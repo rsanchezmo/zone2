@@ -143,15 +143,12 @@ class StravaEndpoint:
             'Authorization': f'Bearer {access_token}',
             'Content-Type': 'application/json'
         }
+    
 
-    def get_activities(self, from_date: datetime | None = None, to_date: datetime | None = None, per_page: int = 30) -> list[dict]:
-        """Fetch activities from Strava API."""
-        
+    def __fetch_activities(self, page: int, per_page: int, from_date: datetime | None = None, to_date: datetime | None = None) -> list[dict]:
         headers = self.__get_headers()
 
         activities = []
-        page = 1
-
         while True:
         
             params = {
@@ -173,6 +170,7 @@ class StravaEndpoint:
                 return activities
             
             page_activities = response.json()
+
             if not page_activities:
                 break
 
@@ -180,7 +178,17 @@ class StravaEndpoint:
             page += 1
 
         return activities
+
+    def get_activities(self, from_date: datetime | None = None, to_date: datetime | None = None, sports: list[str] | None = None) -> list[dict]:
+        """Fetch activities from Strava API."""
+
+        activities = self.__fetch_activities(page=1, per_page=200, from_date=from_date, to_date=to_date)
+
+        # Filter by sports if provided
+        if sports:
+            activities = [activity for activity in activities if activity.get('type') in sports]
         
+        return activities
 
     def get_athlete(self) -> dict:
         """Fetch athlete information from Strava API."""
