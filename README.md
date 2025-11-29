@@ -21,8 +21,8 @@ A Python toolkit for analyzing and visualizing your Strava activities without pa
 
 ## 📋 Prerequisites
 
-- Python 3.11+
-- A Strava account with API access
+- Python 3.12+
+- A Strava FREE account with API access
 - Strava API credentials (Client ID and Client Secret)
 
 ## 🔧 Installation
@@ -38,7 +38,7 @@ cd strava-intelligence
 poetry install
 
 # Activate the virtual environment
-poetry shell
+poetry env activate
 ```
 
 ### Using pip
@@ -186,7 +186,7 @@ Generates all visualizations.
 - `plot_efficiency_factor(sport_types, window)`
 - `plot_performance_frontier(sport_types)`
 
-### StravaAnalytics
+### [WIP] StravaAnalytics
 
 Provides analytics calculations.
 
@@ -194,6 +194,12 @@ Provides analytics calculations.
 - `get_rest_heart_rate()` - Get estimated resting heart rate
 - `get_max_heart_rate()` - Get maximum heart rate from zones
 - `get_current_vo2_max()` - Calculate VO2 Max estimate
+
+## 🗺️ Roadmap
+
+- [ ] Extend the analytics, use ML models to provide deeper insights, such as training load, fatigue estimation, and performance prediction
+- [ ] Add more visualizations
+- [ ] Create an mcp server to expose Strava data so you can access it from your LLM based agents
 
 ## 🤝 Contributing
 
