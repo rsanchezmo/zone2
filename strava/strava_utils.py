@@ -2,6 +2,7 @@ import geopandas as gpd
 from shapely.geometry import LineString
 import polyline
 import pandas as pd
+import json
 
 from strava.constants import BASE_CRS
 
@@ -14,7 +15,14 @@ def get_activities_as_gdf(activities: pd.DataFrame) -> gpd.GeoDataFrame:
 
     # Parse polylines into LineString geometries
     def _parse_map(map_activity):
-        if 'summary_polyline' in map_activity and map_activity['summary_polyline'] != "":
+        # Handle JSON string from Parquet deserialization
+        if isinstance(map_activity, str):
+            try:
+                map_activity = json.loads(map_activity)
+            except json.JSONDecodeError:
+                return None
+        
+        if isinstance(map_activity, dict) and 'summary_polyline' in map_activity and map_activity['summary_polyline'] != "":
             encoded_polyline = map_activity['summary_polyline']
             decoded_points = polyline.decode(encoded_polyline, geojson=True)
             return LineString(decoded_points)

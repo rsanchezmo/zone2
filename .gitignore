@@ -1,0 +1,9 @@
+__pycache__/
+
+.env
+
+# Strava cache
+.strava/
+
+# Project workdir
+strava_intelligence_workdir/
