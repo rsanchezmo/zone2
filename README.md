@@ -4,6 +4,8 @@ A Python toolkit for analyzing and visualizing your Strava activities without pa
 
 ![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
 
+> ⚠️ **Disclaimer**: This project stores Strava data locally on your machine. It is the responsibility of each user to comply with [Strava's API Agreement](https://www.strava.com/legal/api) and their terms regarding data storage and usage. Please review Strava's policies before using this tool.
+
 ## ✨ Current features
 
 - **Activity Sync**: Automatically sync and cache your Strava activities locally using Parquet files
@@ -105,8 +107,12 @@ strava.save_geojson_activities()
 ### Thunderstorm Heatmap
 A stunning neon visualization of your activity routes on a dark canvas. Perfect for showcasing your training coverage in a specific area.
 
+![Thunderstorm Heatmap](readme_data/thunderstorm_run.png)
+
 ### Activity Clock
 A polar plot showing the distribution of your activities by time of day and distance. Discover your training patterns at a glance.
+
+![Activity Clock](readme_data/activity_clock_run.png)
 
 ### HUD Dashboard
 Cyberpunk-inspired histograms displaying the distribution of:
@@ -114,14 +120,24 @@ Cyberpunk-inspired histograms displaying the distribution of:
 - Heart Rate (bpm)
 - Pace (min/km)
 
+![HUD Dashboard](readme_data/hud_run.png)
+
 ### Efficiency Factor
 Track your aerobic efficiency over time with rolling averages and variance bands. Identify peak performance periods.
+
+![Efficiency Factor](readme_data/efficiency_factor.png)
 
 ### Performance Frontier
 Visualize your best performances across different distances with Riegel's power-law fatigue model fitting.
 
+![Performance Frontier](readme_data/performance_frontier.png)
+
 ### QGIS GeoJSON Export
 Easily export your Strava activities as GeoJSON files for advanced mapping and spatial analysis in GIS software like QGIS.
+
+![QGIS All Activities](readme_data/qgis_all.png)
+
+![QGIS Activity Info](readme_data/qgis_info.png)
 
 ## 🏗️ Project Structure
 
