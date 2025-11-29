@@ -44,6 +44,7 @@ class StravaTokenData(BaseModel):
 class StravaEndpoint:
 
     __ACTIVITIES_URL = 'https://www.strava.com/api/v3/athlete/activities'
+    __ACTIVITY_URL = 'https://www.strava.com/api/v3/activities'
     __ATHLETE_URL = 'https://www.strava.com/api/v3/athlete'
     __ATHLETES_URL = 'https://www.strava.com/api/v3/athletes'
     __OAUTH_TOKEN_URL = 'https://www.strava.com/oauth/token'
@@ -71,12 +72,20 @@ class StravaEndpoint:
         if (self.__cache_dir / StravaEndpoint.__TOKEN_FILENAME).exists():
             return StravaTokenData.from_file(self.__cache_dir / StravaEndpoint.__TOKEN_FILENAME)
 
+        # Request all necessary scopes for full API access
+        scopes = [
+            'read',              # Public data access
+            'read_all',          # Private routes, segments, events
+            'profile:read_all',  # Full profile access (required for zones)
+            'activity:read_all', # All activities including private
+        ]
+
         auth_url = (
             f"{StravaEndpoint.__OAUTH_AUTHORIZE_URL}?"
             f"client_id={self.__STRAVA_CLIENT_ID}&"
             f"response_type=code&"
             f"redirect_uri=http://localhost/exchange_token&"
-            f"scope=activity:read_all"
+            f"scope={','.join(scopes)}"
         )
         webbrowser.open(auth_url)
         authorization_code = input("Enter the authorization code from the URL: ")
@@ -175,20 +184,113 @@ class StravaEndpoint:
                 break
 
             activities.extend(page_activities)
+
+            if len(page_activities) < per_page:
+                break
+
             page += 1
 
         return activities
 
-    def get_activities(self, from_date: datetime | None = None, to_date: datetime | None = None, sports: list[str] | None = None) -> list[dict]:
-        """Fetch activities from Strava API."""
+    def get_activities(
+            self, 
+            from_date: datetime | None = None, 
+            to_date: datetime | None = None, 
+            sports: list[str] | None = None,
+            include_streams: bool = False,
+            include_zones: bool = False
+            ) -> list[dict]:
+        """Fetch activities from Strava API, enabling include_streams or include_zones as needed, but can violate rate limits quite easily."""
 
         activities = self.__fetch_activities(page=1, per_page=200, from_date=from_date, to_date=to_date)
 
         # Filter by sports if provided
         if sports:
-            activities = [activity for activity in activities if activity.get('type') in sports]
+            activities = [activity for activity in activities if activity.get('sport_type') in sports]
+
+        # Include streams if requested
+        if include_streams:
+            activities = self.__fetch_activity_streams(activities, merge_into_data_points=True)
+
+        if include_zones:
+            activities = self.__fetch_activity_zones(activities)
         
         return activities
+    
+    def __fetch_activity_zones(self, activities: list[dict]) -> list[dict]:
+        """Fetch zones for each activity and attach to activity data."""
+        headers = self.__get_headers()
+        
+        for activity in activities:
+            activity_id = activity['id']
+
+            print(f"Fetching zones for activity {activity_id}...")
+            response = requests.get(
+                f"{StravaEndpoint.__ACTIVITY_URL}/{activity_id}/zones",
+                headers=headers
+            )
+            if response.status_code != 200:
+                print(f"Failed to fetch zones for activity {activity_id}: {response.json()}")
+                continue
+
+            activity['zones'] = response.json()
+        return activities
+
+    def __fetch_activity_streams(self, activities: list[dict], merge_into_data_points: bool = False) -> list[dict]:
+        """Fetch streams for each activity and attach to activity data."""
+        headers = self.__get_headers()
+        
+        for activity in activities:
+            activity_id = activity['id']
+
+            print(f"Fetching streams for activity {activity_id}...")
+
+            response = requests.get(
+                f"{StravaEndpoint.__ACTIVITY_URL}/{activity_id}/streams",
+                headers=headers,
+                params={
+                    'keys': 'time,latlng,altitude,velocity_smooth,heartrate,cadence,power',
+                    'key_by_type': 'true',
+                    'resolution': 'low'
+                }
+            )
+            if response.status_code != 200:
+                print(f"Failed to fetch streams for activity {activity_id}: {response.json()}")
+                continue
+            
+            activity['streams'] = self.__merge_streams_into_data_points(response.json())
+        return activities
+    
+    def __merge_streams_into_data_points(self, streams: dict) -> list[dict]:
+        """
+        Merge all stream data into a list of synchronized data points.
+        Each point contains all metrics at that specific moment.
+        """
+        # Get the length of any stream (they're all the same)
+        if not streams:
+            return []
+        
+        first_stream = next(iter(streams.values()))
+        num_points = len(first_stream['data'])
+        
+        merged_data = []
+        
+        for i in range(num_points):
+            point = {}
+            
+            for stream_type, stream_data in streams.items():
+                if stream_type == 'latlng':
+                    # Handle latlng specially (it's an array [lat, lng])
+                    lat, lng = stream_data['data'][i]
+                    point['lat'] = lat
+                    point['lng'] = lng
+                else:
+                    point[stream_type] = stream_data['data'][i]
+            
+            merged_data.append(point)
+        
+        return merged_data
+
 
     def get_athlete(self) -> dict:
         """Fetch athlete information from Strava API."""
@@ -197,7 +299,8 @@ class StravaEndpoint:
         response = requests.get(StravaEndpoint.__ATHLETE_URL, headers=headers)
         
         if response.status_code != 200:
-            raise Exception(f"Failed to fetch athlete info: {response.json()}")
+            print(f"Failed to fetch athlete info: {response.json()}")
+            return {}
         
         return response.json()
     
@@ -209,8 +312,22 @@ class StravaEndpoint:
         response = requests.get(f"{StravaEndpoint.__ATHLETES_URL}/{self.__STRAVA_CLIENT_ID}/stats", headers=headers)
 
         if response.status_code != 200:
-            if response.reason == "Forbidden":
-                return {}
+            print(f"Failed to fetch athlete stats: {response.json()}")
+            return {}
+        return response.json()
+    
+    def get_athlete_zones(self) -> dict:
+        """
+        Get the authenticated athlete's heart rate and power zones.
+        Returns zones configuration for heart rate and power.
         
-            raise Exception(f"Failed to fetch athlete stats: {response.json()}")
+        Endpoint: GET /athlete/zones
+        """
+        headers = self.__get_headers()
+        response = requests.get(f"{StravaEndpoint.__ATHLETE_URL}/zones", headers=headers)
+        
+        if response.status_code != 200:
+            print(f"Failed to fetch athlete zones: {response.json()}")
+            return {}
+        
         return response.json()
