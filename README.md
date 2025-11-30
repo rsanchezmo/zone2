@@ -2,7 +2,7 @@
 
 A Python toolkit for analyzing and visualizing your Strava activities without paying for Strava Premium. Sync your activities, generate cool visualizations, and track your performance metrics over time. This repository is conceived as a starting point for building more advanced Strava data analysis tools. I will keep adding features and visualizations over time.
 
-![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
+![Python](https://img.shields.io/badge/python-3.12+-blue.svg)
 
 > ⚠️ **Disclaimer**: This project stores Strava data locally on your machine. It is the responsibility of each user to comply with [Strava's API Agreement](https://www.strava.com/legal/api) and their terms regarding data storage and usage. Please review Strava's policies before using this tool.
 
@@ -86,6 +86,12 @@ strava.strava_visualizer.thunderstorm_heatmap(
     add_basemap=False
 )
 
+# Generate a bubble map for Europe
+strava.strava_visualizer.activity_bubble_map(
+    region="europe",
+    sport_types=['Run']
+)
+
 # Create an activity clock visualization
 strava.strava_visualizer.activity_clock(sport_types=['Run'])
 
@@ -131,6 +137,13 @@ Track your aerobic efficiency over time with rolling averages and variance bands
 Visualize your best performances across different distances with Riegel's power-law fatigue model fitting.
 
 ![Performance Frontier](readme_data/performance_frontier.png)
+
+### Activity Bubble Map
+A geographic bubble visualization where circle size represents activity density in each area. Perfect for seeing where you've trained across regions, countries, or continents.
+
+![Bubble Map Europe](readme_data/bubble_map_europe.png)
+
+![Bubble Map Madrid](readme_data/bubble_map_city.png)
 
 ### QGIS GeoJSON Export
 Easily export your Strava activities as GeoJSON files for advanced mapping and spatial analysis in GIS software like QGIS.
@@ -181,6 +194,7 @@ Generates all visualizations.
 
 **Current methods:**
 - `thunderstorm_heatmap(location, sport_types, radius_km, add_basemap, neon_color, show_title)`
+- `activity_bubble_map(region, sport_types, min_radius_scale, grid_density, neon_color, show_title)`
 - `activity_clock(sport_types, neon_color, max_dist_km, show_title)`
 - `hud_dashboard(sport_types, bins)`
 - `plot_efficiency_factor(sport_types, window)`

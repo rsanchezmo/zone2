@@ -26,4 +26,7 @@ if __name__ == "__main__":
         sport_types=['Run']
     )
 
+    strava_intelligence.strava_visualizer.activity_bubble_map(
+        sport_types=['Run'], region="europe")
+
     strava_intelligence.save_geojson_activities()

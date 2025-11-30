@@ -1,5 +1,5 @@
 from strava.strava_analytics import StravaAnalytics
-from strava.strava_utils import get_activities_as_gdf, get_coordinates_city_from_osm
+from strava.strava_utils import get_activities_as_gdf, get_region_coordinates
 from strava.constants import WEB_MERCATOR_CRS, BASE_CRS
 
 import matplotlib.pyplot as plt
@@ -37,8 +37,11 @@ class StravaVisualizer:
             np.median(centroids.y)
         )
 
-    def _filter_and_get_gdf(self, sport_types: list[str] | None = None, radius_km: float | None = None, location: str | None = None) -> gpd.GeoDataFrame | None:
-        """Filters by sport, projects to WebMercator, and spatially filters by radius."""
+    def _filter_and_get_gdf(self, sport_types: list[str] | None = None, 
+                            radius_km: float | None = None, 
+                            location: str | None = None,
+                            filter_by_boundary: bool = False) -> tuple[gpd.GeoDataFrame | None, dict | None]:
+        """Filters by sport, projects to WebMercator, and spatially filters by radius or boundary."""
         activities = self.strava_analytics.strava_activities_cache.activities
         gdf = get_activities_as_gdf(activities)
 
@@ -47,22 +50,43 @@ class StravaVisualizer:
             
         if gdf.empty:
             print(f"No activities found for {sport_types}")
-            return None
+            return None, None
+        
+        # get region_coordinates if location is provided
+        region_coords = get_region_coordinates(location) if location else None
+        if region_coords is None:
+            return gdf.to_crs(WEB_MERCATOR_CRS), None
         
         if radius_km is not None:
             # Project to WebMercator for distance calculations
             gdf = gdf.to_crs(WEB_MERCATOR_CRS)
 
-            center_latlon = get_coordinates_city_from_osm(location) if location else None
-
             # Determine centroid of the map in WebMercator
-            centroid = self._get_centroid_of_map(gdf, center_latlon)       
+            centroid = self._get_centroid_of_map(gdf, (region_coords['lat'], region_coords['lon']))       
 
             # Filter data on a ~ radius_km as we use WebMercator 
             gdf['dist_to_centroid'] = gdf.geometry.distance(centroid)
             gdf = gdf[gdf['dist_to_centroid'] < radius_km * 1e3]
 
-        return gdf        
+        elif filter_by_boundary:
+            # Use bounding box from OSM to filter activities
+            bbox_polygon = region_coords['boundingbox']
+            # Ensure we are comparing in Lat/Lon (BASE_CRS) because bbox is Lat/Lon
+            gdf_latlon = gdf.to_crs(BASE_CRS)
+            
+            # Use INTERSECTS instead of WITHIN to keep runs that cross the border
+            mask = gdf_latlon.geometry.intersects(bbox_polygon)
+            gdf = gdf_latlon[mask]
+            
+            # Convert result to WebMercator for final plotting
+            gdf = gdf.to_crs(WEB_MERCATOR_CRS)
+        
+        # Fallback: Location provided but no filter method (radius/boundary) selected
+        # Usually we just return the full dataset projected
+        else:
+             gdf = gdf.to_crs(WEB_MERCATOR_CRS)
+
+        return gdf, region_coords
 
     def thunderstorm_heatmap(
             self, 
@@ -76,7 +100,7 @@ class StravaVisualizer:
         """
         Generates a high-contrast 'Neon' visualization of activities.
         """
-        gdf = self._filter_and_get_gdf(sport_types, radius_km, location)
+        gdf, _ = self._filter_and_get_gdf(sport_types, radius_km, location)
         if gdf is None or gdf.empty:
             print(f"No data found for the specified parameters.")
             return
@@ -150,6 +174,165 @@ class StravaVisualizer:
         )
         print(f"⚡ Thunderstorm map saved to: {save_path}")
         plt.close()
+
+    def activity_bubble_map(
+            self,
+            region: str,  # 'Europe', 'Spain', or None for World
+            sport_types: list[str] | None = None,
+            min_radius_scale: float = 100.0,
+            grid_density: int = 100,  # if too low, bubbles may lose position accuracy
+            neon_color: str = "#fc0101",
+            show_title: bool = False
+    ) -> None:
+        """
+        Generates a 'Bubble Map' where the size of the circle represents 
+        the number of activities in that cluster.
+        """
+        # 1. Get Base Data (Filter by boundary logic is handled inside _filter_and_get_gdf)
+        gdf, region_info = self._filter_and_get_gdf(
+            sport_types=sport_types, 
+            radius_km=None, 
+            location=region, 
+            filter_by_boundary=True
+        )
+        
+        if gdf is None or gdf.empty:
+            print("No activities found.")
+            return
+        
+        if region_info is None:
+            print("Region information not found.")
+            return
+
+        # 2. Setup Bounding Box (in Web Mercator)
+        # We do this FIRST to determine the grid size
+        bbox_latlon = region_info['boundingbox']
+        
+        # Create a GeoDataFrame just to project the box accurately
+        bbox_gdf = gpd.GeoDataFrame(geometry=[bbox_latlon], crs=BASE_CRS).to_crs(WEB_MERCATOR_CRS)
+        minx, miny, maxx, maxy = bbox_gdf.total_bounds
+        
+        box_width = maxx - minx
+        box_height = maxy - miny
+
+        # 3. Dynamic Grid Grouping (in Meters)
+        # Divide the map width by 'grid_density' to find the cell size
+        # e.g. If map is 1000km wide and density is 50, grid cells are 20km wide.
+        grid_size = box_width / grid_density
+        
+        # Convert activities to Web Mercator if they aren't already
+        gdf_proj = gdf.to_crs(WEB_MERCATOR_CRS)
+        
+        # Snap centroids to this dynamic grid
+        # Formula: round(coord / size) * size
+        gdf_proj['x_group'] = (gdf_proj.geometry.centroid.x // grid_size) * grid_size
+        gdf_proj['y_group'] = (gdf_proj.geometry.centroid.y // grid_size) * grid_size
+        
+        # Group and count
+        grouped = gdf_proj.groupby(['x_group', 'y_group']).size().reset_index(name='count')
+        
+        # Create Bubbles (shift to center of grid cell)
+        bubbles_gdf = gpd.GeoDataFrame(
+            grouped,
+            geometry=gpd.points_from_xy(grouped.x_group + grid_size/2, grouped.y_group + grid_size/2),
+            crs=WEB_MERCATOR_CRS
+        )
+
+        # 4. Setup Canvas
+        fig, ax = plt.subplots(figsize=(20, 12), facecolor='black')
+        ax.set_facecolor('black')
+        
+        # Set Limits explicitly to the Bounding Box
+        # Add small padding (1%)
+        pad_x = box_width * 0.01
+        pad_y = box_height * 0.01
+        ax.set_xlim(minx - pad_x, maxx + pad_x)
+        ax.set_ylim(miny - pad_y, maxy + pad_y)
+
+        # 5. Calculate Marker Sizes
+        # Normalize by max count so the busiest spot is always "1.0" scale
+        max_val = bubbles_gdf['count'].max()
+        
+        # Size formula needs to be responsive to the figure size and grid density
+        # If we have many grid cells (high density), bubbles should be smaller to avoid overlap
+        # We use a heuristic: base_size relative to grid_density
+        relative_scale = (np.sqrt(bubbles_gdf['count']) / np.sqrt(max_val))
+        
+        # Tuning factor: The visual size of the bubble
+        # min_radius_scale passed by user acts as a global multiplier
+        sizes = relative_scale * min_radius_scale 
+
+        # 6. Plotting The Neon Bubbles
+        
+        # Layer 1: Atmosphere
+        ax.scatter(
+            bubbles_gdf.geometry.x,
+            bubbles_gdf.geometry.y,
+            s=sizes * 8,
+            c=neon_color,
+            alpha=0.05,
+            linewidth=0,
+            zorder=2
+        )
+
+        # Layer 2: The Halo
+        ax.scatter(
+            bubbles_gdf.geometry.x,
+            bubbles_gdf.geometry.y,
+            s=sizes * 4,
+            c=neon_color,
+            alpha=0.2,
+            linewidth=0,
+            zorder=3
+        )
+
+        # Layer 3: The Core
+        ax.scatter(
+            bubbles_gdf.geometry.x,
+            bubbles_gdf.geometry.y,
+            s=sizes,
+            c='white',
+            alpha=0.9,
+            edgecolors=neon_color,
+            linewidth=1,
+            zorder=4
+        )
+
+        # 7. Basemap
+        try:
+            ctx.add_basemap(
+                ax,
+                source=ctx.providers.CartoDB.DarkMatter, 
+                alpha=0.6,
+                zoom_adjust=0, # Auto-zoom usually works well with set_xlim
+                zorder=1
+            )
+        except Exception:
+            pass
+
+        ax.set_axis_off()
+        ax.axis('equal')
+
+        # 8. Title & Save
+        if show_title:
+            sport_str = " / ".join(sport_types).upper() if sport_types else "ALL ACTIVITIES"
+            
+            plt.title(
+                f"{region.upper()} | {sport_str} | DENSITY",
+                color=neon_color,
+                fontsize=24,
+                fontfamily='monospace',
+                fontweight='bold',
+                pad=20
+            )
+
+        filename = f"bubble_map_{region.replace(' ', '_')}.png"
+        save_path = self.output_dir / filename.lower()
+        
+        plt.savefig(save_path, dpi=600, facecolor='black', bbox_inches='tight')
+        print(f"⚪ Bubble map saved to: {save_path}")
+        plt.close()
+
 
     def activity_clock(
         self, 
@@ -343,7 +526,7 @@ class StravaVisualizer:
         Includes rolling average, standard deviation bands, and peak annotations.
         """
         # 1. Data Prep
-        gdf = self._filter_and_get_gdf(sport_types)
+        gdf, _ = self._filter_and_get_gdf(sport_types)
 
         if gdf is None or gdf.empty:
             print("No data found for the specified parameters.")
@@ -457,7 +640,7 @@ class StravaVisualizer:
         """
         
         # --- 1. Data Prep ---
-        gdf = self._filter_and_get_gdf(sport_types)
+        gdf, _ = self._filter_and_get_gdf(sport_types)
         if gdf is None or gdf.empty:
             print("No data found.")
             return
@@ -567,5 +750,5 @@ class StravaVisualizer:
             plt.tight_layout()
             out_path = self.output_dir / "performance_frontier.png"
             plt.savefig(out_path, dpi=600, bbox_inches='tight')
-            print(f"🚀 Scientific frontier plot saved to {out_path}")
+            print(f"🚀 Frontier plot saved to {out_path}")
             plt.close()

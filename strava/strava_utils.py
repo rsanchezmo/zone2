@@ -1,5 +1,5 @@
 import geopandas as gpd
-from shapely.geometry import LineString
+from shapely.geometry import LineString, Polygon, box
 import polyline
 import pandas as pd
 import json
@@ -44,7 +44,7 @@ def vo2_max(hr_max: float, hr_rest: float) -> float:
     """
     return 15.3 * (hr_max / hr_rest)
 
-def get_coordinates_city_from_osm(city_name: str) -> tuple[float, float] | None:
+def get_region_coordinates(region_name: str) -> dict | None:
     """
     Get the latitude and longitude of a city using OSM Nominatim API.
     """
@@ -53,7 +53,7 @@ def get_coordinates_city_from_osm(city_name: str) -> tuple[float, float] | None:
     url = "https://nominatim.openstreetmap.org/search"
     headers = {'User-Agent': 'agent'}
     params = {
-        'q': city_name,
+        'q': region_name,
         'format': 'json',
         'limit': 1
     }
@@ -63,6 +63,10 @@ def get_coordinates_city_from_osm(city_name: str) -> tuple[float, float] | None:
     if data:
         lat = float(data[0]['lat'])
         lon = float(data[0]['lon'])
-        return (lat, lon)
+        bbox = data[0]['boundingbox']
+        min_lat, max_lat = float(bbox[0]), float(bbox[1])
+        min_lon, max_lon = float(bbox[2]), float(bbox[3])
+        bbox_polygon = box(min_lon, min_lat, max_lon, max_lat)
+        return {'lat': lat, 'lon': lon, 'boundingbox': bbox_polygon}
     
     return None
