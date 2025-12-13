@@ -1,5 +1,5 @@
 from pathlib import Path
-from strava.strava_analytics import StravaAnalytics
+from strava.strava_analytics import StravaAnalytics, YearInSportFeatures
 from strava.strava_user_cache import StravaUserCache
 from strava.strava_activities_cache import StravaActivitiesCache
 from strava.strava_endpoint import StravaEndpoint
@@ -49,3 +49,51 @@ class StravaIntelligence:
         filepath = self.workdir / "activities.geojson"
         gdf.to_file(filepath, driver="GeoJSON")
         print(f"✓ Saved activities to {filepath}")
+
+
+    def get_year_in_sport(self, year: int, main_sport: str) -> dict:
+        """Get year in sport for the specified year."""
+        
+        year_in_sport_main_sport = self.strava_analytics.get_year_in_sport(year, main_sport)
+        year_in_sport = {
+            main_sport : year_in_sport_main_sport,
+            'all': self.strava_analytics.get_all_year_in_sport(year)
+            }
+        
+        output_folder = self.workdir / "year_in_sport" / str(year)
+        
+        # Plot year in sport summary - main sport
+        self.strava_visualizer.plot_year_in_sport_main(
+            year=year,
+            year_in_sport=year_in_sport,
+            main_sport=main_sport,
+            folder=output_folder
+        )
+        
+        # Plot year in sport summary - totals across all sports
+        self.strava_visualizer.plot_year_in_sport_totals(
+            year=year,
+            year_in_sport=year_in_sport,
+            folder=output_folder
+        )
+        
+        # plot longest activity (by time), fastest activity and longest distance activity
+        self.strava_visualizer.plot_activity(
+            year_in_sport_main_sport[YearInSportFeatures.LONGEST_ACTIVITY_MINS_ID], 
+            self.strava_endpoint,
+            folder=output_folder, 
+            title="Longest Activity (Time)"
+        )
+        self.strava_visualizer.plot_activity(
+            year_in_sport_main_sport[YearInSportFeatures.FASTEST_ACTIVITY_PACE_ID], 
+            self.strava_endpoint,
+            folder=output_folder, 
+            title="Fastest Activity"
+        )
+        self.strava_visualizer.plot_activity(
+            year_in_sport_main_sport[YearInSportFeatures.LONGEST_ACTIVITY_KM_ID], 
+            self.strava_endpoint,
+            folder=output_folder, 
+            title="Longest Activity (Distance)"
+        )
+        return year_in_sport

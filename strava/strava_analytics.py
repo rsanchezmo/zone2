@@ -1,6 +1,8 @@
+from enum import StrEnum
+import pandas as pd
 from strava.strava_activities_cache import StravaActivitiesCache
 from strava.strava_user_cache import StravaUserCache
-from strava.strava_utils import vo2_max
+from strava.strava_utils import vo2_max, get_activities_as_gdf
 
 
 class StravaAnalytics:
@@ -50,3 +52,184 @@ class StravaAnalytics:
     ACTIVITY ANALYTICS
     ==================
     """
+
+    def get_year_in_sport(self, year: int, main_sport: str) -> dict:
+        """Get year in sport for the specified year."""
+        
+        # Use raw activities DataFrame (not GeoDataFrame) to include all activities
+        activities = self.strava_activities_cache.activities.copy()
+        activities['start_date_local'] = pd.to_datetime(activities['start_date_local'])
+
+        # get activities for the specified year
+        activities_year = activities[
+            (activities['start_date_local'].dt.year == year) &
+            (activities['sport_type'] == main_sport)
+        ].copy()
+
+        total_activities = len(activities_year)
+        total_distance_km = activities_year['distance'].sum() / 1000.0
+        total_elevation_m = activities_year['total_elevation_gain'].sum()
+        active_days = activities_year['start_date_local'].dt.date.nunique()
+
+        # get activities per month
+        activities_per_month = activities_year.groupby(activities_year['start_date_local'].dt.month).size()
+        if not activities_per_month.empty:
+            month_most_activities = activities_per_month.idxmax()
+        else:
+            month_most_activities = None
+        activities_per_month = activities_per_month.to_dict()
+
+        # day of the week with most activities
+        activities_per_weekday = activities_year.groupby(activities_year['start_date_local'].dt.weekday).size()
+        if not activities_per_weekday.empty:
+            most_active_weekday = activities_per_weekday.idxmax()
+        else:
+            most_active_weekday = None
+
+        # month with most kms
+        distance_per_month = activities_year.groupby(activities_year['start_date_local'].dt.month)['distance'].sum()
+        if not distance_per_month.empty:
+            month_most_km = distance_per_month.idxmax()
+        else:
+            month_most_km = None
+
+        # month with least kms
+        if not distance_per_month.empty:
+            month_least_km = distance_per_month.idxmin()
+        else:
+            month_least_km = None
+
+
+        # longest activity in kms
+        if not activities_year.empty:
+            longest_activity_km = activities_year['distance'].max() / 1000.0
+            longest_activity_km_id = activities_year.loc[activities_year['distance'].idxmax()]['id']
+        else:
+            longest_activity_km = 0.0
+            longest_activity_km_id = None
+
+
+        # longest activity in mins
+        if not activities_year.empty:
+            longest_activity_mins = activities_year['moving_time'].max() / 60.0
+            longest_activity_mins_id = activities_year.loc[activities_year['moving_time'].idxmax()]['id']
+        else:
+            longest_activity_mins = 0.0
+            longest_activity_mins_id = None
+
+        # average distance per activity
+        average_distance_km = (total_distance_km / total_activities) if total_activities > 0 else 0.0
+
+        # activity with fastest pace (min/km) from average_speed (m/s)
+        # Convert m/s to min/km: pace = 1000 / (60 * speed_m_s) = 16.6667 / speed_m_s
+        activities_year['pace_min_per_km'] = 1000 / (60 * activities_year['average_speed'])
+        if not activities_year.empty:
+            fastest_activity_pace = activities_year['pace_min_per_km'].min()
+            fastest_activity_pace_id = activities_year.loc[activities_year['pace_min_per_km'].idxmin()]['id']
+        else:
+            fastest_activity_pace = 0.0
+            fastest_activity_pace_id = None
+
+
+        year_in_sport_dict = {
+            YearInSportFeatures.TOTAL_ACTIVITIES: total_activities,
+            YearInSportFeatures.TOTAL_DISTANCE_KM: float(round(total_distance_km, 2)),
+            YearInSportFeatures.TOTAL_ELEVATION_M: float(round(total_elevation_m)),
+            YearInSportFeatures.AVERAGE_DISTANCE_KM: float(round(average_distance_km, 2)),
+            YearInSportFeatures.ACTIVE_DAYS: active_days,
+            YearInSportFeatures.ACTIVITIES_PER_MONTH: {month: int(count) for month, count in activities_per_month.items()},
+            YearInSportFeatures.DISTANCE_PER_MONTH_KM: {month: float(round(dist / 1000.0, 2)) for month, dist in distance_per_month.items()},
+            YearInSportFeatures.MOST_ACTIVE_WEEKDAY: int(most_active_weekday) if most_active_weekday is not None else None,
+            YearInSportFeatures.MONTH_MOST_ACTIVITIES: int(month_most_activities) if month_most_activities is not None else None,
+            YearInSportFeatures.MONTH_MOST_KM: int(month_most_km) if month_most_km is not None else None,
+            YearInSportFeatures.MONTH_LEAST_KM: int(month_least_km) if month_least_km is not None else None,
+            YearInSportFeatures.LONGEST_ACTIVITY_KM: float(round(longest_activity_km, 2)),
+            YearInSportFeatures.LONGEST_ACTIVITY_MINS: float(round(longest_activity_mins, 2)),
+            YearInSportFeatures.LONGEST_ACTIVITY_KM_ID: str(longest_activity_km_id) if longest_activity_km_id is not None else None,
+            YearInSportFeatures.LONGEST_ACTIVITY_MINS_ID: str(longest_activity_mins_id) if longest_activity_mins_id is not None else None,
+            YearInSportFeatures.FASTEST_ACTIVITY_PACE: float(fastest_activity_pace),  # Don't round - keep full precision for display
+            YearInSportFeatures.FASTEST_ACTIVITY_PACE_ID: str(fastest_activity_pace_id) if fastest_activity_pace_id is not None else None,
+        }
+
+        return year_in_sport_dict
+
+
+    def get_all_year_in_sport(self, year: int) -> dict:
+        """Get overall year in sport stats across all sports for the specified year."""
+        
+        # Use raw activities DataFrame (not GeoDataFrame) to include all activities
+        activities = self.strava_activities_cache.activities.copy()
+        activities['start_date_local'] = pd.to_datetime(activities['start_date_local'])
+
+        # get activities for the specified year (all sports)
+        activities_year = activities[
+            activities['start_date_local'].dt.year == year
+        ].copy()
+
+        # total activities and distance
+        total_activities = len(activities_year)
+        total_distance_km = activities_year['distance'].sum() / 1000.0
+        total_time_hours = activities_year['moving_time'].sum() / 3600.0  # Convert seconds to hours
+
+        # activities per sport
+        activities_per_sport = activities_year.groupby('sport_type').size().to_dict()
+
+        # day of the week with most activities
+        activities_per_weekday = activities_year.groupby(activities_year['start_date_local'].dt.weekday).size()
+        if not activities_per_weekday.empty:
+            most_active_weekday = activities_per_weekday.idxmax()
+        else:
+            most_active_weekday = None
+
+        # month with most activities
+        activities_per_month = activities_year.groupby(activities_year['start_date_local'].dt.month).size()
+        if not activities_per_month.empty:
+            most_active_month = activities_per_month.idxmax()
+        else:
+            most_active_month = None
+
+        # sport most done
+        if activities_per_sport:
+            sport_most_done = max(activities_per_sport, key=activities_per_sport.get)
+        else:
+            sport_most_done = None
+
+        return {
+            AllYearInSportFeatures.TOTAL_ACTIVITIES: total_activities,
+            AllYearInSportFeatures.TOTAL_DISTANCE_KM: float(round(total_distance_km, 2)),
+            AllYearInSportFeatures.TOTAL_TIME_HOURS: float(round(total_time_hours, 1)),
+            AllYearInSportFeatures.ACTIVITIES_PER_SPORT: {sport: int(count) for sport, count in activities_per_sport.items()},
+            AllYearInSportFeatures.MOST_ACTIVE_WEEKDAY: int(most_active_weekday) if most_active_weekday is not None else None,
+            AllYearInSportFeatures.MOST_ACTIVE_MONTH: int(most_active_month) if most_active_month is not None else None,
+            AllYearInSportFeatures.SPORT_MOST_DONE: sport_most_done,
+        }
+
+
+class YearInSportFeatures(StrEnum):
+    TOTAL_ACTIVITIES = "total_activities"
+    TOTAL_DISTANCE_KM = "total_distance_km"
+    TOTAL_ELEVATION_M = "total_elevation_m"
+    ACTIVE_DAYS = "active_days"
+    ACTIVITIES_PER_MONTH = "activities_per_month"
+    DISTANCE_PER_MONTH_KM = "distance_per_month_km"
+    MOST_ACTIVE_WEEKDAY = "most_active_weekday"
+    MONTH_MOST_ACTIVITIES = "month_most_activities"
+    MONTH_MOST_KM = "month_most_km"
+    MONTH_LEAST_KM = "month_least_km"
+    LONGEST_ACTIVITY_KM = "longest_activity_km"
+    LONGEST_ACTIVITY_KM_ID = "longest_activity_km_id"
+    LONGEST_ACTIVITY_MINS = "longest_activity_mins"
+    LONGEST_ACTIVITY_MINS_ID = "longest_activity_mins_id"
+    FASTEST_ACTIVITY_PACE = "fastest_activity_pace"
+    FASTEST_ACTIVITY_PACE_ID = "fastest_activity_pace_id"
+    AVERAGE_DISTANCE_KM = "average_distance_km"
+
+
+class AllYearInSportFeatures(StrEnum):
+    TOTAL_ACTIVITIES = "total_activities"
+    TOTAL_DISTANCE_KM = "total_distance_km"
+    TOTAL_TIME_HOURS = "total_time_hours"
+    ACTIVITIES_PER_SPORT = "activities_per_sport"
+    MOST_ACTIVE_WEEKDAY = "most_active_weekday"
+    MOST_ACTIVE_MONTH = "most_active_month"
+    SPORT_MOST_DONE = "sport_most_done"

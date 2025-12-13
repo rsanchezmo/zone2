@@ -429,6 +429,691 @@ class StravaVisualizer:
         print(f"🕑 Activity clock saved to: {save_path}")
         plt.close()
 
+    def plot_activity(
+        self,
+        activity_id: int | str,
+        strava_endpoint,
+        folder: Path | None = None,
+        title: str | None = None,
+        neon_color: str = "#fc0101"
+    ) -> None:
+        """
+        Plot a single activity with neon style map and elevation profile below.
+        Fetches activity streams from Strava API for elevation data.
+        Sized for Instagram Stories (9:16 aspect ratio).
+        """
+        from shapely.geometry import LineString
+        
+        # Get activity from cache
+        activities = self.strava_analytics.strava_activities_cache.activities
+        activity = activities[activities['id'] == int(activity_id)]
+        
+        if activity.empty:
+            print(f"Activity {activity_id} not found in cache.")
+            return
+        
+        activity = activity.iloc[0]
+        
+        # Fetch streams for elevation data
+        streams = strava_endpoint.get_activity_streams(activity_id)
+        
+        if not streams:
+            print(f"Could not fetch streams for activity {activity_id}")
+            return
+        
+        # Extract data from streams
+        latlngs = [(p['lat'], p['lng']) for p in streams if 'lat' in p and 'lng' in p]
+        altitudes = [p.get('altitude', 0) for p in streams if 'altitude' in p]
+        distances = [p.get('distance', 0) / 1000 for p in streams if 'distance' in p]  # Convert to km
+        
+        if not latlngs or not altitudes:
+            print(f"No GPS or altitude data for activity {activity_id}")
+            return
+        
+        # Create LineString geometry
+        line = LineString([(lon, lat) for lat, lon in latlngs])
+        gdf = gpd.GeoDataFrame(geometry=[line], crs=BASE_CRS).to_crs(WEB_MERCATOR_CRS)
+        
+        # Instagram Story size: 9:16 aspect ratio (1080x1920 px -> 9x16 inches at 120 dpi for reasonable file)
+        fig = plt.figure(figsize=(9, 16), facecolor='black')
+        
+        # Create gridspec for custom layout (map takes more space)
+        gs = fig.add_gridspec(3, 1, height_ratios=[0.8, 3, 1.2], hspace=0.08)
+        
+        # --- Header Panel (Activity name and title) ---
+        ax_header = fig.add_subplot(gs[0])
+        ax_header.set_facecolor('black')
+        ax_header.set_axis_off()
+        
+        activity_name = activity.get('name', f'Activity {activity_id}')
+        
+        # Calculate stats for header
+        total_elevation = activity.get('total_elevation_gain', 0)
+        distance_km = activity.get('distance', 0) / 1000
+        moving_time_secs = activity.get('moving_time', 0)
+        avg_speed = activity.get('average_speed', 0)
+        
+        # Format time
+        hours = int(moving_time_secs // 3600)
+        mins = int((moving_time_secs % 3600) // 60)
+        secs = int(moving_time_secs % 60)
+        if hours > 0:
+            time_str = f"{hours}h {mins}m"
+        else:
+            time_str = f"{mins}:{secs:02d}"
+        
+        # Format pace
+        if avg_speed > 0:
+            pace_min_per_km = 1000 / (60 * avg_speed)
+            pace_mins = int(pace_min_per_km)
+            pace_secs = round((pace_min_per_km % 1) * 60)
+            if pace_secs == 60:
+                pace_mins += 1
+                pace_secs = 0
+            pace_str = f"{pace_mins}:{pace_secs:02d} /km"
+        else:
+            pace_str = "N/A"
+        stats_text = f"{distance_km:.2f} km  •  {time_str}  •  {pace_str}  •  ↑{total_elevation:.0f} m"
+        
+        # Custom title if provided - at top with reduced opacity
+        if title:
+            ax_header.text(
+                0.5, 0.82, title.upper(),
+                transform=ax_header.transAxes,
+                ha='center', va='center',
+                color=neon_color,
+                fontsize=18,
+                fontfamily='monospace',
+                fontweight='bold',
+                alpha=0.7
+            )
+        
+        # Activity name (Strava title) - smaller, subtle
+        ax_header.text(
+            0.5, 0.5, activity_name,
+            transform=ax_header.transAxes,
+            ha='center', va='center',
+            color='white',
+            fontsize=14,
+            fontfamily='monospace',
+            alpha=0.6
+        )
+        
+        # Stats below activity name
+        ax_header.text(
+            0.5, 0.18, stats_text,
+            transform=ax_header.transAxes,
+            ha='center', va='center',
+            color='white',
+            fontsize=12,
+            fontfamily='monospace',
+            fontweight='bold',
+            alpha=0.9
+        )
+        
+        # --- Map Panel (Middle) ---
+        ax_map = fig.add_subplot(gs[1])
+        ax_map.set_facecolor('black')
+        
+        # Neon effect for the route
+        # Layer 1: The "Atmosphere" (Wide, very faint glow)
+        gdf.plot(ax=ax_map, color=neon_color, linewidth=14, alpha=0.03, zorder=1)
+        # Layer 2: The "Glow" (Medium, soft light)
+        gdf.plot(ax=ax_map, color=neon_color, linewidth=7, alpha=0.15, zorder=2)
+        # Layer 3: The "Core" (Thin, bright white center)
+        gdf.plot(ax=ax_map, color='white', linewidth=2.5, alpha=0.9, zorder=3)
+        
+        # Add start/end markers
+        coords = list(gdf.iloc[0].geometry.coords)
+        start_point = coords[0]
+        end_point = coords[-1]
+        
+        ax_map.scatter(*start_point, color='#00FF00', s=100, zorder=5, marker='o', edgecolors='white', linewidths=1.5)
+        ax_map.scatter(*end_point, color=neon_color, s=100, zorder=5, marker='s', edgecolors='white', linewidths=1.5)
+        
+        ax_map.set_axis_off()
+        
+        # Set limits to the data bounds with padding
+        minx, miny, maxx, maxy = gdf.total_bounds
+        pad_x = (maxx - minx) * 0.1
+        pad_y = (maxy - miny) * 0.1
+        ax_map.set_xlim(minx - pad_x, maxx + pad_x)
+        ax_map.set_ylim(miny - pad_y, maxy + pad_y)
+        ax_map.set_aspect('equal')
+        
+        # --- Elevation Panel (Bottom) ---
+        ax_elev = fig.add_subplot(gs[2])
+        ax_elev.set_facecolor('black')
+        
+        # Use distance if available, otherwise use index
+        if distances and len(distances) == len(altitudes):
+            x_data = distances
+            x_label = 'Distance (km)'
+        else:
+            x_data = list(range(len(altitudes)))
+            x_label = 'Points'
+        
+        # Fill elevation profile with gradient effect
+        ax_elev.fill_between(x_data, altitudes, alpha=0.3, color=neon_color)
+        ax_elev.plot(x_data, altitudes, color=neon_color, linewidth=1.5, alpha=0.8)
+        ax_elev.plot(x_data, altitudes, color='white', linewidth=0.5, alpha=0.9)
+        
+        # Style elevation chart
+        ax_elev.set_xlabel(x_label, color='white', fontsize=10, fontfamily='monospace')
+        ax_elev.set_ylabel('Elevation (m)', color=neon_color, fontsize=9, fontfamily='monospace')
+        ax_elev.tick_params(axis='y', colors=neon_color, labelsize=8)
+        ax_elev.tick_params(axis='x', colors='white', labelsize=8)
+        ax_elev.spines['bottom'].set_color(neon_color)
+        ax_elev.spines['left'].set_color(neon_color)
+        ax_elev.spines['top'].set_visible(False)
+        ax_elev.spines['right'].set_visible(False)
+        ax_elev.grid(color=neon_color, alpha=0.1, linestyle=':')
+        
+        # Save
+        output_folder = folder if folder else self.output_dir
+        output_folder.mkdir(parents=True, exist_ok=True)
+        
+        safe_title = (title or activity_name).replace(' ', '_').lower()
+        filename = f"activity_{activity_id}_{safe_title}.png"
+        save_path = output_folder / filename
+        
+        plt.savefig(
+            save_path,
+            dpi=120,  # 9*120=1080, 16*120=1920 -> Instagram Story resolution
+            facecolor='black',
+            bbox_inches='tight',
+            pad_inches=0.3
+        )
+        print(f"🗺️ Activity plot saved to: {save_path}")
+        plt.close()
+
+    def plot_year_in_sport_main(
+        self,
+        year: int,
+        year_in_sport: dict,
+        main_sport: str,
+        folder: Path | None = None,
+        neon_color: str = "#fc0101"
+    ) -> None:
+        """
+        Plot main sport statistics in neon style for Instagram Stories.
+        Shows sport-specific stats, monthly chart, and highlights.
+        """
+        from strava.strava_analytics import YearInSportFeatures
+        
+        main_sport_data = year_in_sport.get(main_sport, {})
+        
+        # Instagram Story size: 9:16 aspect ratio
+        fig = plt.figure(figsize=(9, 16), facecolor='black')
+        
+        # Create gridspec for layout
+        gs = fig.add_gridspec(5, 1, height_ratios=[1.2, 1, 2, 1.5, 1.3], hspace=0.12)
+        
+        # --- Header Panel ---
+        ax_header = fig.add_subplot(gs[0])
+        ax_header.set_facecolor('black')
+        ax_header.set_axis_off()
+        
+        # Year title
+        ax_header.text(
+            0.5, 0.75, f"{year}",
+            transform=ax_header.transAxes,
+            ha='center', va='center',
+            color=neon_color,
+            fontsize=48,
+            fontfamily='monospace',
+            fontweight='bold',
+            alpha=0.9
+        )
+        
+        # Sport name as subtitle
+        ax_header.text(
+            0.5, 0.25, main_sport.upper(),
+            transform=ax_header.transAxes,
+            ha='center', va='center',
+            color='white',
+            fontsize=20,
+            fontfamily='monospace',
+            alpha=0.7
+        )
+        
+        # --- Main Stats Panel ---
+        ax_stats = fig.add_subplot(gs[1])
+        ax_stats.set_facecolor('black')
+        ax_stats.set_axis_off()
+        
+        sport_activities = main_sport_data.get(YearInSportFeatures.TOTAL_ACTIVITIES, 0)
+        sport_km = main_sport_data.get(YearInSportFeatures.TOTAL_DISTANCE_KM, 0)
+        sport_elevation = main_sport_data.get(YearInSportFeatures.TOTAL_ELEVATION_M, 0)
+        
+        # Big numbers row - 3 stats
+        stats_big = [
+            (f"{sport_activities}", "ACTIVITIES"),
+            (f"{sport_km:,.0f}", "KILOMETERS"),
+            (f"↑{sport_elevation:,.0f}", "METERS"),
+        ]
+        
+        for i, (value, label) in enumerate(stats_big):
+            x = 0.17 + i * 0.33
+            ax_stats.text(
+                x, 0.65, value,
+                transform=ax_stats.transAxes,
+                ha='center', va='center',
+                color=neon_color,
+                fontsize=28,
+                fontfamily='monospace',
+                fontweight='bold'
+            )
+            ax_stats.text(
+                x, 0.25, label,
+                transform=ax_stats.transAxes,
+                ha='center', va='center',
+                color='white',
+                fontsize=9,
+                fontfamily='monospace',
+                alpha=0.6
+            )
+        
+        # --- Monthly Distance Chart ---
+        ax_chart = fig.add_subplot(gs[2])
+        ax_chart.set_facecolor('black')
+        
+        distance_per_month = main_sport_data.get(YearInSportFeatures.DISTANCE_PER_MONTH_KM, {})
+        months = list(range(1, 13))
+        month_names = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D']
+        values = [distance_per_month.get(m, 0) for m in months]
+        
+        # Softer neon bar chart
+        ax_chart.bar(months, values, color=neon_color, alpha=0.15, width=0.6)
+        ax_chart.bar(months, values, color=neon_color, alpha=0.4, width=0.35)
+        ax_chart.bar(months, values, color='white', alpha=0.6, width=0.15)
+        
+        ax_chart.set_xticks(months)
+        ax_chart.set_xticklabels(month_names, color='white', fontsize=10, fontfamily='monospace')
+        ax_chart.set_yticks([])  # Remove y-axis ticks to prevent width expansion
+        ax_chart.tick_params(axis='x', colors='white', length=0)
+        ax_chart.spines['bottom'].set_color(neon_color)
+        ax_chart.spines['bottom'].set_alpha(0.2)
+        ax_chart.spines['left'].set_visible(False)
+        ax_chart.spines['top'].set_visible(False)
+        ax_chart.spines['right'].set_visible(False)
+        ax_chart.set_ylabel('KM PER MONTH', color='white', fontsize=9, fontfamily='monospace', alpha=0.5)
+        ax_chart.grid(axis='y', color=neon_color, alpha=0.08, linestyle=':')
+        
+        # --- Additional Stats ---
+        ax_extra = fig.add_subplot(gs[3])
+        ax_extra.set_facecolor('black')
+        ax_extra.set_axis_off()
+        
+        active_days = main_sport_data.get(YearInSportFeatures.ACTIVE_DAYS, 0)
+        avg_km = main_sport_data.get(YearInSportFeatures.AVERAGE_DISTANCE_KM, 0)
+        month_most_km = main_sport_data.get(YearInSportFeatures.MONTH_MOST_KM)
+        most_active_weekday = main_sport_data.get(YearInSportFeatures.MOST_ACTIVE_WEEKDAY)
+        
+        weekday_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        month_full_names = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        
+        weekday_str = weekday_names[most_active_weekday] if most_active_weekday is not None else "N/A"
+        month_str = month_full_names[month_most_km] if month_most_km else "N/A"
+        
+        stats_extra = [
+            (f"{active_days}", "active days"),
+            (f"{avg_km:.1f} km", "avg distance"),
+            (weekday_str, "favorite day"),
+            (month_str, "best month"),
+        ]
+        
+        for i, (value, label) in enumerate(stats_extra):
+            row = i // 2
+            col = i % 2
+            x = 0.25 + col * 0.5
+            y = 0.7 - row * 0.45
+            
+            ax_extra.text(
+                x, y, value,
+                transform=ax_extra.transAxes,
+                ha='center', va='center',
+                color='white',
+                fontsize=16,
+                fontfamily='monospace',
+                fontweight='bold'
+            )
+            ax_extra.text(
+                x, y - 0.15, label,
+                transform=ax_extra.transAxes,
+                ha='center', va='center',
+                color='white',
+                fontsize=9,
+                fontfamily='monospace',
+                alpha=0.5
+            )
+        
+        # --- Highlights Panel ---
+        ax_highlights = fig.add_subplot(gs[4])
+        ax_highlights.set_facecolor('black')
+        ax_highlights.set_axis_off()
+        
+        longest_km = main_sport_data.get(YearInSportFeatures.LONGEST_ACTIVITY_KM, 0)
+        longest_mins = main_sport_data.get(YearInSportFeatures.LONGEST_ACTIVITY_MINS, 0)
+        fastest_pace = main_sport_data.get(YearInSportFeatures.FASTEST_ACTIVITY_PACE, 0)
+        
+        # Format pace (use round for seconds to avoid truncation errors)
+        if fastest_pace > 0:
+            pace_mins = int(fastest_pace)
+            pace_secs = round((fastest_pace % 1) * 60)
+            if pace_secs == 60:  # Handle rounding up to 60 seconds
+                pace_mins += 1
+                pace_secs = 0
+            pace_str = f"{pace_mins}:{pace_secs:02d} /km"
+        else:
+            pace_str = "N/A"
+        
+        # Format time
+        hours = int(longest_mins // 60)
+        mins = int(longest_mins % 60)
+        time_str = f"{hours}h {mins}m" if hours > 0 else f"{mins}m"
+        
+        ax_highlights.text(
+            0.5, 0.9, "PERSONAL BESTS",
+            transform=ax_highlights.transAxes,
+            ha='center', va='center',
+            color=neon_color,
+            fontsize=12,
+            fontfamily='monospace',
+            fontweight='bold',
+            alpha=0.7
+        )
+        
+        highlights = [
+            ("> Longest Distance", f"{longest_km:.2f} km"),
+            ("> Longest Time", time_str),
+            ("> Fastest Pace", pace_str),
+        ]
+        
+        for i, (label, value) in enumerate(highlights):
+            y = 0.65 - i * 0.22
+            ax_highlights.text(
+                0.1, y, label,
+                transform=ax_highlights.transAxes,
+                ha='left', va='center',
+                color='white',
+                fontsize=11,
+                fontfamily='monospace',
+                alpha=0.6
+            )
+            ax_highlights.text(
+                0.9, y, value,
+                transform=ax_highlights.transAxes,
+                ha='right', va='center',
+                color='white',
+                fontsize=11,
+                fontfamily='monospace',
+                fontweight='bold'
+            )
+        
+        # Save
+        output_folder = folder if folder else self.output_dir
+        output_folder.mkdir(parents=True, exist_ok=True)
+        
+        filename = f"year_in_sport_{year}_{main_sport.lower()}.png"
+        save_path = output_folder / filename
+        
+        plt.savefig(
+            save_path,
+            dpi=120,
+            facecolor='black',
+            bbox_inches='tight',
+            pad_inches=0.3
+        )
+        print(f"📊 Year in sport ({main_sport}) saved to: {save_path}")
+        plt.close()
+
+    def plot_year_in_sport_totals(
+        self,
+        year: int,
+        year_in_sport: dict,
+        folder: Path | None = None,
+        neon_color: str = "#fc0101"
+    ) -> None:
+        """
+        Plot total year statistics across all sports in neon style for Instagram Stories.
+        Shows total stats, sports breakdown, and monthly activity.
+        """
+        from strava.strava_analytics import AllYearInSportFeatures
+        
+        all_sports_data = year_in_sport.get('all', {})
+        
+        # Instagram Story size: 9:16 aspect ratio
+        fig = plt.figure(figsize=(9, 16), facecolor='black')
+        
+        # Create gridspec for layout
+        gs = fig.add_gridspec(4, 1, height_ratios=[1.2, 1, 2.5, 2.3], hspace=0.12)
+        
+        # --- Header Panel ---
+        ax_header = fig.add_subplot(gs[0])
+        ax_header.set_facecolor('black')
+        ax_header.set_axis_off()
+        
+        # Year title
+        ax_header.text(
+            0.5, 0.75, f"{year}",
+            transform=ax_header.transAxes,
+            ha='center', va='center',
+            color=neon_color,
+            fontsize=48,
+            fontfamily='monospace',
+            fontweight='bold',
+            alpha=0.9
+        )
+        
+        # Subtitle
+        ax_header.text(
+            0.5, 0.25, "YEAR IN SPORT",
+            transform=ax_header.transAxes,
+            ha='center', va='center',
+            color='white',
+            fontsize=20,
+            fontfamily='monospace',
+            alpha=0.7
+        )
+        
+        # --- Main Stats Panel ---
+        ax_stats = fig.add_subplot(gs[1])
+        ax_stats.set_facecolor('black')
+        ax_stats.set_axis_off()
+        
+        total_activities = all_sports_data.get(AllYearInSportFeatures.TOTAL_ACTIVITIES, 0)
+        total_km = all_sports_data.get(AllYearInSportFeatures.TOTAL_DISTANCE_KM, 0)
+        total_hours = all_sports_data.get(AllYearInSportFeatures.TOTAL_TIME_HOURS, 0)
+        
+        # Big numbers row - 3 columns
+        ax_stats.text(
+            0.17, 0.6, f"{total_activities}",
+            transform=ax_stats.transAxes,
+            ha='center', va='center',
+            color=neon_color,
+            fontsize=36,
+            fontfamily='monospace',
+            fontweight='bold'
+        )
+        ax_stats.text(
+            0.17, 0.2, "ACTIVITIES",
+            transform=ax_stats.transAxes,
+            ha='center', va='center',
+            color='white',
+            fontsize=9,
+            fontfamily='monospace',
+            alpha=0.6
+        )
+        
+        ax_stats.text(
+            0.5, 0.6, f"{total_km:,.0f}",
+            transform=ax_stats.transAxes,
+            ha='center', va='center',
+            color=neon_color,
+            fontsize=36,
+            fontfamily='monospace',
+            fontweight='bold'
+        )
+        ax_stats.text(
+            0.5, 0.2, "KILOMETERS",
+            transform=ax_stats.transAxes,
+            ha='center', va='center',
+            color='white',
+            fontsize=9,
+            fontfamily='monospace',
+            alpha=0.6
+        )
+        
+        ax_stats.text(
+            0.83, 0.6, f"{total_hours:,.0f}",
+            transform=ax_stats.transAxes,
+            ha='center', va='center',
+            color=neon_color,
+            fontsize=36,
+            fontfamily='monospace',
+            fontweight='bold'
+        )
+        ax_stats.text(
+            0.83, 0.2, "HOURS",
+            transform=ax_stats.transAxes,
+            ha='center', va='center',
+            color='white',
+            fontsize=9,
+            fontfamily='monospace',
+            alpha=0.6
+        )
+        
+        # --- Sports Breakdown ---
+        ax_sports = fig.add_subplot(gs[2])
+        ax_sports.set_facecolor('black')
+        
+        activities_per_sport = all_sports_data.get(AllYearInSportFeatures.ACTIVITIES_PER_SPORT, {})
+        
+        if activities_per_sport:
+            # Sort by count descending
+            sorted_sports = sorted(activities_per_sport.items(), key=lambda x: x[1], reverse=True)
+            sports = [s[0] for s in sorted_sports]
+            counts = [s[1] for s in sorted_sports]
+            
+            # Limit to top 10 sports
+            if len(sports) > 10:
+                sports = sports[:10]
+                counts = counts[:10]
+            
+            y_pos = np.arange(len(sports))
+            max_count = max(counts)
+            
+            # Create left margin for labels by extending xlim
+            label_margin = max_count * 0.35
+            
+            # Horizontal bar chart with soft neon
+            ax_sports.barh(y_pos, counts, left=label_margin, color=neon_color, alpha=0.15, height=0.6)
+            ax_sports.barh(y_pos, counts, left=label_margin, color=neon_color, alpha=0.4, height=0.35)
+            ax_sports.barh(y_pos, counts, left=label_margin, color='white', alpha=0.6, height=0.12)
+            
+            # Set xlim to include label margin
+            ax_sports.set_xlim(0, label_margin + max_count * 1.15)
+            
+            # Remove y-axis labels
+            ax_sports.set_yticks([])
+            ax_sports.set_xticks([])  # Also hide x ticks for cleaner look
+            ax_sports.invert_yaxis()
+            
+            ax_sports.spines['bottom'].set_visible(False)
+            ax_sports.spines['left'].set_visible(False)
+            ax_sports.spines['top'].set_visible(False)
+            ax_sports.spines['right'].set_visible(False)
+            
+            # Add sport names and count labels
+            for i, (sport, count) in enumerate(zip(sports, counts)):
+                # Sport name on the left of the bar
+                ax_sports.text(
+                    label_margin - max_count * 0.03, i, sport,
+                    va='center', ha='right',
+                    color='white', fontsize=10, fontfamily='monospace', alpha=0.9
+                )
+                # Count at the end of bar
+                ax_sports.text(
+                    label_margin + count + max_count * 0.02, i, str(count),
+                    va='center', ha='left',
+                    color='white', fontsize=9, fontfamily='monospace', alpha=0.7
+                )
+        
+        # --- Highlights Panel ---
+        ax_highlights = fig.add_subplot(gs[3])
+        ax_highlights.set_facecolor('black')
+        ax_highlights.set_axis_off()
+        
+        # Convert weekday and month numbers to names
+        weekday_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        month_full_names = ['', 'January', 'February', 'March', 'April', 'May', 'June', 
+                           'July', 'August', 'September', 'October', 'November', 'December']
+        
+        most_active_weekday = all_sports_data.get(AllYearInSportFeatures.MOST_ACTIVE_WEEKDAY)
+        most_active_month = all_sports_data.get(AllYearInSportFeatures.MOST_ACTIVE_MONTH)
+        sport_most_done = all_sports_data.get(AllYearInSportFeatures.SPORT_MOST_DONE, "N/A")
+        num_sports = len(activities_per_sport) if activities_per_sport else 0
+        
+        weekday_str = weekday_names[most_active_weekday] if most_active_weekday is not None else "N/A"
+        month_str = month_full_names[most_active_month] if most_active_month else "N/A"
+        
+        ax_highlights.text(
+            0.5, 0.92, "HIGHLIGHTS",
+            transform=ax_highlights.transAxes,
+            ha='center', va='center',
+            color=neon_color,
+            fontsize=12,
+            fontfamily='monospace',
+            fontweight='bold',
+            alpha=0.7
+        )
+        
+        highlights = [
+            ("> Top Sport", sport_most_done),
+            ("> Sports Practiced", str(num_sports)),
+            ("> Most Active Day", weekday_str),
+            ("> Best Month", month_str),
+        ]
+        
+        for i, (label, value) in enumerate(highlights):
+            y = 0.75 - i * 0.18
+            ax_highlights.text(
+                0.1, y, label,
+                transform=ax_highlights.transAxes,
+                ha='left', va='center',
+                color='white',
+                fontsize=11,
+                fontfamily='monospace',
+                alpha=0.6
+            )
+            ax_highlights.text(
+                0.9, y, value,
+                transform=ax_highlights.transAxes,
+                ha='right', va='center',
+                color='white',
+                fontsize=11,
+                fontfamily='monospace',
+                fontweight='bold'
+            )
+        
+        # Save
+        output_folder = folder if folder else self.output_dir
+        output_folder.mkdir(parents=True, exist_ok=True)
+        
+        filename = f"year_in_sport_{year}_totals.png"
+        save_path = output_folder / filename
+        
+        plt.savefig(
+            save_path,
+            dpi=120,
+            facecolor='black',
+            bbox_inches='tight',
+            pad_inches=0.3
+        )
+        print(f"📊 Year in sport (totals) saved to: {save_path}")
+        plt.close()
+
     def hud_dashboard(
         self, 
         sport_types: list[str] | None = None,

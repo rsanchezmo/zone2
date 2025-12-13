@@ -331,3 +331,26 @@ class StravaEndpoint:
             return {}
         
         return response.json()
+
+    def get_activity_streams(self, activity_id: int | str) -> list[dict]:
+        """
+        Fetch streams for a single activity.
+        Returns a list of data points with time, latlng, altitude, velocity, heartrate, etc.
+        """
+        headers = self.__get_headers()
+        
+        response = requests.get(
+            f"{StravaEndpoint.__ACTIVITY_URL}/{activity_id}/streams",
+            headers=headers,
+            params={
+                'keys': 'time,latlng,altitude,velocity_smooth,heartrate,cadence,power,distance',
+                'key_by_type': 'true',
+                'resolution': 'medium'
+            }
+        )
+        
+        if response.status_code != 200:
+            print(f"Failed to fetch streams for activity {activity_id}: {response.json()}")
+            return []
+        
+        return self.__merge_streams_into_data_points(response.json())
