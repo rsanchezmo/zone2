@@ -15,6 +15,8 @@ A Python toolkit for analyzing and visualizing your Strava activities without pa
   - 🎛️ **HUD Dashboard**: Cyberpunk-style histograms for distance, heart rate, and pace
   - 📈 **Efficiency Factor**: Track your aerobic efficiency (speed/HR) over time
   - 🚀 **Performance Frontier**: Pareto frontier with Riegel's fatigue model fitting
+  - 🎯 **Year in Sport**: Instagram Story-sized summaries of your yearly training (main sport & totals)
+  - 🏆 **Activity Plots**: Neon-style individual activity visualization with elevation profile
 - **Analytics**: WIP
 - **GeoJSON Export**: Export your activities as GeoJSON for use in mapping applications sycg as QGIS
 - **Smart Caching**: Efficient local caching with incremental sync supportm to avoid redundant API calls
@@ -98,6 +100,9 @@ strava.strava_visualizer.plot_efficiency_factor(sport_types=['Run'])
 # Plot performance frontier with fatigue model
 strava.strava_visualizer.plot_performance_frontier(sport_types=['Run'])
 
+# Generate Year in Sport summary (Instagram Story format)
+strava.get_year_in_sport(year=2025, main_sport="Run", neon_color="#fc0101")
+
 # Export activities as GeoJSON
 strava.save_geojson_activities()
 ```
@@ -131,6 +136,26 @@ Track your aerobic efficiency over time with rolling averages and variance bands
 Visualize your best performances across different distances with Riegel's power-law fatigue model fitting.
 
 ![Performance Frontier](readme_data/performance_frontier.png)
+
+### Bubble Map
+Geographic bubble visualization showing your activity locations with size proportional to distance or count. Great for visualizing where you train most.
+
+![Bubble Map](readme_data/bubble_map_country.png)
+
+### Year in Sport
+Generate Instagram Story-sized (9:16) summaries of your yearly training. Includes stats for your main sport and totals across all activities, plus individual activity plots for your personal bests.
+
+**Main Sport Summary** - Shows total activities, kilometers, hours, elevation, monthly distance chart, and personal bests (longest distance, longest time, fastest pace).
+
+![Year in Sport - Main](readme_data/year_in_sport_2025_run.png)
+
+**All Sports Summary** - Aggregated stats across all sports with breakdown by sport type.
+
+![Year in Sport - Totals](readme_data/year_in_sport_2025_totals.png)
+
+**Activity Plot** - Individual activity visualization with route map and elevation profile.
+
+![Year in Sport - Activity](readme_data/year_in_sport_activity.png)
 
 ### QGIS GeoJSON Export
 Easily export your Strava activities as GeoJSON files for advanced mapping and spatial analysis in GIS software like QGIS.
@@ -174,6 +199,7 @@ StravaIntelligence(
 **Current methods:**
 - `sync_activities(full_sync=False, include_streams=False)` - Sync activities from Strava
 - `save_geojson_activities()` - Export activities as GeoJSON
+- `get_year_in_sport(year, main_sport, neon_color)` - Generate Year in Sport visualizations
 
 ### StravaVisualizer
 
@@ -185,6 +211,9 @@ Generates all visualizations.
 - `hud_dashboard(sport_types, bins)`
 - `plot_efficiency_factor(sport_types, window)`
 - `plot_performance_frontier(sport_types)`
+- `plot_year_in_sport_main(year, year_in_sport, main_sport, folder, neon_color)`
+- `plot_year_in_sport_totals(year, year_in_sport, folder, neon_color)`
+- `plot_activity(activity_id, strava_endpoint, folder, title, neon_color)`
 
 ### [WIP] StravaAnalytics
 
