@@ -51,7 +51,7 @@ class StravaIntelligence:
         print(f"✓ Saved activities to {filepath}")
 
 
-    def get_year_in_sport(self, year: int, main_sport: str) -> dict:
+    def get_year_in_sport(self, year: int, main_sport: str, neon_color: str = "#fc0101") -> dict:
         """Get year in sport for the specified year."""
         
         year_in_sport_main_sport = self.strava_analytics.get_year_in_sport(year, main_sport)
@@ -67,14 +67,16 @@ class StravaIntelligence:
             year=year,
             year_in_sport=year_in_sport,
             main_sport=main_sport,
-            folder=output_folder
+            folder=output_folder,
+            neon_color=neon_color
         )
         
         # Plot year in sport summary - totals across all sports
         self.strava_visualizer.plot_year_in_sport_totals(
             year=year,
             year_in_sport=year_in_sport,
-            folder=output_folder
+            folder=output_folder,
+            neon_color=neon_color
         )
         
         # plot longest activity (by time), fastest activity and longest distance activity
@@ -82,18 +84,21 @@ class StravaIntelligence:
             year_in_sport_main_sport[YearInSportFeatures.LONGEST_ACTIVITY_MINS_ID], 
             self.strava_endpoint,
             folder=output_folder, 
-            title="Longest Activity (Time)"
+            title="Longest Activity (Time)",
+            neon_color=neon_color
         )
         self.strava_visualizer.plot_activity(
             year_in_sport_main_sport[YearInSportFeatures.FASTEST_ACTIVITY_PACE_ID], 
             self.strava_endpoint,
             folder=output_folder, 
-            title="Fastest Activity"
+            title="Fastest Activity",
+            neon_color=neon_color
         )
         self.strava_visualizer.plot_activity(
             year_in_sport_main_sport[YearInSportFeatures.LONGEST_ACTIVITY_KM_ID], 
             self.strava_endpoint,
             folder=output_folder, 
-            title="Longest Activity (Distance)"
+            title="Longest Activity (Distance)",
+            neon_color=neon_color
         )
         return year_in_sport

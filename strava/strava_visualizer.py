@@ -619,7 +619,7 @@ class StravaVisualizer:
         
         plt.savefig(
             save_path,
-            dpi=120,  # 9*120=1080, 16*120=1920 -> Instagram Story resolution
+            dpi=300,
             facecolor='black',
             bbox_inches='tight',
             pad_inches=0.3
@@ -685,22 +685,24 @@ class StravaVisualizer:
         sport_activities = main_sport_data.get(YearInSportFeatures.TOTAL_ACTIVITIES, 0)
         sport_km = main_sport_data.get(YearInSportFeatures.TOTAL_DISTANCE_KM, 0)
         sport_elevation = main_sport_data.get(YearInSportFeatures.TOTAL_ELEVATION_M, 0)
+        sport_hours = main_sport_data.get(YearInSportFeatures.TOTAL_TIME_HOURS, 0)
         
-        # Big numbers row - 3 stats
+        # Big numbers row - 4 stats
         stats_big = [
             (f"{sport_activities}", "ACTIVITIES"),
             (f"{sport_km:,.0f}", "KILOMETERS"),
+            (f"{sport_hours:,.0f}", "HOURS"),
             (f"↑{sport_elevation:,.0f}", "METERS"),
         ]
         
         for i, (value, label) in enumerate(stats_big):
-            x = 0.17 + i * 0.33
+            x = 0.125 + i * 0.25
             ax_stats.text(
                 x, 0.65, value,
                 transform=ax_stats.transAxes,
                 ha='center', va='center',
                 color=neon_color,
-                fontsize=28,
+                fontsize=24,
                 fontfamily='monospace',
                 fontweight='bold'
             )
@@ -749,6 +751,8 @@ class StravaVisualizer:
         avg_km = main_sport_data.get(YearInSportFeatures.AVERAGE_DISTANCE_KM, 0)
         month_most_km = main_sport_data.get(YearInSportFeatures.MONTH_MOST_KM)
         most_active_weekday = main_sport_data.get(YearInSportFeatures.MOST_ACTIVE_WEEKDAY)
+        average_pace = main_sport_data.get(YearInSportFeatures.AVERAGE_PACE, 0)
+        activities_per_week = main_sport_data.get(YearInSportFeatures.ACTIVITIES_PER_WEEK, 0)
         
         weekday_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
         month_full_names = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -756,17 +760,30 @@ class StravaVisualizer:
         weekday_str = weekday_names[most_active_weekday] if most_active_weekday is not None else "N/A"
         month_str = month_full_names[month_most_km] if month_most_km else "N/A"
         
+        # Format average pace
+        if average_pace > 0:
+            pace_mins = int(average_pace)
+            pace_secs = round((average_pace % 1) * 60)
+            if pace_secs == 60:
+                pace_mins += 1
+                pace_secs = 0
+            avg_pace_str = f"{pace_mins}:{pace_secs:02d}"
+        else:
+            avg_pace_str = "N/A"
+        
         stats_extra = [
             (f"{active_days}", "active days"),
+            (f"{activities_per_week:.1f}", "per week"),
             (f"{avg_km:.1f} km", "avg distance"),
+            (avg_pace_str, "avg pace"),
             (weekday_str, "favorite day"),
             (month_str, "best month"),
         ]
         
         for i, (value, label) in enumerate(stats_extra):
-            row = i // 2
-            col = i % 2
-            x = 0.25 + col * 0.5
+            row = i // 3
+            col = i % 3
+            x = 0.17 + col * 0.33
             y = 0.7 - row * 0.45
             
             ax_extra.text(
@@ -774,7 +791,7 @@ class StravaVisualizer:
                 transform=ax_extra.transAxes,
                 ha='center', va='center',
                 color='white',
-                fontsize=16,
+                fontsize=14,
                 fontfamily='monospace',
                 fontweight='bold'
             )
@@ -783,7 +800,7 @@ class StravaVisualizer:
                 transform=ax_extra.transAxes,
                 ha='center', va='center',
                 color='white',
-                fontsize=9,
+                fontsize=8,
                 fontfamily='monospace',
                 alpha=0.5
             )
@@ -825,9 +842,9 @@ class StravaVisualizer:
         )
         
         highlights = [
-            ("> Longest Distance", f"{longest_km:.2f} km"),
-            ("> Longest Time", time_str),
-            ("> Fastest Pace", pace_str),
+            ("▸ Longest Distance", f"{longest_km:.2f} km"),
+            ("▸ Longest Time", time_str),
+            ("▸ Fastest Pace", pace_str),
         ]
         
         for i, (label, value) in enumerate(highlights):
@@ -860,7 +877,7 @@ class StravaVisualizer:
         
         plt.savefig(
             save_path,
-            dpi=120,
+            dpi=300,
             facecolor='black',
             bbox_inches='tight',
             pad_inches=0.3
@@ -1054,12 +1071,14 @@ class StravaVisualizer:
         most_active_month = all_sports_data.get(AllYearInSportFeatures.MOST_ACTIVE_MONTH)
         sport_most_done = all_sports_data.get(AllYearInSportFeatures.SPORT_MOST_DONE, "N/A")
         num_sports = len(activities_per_sport) if activities_per_sport else 0
+        active_days = all_sports_data.get(AllYearInSportFeatures.ACTIVE_DAYS, 0)
+        activities_per_week = all_sports_data.get(AllYearInSportFeatures.ACTIVITIES_PER_WEEK, 0)
         
         weekday_str = weekday_names[most_active_weekday] if most_active_weekday is not None else "N/A"
         month_str = month_full_names[most_active_month] if most_active_month else "N/A"
         
         ax_highlights.text(
-            0.5, 0.92, "HIGHLIGHTS",
+            0.5, 0.95, "HIGHLIGHTS",
             transform=ax_highlights.transAxes,
             ha='center', va='center',
             color=neon_color,
@@ -1070,20 +1089,21 @@ class StravaVisualizer:
         )
         
         highlights = [
-            ("> Top Sport", sport_most_done),
-            ("> Sports Practiced", str(num_sports)),
-            ("> Most Active Day", weekday_str),
-            ("> Best Month", month_str),
+            ("▸ Active Days", str(active_days)),
+            ("▸ Top Sport", sport_most_done),
+            ("▸ Sports Practiced", str(num_sports)),
+            ("▸ Most Active Day", weekday_str),
+            ("▸ Best Month", month_str),
         ]
         
         for i, (label, value) in enumerate(highlights):
-            y = 0.75 - i * 0.18
+            y = 0.8 - i * 0.16
             ax_highlights.text(
                 0.1, y, label,
                 transform=ax_highlights.transAxes,
                 ha='left', va='center',
                 color='white',
-                fontsize=11,
+                fontsize=10,
                 fontfamily='monospace',
                 alpha=0.6
             )
@@ -1106,7 +1126,7 @@ class StravaVisualizer:
         
         plt.savefig(
             save_path,
-            dpi=120,
+            dpi=300,
             facecolor='black',
             bbox_inches='tight',
             pad_inches=0.3
