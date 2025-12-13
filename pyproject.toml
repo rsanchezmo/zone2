@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "A Python toolkit for analyzing and visualizing your Strava activities"
 authors = ["rsanchezmo"]
 readme = "README.md"
-packages = [{ include = "strava" }]
+packages = [
+    { include = "strava" },
+]
 
 [tool.poetry.dependencies]
 python = "^3.12"
