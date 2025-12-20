@@ -121,11 +121,11 @@ class StravaAnalytics:
         # average distance per activity
         average_distance_km = (total_distance_km / total_activities) if total_activities > 0 else 0.0
 
-        # average pace (min/km) from total time and distance
-        if total_distance_km > 0:
-            average_pace = (total_time_hours * 60) / total_distance_km  # minutes per km
+        # average speed (m/s) from total time and distance
+        if total_time_hours > 0:
+            average_speed = (total_distance_km * 1000) / (total_time_hours * 3600)  # m/s
         else:
-            average_pace = 0.0
+            average_speed = 0.0
 
         # activities per week (based on weeks in year with activity)
         if not activities_year.empty:
@@ -136,15 +136,13 @@ class StravaAnalytics:
         else:
             activities_per_week = 0.0
 
-        # activity with fastest pace (min/km) from average_speed (m/s)
-        # Convert m/s to min/km: pace = 1000 / (60 * speed_m_s) = 16.6667 / speed_m_s
-        activities_year['pace_min_per_km'] = 1000 / (60 * activities_year['average_speed'])
+        # activity with fastest speed (m/s) - highest average_speed
         if not activities_year.empty:
-            fastest_activity_pace = activities_year['pace_min_per_km'].min()
-            fastest_activity_pace_id = activities_year.loc[activities_year['pace_min_per_km'].idxmin()]['id']
+            fastest_activity_speed = activities_year['average_speed'].max()
+            fastest_activity_speed_id = activities_year.loc[activities_year['average_speed'].idxmax()]['id']
         else:
-            fastest_activity_pace = 0.0
-            fastest_activity_pace_id = None
+            fastest_activity_speed = 0.0
+            fastest_activity_speed_id = None
 
 
         year_in_sport_dict = {
@@ -164,9 +162,9 @@ class StravaAnalytics:
             YearInSportFeatures.LONGEST_ACTIVITY_MINS: float(round(longest_activity_mins, 2)),
             YearInSportFeatures.LONGEST_ACTIVITY_KM_ID: str(longest_activity_km_id) if longest_activity_km_id is not None else None,
             YearInSportFeatures.LONGEST_ACTIVITY_MINS_ID: str(longest_activity_mins_id) if longest_activity_mins_id is not None else None,
-            YearInSportFeatures.FASTEST_ACTIVITY_PACE: float(fastest_activity_pace),  # Don't round - keep full precision for display
-            YearInSportFeatures.FASTEST_ACTIVITY_PACE_ID: str(fastest_activity_pace_id) if fastest_activity_pace_id is not None else None,
-            YearInSportFeatures.AVERAGE_PACE: float(average_pace),  # Keep full precision for display
+            YearInSportFeatures.FASTEST_ACTIVITY_SPEED: float(fastest_activity_speed),  # m/s - format on display
+            YearInSportFeatures.FASTEST_ACTIVITY_SPEED_ID: str(fastest_activity_speed_id) if fastest_activity_speed_id is not None else None,
+            YearInSportFeatures.AVERAGE_SPEED: float(average_speed),  # m/s - format on display
             YearInSportFeatures.ACTIVITIES_PER_WEEK: float(round(activities_per_week, 1)),
         }
 
@@ -252,10 +250,10 @@ class YearInSportFeatures(StrEnum):
     LONGEST_ACTIVITY_KM_ID = "longest_activity_km_id"
     LONGEST_ACTIVITY_MINS = "longest_activity_mins"
     LONGEST_ACTIVITY_MINS_ID = "longest_activity_mins_id"
-    FASTEST_ACTIVITY_PACE = "fastest_activity_pace"
-    FASTEST_ACTIVITY_PACE_ID = "fastest_activity_pace_id"
+    FASTEST_ACTIVITY_SPEED = "fastest_activity_speed"  # m/s
+    FASTEST_ACTIVITY_SPEED_ID = "fastest_activity_speed_id"
     AVERAGE_DISTANCE_KM = "average_distance_km"
-    AVERAGE_PACE = "average_pace"
+    AVERAGE_SPEED = "average_speed"  # m/s
     ACTIVITIES_PER_WEEK = "activities_per_week"
 
 

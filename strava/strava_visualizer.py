@@ -1,5 +1,5 @@
 from strava.strava_analytics import StravaAnalytics
-from strava.strava_utils import get_activities_as_gdf, get_region_coordinates
+from strava.strava_utils import get_activities_as_gdf, get_region_coordinates, format_pace_or_speed, convert_speed, get_sport_category
 from strava.constants import WEB_MERCATOR_CRS, BASE_CRS
 
 import matplotlib.pyplot as plt
@@ -502,23 +502,15 @@ class StravaVisualizer:
         else:
             time_str = f"{mins}:{secs:02d}"
         
-        # Format pace
-        if avg_speed > 0:
-            pace_min_per_km = 1000 / (60 * avg_speed)
-            pace_mins = int(pace_min_per_km)
-            pace_secs = round((pace_min_per_km % 1) * 60)
-            if pace_secs == 60:
-                pace_mins += 1
-                pace_secs = 0
-            pace_str = f"{pace_mins}:{pace_secs:02d} /km"
-        else:
-            pace_str = "N/A"
+        # Format pace/speed based on sport type
+        sport_type = activity.get('sport_type', '')
+        pace_str = format_pace_or_speed(avg_speed, sport_type)
         stats_text = f"{distance_km:.2f} km  •  {time_str}  •  {pace_str}  •  ↑{total_elevation:.0f} m"
         
         # Custom title if provided - at top with reduced opacity
         if title:
             ax_header.text(
-                0.5, 0.82, title.upper(),
+                0.5, 0.88, title.upper(),
                 transform=ax_header.transAxes,
                 ha='center', va='center',
                 color=neon_color,
@@ -528,9 +520,23 @@ class StravaVisualizer:
                 alpha=0.7
             )
         
+        # Activity date - formatted nicely
+        activity_date = pd.to_datetime(activity.get('start_date_local', None))
+        if activity_date is not None:
+            date_str = activity_date.strftime('%d %B %Y')
+            ax_header.text(
+                0.5, 0.65, date_str,
+                transform=ax_header.transAxes,
+                ha='center', va='center',
+                color=neon_color,
+                fontsize=12,
+                fontfamily='monospace',
+                alpha=0.8
+            )
+        
         # Activity name (Strava title) - smaller, subtle
         ax_header.text(
-            0.5, 0.5, activity_name,
+            0.5, 0.45, activity_name,
             transform=ax_header.transAxes,
             ha='center', va='center',
             color='white',
@@ -835,13 +841,13 @@ class StravaVisualizer:
         avg_km = main_sport_data.get(YearInSportFeatures.AVERAGE_DISTANCE_KM, 0)
         month_most_km = main_sport_data.get(YearInSportFeatures.MONTH_MOST_KM)
         most_active_weekday = main_sport_data.get(YearInSportFeatures.MOST_ACTIVE_WEEKDAY)
-        average_pace = main_sport_data.get(YearInSportFeatures.AVERAGE_PACE, 0)
+        average_speed = main_sport_data.get(YearInSportFeatures.AVERAGE_SPEED, 0)
         activities_per_week = main_sport_data.get(YearInSportFeatures.ACTIVITIES_PER_WEEK, 0)
         
         # Get comparison values for all features
         comp_active_days = comparison_sport_data.get(YearInSportFeatures.ACTIVE_DAYS, 0) if comparison_sport_data else None
         comp_avg_km = comparison_sport_data.get(YearInSportFeatures.AVERAGE_DISTANCE_KM, 0) if comparison_sport_data else None
-        comp_average_pace = comparison_sport_data.get(YearInSportFeatures.AVERAGE_PACE, 0) if comparison_sport_data else None
+        comp_average_speed = comparison_sport_data.get(YearInSportFeatures.AVERAGE_SPEED, 0) if comparison_sport_data else None
         comp_activities_per_week = comparison_sport_data.get(YearInSportFeatures.ACTIVITIES_PER_WEEK, 0) if comparison_sport_data else None
         comp_month_most_km = comparison_sport_data.get(YearInSportFeatures.MONTH_MOST_KM) if comparison_sport_data else None
         comp_most_active_weekday = comparison_sport_data.get(YearInSportFeatures.MOST_ACTIVE_WEEKDAY) if comparison_sport_data else None
@@ -854,19 +860,18 @@ class StravaVisualizer:
         comp_weekday_str = weekday_names[comp_most_active_weekday] if comp_most_active_weekday is not None else None
         comp_month_str = month_full_names[comp_month_most_km] if comp_month_most_km else None
         
-        # Format average pace
-        def format_pace(pace: float) -> str:
-            if pace > 0:
-                pace_mins = int(pace)
-                pace_secs = round((pace % 1) * 60)
-                if pace_secs == 60:
-                    pace_mins += 1
-                    pace_secs = 0
-                return f"{pace_mins}:{pace_secs:02d}"
-            return "N/A"
+        # Format average speed using sport-specific formatting
+        avg_speed_str = format_pace_or_speed(average_speed, main_sport)
+        comp_avg_speed_str = format_pace_or_speed(comp_average_speed, main_sport) if comp_average_speed else None
         
-        avg_pace_str = format_pace(average_pace)
-        comp_avg_pace_str = format_pace(comp_average_pace) if comp_average_pace else None
+        # Determine label based on sport type
+        sport_lower = main_sport.lower()
+        cycling_sports = {'ride', 'virtualride', 'ebikeride', 'handcycle', 'velomobile', 
+                          'gravel ride', 'gravelride', 'mountain bike ride', 'mountainbikeride'}
+        if any(cycle in sport_lower for cycle in cycling_sports):
+            avg_speed_label = "avg speed"
+        else:
+            avg_speed_label = "avg pace"
         
         # Stats with comparison values for all features
         # Box-based layout for additional stats: 3 columns x 2 rows
@@ -874,7 +879,7 @@ class StravaVisualizer:
             (f"{active_days}", "active days", f"{comp_active_days}" if comp_active_days is not None else None),
             (f"{activities_per_week:.1f}", "acts per week", f"{comp_activities_per_week:.1f}" if comp_activities_per_week is not None else None),
             (f"{avg_km:.1f}", "avg distance (km)", f"{comp_avg_km:.1f}" if comp_avg_km is not None else None),
-            (avg_pace_str, "avg pace (/km)", comp_avg_pace_str),
+            (avg_speed_str, avg_speed_label, comp_avg_speed_str),
             (weekday_str, "favorite day", comp_weekday_str),
             (month_str, "best month", comp_month_str),
         ]
@@ -933,23 +938,12 @@ class StravaVisualizer:
         
         longest_km = main_sport_data.get(YearInSportFeatures.LONGEST_ACTIVITY_KM, 0)
         longest_mins = main_sport_data.get(YearInSportFeatures.LONGEST_ACTIVITY_MINS, 0)
-        fastest_pace = main_sport_data.get(YearInSportFeatures.FASTEST_ACTIVITY_PACE, 0)
+        fastest_speed = main_sport_data.get(YearInSportFeatures.FASTEST_ACTIVITY_SPEED, 0)
         
         # Get comparison values if available
         comp_longest_km = comparison_sport_data.get(YearInSportFeatures.LONGEST_ACTIVITY_KM, 0) if comparison_sport_data else None
         comp_longest_mins = comparison_sport_data.get(YearInSportFeatures.LONGEST_ACTIVITY_MINS, 0) if comparison_sport_data else None
-        comp_fastest_pace = comparison_sport_data.get(YearInSportFeatures.FASTEST_ACTIVITY_PACE, 0) if comparison_sport_data else None
-        
-        # Format pace helper
-        def format_pace_with_unit(pace: float) -> str:
-            if pace > 0:
-                pace_mins = int(pace)
-                pace_secs = round((pace % 1) * 60)
-                if pace_secs == 60:
-                    pace_mins += 1
-                    pace_secs = 0
-                return f"{pace_mins}:{pace_secs:02d} /km"
-            return "N/A"
+        comp_fastest_speed = comparison_sport_data.get(YearInSportFeatures.FASTEST_ACTIVITY_SPEED, 0) if comparison_sport_data else None
         
         # Format time helper
         def format_time(mins: float) -> str:
@@ -957,10 +951,11 @@ class StravaVisualizer:
             m = int(mins % 60)
             return f"{hours}h {m}m" if hours > 0 else f"{m}m"
         
-        pace_str = format_pace_with_unit(fastest_pace)
+        # Format pace/speed based on sport type using utility function
+        pace_str = format_pace_or_speed(fastest_speed, main_sport)
         time_str = format_time(longest_mins)
         
-        comp_pace_str = format_pace_with_unit(comp_fastest_pace) if comp_fastest_pace else None
+        comp_pace_str = format_pace_or_speed(comp_fastest_speed, main_sport) if comp_fastest_speed else None
         comp_time_str = format_time(comp_longest_mins) if comp_longest_mins else None
         
         ax_highlights.text(
@@ -974,10 +969,19 @@ class StravaVisualizer:
             alpha=0.7
         )
         
+        # Determine label based on sport type (pace vs speed)
+        sport_lower = main_sport.lower()
+        cycling_sports = {'ride', 'virtualride', 'ebikeride', 'handcycle', 'velomobile', 
+                          'gravel ride', 'gravelride', 'mountain bike ride', 'mountainbikeride'}
+        if any(cycle in sport_lower for cycle in cycling_sports):
+            speed_label = "▸ Top Speed"
+        else:
+            speed_label = "▸ Fastest Pace"
+        
         highlights = [
             ("▸ Longest Distance", f"{longest_km:.1f} km", f"{comp_longest_km:.1f} km" if comp_longest_km else None),
             ("▸ Longest Time", time_str, comp_time_str),
-            ("▸ Fastest Pace", pace_str, comp_pace_str),
+            (speed_label, pace_str, comp_pace_str),
         ]
         
         # Adjust positions based on whether comparison data exists
@@ -1403,40 +1407,56 @@ class StravaVisualizer:
 
     def hud_dashboard(
         self, 
-        sport_types: list[str] | None = None,
+        sport_type: str,
         bins: int = 40
     ) -> None:
         """
         Generates a 3-row 'Cyberpunk HUD' dashboard showing distributions of 
-        Distance, Heart Rate, and Speed.
+        Distance, Heart Rate, and Speed/Pace.
+        Speed/Pace format adapts based on sport type.
         """
         # 1. Get & Filter Data
         activities = self.strava_analytics.strava_activities_cache.activities
         gdf = get_activities_as_gdf(activities)
         
-        if sport_types:
-            gdf = gdf[gdf['sport_type'].isin(sport_types)]
+        gdf = gdf[gdf['sport_type'] == sport_type]
         
         if gdf.empty:
             print("No data found.")
             return
 
-        # 2. Prepare Metrics (Drop NaNs for cleaner plots)
+        # 2. Determine sport category for speed/pace formatting
+        primary_sport = sport_type if sport_type else ""
+        category = get_sport_category(primary_sport)
+
+        # 3. Prepare Metrics (Drop NaNs for cleaner plots)
         # Distance: Convert to KM
         dist_data = gdf['distance'].dropna() / 1000.0
         
         # Heart Rate: Use raw BPM
         hr_data = gdf['average_heartrate'].dropna() if 'average_heartrate' in gdf.columns else []
         
-        # Speed: Convert m/s to  min/km
-        speed_data = (16.66667 / gdf['average_speed'].dropna()) if 'average_speed' in gdf.columns else []
+        # Speed: Convert based on sport type using utility
+        if 'average_speed' in gdf.columns:
+            speed_raw = gdf['average_speed'].dropna()
+            # Convert each speed value and get the unit label
+            speed_data = speed_raw.apply(lambda s: convert_speed(s, primary_sport)[0])
+            _, unit_label = convert_speed(1.0, primary_sport)  # Get unit label
+            
+            if category == 'cycling':
+                speed_title = f"SPEED [{unit_label}]"
+            else:
+                speed_title = f"PACE ['{unit_label.replace('min/', '/')}]"
+        else:
+            speed_data = []
+            speed_title = "SPEED"
 
-        # 3. Setup Canvas (3 Rows, 1 Col)
+        # 4. Setup Canvas (3 Rows, 1 Col)
         fig, axes = plt.subplots(3, 1, figsize=(10, 12), facecolor='black')
         plt.subplots_adjust(hspace=0.4) # Space between panels
 
         # Helper to draw "Digital Equalizer" style histogram
-        def plot_digital_hist(ax, data, color, title, is_pace: bool = False):
+        def plot_digital_hist(ax, data, color, title):
             if len(data) == 0:
                 ax.text(0.5, 0.5, "NO DATA", color='gray', ha='center')
                 ax.set_axis_off()
@@ -1472,19 +1492,18 @@ class StravaVisualizer:
             # # Styling
             ax.tick_params(axis='x', colors='white', labelsize=9)
 
-        # 4. Plot Each Metric
+        # 5. Plot Each Metric
         # Panel 1: Distance (Yellow Neon)
         plot_digital_hist(axes[0], dist_data, color='#faff00', title="DISTANCE [km]")
         
         # Panel 2: Heart Rate (Magenta Neon)
-        # Typical neon magenta: #ff00ff
         plot_digital_hist(axes[1], hr_data, color='#ff00ff', title="HR [bpm]")
         
-        # Panel 3: Speed (Cyan Neon)
-        plot_digital_hist(axes[2], speed_data, color='#00faed', title="PACE ['/km]", is_pace=True)
+        # Panel 3: Speed/Pace (Cyan Neon) - sport-specific
+        plot_digital_hist(axes[2], speed_data, color='#00faed', title=speed_title)
 
-        # 5. Save
-        sport_str = " / ".join(sport_types).upper() if sport_types else "ALL_ACTIVITIES"
+        # 6. Save
+        sport_str = sport_type.upper()
         filename = f"hud_{sport_str.replace(' ', '_')}.png"
         save_path = self.output_dir / filename.lower()
         
@@ -1492,14 +1511,13 @@ class StravaVisualizer:
         print(f"🎛️ HUD dashboard saved to: {save_path}")
         plt.close()
 
-    def plot_efficiency_factor(self, sport_types=['Run'], window=14):
+    def plot_efficiency_factor(self, sport_type: str, window=14):
         """
         Plots Aerobic Efficiency (Speed / HR) with publication-quality styling.
         Includes rolling average, standard deviation bands, and peak annotations.
         """
         # 1. Data Prep
-        gdf, _ = self._filter_and_get_gdf(sport_types)
-
+        gdf, _ = self._filter_and_get_gdf([sport_type])
         if gdf is None or gdf.empty:
             print("No data found for the specified parameters.")
             return

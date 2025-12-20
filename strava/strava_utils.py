@@ -7,6 +7,115 @@ import json
 from strava.constants import BASE_CRS
 
 
+# Sport category sets for reuse across functions
+CYCLING_SPORTS = {'ride', 'virtualride', 'ebikeride', 'handcycle', 'velomobile', 
+                  'gravel ride', 'gravelride', 'mountain bike ride', 'mountainbikeride'}
+SWIMMING_SPORTS = {'swim', 'openwater swim', 'openwaterswim'}
+RUNNING_SPORTS = {'run', 'trailrun', 'trail run', 'virtualrun', 'treadmill'}
+
+
+def get_sport_category(sport_type: str | None) -> str:
+    """
+    Determine the sport category from sport type.
+    
+    Args:
+        sport_type: Strava sport type (e.g., 'Run', 'Ride', 'Swim')
+    
+    Returns:
+        Category string: 'cycling', 'swimming', or 'running' (default)
+    """
+    sport_type = sport_type or ""
+    sport_lower = sport_type.lower()
+    
+    if any(cycle in sport_lower for cycle in CYCLING_SPORTS):
+        return 'cycling'
+    elif any(swim in sport_lower for swim in SWIMMING_SPORTS):
+        return 'swimming'
+    else:
+        return 'running'
+
+
+def convert_speed(speed_ms: float, sport_type: str | None = None) -> tuple[float, str]:
+    """
+    Convert speed from m/s to sport-appropriate unit.
+    
+    Args:
+        speed_ms: Speed in m/s from Strava API
+        sport_type: Strava sport type (e.g., 'Run', 'Ride', 'Swim')
+    
+    Returns:
+        Tuple of (converted_value, unit_label):
+        - Running sports: (pace in min/km, "min/km")
+        - Cycling sports: (speed in km/h, "km/h")
+        - Swimming sports: (pace in min/100m, "min/100m")
+    """
+    if speed_ms <= 0:
+        return (0.0, "N/A")
+    
+    category = get_sport_category(sport_type)
+    
+    if category == 'swimming':
+        # Swimming: pace per 100m (in minutes)
+        pace_min_per_100m = (100 / speed_ms) / 60
+        return (pace_min_per_100m, "min/100m")
+    
+    elif category == 'cycling':
+        # Cycling: speed in km/h
+        speed_kmh = speed_ms * 3.6
+        return (speed_kmh, "km/h")
+    
+    else:
+        # Running and other sports: pace per km (in minutes)
+        pace_min_per_km = 1000 / (60 * speed_ms)
+        return (pace_min_per_km, "min/km")
+
+
+def format_pace_or_speed(avg_speed: float, sport_type: str | None = None) -> str:
+    """
+    Format pace or speed based on the sport type.
+    
+    Args:
+        avg_speed: Average speed in m/s from Strava API
+        sport_type: Strava sport type (e.g., 'Run', 'Ride', 'Swim', 'TrailRun', etc.)
+    
+    Returns:
+        Formatted string:
+        - Running sports: pace in min:sec /km (e.g., "5:30 /km")
+        - Cycling sports: speed in km/h (e.g., "25.3 km/h")
+        - Swimming sports: pace in min:sec /100m (e.g., "1:45 /100m")
+        - Other sports: pace in min:sec /km (default)
+    """
+    if avg_speed <= 0:
+        return "N/A"
+    
+    category = get_sport_category(sport_type)
+    
+    if category == 'swimming':
+        # Swimming: pace per 100m
+        pace_sec_per_100m = 100 / avg_speed  # seconds per 100m
+        pace_mins = int(pace_sec_per_100m // 60)
+        pace_secs = round(pace_sec_per_100m % 60)
+        if pace_secs == 60:
+            pace_mins += 1
+            pace_secs = 0
+        return f"{pace_mins}:{pace_secs:02d} /100m"
+    
+    elif category == 'cycling':
+        # Cycling: speed in km/h
+        speed_kmh = avg_speed * 3.6  # m/s to km/h
+        return f"{speed_kmh:.1f} km/h"
+    
+    else:
+        # Running and other sports: pace per km (default)
+        pace_min_per_km = 1000 / (60 * avg_speed)
+        pace_mins = int(pace_min_per_km)
+        pace_secs = round((pace_min_per_km % 1) * 60)
+        if pace_secs == 60:
+            pace_mins += 1
+            pace_secs = 0
+        return f"{pace_mins}:{pace_secs:02d} /km"
+
+
 def get_activities_as_gdf(activities: pd.DataFrame) -> gpd.GeoDataFrame:
     """Convert a pd.Dataframes with strava activities to a GeoDataFrame with LineString geometries."""
     

@@ -50,6 +50,21 @@ class StravaIntelligence:
         gdf.to_file(filepath, driver="GeoJSON")
         print(f"✓ Saved activities to {filepath}")
 
+    
+    def plot_last_activity(self, sport_type: str):
+        """Plot the last activity of the specified sport type."""
+        activities = self.strava_activities_cache.activities
+
+        # filter by sport type
+        activities = activities[activities['sport_type'] == sport_type]
+        if activities.empty:
+            print(f"No activities found for sport type: {sport_type}")
+            return
+        
+        # activities are already ordered by start_date ascending
+        last_activity = activities.iloc[-1]["id"]
+        self.strava_visualizer.plot_activity(last_activity, self.strava_endpoint, folder=self.workdir, title=f"Last {sport_type} Activity")
+
 
     def get_year_in_sport(self, year: int, main_sport: str, neon_color: str = "#fc0101", comparison_year: int | None = None, comparison_neon_color: str = "#00aaff") -> dict:
         """Get year in sport for the specified year and main sport, with an optional comparison year."""
@@ -102,7 +117,7 @@ class StravaIntelligence:
             neon_color=neon_color
         )
         self.strava_visualizer.plot_activity(
-            year_in_sport_main_sport[YearInSportFeatures.FASTEST_ACTIVITY_PACE_ID], 
+            year_in_sport_main_sport[YearInSportFeatures.FASTEST_ACTIVITY_SPEED_ID], 
             self.strava_endpoint,
             folder=output_folder, 
             title="Fastest Activity",
