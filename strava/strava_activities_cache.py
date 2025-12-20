@@ -93,13 +93,18 @@ class StravaActivitiesCache:
         # Group by year-month
         df['year_month'] = df['start_date'].dt.tz_localize(None).dt.to_period('M')
 
-        def __convert_bools(data):
+        def __convert_for_parquet(data):
+            """Convert non-parquet-compatible types."""
             if isinstance(data, bool):
                 return float(data)
+            if isinstance(data, dict):
+                return json.dumps(data)
+            if isinstance(data, list):
+                return json.dumps(data)
             return data
 
-        # Convert bools to floats for Parquet compatibility and apply to all columns
-        df = df.map(__convert_bools)
+        # Convert incompatible types for Parquet and apply to all columns
+        df = df.map(__convert_for_parquet)
         
         for period, group in df.groupby('year_month'):
             year = period.year

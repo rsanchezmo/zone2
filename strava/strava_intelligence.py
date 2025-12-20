@@ -51,8 +51,8 @@ class StravaIntelligence:
         print(f"✓ Saved activities to {filepath}")
 
 
-    def get_year_in_sport(self, year: int, main_sport: str, neon_color: str = "#fc0101") -> dict:
-        """Get year in sport for the specified year."""
+    def get_year_in_sport(self, year: int, main_sport: str, neon_color: str = "#fc0101", comparison_year: int | None = None, comparison_neon_color: str = "#00aaff") -> dict:
+        """Get year in sport for the specified year and main sport, with an optional comparison year."""
         
         year_in_sport_main_sport = self.strava_analytics.get_year_in_sport(year, main_sport)
         year_in_sport = {
@@ -61,14 +61,25 @@ class StravaIntelligence:
             }
         
         output_folder = self.workdir / "year_in_sport" / str(year)
-        
+
+        # comparison year
+        year_in_sport_comparison = None
+        if comparison_year is not None:
+            year_in_sport_comparison = {
+                main_sport: self.strava_analytics.get_year_in_sport(comparison_year, main_sport),
+                'all': self.strava_analytics.get_all_year_in_sport(comparison_year)
+            }
+
         # Plot year in sport summary - main sport
         self.strava_visualizer.plot_year_in_sport_main(
             year=year,
             year_in_sport=year_in_sport,
             main_sport=main_sport,
             folder=output_folder,
-            neon_color=neon_color
+            neon_color=neon_color,
+            comparison_year=comparison_year,
+            comparison_data=year_in_sport_comparison,
+            comparison_neon_color=comparison_neon_color
         )
         
         # Plot year in sport summary - totals across all sports
@@ -76,29 +87,32 @@ class StravaIntelligence:
             year=year,
             year_in_sport=year_in_sport,
             folder=output_folder,
-            neon_color=neon_color
+            neon_color=neon_color,
+            comparison_year=comparison_year,
+            comparison_data=year_in_sport_comparison,
+            comparison_neon_color=comparison_neon_color
         )
         
-        # plot longest activity (by time), fastest activity and longest distance activity
-        self.strava_visualizer.plot_activity(
-            year_in_sport_main_sport[YearInSportFeatures.LONGEST_ACTIVITY_MINS_ID], 
-            self.strava_endpoint,
-            folder=output_folder, 
-            title="Longest Activity (Time)",
-            neon_color=neon_color
-        )
-        self.strava_visualizer.plot_activity(
-            year_in_sport_main_sport[YearInSportFeatures.FASTEST_ACTIVITY_PACE_ID], 
-            self.strava_endpoint,
-            folder=output_folder, 
-            title="Fastest Activity",
-            neon_color=neon_color
-        )
-        self.strava_visualizer.plot_activity(
-            year_in_sport_main_sport[YearInSportFeatures.LONGEST_ACTIVITY_KM_ID], 
-            self.strava_endpoint,
-            folder=output_folder, 
-            title="Longest Activity (Distance)",
-            neon_color=neon_color
-        )
+        # # plot longest activity (by time), fastest activity and longest distance activity
+        # self.strava_visualizer.plot_activity(
+        #     year_in_sport_main_sport[YearInSportFeatures.LONGEST_ACTIVITY_MINS_ID], 
+        #     self.strava_endpoint,
+        #     folder=output_folder, 
+        #     title="Longest Activity (Time)",
+        #     neon_color=neon_color
+        # )
+        # self.strava_visualizer.plot_activity(
+        #     year_in_sport_main_sport[YearInSportFeatures.FASTEST_ACTIVITY_PACE_ID], 
+        #     self.strava_endpoint,
+        #     folder=output_folder, 
+        #     title="Fastest Activity",
+        #     neon_color=neon_color
+        # )
+        # self.strava_visualizer.plot_activity(
+        #     year_in_sport_main_sport[YearInSportFeatures.LONGEST_ACTIVITY_KM_ID], 
+        #     self.strava_endpoint,
+        #     folder=output_folder, 
+        #     title="Longest Activity (Distance)",
+        #     neon_color=neon_color
+        # )
         return year_in_sport

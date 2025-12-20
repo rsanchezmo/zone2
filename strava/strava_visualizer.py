@@ -633,38 +633,67 @@ class StravaVisualizer:
         year_in_sport: dict,
         main_sport: str,
         folder: Path | None = None,
-        neon_color: str = "#fc0101"
+        neon_color: str = "#fc0101",
+        comparison_year: int | None = None,
+        comparison_data: dict | None = None,
+        comparison_neon_color: str = "#00aaff"
     ) -> None:
         """
         Plot main sport statistics in neon style for Instagram Stories.
         Shows sport-specific stats, monthly chart, and highlights.
+        Optionally shows comparison with previous year.
         """
         from strava.strava_analytics import YearInSportFeatures
         
         main_sport_data = year_in_sport.get(main_sport, {})
+        comparison_sport_data = comparison_data.get(main_sport, {}) if comparison_data else None
         
         # Instagram Story size: 9:16 aspect ratio
         fig = plt.figure(figsize=(9, 16), facecolor='black')
         
         # Create gridspec for layout
-        gs = fig.add_gridspec(5, 1, height_ratios=[1.2, 1, 2, 1.5, 1.3], hspace=0.12)
+        gs = fig.add_gridspec(5, 1, height_ratios=[1.2, 1.2, 2, 1.5, 1.3], hspace=0.10)
         
         # --- Header Panel ---
         ax_header = fig.add_subplot(gs[0])
         ax_header.set_facecolor('black')
         ax_header.set_axis_off()
         
-        # Year title
-        ax_header.text(
-            0.5, 0.75, f"{year}",
-            transform=ax_header.transAxes,
-            ha='center', va='center',
-            color=neon_color,
-            fontsize=48,
-            fontfamily='monospace',
-            fontweight='bold',
-            alpha=0.9
-        )
+        # Year title - show both years if comparison provided
+        if comparison_year is not None:
+            # Main year on left
+            ax_header.text(
+                0.5, 0.75, f"{year}",
+                transform=ax_header.transAxes,
+                ha='center', va='center',
+                color=neon_color,
+                fontsize=48,
+                fontfamily='monospace',
+                fontweight='bold',
+                alpha=0.9
+            )
+            # Comparison year on right, different neon color
+            ax_header.text(
+                0.67, 0.70, f"{comparison_year}",
+                transform=ax_header.transAxes,
+                ha='center', va='center',
+                color=comparison_neon_color,
+                fontsize=16,
+                fontfamily='monospace',
+                fontweight='bold',
+                alpha=0.5
+            )
+        else:
+            ax_header.text(
+                0.5, 0.75, f"{year}",
+                transform=ax_header.transAxes,
+                ha='center', va='center',
+                color=neon_color,
+                fontsize=48,
+                fontfamily='monospace',
+                fontweight='bold',
+                alpha=0.9
+            )
         
         # Sport name as subtitle
         ax_header.text(
@@ -687,31 +716,72 @@ class StravaVisualizer:
         sport_elevation = main_sport_data.get(YearInSportFeatures.TOTAL_ELEVATION_M, 0)
         sport_hours = main_sport_data.get(YearInSportFeatures.TOTAL_TIME_HOURS, 0)
         
-        # Big numbers row - 4 stats
+        # Get comparison values if available
+        comp_activities = comparison_sport_data.get(YearInSportFeatures.TOTAL_ACTIVITIES, 0) if comparison_sport_data else None
+        comp_km = comparison_sport_data.get(YearInSportFeatures.TOTAL_DISTANCE_KM, 0) if comparison_sport_data else None
+        comp_elevation = comparison_sport_data.get(YearInSportFeatures.TOTAL_ELEVATION_M, 0) if comparison_sport_data else None
+        comp_hours = comparison_sport_data.get(YearInSportFeatures.TOTAL_TIME_HOURS, 0) if comparison_sport_data else None
+        
+        # Box-based layout: each stat gets a box, current year takes 2/3, comparison takes 1/3
         stats_big = [
-            (f"{sport_activities}", "ACTIVITIES"),
-            (f"{sport_km:,.0f}", "KILOMETERS"),
-            (f"{sport_hours:,.0f}", "HOURS"),
-            (f"↑{sport_elevation:,.0f}", "METERS"),
+            (f"{sport_activities}", "ACTIVITIES", f"{comp_activities}" if comp_activities is not None else None),
+            (f"{sport_km:,.0f}", "KILOMETERS", f"{comp_km:,.0f}" if comp_km is not None else None),
+            (f"{sport_hours:,.0f}", "HOURS", f"{comp_hours:,.0f}" if comp_hours is not None else None),
+            (f"{sport_elevation:,.0f}", "↑ METERS", f"{comp_elevation:,.0f}" if comp_elevation is not None else None),
         ]
         
-        for i, (value, label) in enumerate(stats_big):
-            x = 0.125 + i * 0.25
+        num_boxes = len(stats_big)
+        box_width = 1.0 / num_boxes  # Each box takes equal width
+        main_y = 0.75
+
+        for i, (value, label, comp_value) in enumerate(stats_big):
+            # Box boundaries
+            box_left = i * box_width
+            box_center = box_left + box_width / 2
+            
+            if comp_value is not None:
+                # With comparison: current year at 1/2 of box, comparison at 3/4 of box
+                main_x = box_center
+                comp_x = box_center
+                main_fontsize = 25
+                comp_fontsize = 12
+                comp_y = 0.6
+            else:
+                # Without comparison: center the value
+                main_x = box_center
+                main_fontsize = 30
+
+            # Main value
             ax_stats.text(
-                x, 0.65, value,
+                main_x, main_y, value,
                 transform=ax_stats.transAxes,
                 ha='center', va='center',
                 color=neon_color,
-                fontsize=24,
+                fontsize=main_fontsize,
                 fontfamily='monospace',
                 fontweight='bold'
             )
+            
+            # Comparison value
+            if comp_value is not None:
+                ax_stats.text(
+                    comp_x, comp_y, comp_value,
+                    transform=ax_stats.transAxes,
+                    ha='center', va='center',
+                    color=comparison_neon_color,
+                    fontsize=comp_fontsize,
+                    fontfamily='monospace',
+                    fontweight='bold',
+                    alpha=0.45
+                )
+            
+            # Label centered in box
             ax_stats.text(
-                x, 0.25, label,
+                box_center, 0.5, label,
                 transform=ax_stats.transAxes,
                 ha='center', va='center',
                 color='white',
-                fontsize=9,
+                fontsize=8,
                 fontfamily='monospace',
                 alpha=0.6
             )
@@ -721,18 +791,32 @@ class StravaVisualizer:
         ax_chart.set_facecolor('black')
         
         distance_per_month = main_sport_data.get(YearInSportFeatures.DISTANCE_PER_MONTH_KM, {})
+        comp_distance_per_month = comparison_sport_data.get(YearInSportFeatures.DISTANCE_PER_MONTH_KM, {}) if comparison_sport_data else {}
+        
         months = list(range(1, 13))
         month_names = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D']
         values = [distance_per_month.get(m, 0) for m in months]
+        comp_values = [comp_distance_per_month.get(m, 0) for m in months]
         
-        # Softer neon bar chart
-        ax_chart.bar(months, values, color=neon_color, alpha=0.15, width=0.6)
-        ax_chart.bar(months, values, color=neon_color, alpha=0.4, width=0.35)
-        ax_chart.bar(months, values, color='white', alpha=0.6, width=0.15)
+        # Bar width and positions for grouped bars
+        bar_width = 0.35 if comparison_sport_data else 0.6
+        x_main = np.array(months) - bar_width/2 if comparison_sport_data else np.array(months)
+        x_comp = np.array(months) + bar_width/2
+        
+        # Main year bars - neon effect
+        ax_chart.bar(x_main, values, color=neon_color, alpha=0.15, width=bar_width)
+        ax_chart.bar(x_main, values, color=neon_color, alpha=0.4, width=bar_width * 0.6)
+        ax_chart.bar(x_main, values, color='white', alpha=0.6, width=bar_width * 0.25)
+        
+        # Comparison year bars - neon effect with comparison color
+        if comparison_sport_data:
+            ax_chart.bar(x_comp, comp_values, color=comparison_neon_color, alpha=0.15, width=bar_width)
+            ax_chart.bar(x_comp, comp_values, color=comparison_neon_color, alpha=0.35, width=bar_width * 0.6)
+            ax_chart.bar(x_comp, comp_values, color='white', alpha=0.4, width=bar_width * 0.25)
         
         ax_chart.set_xticks(months)
         ax_chart.set_xticklabels(month_names, color='white', fontsize=10, fontfamily='monospace')
-        ax_chart.set_yticks([])  # Remove y-axis ticks to prevent width expansion
+        ax_chart.set_yticks([])
         ax_chart.tick_params(axis='x', colors='white', length=0)
         ax_chart.spines['bottom'].set_color(neon_color)
         ax_chart.spines['bottom'].set_alpha(0.2)
@@ -754,49 +838,86 @@ class StravaVisualizer:
         average_pace = main_sport_data.get(YearInSportFeatures.AVERAGE_PACE, 0)
         activities_per_week = main_sport_data.get(YearInSportFeatures.ACTIVITIES_PER_WEEK, 0)
         
-        weekday_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        # Get comparison values for all features
+        comp_active_days = comparison_sport_data.get(YearInSportFeatures.ACTIVE_DAYS, 0) if comparison_sport_data else None
+        comp_avg_km = comparison_sport_data.get(YearInSportFeatures.AVERAGE_DISTANCE_KM, 0) if comparison_sport_data else None
+        comp_average_pace = comparison_sport_data.get(YearInSportFeatures.AVERAGE_PACE, 0) if comparison_sport_data else None
+        comp_activities_per_week = comparison_sport_data.get(YearInSportFeatures.ACTIVITIES_PER_WEEK, 0) if comparison_sport_data else None
+        comp_month_most_km = comparison_sport_data.get(YearInSportFeatures.MONTH_MOST_KM) if comparison_sport_data else None
+        comp_most_active_weekday = comparison_sport_data.get(YearInSportFeatures.MOST_ACTIVE_WEEKDAY) if comparison_sport_data else None
+        
+        weekday_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
         month_full_names = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
         
         weekday_str = weekday_names[most_active_weekday] if most_active_weekday is not None else "N/A"
         month_str = month_full_names[month_most_km] if month_most_km else "N/A"
+        comp_weekday_str = weekday_names[comp_most_active_weekday] if comp_most_active_weekday is not None else None
+        comp_month_str = month_full_names[comp_month_most_km] if comp_month_most_km else None
         
         # Format average pace
-        if average_pace > 0:
-            pace_mins = int(average_pace)
-            pace_secs = round((average_pace % 1) * 60)
-            if pace_secs == 60:
-                pace_mins += 1
-                pace_secs = 0
-            avg_pace_str = f"{pace_mins}:{pace_secs:02d}"
-        else:
-            avg_pace_str = "N/A"
+        def format_pace(pace: float) -> str:
+            if pace > 0:
+                pace_mins = int(pace)
+                pace_secs = round((pace % 1) * 60)
+                if pace_secs == 60:
+                    pace_mins += 1
+                    pace_secs = 0
+                return f"{pace_mins}:{pace_secs:02d}"
+            return "N/A"
         
+        avg_pace_str = format_pace(average_pace)
+        comp_avg_pace_str = format_pace(comp_average_pace) if comp_average_pace else None
+        
+        # Stats with comparison values for all features
+        # Box-based layout for additional stats: 3 columns x 2 rows
         stats_extra = [
-            (f"{active_days}", "active days"),
-            (f"{activities_per_week:.1f}", "per week"),
-            (f"{avg_km:.1f} km", "avg distance"),
-            (avg_pace_str, "avg pace"),
-            (weekday_str, "favorite day"),
-            (month_str, "best month"),
+            (f"{active_days}", "active days", f"{comp_active_days}" if comp_active_days is not None else None),
+            (f"{activities_per_week:.1f}", "acts per week", f"{comp_activities_per_week:.1f}" if comp_activities_per_week is not None else None),
+            (f"{avg_km:.1f}", "avg distance (km)", f"{comp_avg_km:.1f}" if comp_avg_km is not None else None),
+            (avg_pace_str, "avg pace (/km)", comp_avg_pace_str),
+            (weekday_str, "favorite day", comp_weekday_str),
+            (month_str, "best month", comp_month_str),
         ]
         
-        for i, (value, label) in enumerate(stats_extra):
-            row = i // 3
-            col = i % 3
-            x = 0.17 + col * 0.33
-            y = 0.7 - row * 0.45
+        num_cols = 3
+        box_width = 1.0 / num_cols
+        
+        for i, (value, label, comp_value) in enumerate(stats_extra):
+            row = i // num_cols
+            col = i % num_cols
             
+            # Box boundaries
+            box_center = col * box_width + box_width / 2
+            y = 0.75 - row * 0.5
+            
+            # Main value - always centered
             ax_extra.text(
-                x, y, value,
+                box_center, y, value,
                 transform=ax_extra.transAxes,
                 ha='center', va='center',
                 color='white',
-                fontsize=14,
+                fontsize=13,
                 fontfamily='monospace',
                 fontweight='bold'
             )
+            
+            # Comparison value - below main value
+            if comp_value is not None:
+                ax_extra.text(
+                    box_center, y - 0.11, comp_value,
+                    transform=ax_extra.transAxes,
+                    ha='center', va='center',
+                    color=comparison_neon_color,
+                    fontsize=10,
+                    fontfamily='monospace',
+                    fontweight='bold',
+                    alpha=0.45
+                )
+            
+            # Label centered in box - below comparison (or below main if no comparison)
+            label_y = y - 0.19 if comp_value is not None else y - 0.15
             ax_extra.text(
-                x, y - 0.15, label,
+                box_center, label_y, label,
                 transform=ax_extra.transAxes,
                 ha='center', va='center',
                 color='white',
@@ -814,21 +935,33 @@ class StravaVisualizer:
         longest_mins = main_sport_data.get(YearInSportFeatures.LONGEST_ACTIVITY_MINS, 0)
         fastest_pace = main_sport_data.get(YearInSportFeatures.FASTEST_ACTIVITY_PACE, 0)
         
-        # Format pace (use round for seconds to avoid truncation errors)
-        if fastest_pace > 0:
-            pace_mins = int(fastest_pace)
-            pace_secs = round((fastest_pace % 1) * 60)
-            if pace_secs == 60:  # Handle rounding up to 60 seconds
-                pace_mins += 1
-                pace_secs = 0
-            pace_str = f"{pace_mins}:{pace_secs:02d} /km"
-        else:
-            pace_str = "N/A"
+        # Get comparison values if available
+        comp_longest_km = comparison_sport_data.get(YearInSportFeatures.LONGEST_ACTIVITY_KM, 0) if comparison_sport_data else None
+        comp_longest_mins = comparison_sport_data.get(YearInSportFeatures.LONGEST_ACTIVITY_MINS, 0) if comparison_sport_data else None
+        comp_fastest_pace = comparison_sport_data.get(YearInSportFeatures.FASTEST_ACTIVITY_PACE, 0) if comparison_sport_data else None
         
-        # Format time
-        hours = int(longest_mins // 60)
-        mins = int(longest_mins % 60)
-        time_str = f"{hours}h {mins}m" if hours > 0 else f"{mins}m"
+        # Format pace helper
+        def format_pace_with_unit(pace: float) -> str:
+            if pace > 0:
+                pace_mins = int(pace)
+                pace_secs = round((pace % 1) * 60)
+                if pace_secs == 60:
+                    pace_mins += 1
+                    pace_secs = 0
+                return f"{pace_mins}:{pace_secs:02d} /km"
+            return "N/A"
+        
+        # Format time helper
+        def format_time(mins: float) -> str:
+            hours = int(mins // 60)
+            m = int(mins % 60)
+            return f"{hours}h {m}m" if hours > 0 else f"{m}m"
+        
+        pace_str = format_pace_with_unit(fastest_pace)
+        time_str = format_time(longest_mins)
+        
+        comp_pace_str = format_pace_with_unit(comp_fastest_pace) if comp_fastest_pace else None
+        comp_time_str = format_time(comp_longest_mins) if comp_longest_mins else None
         
         ax_highlights.text(
             0.5, 0.9, "PERSONAL BESTS",
@@ -842,31 +975,43 @@ class StravaVisualizer:
         )
         
         highlights = [
-            ("▸ Longest Distance", f"{longest_km:.2f} km"),
-            ("▸ Longest Time", time_str),
-            ("▸ Fastest Pace", pace_str),
+            ("▸ Longest Distance", f"{longest_km:.1f} km", f"{comp_longest_km:.1f} km" if comp_longest_km else None),
+            ("▸ Longest Time", time_str, comp_time_str),
+            ("▸ Fastest Pace", pace_str, comp_pace_str),
         ]
         
-        for i, (label, value) in enumerate(highlights):
+        for i, (label, value, comp_value) in enumerate(highlights):
             y = 0.65 - i * 0.22
             ax_highlights.text(
-                0.1, y, label,
+                0.2, y, label,
                 transform=ax_highlights.transAxes,
                 ha='left', va='center',
                 color='white',
-                fontsize=11,
+                fontsize=10,
                 fontfamily='monospace',
                 alpha=0.6
             )
             ax_highlights.text(
-                0.9, y, value,
+                0.62, y, value,
                 transform=ax_highlights.transAxes,
                 ha='right', va='center',
                 color='white',
-                fontsize=11,
+                fontsize=10,
                 fontfamily='monospace',
                 fontweight='bold'
             )
+            # Show comparison value (more transparent)
+            if comp_value is not None:
+                ax_highlights.text(
+                    0.75, y, comp_value,
+                    transform=ax_highlights.transAxes,
+                    ha='center', va='center',
+                    color=comparison_neon_color,
+                    fontsize=10,
+                    fontfamily='monospace',
+                    fontweight='bold',
+                    alpha=0.45
+                )
         
         # Save
         output_folder = folder if folder else self.output_dir
@@ -890,15 +1035,20 @@ class StravaVisualizer:
         year: int,
         year_in_sport: dict,
         folder: Path | None = None,
-        neon_color: str = "#fc0101"
+        neon_color: str = "#fc0101",
+        comparison_year: int | None = None,
+        comparison_data: dict | None = None,
+        comparison_neon_color: str = "#00aaff"
     ) -> None:
         """
         Plot total year statistics across all sports in neon style for Instagram Stories.
         Shows total stats, sports breakdown, and monthly activity.
+        Optionally shows comparison with previous year.
         """
         from strava.strava_analytics import AllYearInSportFeatures
         
         all_sports_data = year_in_sport.get('all', {})
+        comparison_all_data = comparison_data.get('all', {}) if comparison_data else None
         
         # Instagram Story size: 9:16 aspect ratio
         fig = plt.figure(figsize=(9, 16), facecolor='black')
@@ -911,17 +1061,41 @@ class StravaVisualizer:
         ax_header.set_facecolor('black')
         ax_header.set_axis_off()
         
-        # Year title
-        ax_header.text(
-            0.5, 0.75, f"{year}",
-            transform=ax_header.transAxes,
-            ha='center', va='center',
-            color=neon_color,
-            fontsize=48,
-            fontfamily='monospace',
-            fontweight='bold',
-            alpha=0.9
-        )
+        # Year title - show both years if comparison provided
+        if comparison_year is not None:
+            # Main year centered
+            ax_header.text(
+                0.5, 0.75, f"{year}",
+                transform=ax_header.transAxes,
+                ha='center', va='center',
+                color=neon_color,
+                fontsize=48,
+                fontfamily='monospace',
+                fontweight='bold',
+                alpha=0.9
+            )
+            # Comparison year below/right, smaller
+            ax_header.text(
+                0.67, 0.70, f"{comparison_year}",
+                transform=ax_header.transAxes,
+                ha='center', va='center',
+                color=comparison_neon_color,
+                fontsize=16,
+                fontfamily='monospace',
+                fontweight='bold',
+                alpha=0.5
+            )
+        else:
+            ax_header.text(
+                0.5, 0.75, f"{year}",
+                transform=ax_header.transAxes,
+                ha='center', va='center',
+                color=neon_color,
+                fontsize=48,
+                fontfamily='monospace',
+                fontweight='bold',
+                alpha=0.9
+            )
         
         # Subtitle
         ax_header.text(
@@ -943,119 +1117,177 @@ class StravaVisualizer:
         total_km = all_sports_data.get(AllYearInSportFeatures.TOTAL_DISTANCE_KM, 0)
         total_hours = all_sports_data.get(AllYearInSportFeatures.TOTAL_TIME_HOURS, 0)
         
-        # Big numbers row - 3 columns
-        ax_stats.text(
-            0.17, 0.6, f"{total_activities}",
-            transform=ax_stats.transAxes,
-            ha='center', va='center',
-            color=neon_color,
-            fontsize=36,
-            fontfamily='monospace',
-            fontweight='bold'
-        )
-        ax_stats.text(
-            0.17, 0.2, "ACTIVITIES",
-            transform=ax_stats.transAxes,
-            ha='center', va='center',
-            color='white',
-            fontsize=9,
-            fontfamily='monospace',
-            alpha=0.6
-        )
+        # Get comparison values if available
+        comp_total_activities = comparison_all_data.get(AllYearInSportFeatures.TOTAL_ACTIVITIES, 0) if comparison_all_data else None
+        comp_total_km = comparison_all_data.get(AllYearInSportFeatures.TOTAL_DISTANCE_KM, 0) if comparison_all_data else None
+        comp_total_hours = comparison_all_data.get(AllYearInSportFeatures.TOTAL_TIME_HOURS, 0) if comparison_all_data else None
         
-        ax_stats.text(
-            0.5, 0.6, f"{total_km:,.0f}",
-            transform=ax_stats.transAxes,
-            ha='center', va='center',
-            color=neon_color,
-            fontsize=36,
-            fontfamily='monospace',
-            fontweight='bold'
-        )
-        ax_stats.text(
-            0.5, 0.2, "KILOMETERS",
-            transform=ax_stats.transAxes,
-            ha='center', va='center',
-            color='white',
-            fontsize=9,
-            fontfamily='monospace',
-            alpha=0.6
-        )
+        # Box-based layout for main stats: 3 columns
+        stats_big = [
+            (f"{total_activities}", "ACTIVITIES", f"{comp_total_activities}" if comp_total_activities is not None else None),
+            (f"{total_km:,.0f}", "KILOMETERS", f"{comp_total_km:,.0f}" if comp_total_km is not None else None),
+            (f"{total_hours:,.0f}", "HOURS", f"{comp_total_hours:,.0f}" if comp_total_hours is not None else None),
+        ]
         
-        ax_stats.text(
-            0.83, 0.6, f"{total_hours:,.0f}",
-            transform=ax_stats.transAxes,
-            ha='center', va='center',
-            color=neon_color,
-            fontsize=36,
-            fontfamily='monospace',
-            fontweight='bold'
-        )
-        ax_stats.text(
-            0.83, 0.2, "HOURS",
-            transform=ax_stats.transAxes,
-            ha='center', va='center',
-            color='white',
-            fontsize=9,
-            fontfamily='monospace',
-            alpha=0.6
-        )
+        num_boxes = len(stats_big)
+        box_width = 1.0 / num_boxes
+        
+        for i, (value, label, comp_value) in enumerate(stats_big):
+            box_center = i * box_width + box_width / 2
+            
+            # Main value - always centered
+            ax_stats.text(
+                box_center, 0.7, value,
+                transform=ax_stats.transAxes,
+                ha='center', va='center',
+                color=neon_color,
+                fontsize=32,
+                fontfamily='monospace',
+                fontweight='bold'
+            )
+            
+            # Comparison value - below main value
+            if comp_value is not None:
+                ax_stats.text(
+                    box_center, 0.45, comp_value,
+                    transform=ax_stats.transAxes,
+                    ha='center', va='center',
+                    color=comparison_neon_color,
+                    fontsize=18,
+                    fontfamily='monospace',
+                    fontweight='bold',
+                    alpha=0.45
+                )
+            
+            # Label centered in box - below comparison (or below main if no comparison)
+            label_y = 0.2 if comp_value is not None else 0.35
+            ax_stats.text(
+                box_center, label_y, label,
+                transform=ax_stats.transAxes,
+                ha='center', va='center',
+                color='white',
+                fontsize=9,
+                fontfamily='monospace',
+                alpha=0.6
+            )
         
         # --- Sports Breakdown ---
         ax_sports = fig.add_subplot(gs[2])
         ax_sports.set_facecolor('black')
         
         activities_per_sport = all_sports_data.get(AllYearInSportFeatures.ACTIVITIES_PER_SPORT, {})
+        comp_activities_per_sport = comparison_all_data.get(AllYearInSportFeatures.ACTIVITIES_PER_SPORT, {}) if comparison_all_data else {}
         
-        if activities_per_sport:
-            # Sort by count descending
-            sorted_sports = sorted(activities_per_sport.items(), key=lambda x: x[1], reverse=True)
+        if activities_per_sport or comp_activities_per_sport:
+            # Merge sports from both years - current year sports first (sorted by count), then comp-only sports
+            all_sport_names = set(activities_per_sport.keys()) | set(comp_activities_per_sport.keys())
+            
+            # Sort: current year sports by count desc, then comp-only sports by their count desc
+            current_year_sports = sorted(
+                [(s, activities_per_sport.get(s, 0)) for s in all_sport_names if s in activities_per_sport],
+                key=lambda x: x[1], reverse=True
+            )
+            comp_only_sports = sorted(
+                [(s, comp_activities_per_sport.get(s, 0)) for s in all_sport_names if s not in activities_per_sport],
+                key=lambda x: x[1], reverse=True
+            )
+            
+            sorted_sports = current_year_sports + comp_only_sports
             sports = [s[0] for s in sorted_sports]
-            counts = [s[1] for s in sorted_sports]
+            counts = [activities_per_sport.get(s, 0) for s in sports]
+            comp_counts = [comp_activities_per_sport.get(s, 0) for s in sports]
             
             # Limit to top 10 sports
             if len(sports) > 10:
                 sports = sports[:10]
                 counts = counts[:10]
+                comp_counts = comp_counts[:10]
             
-            y_pos = np.arange(len(sports))
-            max_count = max(counts)
+            max_count = max(max(counts) if counts else 0, max(comp_counts) if comp_counts else 0, 1)
             
             # Create left margin for labels by extending xlim
             label_margin = max_count * 0.35
             
-            # Horizontal bar chart with soft neon
-            ax_sports.barh(y_pos, counts, left=label_margin, color=neon_color, alpha=0.15, height=0.6)
-            ax_sports.barh(y_pos, counts, left=label_margin, color=neon_color, alpha=0.4, height=0.35)
-            ax_sports.barh(y_pos, counts, left=label_margin, color='white', alpha=0.6, height=0.12)
-            
-            # Set xlim to include label margin
-            ax_sports.set_xlim(0, label_margin + max_count * 1.15)
-            
-            # Remove y-axis labels
-            ax_sports.set_yticks([])
-            ax_sports.set_xticks([])  # Also hide x ticks for cleaner look
-            ax_sports.invert_yaxis()
-            
-            ax_sports.spines['bottom'].set_visible(False)
-            ax_sports.spines['left'].set_visible(False)
-            ax_sports.spines['top'].set_visible(False)
-            ax_sports.spines['right'].set_visible(False)
-            
-            # Add sport names and count labels
-            for i, (sport, count) in enumerate(zip(sports, counts)):
-                # Sport name on the left of the bar
-                ax_sports.text(
-                    label_margin - max_count * 0.03, i, sport,
-                    va='center', ha='right',
-                    color='white', fontsize=10, fontfamily='monospace', alpha=0.9
-                )
-                # Count at the end of bar
-                ax_sports.text(
-                    label_margin + count + max_count * 0.02, i, str(count),
-                    va='center', ha='left',
-                    color='white', fontsize=9, fontfamily='monospace', alpha=0.7
-                )
+            if comparison_all_data:
+                # Grouped bar chart - similar to monthly chart style
+                bar_height = 0.35
+                y_pos = np.arange(len(sports))
+                
+                # Current year bars - neon style
+                ax_sports.barh(y_pos - 0.2, counts, left=label_margin, color=neon_color, alpha=0.15, height=bar_height + 0.1)
+                ax_sports.barh(y_pos - 0.2, counts, left=label_margin, color=neon_color, alpha=0.4, height=bar_height)
+                ax_sports.barh(y_pos - 0.2, counts, left=label_margin, color='white', alpha=0.6, height=0.08)
+                
+                # Comparison year bars - neon style  
+                ax_sports.barh(y_pos + 0.2, comp_counts, left=label_margin, color=comparison_neon_color, alpha=0.15, height=bar_height + 0.1)
+                ax_sports.barh(y_pos + 0.2, comp_counts, left=label_margin, color=comparison_neon_color, alpha=0.4, height=bar_height)
+                ax_sports.barh(y_pos + 0.2, comp_counts, left=label_margin, color='white', alpha=0.4, height=0.06)
+                
+                # Set xlim to include label margin - uses max_count from both years
+                ax_sports.set_xlim(0, label_margin + max_count * 1.15)
+                
+                # Remove axis elements
+                ax_sports.set_yticks([])
+                ax_sports.set_xticks([])
+                ax_sports.invert_yaxis()
+                
+                ax_sports.spines['bottom'].set_visible(False)
+                ax_sports.spines['left'].set_visible(False)
+                ax_sports.spines['top'].set_visible(False)
+                ax_sports.spines['right'].set_visible(False)
+                
+                # Add sport names and count labels
+                for i, sport in enumerate(sports):
+                    count = counts[i]
+                    comp_count = comp_counts[i]
+                    
+                    # Sport name on the left
+                    ax_sports.text(
+                        label_margin - max_count * 0.03, i, sport,
+                        va='center', ha='right',
+                        color='white', fontsize=10, fontfamily='monospace', alpha=0.9
+                    )
+                    # Current year count
+                    ax_sports.text(
+                        label_margin + count + max_count * 0.02, i - 0.2, str(count),
+                        va='center', ha='left',
+                        color='white', fontsize=9, fontfamily='monospace', alpha=0.8
+                    )
+                    # Comparison count
+                    ax_sports.text(
+                        label_margin + comp_count + max_count * 0.02, i + 0.2, str(comp_count),
+                        va='center', ha='left',
+                        color=comparison_neon_color, fontsize=8, fontfamily='monospace', alpha=0.5
+                    )
+            else:
+                # Single year - original style
+                y_pos = np.arange(len(sports))
+                
+                ax_sports.barh(y_pos, counts, left=label_margin, color=neon_color, alpha=0.15, height=0.6)
+                ax_sports.barh(y_pos, counts, left=label_margin, color=neon_color, alpha=0.4, height=0.35)
+                ax_sports.barh(y_pos, counts, left=label_margin, color='white', alpha=0.6, height=0.12)
+                
+                ax_sports.set_xlim(0, label_margin + max_count * 1.15)
+                ax_sports.set_yticks([])
+                ax_sports.set_xticks([])
+                ax_sports.invert_yaxis()
+                
+                ax_sports.spines['bottom'].set_visible(False)
+                ax_sports.spines['left'].set_visible(False)
+                ax_sports.spines['top'].set_visible(False)
+                ax_sports.spines['right'].set_visible(False)
+                
+                for i, (sport, count) in enumerate(zip(sports, counts)):
+                    ax_sports.text(
+                        label_margin - max_count * 0.03, i, sport,
+                        va='center', ha='right',
+                        color='white', fontsize=10, fontfamily='monospace', alpha=0.9
+                    )
+                    ax_sports.text(
+                        label_margin + count + max_count * 0.02, i, str(count),
+                        va='center', ha='left',
+                        color='white', fontsize=9, fontfamily='monospace', alpha=0.7
+                    )
         
         # --- Highlights Panel ---
         ax_highlights = fig.add_subplot(gs[3])
@@ -1074,8 +1306,19 @@ class StravaVisualizer:
         active_days = all_sports_data.get(AllYearInSportFeatures.ACTIVE_DAYS, 0)
         activities_per_week = all_sports_data.get(AllYearInSportFeatures.ACTIVITIES_PER_WEEK, 0)
         
+        # Get comparison values if available
+        comp_active_days = comparison_all_data.get(AllYearInSportFeatures.ACTIVE_DAYS, 0) if comparison_all_data else None
+        comp_activities_per_week = comparison_all_data.get(AllYearInSportFeatures.ACTIVITIES_PER_WEEK, 0) if comparison_all_data else None
+        comp_activities_per_sport_hl = comparison_all_data.get(AllYearInSportFeatures.ACTIVITIES_PER_SPORT, {}) if comparison_all_data else {}
+        comp_num_sports = len(comp_activities_per_sport_hl) if comp_activities_per_sport_hl else None
+        comp_most_active_weekday = comparison_all_data.get(AllYearInSportFeatures.MOST_ACTIVE_WEEKDAY) if comparison_all_data else None
+        comp_most_active_month = comparison_all_data.get(AllYearInSportFeatures.MOST_ACTIVE_MONTH) if comparison_all_data else None
+        comp_sport_most_done = comparison_all_data.get(AllYearInSportFeatures.SPORT_MOST_DONE, None) if comparison_all_data else None
+        
         weekday_str = weekday_names[most_active_weekday] if most_active_weekday is not None else "N/A"
         month_str = month_full_names[most_active_month] if most_active_month else "N/A"
+        comp_weekday_str = weekday_names[comp_most_active_weekday] if comp_most_active_weekday is not None else None
+        comp_month_str = month_full_names[comp_most_active_month] if comp_most_active_month else None
         
         ax_highlights.text(
             0.5, 0.95, "HIGHLIGHTS",
@@ -1089,17 +1332,17 @@ class StravaVisualizer:
         )
         
         highlights = [
-            ("▸ Active Days", str(active_days)),
-            ("▸ Top Sport", sport_most_done),
-            ("▸ Sports Practiced", str(num_sports)),
-            ("▸ Most Active Day", weekday_str),
-            ("▸ Best Month", month_str),
+            ("▸ Active Days", str(active_days), str(comp_active_days) if comp_active_days is not None else None),
+            ("▸ Top Sport", sport_most_done, comp_sport_most_done),
+            ("▸ Sports Practiced", str(num_sports), str(comp_num_sports) if comp_num_sports is not None else None),
+            ("▸ Most Active Day", weekday_str, comp_weekday_str),
+            ("▸ Best Month", month_str, comp_month_str),
         ]
         
-        for i, (label, value) in enumerate(highlights):
+        for i, (label, value, comp_value) in enumerate(highlights):
             y = 0.8 - i * 0.16
             ax_highlights.text(
-                0.1, y, label,
+                0.08, y, label,
                 transform=ax_highlights.transAxes,
                 ha='left', va='center',
                 color='white',
@@ -1108,14 +1351,26 @@ class StravaVisualizer:
                 alpha=0.6
             )
             ax_highlights.text(
-                0.9, y, value,
+                0.6, y, value,
                 transform=ax_highlights.transAxes,
                 ha='right', va='center',
                 color='white',
-                fontsize=11,
+                fontsize=10,
                 fontfamily='monospace',
                 fontweight='bold'
             )
+            # Show comparison value (more transparent)
+            if comp_value is not None:
+                ax_highlights.text(
+                    0.82, y, comp_value,
+                    transform=ax_highlights.transAxes,
+                    ha='right', va='center',
+                    color=comparison_neon_color,
+                    fontsize=9,
+                    fontfamily='monospace',
+                    fontweight='bold',
+                    alpha=0.45
+                )
         
         # Save
         output_folder = folder if folder else self.output_dir
