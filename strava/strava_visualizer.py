@@ -1166,7 +1166,7 @@ class StravaVisualizer:
                 )
             
             # Label centered in box - below comparison (or below main if no comparison)
-            label_y = 0.2 if comp_value is not None else 0.35
+            label_y = 0.25 if comp_value is not None else 0.35
             ax_stats.text(
                 box_center, label_y, label,
                 transform=ax_stats.transAxes,
