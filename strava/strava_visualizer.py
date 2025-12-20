@@ -980,10 +980,16 @@ class StravaVisualizer:
             ("▸ Fastest Pace", pace_str, comp_pace_str),
         ]
         
+        # Adjust positions based on whether comparison data exists
+        has_comparison = comparison_sport_data is not None
+        label_x = 0.2 if has_comparison else 0.25
+        value_x = 0.62 if has_comparison else 0.75
+        comp_x = 0.75
+        
         for i, (label, value, comp_value) in enumerate(highlights):
             y = 0.65 - i * 0.22
             ax_highlights.text(
-                0.2, y, label,
+                label_x, y, label,
                 transform=ax_highlights.transAxes,
                 ha='left', va='center',
                 color='white',
@@ -992,7 +998,7 @@ class StravaVisualizer:
                 alpha=0.6
             )
             ax_highlights.text(
-                0.62, y, value,
+                value_x, y, value,
                 transform=ax_highlights.transAxes,
                 ha='right', va='center',
                 color='white',
@@ -1003,7 +1009,7 @@ class StravaVisualizer:
             # Show comparison value (more transparent)
             if comp_value is not None:
                 ax_highlights.text(
-                    0.75, y, comp_value,
+                    comp_x, y, comp_value,
                     transform=ax_highlights.transAxes,
                     ha='center', va='center',
                     color=comparison_neon_color,
@@ -1339,10 +1345,16 @@ class StravaVisualizer:
             ("▸ Best Month", month_str, comp_month_str),
         ]
         
+        # Adjust positions based on whether comparison data exists
+        has_comparison = comparison_all_data is not None
+        label_x = 0.08 if has_comparison else 0.15
+        value_x = 0.6 if has_comparison else 0.85
+        comp_x = 0.82
+        
         for i, (label, value, comp_value) in enumerate(highlights):
             y = 0.8 - i * 0.16
             ax_highlights.text(
-                0.08, y, label,
+                label_x, y, label,
                 transform=ax_highlights.transAxes,
                 ha='left', va='center',
                 color='white',
@@ -1351,7 +1363,7 @@ class StravaVisualizer:
                 alpha=0.6
             )
             ax_highlights.text(
-                0.6, y, value,
+                value_x, y, value,
                 transform=ax_highlights.transAxes,
                 ha='right', va='center',
                 color='white',
@@ -1362,7 +1374,7 @@ class StravaVisualizer:
             # Show comparison value (more transparent)
             if comp_value is not None:
                 ax_highlights.text(
-                    0.82, y, comp_value,
+                    comp_x, y, comp_value,
                     transform=ax_highlights.transAxes,
                     ha='right', va='center',
                     color=comparison_neon_color,

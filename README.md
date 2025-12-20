@@ -103,6 +103,15 @@ strava.strava_visualizer.plot_performance_frontier(sport_types=['Run'])
 # Generate Year in Sport summary (Instagram Story format)
 strava.get_year_in_sport(year=2025, main_sport="Run", neon_color="#fc0101")
 
+# Generate Year in Sport with comparison to previous year
+strava.get_year_in_sport(
+    year=2025, 
+    main_sport="Run", 
+    neon_color="#fc0101",
+    comparison_year=2024,
+    comparison_neon_color="#00aaff"
+)
+
 # Export activities as GeoJSON
 strava.save_geojson_activities()
 ```
@@ -143,7 +152,7 @@ Geographic bubble visualization showing your activity locations with size propor
 ![Bubble Map](readme_data/bubble_map_country.png)
 
 ### Year in Sport
-Generate Instagram Story-sized (9:16) summaries of your yearly training. Includes stats for your main sport and totals across all activities, plus individual activity plots for your personal bests.
+Generate Instagram Story-sized (9:16) summaries of your yearly training. Includes stats for your main sport and totals across all activities, plus individual activity plots for your personal bests. Now with **year comparison** feature to compare your progress against previous years!
 
 **Main Sport Summary** - Shows total activities, kilometers, hours, elevation, monthly distance chart, and personal bests (longest distance, longest time, fastest pace).
 
@@ -152,6 +161,12 @@ Generate Instagram Story-sized (9:16) summaries of your yearly training. Include
 **All Sports Summary** - Aggregated stats across all sports with breakdown by sport type.
 
 ![Year in Sport - Totals](readme_data/year_in_sport_2025_totals.png)
+
+**Year Comparison** - Compare your current year against a previous year with side-by-side stats, grouped bar charts, and highlighted differences.
+
+![Year in Sport - Comparison Run](readme_data/year_in_sport_2025_run_comparison.png)
+
+![Year in Sport - Comparison Totals](readme_data/year_in_sport_2025_totals_comparison.png)
 
 **Activity Plot** - Individual activity visualization with route map and elevation profile.
 
@@ -199,7 +214,7 @@ StravaIntelligence(
 **Current methods:**
 - `sync_activities(full_sync=False, include_streams=False)` - Sync activities from Strava
 - `save_geojson_activities()` - Export activities as GeoJSON
-- `get_year_in_sport(year, main_sport, neon_color)` - Generate Year in Sport visualizations
+- `get_year_in_sport(year, main_sport, neon_color, comparison_year=None, comparison_neon_color="#00aaff")` - Generate Year in Sport visualizations with optional year comparison
 
 ### StravaVisualizer
 
