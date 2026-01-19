@@ -234,6 +234,126 @@ class StravaAnalytics:
         }
 
 
+    def get_weekly_report(self, week_start_date: str | None = None) -> dict:
+        """
+        Get weekly report for a given week.
+        
+        Args:
+            week_start_date: Start of the week in format 'YYYY-MM-DD'. If None, uses the last completed week.
+                             The date will be adjusted to the Monday of that week.
+        
+        Returns:
+            Dictionary with weekly statistics.
+        """
+        from datetime import datetime, timedelta, timezone
+        
+        activities = self.strava_activities_cache.activities.copy()
+        activities['start_date_local'] = pd.to_datetime(activities['start_date_local'], utc=True)
+        
+        # Determine the week to report on
+        if week_start_date is None:
+            # Use last completed week (previous Monday to Sunday)
+            today = datetime.now(timezone.utc)
+            # Get last Monday (if today is Monday, go back 7 days)
+            days_since_monday = today.weekday()
+            if days_since_monday == 0:  # Today is Monday
+                last_monday = today - timedelta(days=7)
+            else:
+                last_monday = today - timedelta(days=days_since_monday + 7)
+            week_start = last_monday.replace(hour=0, minute=0, second=0, microsecond=0)
+        else:
+            week_start = pd.to_datetime(week_start_date, utc=True)
+            # Adjust to Monday of that week
+            days_since_monday = week_start.weekday()
+            week_start = week_start - timedelta(days=days_since_monday)
+            week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        week_end = week_start + timedelta(days=6, hours=23, minutes=59, seconds=59)
+        
+        # Filter activities for the week
+        activities_week = activities[
+            (activities['start_date_local'] >= week_start) &
+            (activities['start_date_local'] <= week_end)
+        ].copy()
+        
+        # Total aggregations
+        total_activities = len(activities_week)
+        total_distance_km = activities_week['distance'].sum() / 1000.0
+        total_elevation_m = activities_week['total_elevation_gain'].sum()
+        total_time_hours = activities_week['moving_time'].sum() / 3600.0
+        active_days = activities_week['start_date_local'].dt.date.nunique()
+        
+        # Activities per day (0=Monday, 6=Sunday)
+        activities_per_day = activities_week.groupby(
+            activities_week['start_date_local'].dt.weekday
+        ).size().reindex(range(7), fill_value=0).to_dict()
+        
+        # Distance per day
+        distance_per_day = activities_week.groupby(
+            activities_week['start_date_local'].dt.weekday
+        )['distance'].sum().reindex(range(7), fill_value=0) / 1000.0
+        distance_per_day_km = distance_per_day.to_dict()
+        
+        # Per sport aggregations
+        distance_per_sport = (
+            activities_week.groupby('sport_type')['distance'].sum() / 1000.0
+        ).to_dict() if not activities_week.empty else {}
+        
+        activities_per_sport = (
+            activities_week.groupby('sport_type').size()
+        ).to_dict() if not activities_week.empty else {}
+        
+        time_per_sport = (
+            activities_week.groupby('sport_type')['moving_time'].sum() / 3600.0
+        ).to_dict() if not activities_week.empty else {}
+        
+        # Sports per day (list of sports for each weekday)
+        sports_per_day = {}
+        if not activities_week.empty:
+            for day in range(7):
+                day_activities = activities_week[activities_week['start_date_local'].dt.weekday == day]
+                sports_per_day[day] = day_activities['sport_type'].tolist()
+        else:
+            sports_per_day = {day: [] for day in range(7)}
+        
+        # Most active day
+        if not activities_week.empty:
+            activities_per_day_series = activities_week.groupby(
+                activities_week['start_date_local'].dt.weekday
+            ).size()
+            most_active_day = int(activities_per_day_series.idxmax()) if not activities_per_day_series.empty else None
+        else:
+            most_active_day = None
+        
+        # Longest activity
+        if not activities_week.empty:
+            longest_idx = activities_week['distance'].idxmax()
+            longest_activity_km = activities_week.loc[longest_idx, 'distance'] / 1000.0
+            longest_activity_name = activities_week.loc[longest_idx, 'name']
+        else:
+            longest_activity_km = 0.0
+            longest_activity_name = None
+        
+        return {
+            WeeklyReportFeatures.WEEK_START: week_start.strftime('%Y-%m-%d'),
+            WeeklyReportFeatures.WEEK_END: week_end.strftime('%Y-%m-%d'),
+            WeeklyReportFeatures.TOTAL_ACTIVITIES: total_activities,
+            WeeklyReportFeatures.TOTAL_DISTANCE_KM: float(round(total_distance_km, 2)),
+            WeeklyReportFeatures.TOTAL_ELEVATION_M: float(round(total_elevation_m, 1)),
+            WeeklyReportFeatures.TOTAL_TIME_HOURS: float(round(total_time_hours, 2)),
+            WeeklyReportFeatures.ACTIVE_DAYS: active_days,
+            WeeklyReportFeatures.ACTIVITIES_PER_DAY: {int(k): int(v) for k, v in activities_per_day.items()},
+            WeeklyReportFeatures.DISTANCE_PER_DAY_KM: {int(k): float(round(v, 2)) for k, v in distance_per_day_km.items()},
+            WeeklyReportFeatures.DISTANCE_PER_SPORT_KM: {k: float(round(v, 2)) for k, v in distance_per_sport.items()},
+            WeeklyReportFeatures.ACTIVITIES_PER_SPORT: {k: int(v) for k, v in activities_per_sport.items()},
+            WeeklyReportFeatures.TIME_PER_SPORT_HOURS: {k: float(round(v, 2)) for k, v in time_per_sport.items()},
+            WeeklyReportFeatures.SPORTS_PER_DAY: sports_per_day,
+            WeeklyReportFeatures.MOST_ACTIVE_DAY: most_active_day,
+            WeeklyReportFeatures.LONGEST_ACTIVITY_KM: float(round(longest_activity_km, 2)),
+            WeeklyReportFeatures.LONGEST_ACTIVITY_NAME: longest_activity_name,
+        }
+
+
 class YearInSportFeatures(StrEnum):
     TOTAL_ACTIVITIES = "total_activities"
     TOTAL_DISTANCE_KM = "total_distance_km"
@@ -267,3 +387,22 @@ class AllYearInSportFeatures(StrEnum):
     MOST_ACTIVE_WEEKDAY = "most_active_weekday"
     MOST_ACTIVE_MONTH = "most_active_month"
     SPORT_MOST_DONE = "sport_most_done"
+
+
+class WeeklyReportFeatures(StrEnum):
+    WEEK_START = "week_start"
+    WEEK_END = "week_end"
+    TOTAL_ACTIVITIES = "total_activities"
+    TOTAL_DISTANCE_KM = "total_distance_km"
+    TOTAL_ELEVATION_M = "total_elevation_m"
+    TOTAL_TIME_HOURS = "total_time_hours"
+    ACTIVE_DAYS = "active_days"
+    ACTIVITIES_PER_DAY = "activities_per_day"  # dict: weekday (0-6) -> count
+    DISTANCE_PER_DAY_KM = "distance_per_day_km"  # dict: weekday (0-6) -> km
+    DISTANCE_PER_SPORT_KM = "distance_per_sport_km"  # dict: sport -> km
+    ACTIVITIES_PER_SPORT = "activities_per_sport"  # dict: sport -> count
+    TIME_PER_SPORT_HOURS = "time_per_sport_hours"  # dict: sport -> hours
+    SPORTS_PER_DAY = "sports_per_day"  # dict: weekday (0-6) -> list of sports
+    MOST_ACTIVE_DAY = "most_active_day"  # weekday (0-6)
+    LONGEST_ACTIVITY_KM = "longest_activity_km"
+    LONGEST_ACTIVITY_NAME = "longest_activity_name"

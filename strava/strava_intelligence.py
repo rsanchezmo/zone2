@@ -63,7 +63,7 @@ class StravaIntelligence:
         
         # activities are already ordered by start_date ascending
         last_activity = activities.iloc[-1]["id"]
-        self.strava_visualizer.plot_activity(last_activity, self.strava_endpoint, folder=self.workdir, title=f"Last {sport_type} Activity")
+        self.strava_visualizer.plot_activity(last_activity, self.strava_endpoint, folder=self.strava_visualizer.output_dir, title=f"Last {sport_type} Activity")
 
 
     def get_year_in_sport(self, year: int, main_sport: str, neon_color: str = "#fc0101", comparison_year: int | None = None, comparison_neon_color: str = "#00aaff") -> dict:
@@ -131,3 +131,29 @@ class StravaIntelligence:
             neon_color=neon_color
         )
         return year_in_sport
+
+
+    def get_weekly_report(self, week_start_date: str | None = None, neon_color: str = "#fc0101") -> dict:
+        """
+        Generate a weekly report with statistics and visualization.
+        
+        Args:
+            week_start_date: Start of the week in 'YYYY-MM-DD' format. 
+                             If None, uses the last completed week.
+                             The date will be adjusted to the Monday of that week.
+            neon_color: Primary color for the visualization (default: red).
+        
+        Returns:
+            Dictionary with weekly statistics.
+        """
+        weekly_report = self.strava_analytics.get_weekly_report(week_start_date)
+        
+        output_folder = self.workdir / "weekly_reports"
+        
+        self.strava_visualizer.plot_weekly_report(
+            weekly_report=weekly_report,
+            folder=output_folder,
+            neon_color=neon_color
+        )
+        
+        return weekly_report

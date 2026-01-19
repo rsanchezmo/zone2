@@ -1,9 +1,11 @@
 from strava.strava_analytics import StravaAnalytics
 from strava.strava_utils import get_activities_as_gdf, get_region_coordinates, format_pace_or_speed, convert_speed, get_sport_category
 from strava.constants import WEB_MERCATOR_CRS, BASE_CRS
+from strava.strava_analytics import WeeklyReportFeatures
 
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from matplotlib.patches import Circle, Wedge, Patch, Ellipse
 
 import geopandas as gpd
 import contextily as ctx
@@ -13,6 +15,9 @@ from shapely.geometry import Point
 import numpy as np
 from scipy.optimize import curve_fit
 import matplotlib.ticker as ticker
+from datetime import datetime
+from collections import Counter
+
 
 
 class StravaVisualizer:
@@ -1742,3 +1747,378 @@ class StravaVisualizer:
             plt.savefig(out_path, dpi=600, bbox_inches='tight')
             print(f"🚀 Frontier plot saved to {out_path}")
             plt.close()
+
+
+    def plot_weekly_report(
+        self,
+        weekly_report: dict,
+        folder: Path | None = None,
+        neon_color: str = "#fc0101",
+    ) -> None:
+        """
+        Plot weekly report statistics in neon style for Instagram Stories.
+        Shows activities per day bar plot, sports breakdown pie charts, and key stats.
+        
+        Args:
+            weekly_report: Dictionary from get_weekly_report()
+            folder: Output folder path (default: workdir/weekly_reports)
+            neon_color: Primary neon color for the visualization
+        """
+        
+        # Instagram Story size: 9:16 aspect ratio
+        fig = plt.figure(figsize=(9, 16), facecolor='black')
+        # Change this line
+        fig.subplots_adjust(left=0.02, right=0.98, top=0.95, bottom=0.02)
+
+        
+        # 1. DEFINE RATIOS
+        # We split the bottom space: 1.7 for pies, 1.5 for empty bottom buffer
+        # This keeps the sum at 5.7, preserving the size of the top sections.
+        ratios = [1.0, 0.5, 1.0, 1.7, 1.5]
+        
+        # 2. CREATE GRID (5 rows now)
+        gs = fig.add_gridspec(5, 1, height_ratios=ratios, hspace=0.05)
+        
+        # Extract data
+        week_start = weekly_report.get(WeeklyReportFeatures.WEEK_START, "")
+        week_end = weekly_report.get(WeeklyReportFeatures.WEEK_END, "")
+        total_activities = weekly_report.get(WeeklyReportFeatures.TOTAL_ACTIVITIES, 0)
+        total_km = weekly_report.get(WeeklyReportFeatures.TOTAL_DISTANCE_KM, 0)
+        total_elevation = weekly_report.get(WeeklyReportFeatures.TOTAL_ELEVATION_M, 0)
+        total_hours = weekly_report.get(WeeklyReportFeatures.TOTAL_TIME_HOURS, 0)
+        active_days = weekly_report.get(WeeklyReportFeatures.ACTIVE_DAYS, 0)
+        activities_per_day = weekly_report.get(WeeklyReportFeatures.ACTIVITIES_PER_DAY, {})
+        distance_per_day_km = weekly_report.get(WeeklyReportFeatures.DISTANCE_PER_DAY_KM, {})
+        distance_per_sport = weekly_report.get(WeeklyReportFeatures.DISTANCE_PER_SPORT_KM, {})
+        activities_per_sport = weekly_report.get(WeeklyReportFeatures.ACTIVITIES_PER_SPORT, {})
+        
+        # --- Header Panel ---
+        ax_header = fig.add_subplot(gs[0])
+        ax_header.set_facecolor('black')
+        ax_header.set_axis_off()
+        
+        # Format week range for display
+        try:
+            start_dt = datetime.strptime(week_start, '%Y-%m-%d')
+            end_dt = datetime.strptime(week_end, '%Y-%m-%d')
+            week_range = f"{start_dt.strftime('%b %d')} - {end_dt.strftime('%b %d, %Y')}"
+        except ValueError:
+            week_range = f"{week_start} - {week_end}"
+        
+        # Title
+        ax_header.text(
+            0.5, 0.75, "WEEKLY REPORT",
+            transform=ax_header.transAxes,
+            ha='center', va='center',
+            color=neon_color,
+            fontsize=36,
+            fontfamily='monospace',
+            fontweight='bold',
+            alpha=0.9
+        )
+        
+        # Week range subtitle
+        ax_header.text(
+            0.5, 0.45, week_range.upper(),
+            transform=ax_header.transAxes,
+            ha='center', va='center',
+            color='white',
+            fontsize=16,
+            fontfamily='monospace',
+            alpha=0.7
+        )
+        
+        # --- Main Stats Panel ---
+        ax_stats = fig.add_subplot(gs[1])
+        ax_stats.set_facecolor('black')
+        ax_stats.set_axis_off()
+        
+        stats_data = [
+            (f"{total_activities}", "ACTIVITIES"),
+            (f"{total_km:,.1f}", "KM"),
+            (f"{total_hours:,.1f}", "HOURS"),
+            (f"{active_days}", "ACTIVE DAYS"),
+            (f"{total_elevation:,.0f}", "↑ METERS"),
+        ]
+        
+        num_boxes = len(stats_data)
+        box_width = 1.0 / num_boxes
+        
+        for i, (value, label) in enumerate(stats_data):
+            box_center = i * box_width + box_width / 2
+            
+            # Main value
+            ax_stats.text(
+                box_center, 0.85, value,
+                transform=ax_stats.transAxes,
+                ha='center', va='center',
+                color=neon_color,
+                fontsize=32,
+                fontfamily='monospace',
+                fontweight='bold'
+            )
+            
+            # Label
+            ax_stats.text(
+                box_center, 0.5, label,
+                transform=ax_stats.transAxes,
+                ha='center', va='center',
+                color='white',
+                fontsize=10,
+                fontfamily='monospace',
+                alpha=0.6
+            )
+        
+        # --- Daily Activity Bubbles ---
+        ax_chart = fig.add_subplot(gs[2])
+        ax_chart.set_facecolor('black')
+        ax_chart.set_axis_off()
+        
+        day_names = ['L', 'M', 'X', 'J', 'V', 'S', 'D']  # Spanish weekday initials
+        days = list(range(7))
+        
+        # Get sports per day data
+        sports_per_day = weekly_report.get(WeeklyReportFeatures.SPORTS_PER_DAY, {})
+        
+        # Define sport colors - distinct neon colors for each sport
+        sport_color_palette = [
+            '#fc0101',  # Red
+            '#00ff88',  # Green
+            '#00aaff',  # Blue
+            '#ff00ff',  # Magenta
+            '#faff00',  # Yellow
+            '#ff8800',  # Orange
+            '#00ffff',  # Cyan
+            '#ff0088',  # Pink
+            '#88ff00',  # Lime
+            '#8800ff',  # Purple
+        ]
+        
+        # Create sport color mapping from distance_per_sport (sorted by distance)
+        if distance_per_sport:
+            sorted_sports = sorted(distance_per_sport.items(), key=lambda x: x[1], reverse=True)
+            all_sports = [s[0] for s in sorted_sports]
+        else:
+            all_sports = []
+        
+        sport_colors = {sport: sport_color_palette[i % len(sport_color_palette)] 
+                       for i, sport in enumerate(all_sports)}
+        
+        # Draw bubbles for each day
+        # Account for aspect ratio: figure is 9x16, gs[2] gets 1.0/5.7 of height
+        # Aspect ratio correction: width/height of this panel
+        fig_width, fig_height = 9, 16
+        total_height_ratio = sum(ratios)
+        panel_height = fig_height * (1.0 / total_height_ratio)
+        aspect_ratio = fig_width / panel_height  # ~3.2
+        
+        bubble_radius_y = 0.15  # Vertical radius in axes coords
+        bubble_radius_x = bubble_radius_y / aspect_ratio  # Horizontal radius adjusted
+        y_center = 0.7
+        
+        for i, day in enumerate(days):
+            x_center = (i + 0.5) / 7  # Distribute evenly across width
+            
+            day_sports = sports_per_day.get(day, [])
+            
+            if not day_sports:
+                # No training - empty ellipse with neon outline
+                ellipse = Ellipse((x_center, y_center), bubble_radius_x * 2, bubble_radius_y * 2, 
+                                 facecolor='none', edgecolor='white', 
+                                 linewidth=2, alpha=0.1, transform=ax_chart.transAxes)
+                ax_chart.add_patch(ellipse)
+            else:
+                # Get unique sports and their counts for this day
+                sport_counts = Counter(day_sports)
+                unique_sports = list(sport_counts.keys())
+                counts = list(sport_counts.values())
+                total = sum(counts)
+                
+                if len(unique_sports) == 1:
+                    # Single sport - filled ellipse
+                    sport = unique_sports[0]
+                    color = sport_colors.get(sport, neon_color)
+                    
+                    # # Glow effect
+                    # glow = Ellipse((x_center, y_center), bubble_radius_x * 2 * 1.3, bubble_radius_y * 2 * 1.3, 
+                    #               facecolor=color, alpha=0.15, transform=ax_chart.transAxes)
+                    # ax_chart.add_patch(glow)
+                    
+                    # Main ellipse
+                    ellipse = Ellipse((x_center, y_center), bubble_radius_x * 2, bubble_radius_y * 2, 
+                                     facecolor=color, edgecolor='white', 
+                                     linewidth=2, alpha=0.6, transform=ax_chart.transAxes)
+                    ax_chart.add_patch(ellipse)
+                else:
+                    # Multiple sports - draw colored ellipse segments manually
+                    # Glow effect (use first sport color)
+                    first_color = sport_colors.get(unique_sports[0], neon_color)
+                    glow = Ellipse((x_center, y_center), bubble_radius_x * 2 * 1.3, bubble_radius_y * 2 * 1.3, 
+                                  facecolor=first_color, alpha=0.1, transform=ax_chart.transAxes)
+                    ax_chart.add_patch(glow)
+                    
+                    # For multiple sports, use a simplified approach: draw colored ellipse with first sport
+                    # and overlay smaller segments - or just blend colors
+                    # Simplified: draw the dominant sport as main color
+                    dominant_sport = unique_sports[0]  # Already sorted by count implicitly
+                    color = sport_colors.get(dominant_sport, neon_color)
+                    
+                    ellipse = Ellipse((x_center, y_center), bubble_radius_x * 2, bubble_radius_y * 2, 
+                                     facecolor=color, edgecolor='white', 
+                                     linewidth=2, alpha=0.7, transform=ax_chart.transAxes)
+                    ax_chart.add_patch(ellipse)
+                    
+                    # Add a small indicator dot for second sport if exists
+                    if len(unique_sports) > 1:
+                        second_color = sport_colors.get(unique_sports[1], neon_color)
+                        dot = Ellipse((x_center + bubble_radius_x * 0.5, y_center + bubble_radius_y * 0.5), 
+                                     bubble_radius_x * 0.6, bubble_radius_y * 0.6,
+                                     facecolor=second_color, edgecolor='white', 
+                                     linewidth=1, alpha=0.9, transform=ax_chart.transAxes)
+                        ax_chart.add_patch(dot)
+            
+            # Day label below bubble
+            ax_chart.text(x_center, y_center - bubble_radius_y - 0.1, day_names[i],
+                         ha='center', va='center', transform=ax_chart.transAxes,
+                         color='white', fontsize=14, fontfamily='monospace', 
+                         fontweight='bold', alpha=0.8)
+
+                        # Create custom legend patches
+            from matplotlib.patches import Patch
+            sports = all_sports[:6] if len(all_sports) > 6 else all_sports
+            legend_patches = [Patch(facecolor=sport_colors.get(s, neon_color), edgecolor='white', label=s.upper()) 
+                            for s in sports]
+            ax_chart.legend(
+                handles=legend_patches,
+                loc='lower center',
+                ncol=min(3, len(sports)),
+                frameon=False,
+                fontsize=9,
+                labelcolor='white',
+            )
+
+        # --- Sports Breakdown: Two Pie Charts Side by Side ---
+        # Create a sub-gridspec for title, legend, and pie charts
+        gs_pies = gs[3].subgridspec(2, 2, height_ratios=[0.2, 1], wspace=0.1, hspace=0.0)
+        
+        # Get time per sport from weekly report (in hours, convert to minutes)
+        time_per_sport_hours = weekly_report.get(WeeklyReportFeatures.TIME_PER_SPORT_HOURS, {})
+        
+        if distance_per_sport:
+            # Sort by distance descending (reuse all_sports from bubble section)
+            sport_distances = [distance_per_sport.get(s, 0) for s in sports]
+            
+            # Use sport_colors from bubble section
+            colors = [sport_colors.get(s, neon_color) for s in sports]
+            
+            # --- Add legend row between title and pie charts ---
+            ax_legend = fig.add_subplot(gs_pies[0, :])
+            ax_legend.set_facecolor('black')
+            ax_legend.set_axis_off()
+            
+            # Create custom legend patches
+            from matplotlib.patches import Patch
+            legend_patches = [Patch(facecolor=sport_colors.get(s, neon_color), edgecolor='white', label=s.upper()) 
+                            for s in sports]
+        
+            
+            # --- Left Pie: Distance per Sport ---
+            ax_dist_pie = fig.add_subplot(gs_pies[1, 0])
+            ax_dist_pie.set_facecolor('black')
+
+            # Create pie with neon style - show actual km values
+            wedges, texts = ax_dist_pie.pie(
+                sport_distances,
+                labels=None,
+                radius=1.2,
+                colors=colors,
+                wedgeprops=dict(width=0.9, edgecolor='black', linewidth=2, alpha=0.6),
+                startangle=90
+            )
+            
+            # Add actual value labels manually
+            for i, (wedge, dist) in enumerate(zip(wedges, sport_distances)):
+                ang = (wedge.theta2 - wedge.theta1) / 2.0 + wedge.theta1
+                x = 0.75 * np.cos(np.radians(ang))
+                y = 0.75 * np.sin(np.radians(ang))
+                if dist > 0:
+                    ax_dist_pie.text(x, y, f'{dist:.1f}', ha='center', va='center',
+                                    color='white', fontsize=9, fontfamily='monospace', fontweight='bold')
+            
+            # Title for distance pie
+            ax_dist_pie.text(
+                0.5, -0.05, "DISTANCE (KM)",
+                transform=ax_dist_pie.transAxes,
+                ha='center', va='top',
+                color='white',
+                fontsize=12,
+                fontfamily='monospace',
+                fontweight='bold',
+                alpha=0.8
+            )
+            
+            # --- Right Pie: Time per Sport ---
+            ax_time_pie = fig.add_subplot(gs_pies[1, 1])
+            ax_time_pie.set_facecolor('black')
+            
+            # Get time values for the same sports (in order) - convert hours to minutes
+            sport_times = [time_per_sport_hours.get(s, 0) * 60 for s in sports]
+            
+            if sum(sport_times) > 0:
+                # Create pie with neon style - show actual minutes values
+                wedges2, texts2 = ax_time_pie.pie(
+                    sport_times,
+                    labels=None,
+                    radius=1.2,
+                    colors=colors,
+                    wedgeprops=dict(width=0.9, edgecolor='black', linewidth=2, alpha=0.6),
+                    startangle=90
+                )
+                
+                # Add actual value labels manually
+                for i, (wedge, mins) in enumerate(zip(wedges2, sport_times)):
+                    ang = (wedge.theta2 - wedge.theta1) / 2.0 + wedge.theta1
+                    x = 0.75 * np.cos(np.radians(ang))
+                    y = 0.75 * np.sin(np.radians(ang))
+                    if mins > 0:
+                        ax_time_pie.text(x, y, f'{mins:.0f}', ha='center', va='center',
+                                        color='white', fontsize=9, fontfamily='monospace', fontweight='bold')
+            
+            # Title for time pie
+            ax_time_pie.text(
+                0.5, -0.05, "MINUTES",
+                transform=ax_time_pie.transAxes,
+                ha='center', va='top',
+                color='white',
+                fontsize=12,
+                fontfamily='monospace',
+                fontweight='bold',
+                alpha=0.8
+            )
+        else:
+            ax_sports = fig.add_subplot(gs[3])
+            ax_sports.set_facecolor('black')
+            ax_sports.set_axis_off()
+            ax_sports.text(
+                0.5, 0.5, "NO ACTIVITIES THIS WEEK",
+                transform=ax_sports.transAxes,
+                ha='center', va='center',
+                color='white',
+                fontsize=14,
+                fontfamily='monospace',
+                alpha=0.5
+            )
+        
+        # --- Save ---
+        # plt.tight_layout()
+        
+        # Determine output folder
+        if folder is None:
+            folder = self.workdir / "weekly_reports"
+        folder.mkdir(parents=True, exist_ok=True)
+        
+        filename = f"weekly_report_{week_start}.png"
+        out_path = folder / filename
+        plt.savefig(out_path, dpi=300, facecolor='black')
+        print(f"📊 Weekly report saved to {out_path}")
+        plt.close()
