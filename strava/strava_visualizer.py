@@ -457,10 +457,15 @@ class StravaVisualizer:
             print(f"Activity {activity_id} not found in cache.")
             return
         
+        # TODO: plot zones on that activity if available
+        
         activity = activity.iloc[0]
         
         # Fetch streams for elevation data
-        streams = strava_endpoint.get_activity_streams(activity_id)
+        streams = activity.get("streams", None)
+        if streams is None:
+            # data not pre-fetched, get from API
+            streams = strava_endpoint.get_activity_streams(activity_id)
         
         if not streams:
             print(f"Could not fetch streams for activity {activity_id}")
@@ -1868,15 +1873,11 @@ class StravaVisualizer:
                 alpha=0.6
             )
         
-        # --- Daily Activity Bubbles ---
+        # --- HR Zone Distribution (Horizontal Bar Chart) ---
         ax_chart = fig.add_subplot(gs[2])
         ax_chart.set_facecolor('black')
-        ax_chart.set_axis_off()
         
-        day_names = ['L', 'M', 'X', 'J', 'V', 'S', 'D']  # Spanish weekday initials
-        days = list(range(7))
-        
-        # Get sports per day data
+        # Get sports per day data (still needed for sport colors later)
         sports_per_day = weekly_report.get(WeeklyReportFeatures.SPORTS_PER_DAY, {})
         
         # Define sport colors - distinct neon colors for each sport
@@ -1903,98 +1904,195 @@ class StravaVisualizer:
         sport_colors = {sport: sport_color_palette[i % len(sport_color_palette)] 
                        for i, sport in enumerate(all_sports)}
         
-        # Draw bubbles for each day
-        # Account for aspect ratio: figure is 9x16, gs[2] gets 1.0/5.7 of height
-        # Aspect ratio correction: width/height of this panel
-        fig_width, fig_height = 9, 16
-        total_height_ratio = sum(ratios)
-        panel_height = fig_height * (1.0 / total_height_ratio)
-        aspect_ratio = fig_width / panel_height  # ~3.2
+        # HR Zone distribution
+        hr_zone_distribution = weekly_report.get(WeeklyReportFeatures.HR_ZONE_DISTRIBUTION, {})
         
-        bubble_radius_y = 0.15  # Vertical radius in axes coords
-        bubble_radius_x = bubble_radius_y / aspect_ratio  # Horizontal radius adjusted
-        y_center = 0.7
+        # Get max HR to calculate zone ranges
+        hr_max = self.strava_analytics.get_max_heart_rate()
         
-        for i, day in enumerate(days):
-            x_center = (i + 0.5) / 7  # Distribute evenly across width
-            
-            day_sports = sports_per_day.get(day, [])
-            
-            if not day_sports:
-                # No training - empty ellipse with neon outline
-                ellipse = Ellipse((x_center, y_center), bubble_radius_x * 2, bubble_radius_y * 2, 
-                                 facecolor='none', edgecolor='white', 
-                                 linewidth=2, alpha=0.1, transform=ax_chart.transAxes)
-                ax_chart.add_patch(ellipse)
-            else:
-                # Get unique sports and their counts for this day
-                sport_counts = Counter(day_sports)
-                unique_sports = list(sport_counts.keys())
-                counts = list(sport_counts.values())
-                total = sum(counts)
-                
-                if len(unique_sports) == 1:
-                    # Single sport - filled ellipse
-                    sport = unique_sports[0]
-                    color = sport_colors.get(sport, neon_color)
-                    
-                    # # Glow effect
-                    # glow = Ellipse((x_center, y_center), bubble_radius_x * 2 * 1.3, bubble_radius_y * 2 * 1.3, 
-                    #               facecolor=color, alpha=0.15, transform=ax_chart.transAxes)
-                    # ax_chart.add_patch(glow)
-                    
-                    # Main ellipse
-                    ellipse = Ellipse((x_center, y_center), bubble_radius_x * 2, bubble_radius_y * 2, 
-                                     facecolor=color, edgecolor='white', 
-                                     linewidth=2, alpha=0.6, transform=ax_chart.transAxes)
-                    ax_chart.add_patch(ellipse)
-                else:
-                    # Multiple sports - draw colored ellipse segments manually
-                    # Glow effect (use first sport color)
-                    first_color = sport_colors.get(unique_sports[0], neon_color)
-                    glow = Ellipse((x_center, y_center), bubble_radius_x * 2 * 1.3, bubble_radius_y * 2 * 1.3, 
-                                  facecolor=first_color, alpha=0.1, transform=ax_chart.transAxes)
-                    ax_chart.add_patch(glow)
-                    
-                    # For multiple sports, use a simplified approach: draw colored ellipse with first sport
-                    # and overlay smaller segments - or just blend colors
-                    # Simplified: draw the dominant sport as main color
-                    dominant_sport = unique_sports[0]  # Already sorted by count implicitly
-                    color = sport_colors.get(dominant_sport, neon_color)
-                    
-                    ellipse = Ellipse((x_center, y_center), bubble_radius_x * 2, bubble_radius_y * 2, 
-                                     facecolor=color, edgecolor='white', 
-                                     linewidth=2, alpha=0.7, transform=ax_chart.transAxes)
-                    ax_chart.add_patch(ellipse)
-                    
-                    # Add a small indicator dot for second sport if exists
-                    if len(unique_sports) > 1:
-                        second_color = sport_colors.get(unique_sports[1], neon_color)
-                        dot = Ellipse((x_center + bubble_radius_x * 0.5, y_center + bubble_radius_y * 0.5), 
-                                     bubble_radius_x * 0.6, bubble_radius_y * 0.6,
-                                     facecolor=second_color, edgecolor='white', 
-                                     linewidth=1, alpha=0.9, transform=ax_chart.transAxes)
-                        ax_chart.add_patch(dot)
-            
-            # Day label below bubble
-            ax_chart.text(x_center, y_center - bubble_radius_y - 0.1, day_names[i],
-                         ha='center', va='center', transform=ax_chart.transAxes,
-                         color='white', fontsize=14, fontfamily='monospace', 
-                         fontweight='bold', alpha=0.8)
-
-                        # Create custom legend patches
-            from matplotlib.patches import Patch
-            sports = all_sports[:6] if len(all_sports) > 6 else all_sports
-            legend_patches = [Patch(facecolor=sport_colors.get(s, neon_color), edgecolor='white', label=s.upper()) 
-                            for s in sports]
-            ax_chart.legend(
-                handles=legend_patches,
-                loc='lower center',
-                ncol=min(3, len(sports)),
-                frameon=False,
-                fontsize=9,
-                labelcolor='white',
-            )
+        # Zone colors (green to red gradient)
+        zone_colors = {
+            1: '#00ff88',  # Z1 - Recovery (green)
+            2: '#00aaff',  # Z2 - Endurance (blue)
+            3: '#faff00',  # Z3 - Tempo (yellow)
+            4: '#ff8800',  # Z4 - Threshold (orange)
+            5: '#fc0101',  # Z5 - VO2max (red)
+        }
+        
+        # Calculate HR ranges for each zone
+        zone_ranges = {
+            1: (0, int(hr_max * 0.60)),
+            2: (int(hr_max * 0.60), int(hr_max * 0.70)),
+            3: (int(hr_max * 0.70), int(hr_max * 0.80)),
+            4: (int(hr_max * 0.80), int(hr_max * 0.90)),
+            5: (int(hr_max * 0.90), hr_max),
+        }
+        
+        zone_labels = [f'Z{z} ({zone_ranges[z][0]}-{zone_ranges[z][1]})' for z in range(1, 6)]
+        zones = [1, 2, 3, 4, 5]
+        counts = [hr_zone_distribution.get(z, 0) for z in zones]
+        
+        # Create horizontal bar chart
+        y_positions = range(len(zones))
+        bars = ax_chart.barh(y_positions, counts, height=0.6, 
+                            color=[zone_colors[z] for z in zones],
+                            edgecolor=[zone_colors[z] for z in zones], linewidth=3, alpha=0.6)
+        
+        # Add count labels at the end of each bar
+        max_count = max(counts) if max(counts) > 0 else 1
+        for i, (bar, count) in enumerate(zip(bars, counts)):
+            if count > 0:
+                ax_chart.text(bar.get_width() + max_count * 0.05, bar.get_y() + bar.get_height() / 2,
+                             f'{count}', va='center', ha='left',
+                             color=zone_colors[zones[i]], fontsize=12, fontfamily='monospace', fontweight='bold')
+        
+        # Style the chart - better centered
+        ax_chart.set_yticks(y_positions)
+        ax_chart.set_yticklabels(zone_labels, color='white', fontsize=10, fontfamily='monospace', fontweight='bold')
+        ax_chart.invert_yaxis()  # Z1 at top
+        ax_chart.set_xlim(-0.1, max_count * 1.4 if max_count > 0 else 1)
+        ax_chart.set_xticks([])
+        ax_chart.spines['bottom'].set_visible(False)
+        ax_chart.spines['top'].set_visible(False)
+        ax_chart.spines['right'].set_visible(False)
+        ax_chart.spines['left'].set_visible(False)
+        ax_chart.tick_params(axis='y', colors='white', length=0, pad=10)
+        
+        # Add title
+        ax_chart.text(0.5, 1.05, 'HR ZONES', transform=ax_chart.transAxes,
+                     ha='center', va='bottom', color='white', fontsize=11,
+                     fontfamily='monospace', fontweight='bold', alpha=0.7)
+        
+        # Center the chart horizontally
+        ax_chart.set_position([0.20, ax_chart.get_position().y0, 0.6, ax_chart.get_position().height])
+        
+        # # --- Daily Activity Bubbles (COMMENTED OUT) ---
+        # ax_chart = fig.add_subplot(gs[2])
+        # ax_chart.set_facecolor('black')
+        # ax_chart.set_axis_off()
+        # 
+        # day_names = ['L', 'M', 'X', 'J', 'V', 'S', 'D']  # Spanish weekday initials
+        # days = list(range(7))
+        # 
+        # # Get sports per day data
+        # sports_per_day = weekly_report.get(WeeklyReportFeatures.SPORTS_PER_DAY, {})
+        # 
+        # # Define sport colors - distinct neon colors for each sport
+        # sport_color_palette = [
+        #     '#fc0101',  # Red
+        #     '#00ff88',  # Green
+        #     '#00aaff',  # Blue
+        #     '#ff00ff',  # Magenta
+        #     '#faff00',  # Yellow
+        #     '#ff8800',  # Orange
+        #     '#00ffff',  # Cyan
+        #     '#ff0088',  # Pink
+        #     '#88ff00',  # Lime
+        #     '#8800ff',  # Purple
+        # ]
+        # 
+        # # Create sport color mapping from distance_per_sport (sorted by distance)
+        # if distance_per_sport:
+        #     sorted_sports = sorted(distance_per_sport.items(), key=lambda x: x[1], reverse=True)
+        #     all_sports = [s[0] for s in sorted_sports]
+        # else:
+        #     all_sports = []
+        # 
+        # sport_colors = {sport: sport_color_palette[i % len(sport_color_palette)] 
+        #                for i, sport in enumerate(all_sports)}
+        # 
+        # # Draw bubbles for each day
+        # # Account for aspect ratio: figure is 9x16, gs[2] gets 1.0/5.7 of height
+        # # Aspect ratio correction: width/height of this panel
+        # fig_width, fig_height = 9, 16
+        # total_height_ratio = sum(ratios)
+        # panel_height = fig_height * (1.0 / total_height_ratio)
+        # aspect_ratio = fig_width / panel_height  # ~3.2
+        # 
+        # bubble_radius_y = 0.15  # Vertical radius in axes coords
+        # bubble_radius_x = bubble_radius_y / aspect_ratio  # Horizontal radius adjusted
+        # y_center = 0.7
+        # 
+        # for i, day in enumerate(days):
+        #     x_center = (i + 0.5) / 7  # Distribute evenly across width
+        #     
+        #     day_sports = sports_per_day.get(day, [])
+        #     
+        #     if not day_sports:
+        #         # No training - empty ellipse with neon outline
+        #         ellipse = Ellipse((x_center, y_center), bubble_radius_x * 2, bubble_radius_y * 2, 
+        #                          facecolor='none', edgecolor='white', 
+        #                          linewidth=2, alpha=0.1, transform=ax_chart.transAxes)
+        #         ax_chart.add_patch(ellipse)
+        #     else:
+        #         # Get unique sports and their counts for this day
+        #         sport_counts = Counter(day_sports)
+        #         unique_sports = list(sport_counts.keys())
+        #         counts = list(sport_counts.values())
+        #         total = sum(counts)
+        #         
+        #         if len(unique_sports) == 1:
+        #             # Single sport - filled ellipse
+        #             sport = unique_sports[0]
+        #             color = sport_colors.get(sport, neon_color)
+        #             
+        #             # # Glow effect
+        #             # glow = Ellipse((x_center, y_center), bubble_radius_x * 2 * 1.3, bubble_radius_y * 2 * 1.3, 
+        #             #               facecolor=color, alpha=0.15, transform=ax_chart.transAxes)
+        #             # ax_chart.add_patch(glow)
+        #             
+        #             # Main ellipse
+        #             ellipse = Ellipse((x_center, y_center), bubble_radius_x * 2, bubble_radius_y * 2, 
+        #                              facecolor=color, edgecolor='white', 
+        #                              linewidth=2, alpha=0.6, transform=ax_chart.transAxes)
+        #             ax_chart.add_patch(ellipse)
+        #         else:
+        #             # Multiple sports - draw colored ellipse segments manually
+        #             # Glow effect (use first sport color)
+        #             first_color = sport_colors.get(unique_sports[0], neon_color)
+        #             glow = Ellipse((x_center, y_center), bubble_radius_x * 2 * 1.3, bubble_radius_y * 2 * 1.3, 
+        #                           facecolor=first_color, alpha=0.1, transform=ax_chart.transAxes)
+        #             ax_chart.add_patch(glow)
+        #             
+        #             # For multiple sports, use a simplified approach: draw colored ellipse with first sport
+        #             # and overlay smaller segments - or just blend colors
+        #             # Simplified: draw the dominant sport as main color
+        #             dominant_sport = unique_sports[0]  # Already sorted by count implicitly
+        #             color = sport_colors.get(dominant_sport, neon_color)
+        #             
+        #             ellipse = Ellipse((x_center, y_center), bubble_radius_x * 2, bubble_radius_y * 2, 
+        #                              facecolor=color, edgecolor='white', 
+        #                              linewidth=2, alpha=0.7, transform=ax_chart.transAxes)
+        #             ax_chart.add_patch(ellipse)
+        #             
+        #             # Add a small indicator dot for second sport if exists
+        #             if len(unique_sports) > 1:
+        #                 second_color = sport_colors.get(unique_sports[1], neon_color)
+        #                 dot = Ellipse((x_center + bubble_radius_x * 0.5, y_center + bubble_radius_y * 0.5), 
+        #                              bubble_radius_x * 0.6, bubble_radius_y * 0.6,
+        #                              facecolor=second_color, edgecolor='white', 
+        #                              linewidth=1, alpha=0.9, transform=ax_chart.transAxes)
+        #                 ax_chart.add_patch(dot)
+        #     
+        #     # Day label below bubble
+        #     ax_chart.text(x_center, y_center - bubble_radius_y - 0.1, day_names[i],
+        #                  ha='center', va='center', transform=ax_chart.transAxes,
+        #                  color='white', fontsize=14, fontfamily='monospace', 
+        #                  fontweight='bold', alpha=0.8)
+        # 
+        #                 # Create custom legend patches
+        #     from matplotlib.patches import Patch
+        #     sports = all_sports[:6] if len(all_sports) > 6 else all_sports
+        #     legend_patches = [Patch(facecolor=sport_colors.get(s, neon_color), edgecolor='white', label=s.upper()) 
+        #                     for s in sports]
+        #     ax_chart.legend(
+        #         handles=legend_patches,
+        #         loc='lower center',
+        #         ncol=min(3, len(sports)),
+        #         frameon=False,
+        #         fontsize=9,
+        #         labelcolor='white',
+        #     )
 
         # --- Sports Breakdown: Two Pie Charts Side by Side ---
         # Create a sub-gridspec for title, legend, and pie charts
@@ -2004,10 +2102,12 @@ class StravaVisualizer:
         time_per_sport_hours = weekly_report.get(WeeklyReportFeatures.TIME_PER_SPORT_HOURS, {})
         
         if distance_per_sport:
-            # Sort by distance descending (reuse all_sports from bubble section)
+            # Limit to top 6 sports for pie charts
+            sports = all_sports[:6] if len(all_sports) > 6 else all_sports
+            # Sort by distance descending
             sport_distances = [distance_per_sport.get(s, 0) for s in sports]
             
-            # Use sport_colors from bubble section
+            # Use sport_colors from earlier
             colors = [sport_colors.get(s, neon_color) for s in sports]
             
             # --- Add legend row between title and pie charts ---
@@ -2112,6 +2212,13 @@ class StravaVisualizer:
         ax_accum = fig.add_subplot(gs[4])
         ax_accum.set_facecolor('black')
         
+        # Add title - using ax_accum.text with transform for 0-1 positioning
+        ax_accum.text(0.15, 0.85, 'ACCUMULATED TRAINING TIME', 
+                     transform=ax_accum.transAxes,
+                     ha='left', va='top',
+                     color='white', fontsize=11,
+                     fontfamily='monospace', fontweight='bold', alpha=0.7)
+        
         time_per_sport_per_day = weekly_report.get(WeeklyReportFeatures.TIME_PER_SPORT_PER_DAY_MINS, {})
         
         if time_per_sport_per_day and distance_per_sport:
@@ -2194,6 +2301,20 @@ class StravaVisualizer:
             # Add some padding at the top for labels
             ylim = ax_accum.get_ylim()
             ax_accum.set_ylim(0, ylim[1] * 1.20 if ylim[1] > 0 else 10)
+            
+            # Add sport legend - centered
+            from matplotlib.patches import Patch
+            sports_for_legend = all_sports[:6] if len(all_sports) > 6 else all_sports
+            legend_patches = [Patch(facecolor=sport_colors.get(s, neon_color), edgecolor='white', label=s.upper()) 
+                            for s in sports_for_legend]
+            ax_accum.legend(
+                handles=legend_patches,
+                loc='upper center',
+                ncol=min(3, len(sports_for_legend)),
+                frameon=False,
+                fontsize=8,
+                labelcolor='white',
+            )
         else:
             ax_accum.set_axis_off()
         

@@ -220,3 +220,66 @@ class StravaActivitiesCache:
     def activities(self) -> pd.DataFrame:
         """Get all cached activities as a DataFrame."""
         return self.load_activities()
+    
+    def save_activities_df(self, df: pd.DataFrame):
+        """Save a DataFrame of activities to the cache."""
+        activities = df.to_dict(orient='records')
+        self.save_activities(activities)
+    
+    def sync_streams(self, strava_endpoint, activity_ids: list[int] | None = None):
+        """Sync streams for activities that don't already have them.
+        
+        Args:
+            strava_endpoint: The StravaEndpoint instance to fetch data from
+            include_zones: Whether to fetch zones data
+            activity_ids: List of activity IDs to sync. If None, syncs all activities.
+        """
+        
+        # Load all activities
+        df = self.load_activities(force_reload=True)
+        
+        if df.empty:
+            print("No activities to sync")
+            return
+        
+        # Filter to specific activity IDs if provided
+        if activity_ids is not None:
+            df = df[df['id'].isin(activity_ids)]
+        
+        if df.empty:
+            print("No matching activities found")
+            return
+        
+        synced_count = 0
+        skipped_count = 0
+        updated_activities = []
+        
+        for idx, activity in df.iterrows():
+            activity_id = activity['id']
+            needs_update = False
+            
+            # Check if streams already exist (look for 'streams' field)
+            has_streams = 'streams' in activity and pd.notna(activity.get('streams')) and activity.get('streams')
+            
+            if not has_streams:
+                print(f"  Fetching streams for activity {activity_id}...")
+                streams = strava_endpoint.get_activity_streams(activity_id)
+                if streams:
+                    activity['streams'] = json.dumps(streams)
+                    needs_update = True
+                else:
+                    print(f"    No streams found for activity {activity_id}")
+            
+            if needs_update:
+                updated_activities.append(activity.to_dict())
+                synced_count += 1
+            else:
+                skipped_count += 1
+        
+        # Save the updated activities if any were modified
+        if synced_count > 0:
+            print(f"✓ Synced {synced_count} activities, skipped {skipped_count} (already had data)")
+            # Save only the updated activities
+            self.save_activities(updated_activities)
+        else:
+            print(f"✓ All {skipped_count} activities already have the requested data")

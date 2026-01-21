@@ -5,6 +5,7 @@ from pathlib import Path
 if __name__ == "__main__":
 
     strava_intelligence = StravaIntelligence(workdir=Path("./strava_intelligence_workdir"))
+    strava_intelligence.ensure_activities_with_streams()
 
     strava_intelligence.plot_last_activity(sport_type='Run')
 

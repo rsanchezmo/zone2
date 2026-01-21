@@ -20,7 +20,8 @@ class StravaIntelligence:
         self.strava_visualizer = StravaVisualizer(self.strava_analytics, workdir)
 
         if auto_sync and self.strava_activities_cache.needs_sync(max_age_hours=sync_max_age_hours):
-            self.sync_activities()
+            # only enable include_streams on full sync to avoid long sync times on incremental syncs
+            self.sync_activities(include_streams=True)
 
 
     def sync_activities(self, full_sync: bool = False, include_streams: bool = False):
@@ -28,19 +29,38 @@ class StravaIntelligence:
         
         if full_sync:
             print("🔄 Performing full sync (all activities)...")
-            activities = self.strava_endpoint.get_activities(include_streams=include_streams)
+            activities = self.strava_endpoint.get_activities()
+
         else:
             last_date = self.strava_activities_cache.get_last_activity_date()
             if last_date:
                 print(f"🔄 Syncing activities from {last_date.date()}...")
                 from_date = last_date - timedelta(days=1)
-                activities = self.strava_endpoint.get_activities(from_date=from_date, include_streams=include_streams)
+                activities = self.strava_endpoint.get_activities(from_date=from_date)
             else:
                 print("🔄 No cached activities found. Performing full sync...")
-                activities = self.strava_endpoint.get_activities(include_streams=include_streams)
+                activities = self.strava_endpoint.get_activities()
 
         self.strava_activities_cache.save_activities(activities)
         print(f"✓ Synced {len(activities)} activities")
+
+        # Now, fetch streams and zones if requested for the saved activities
+        if include_streams:
+            print("🔄 Syncing streams for activities...")
+            self.strava_activities_cache.sync_streams(
+                strava_endpoint=self.strava_endpoint,
+                activity_ids=[activity['id'] for activity in activities]
+            )
+
+
+    def ensure_activities_with_streams(self):
+        """Ensure all cached activities have streams and zones data."""
+        print("🔄 Ensuring all activities have streams and zones data...")
+        activities = self.strava_activities_cache.activities
+        self.strava_activities_cache.sync_streams(
+            strava_endpoint=self.strava_endpoint,
+            activity_ids=activities['id'].tolist() if not activities.empty else None
+        )
 
 
     def save_geojson_activities(self):

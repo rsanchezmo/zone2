@@ -252,14 +252,10 @@ class StravaAnalytics:
         
         # Determine the week to report on
         if week_start_date is None:
-            # Use last completed week (previous Monday to Sunday)
+            # Use the current week
             today = datetime.now(timezone.utc)
-            # Get last Monday (if today is Monday, go back 7 days)
             days_since_monday = today.weekday()
-            if days_since_monday == 0:  # Today is Monday
-                last_monday = today - timedelta(days=7)
-            else:
-                last_monday = today - timedelta(days=days_since_monday + 7)
+            last_monday = today - timedelta(days=days_since_monday)
             week_start = last_monday.replace(hour=0, minute=0, second=0, microsecond=0)
         else:
             week_start = pd.to_datetime(week_start_date, utc=True)
@@ -326,6 +322,28 @@ class StravaAnalytics:
                 )['moving_time'].sum().reindex(range(7), fill_value=0) / 60.0  # Convert to minutes
                 time_per_sport_per_day_mins[sport] = {int(k): float(round(v, 1)) for k, v in time_per_day.to_dict().items()}
         
+        # HR Zone distribution (based on average_heartrate)
+        # Default zones (% of max HR): Z1: 50-60%, Z2: 60-70%, Z3: 70-80%, Z4: 80-90%, Z5: 90-100%
+        hr_zone_distribution = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+        if not activities_week.empty and 'average_heartrate' in activities_week.columns:
+            hr_max = self.get_max_heart_rate()
+            activities_with_hr = activities_week[activities_week['average_heartrate'].notna()]
+            
+            for _, activity in activities_with_hr.iterrows():
+                avg_hr = activity['average_heartrate']
+                hr_percent = (avg_hr / hr_max) * 100
+                
+                if hr_percent < 60:
+                    hr_zone_distribution[1] += 1
+                elif hr_percent < 70:
+                    hr_zone_distribution[2] += 1
+                elif hr_percent < 80:
+                    hr_zone_distribution[3] += 1
+                elif hr_percent < 90:
+                    hr_zone_distribution[4] += 1
+                else:
+                    hr_zone_distribution[5] += 1
+        
         # Most active day
         if not activities_week.empty:
             activities_per_day_series = activities_week.groupby(
@@ -359,6 +377,7 @@ class StravaAnalytics:
             WeeklyReportFeatures.TIME_PER_SPORT_HOURS: {k: float(round(v, 2)) for k, v in time_per_sport.items()},
             WeeklyReportFeatures.SPORTS_PER_DAY: sports_per_day,
             WeeklyReportFeatures.TIME_PER_SPORT_PER_DAY_MINS: time_per_sport_per_day_mins,
+            WeeklyReportFeatures.HR_ZONE_DISTRIBUTION: hr_zone_distribution,
             WeeklyReportFeatures.MOST_ACTIVE_DAY: most_active_day,
             WeeklyReportFeatures.LONGEST_ACTIVITY_KM: float(round(longest_activity_km, 2)),
             WeeklyReportFeatures.LONGEST_ACTIVITY_NAME: longest_activity_name,
@@ -415,6 +434,7 @@ class WeeklyReportFeatures(StrEnum):
     TIME_PER_SPORT_HOURS = "time_per_sport_hours"  # dict: sport -> hours
     SPORTS_PER_DAY = "sports_per_day"  # dict: weekday (0-6) -> list of sports
     TIME_PER_SPORT_PER_DAY_MINS = "time_per_sport_per_day_mins"  # dict: sport -> dict: weekday (0-6) -> minutes
+    HR_ZONE_DISTRIBUTION = "hr_zone_distribution"  # dict: zone (1-5) -> count of activities
     MOST_ACTIVE_DAY = "most_active_day"  # weekday (0-6)
     LONGEST_ACTIVITY_KM = "longest_activity_km"
     LONGEST_ACTIVITY_NAME = "longest_activity_name"

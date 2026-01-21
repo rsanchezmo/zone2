@@ -210,7 +210,7 @@ class StravaEndpoint:
 
         # Include streams if requested
         if include_streams:
-            activities = self.__fetch_activity_streams(activities, merge_into_data_points=True)
+            activities = self.__fetch_activity_streams(activities)
 
         if include_zones:
             activities = self.__fetch_activity_zones(activities)
@@ -219,46 +219,28 @@ class StravaEndpoint:
     
     def __fetch_activity_zones(self, activities: list[dict]) -> list[dict]:
         """Fetch zones for each activity and attach to activity data."""
-        headers = self.__get_headers()
         
         for activity in activities:
             activity_id = activity['id']
+        
+            zones = self.get_activity_zones(activity_id)
 
-            print(f"Fetching zones for activity {activity_id}...")
-            response = requests.get(
-                f"{StravaEndpoint.__ACTIVITY_URL}/{activity_id}/zones",
-                headers=headers
-            )
-            if response.status_code != 200:
-                print(f"Failed to fetch zones for activity {activity_id}: {response.json()}")
-                continue
+            activity['zones'] = zones
 
-            activity['zones'] = response.json()
         return activities
 
-    def __fetch_activity_streams(self, activities: list[dict], merge_into_data_points: bool = False) -> list[dict]:
+    def __fetch_activity_streams(self, activities: list[dict]) -> list[dict]:
         """Fetch streams for each activity and attach to activity data."""
-        headers = self.__get_headers()
-        
+
         for activity in activities:
             activity_id = activity['id']
 
             print(f"Fetching streams for activity {activity_id}...")
 
-            response = requests.get(
-                f"{StravaEndpoint.__ACTIVITY_URL}/{activity_id}/streams",
-                headers=headers,
-                params={
-                    'keys': 'time,latlng,altitude,velocity_smooth,heartrate,cadence,power',
-                    'key_by_type': 'true',
-                    'resolution': 'low'
-                }
-            )
-            if response.status_code != 200:
-                print(f"Failed to fetch streams for activity {activity_id}: {response.json()}")
-                continue
-            
-            activity['streams'] = self.__merge_streams_into_data_points(response.json())
+            streams = self.get_activity_streams(activity_id)
+
+            activity['streams'] = streams
+
         return activities
     
     def __merge_streams_into_data_points(self, streams: dict) -> list[dict]:
@@ -354,3 +336,21 @@ class StravaEndpoint:
             return []
         
         return self.__merge_streams_into_data_points(response.json())
+    
+    def get_activity_zones(self, activity_id: int | str) -> list[dict]:
+        """
+        Fetch zones for a single activity.
+        Returns a list of zone data for the activity.
+        """
+        headers = self.__get_headers()
+        
+        response = requests.get(
+            f"{StravaEndpoint.__ACTIVITY_URL}/{activity_id}/zones",
+            headers=headers
+        )
+        
+        if response.status_code != 200:
+            print(f"Failed to fetch zones for activity {activity_id}: {response.json()}")
+            return []
+        
+        return response.json()
