@@ -316,6 +316,16 @@ class StravaAnalytics:
         else:
             sports_per_day = {day: [] for day in range(7)}
         
+        # Time per sport per day (minutes) - for accumulated line plot
+        time_per_sport_per_day_mins = {}
+        if not activities_week.empty:
+            for sport in activities_week['sport_type'].unique():
+                sport_activities = activities_week[activities_week['sport_type'] == sport]
+                time_per_day = sport_activities.groupby(
+                    sport_activities['start_date_local'].dt.weekday
+                )['moving_time'].sum().reindex(range(7), fill_value=0) / 60.0  # Convert to minutes
+                time_per_sport_per_day_mins[sport] = {int(k): float(round(v, 1)) for k, v in time_per_day.to_dict().items()}
+        
         # Most active day
         if not activities_week.empty:
             activities_per_day_series = activities_week.groupby(
@@ -348,6 +358,7 @@ class StravaAnalytics:
             WeeklyReportFeatures.ACTIVITIES_PER_SPORT: {k: int(v) for k, v in activities_per_sport.items()},
             WeeklyReportFeatures.TIME_PER_SPORT_HOURS: {k: float(round(v, 2)) for k, v in time_per_sport.items()},
             WeeklyReportFeatures.SPORTS_PER_DAY: sports_per_day,
+            WeeklyReportFeatures.TIME_PER_SPORT_PER_DAY_MINS: time_per_sport_per_day_mins,
             WeeklyReportFeatures.MOST_ACTIVE_DAY: most_active_day,
             WeeklyReportFeatures.LONGEST_ACTIVITY_KM: float(round(longest_activity_km, 2)),
             WeeklyReportFeatures.LONGEST_ACTIVITY_NAME: longest_activity_name,
@@ -403,6 +414,7 @@ class WeeklyReportFeatures(StrEnum):
     ACTIVITIES_PER_SPORT = "activities_per_sport"  # dict: sport -> count
     TIME_PER_SPORT_HOURS = "time_per_sport_hours"  # dict: sport -> hours
     SPORTS_PER_DAY = "sports_per_day"  # dict: weekday (0-6) -> list of sports
+    TIME_PER_SPORT_PER_DAY_MINS = "time_per_sport_per_day_mins"  # dict: sport -> dict: weekday (0-6) -> minutes
     MOST_ACTIVE_DAY = "most_active_day"  # weekday (0-6)
     LONGEST_ACTIVITY_KM = "longest_activity_km"
     LONGEST_ACTIVITY_NAME = "longest_activity_name"

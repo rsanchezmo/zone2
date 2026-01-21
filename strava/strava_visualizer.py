@@ -1772,12 +1772,11 @@ class StravaVisualizer:
 
         
         # 1. DEFINE RATIOS
-        # We split the bottom space: 1.7 for pies, 1.5 for empty bottom buffer
-        # This keeps the sum at 5.7, preserving the size of the top sections.
-        ratios = [1.0, 0.5, 1.0, 1.7, 1.5]
+        # We split the bottom space: 1.7 for pies, 2.0 for accumulated plot
+        ratios = [1.0, 0.5, 1.0, 1.7, 2.0]
         
         # 2. CREATE GRID (5 rows now)
-        gs = fig.add_gridspec(5, 1, height_ratios=ratios, hspace=0.05)
+        gs = fig.add_gridspec(5, 1, height_ratios=ratios, hspace=0.08)
         
         # Extract data
         week_start = weekly_report.get(WeeklyReportFeatures.WEEK_START, "")
@@ -2047,7 +2046,7 @@ class StravaVisualizer:
             
             # Title for distance pie
             ax_dist_pie.text(
-                0.5, -0.05, "DISTANCE (KM)",
+                0.5, 1.15, "DISTANCE (KM)",
                 transform=ax_dist_pie.transAxes,
                 ha='center', va='top',
                 color='white',
@@ -2086,7 +2085,7 @@ class StravaVisualizer:
             
             # Title for time pie
             ax_time_pie.text(
-                0.5, -0.05, "MINUTES",
+                0.5, 1.15, "MINUTES",
                 transform=ax_time_pie.transAxes,
                 ha='center', va='top',
                 color='white',
@@ -2108,6 +2107,95 @@ class StravaVisualizer:
                 fontfamily='monospace',
                 alpha=0.5
             )
+        
+        # --- Accumulated Minutes Line Plot (Bottom Panel) ---
+        ax_accum = fig.add_subplot(gs[4])
+        ax_accum.set_facecolor('black')
+        
+        time_per_sport_per_day = weekly_report.get(WeeklyReportFeatures.TIME_PER_SPORT_PER_DAY_MINS, {})
+        
+        if time_per_sport_per_day and distance_per_sport:
+            days = list(range(7))
+            day_labels = ['L', 'M', 'X', 'J', 'V', 'S', 'D']
+            
+            # Calculate total accumulated across all sports first
+            total_accumulated = [0] * 7
+            total_daily_mins = [0] * 7
+            for sport in all_sports:
+                if sport not in time_per_sport_per_day:
+                    continue
+                daily_mins = time_per_sport_per_day[sport]
+                for day in days:
+                    total_daily_mins[day] += daily_mins.get(day, 0)
+            
+            # Compute total accumulated
+            running_total = 0
+            for day in days:
+                running_total += total_daily_mins[day]
+                total_accumulated[day] = running_total
+            
+            # Plot total accumulated line (white, continuous, behind sport lines)
+            ax_accum.fill_between(days, total_accumulated, alpha=0.05, color='white')
+            ax_accum.plot(days, total_accumulated, color='white', linewidth=2, alpha=0.4, zorder=1)
+            
+            # Points and labels for total - only when change happens
+            for d, val in zip(days, total_accumulated):
+                if total_daily_mins[d] > 0:
+                    # Vertical dashed line from point to bottom
+                    ax_accum.vlines(d, 0, val, colors='white', linestyles='dashed', alpha=0.2, linewidth=1, zorder=0)
+                    ax_accum.scatter([d], [val], color='white', s=60, zorder=6, edgecolors='white', linewidths=1, alpha=0.8)
+                    ax_accum.text(d, val + (max(total_accumulated) * 0.05 if max(total_accumulated) > 0 else 5), 
+                                 f'{int(val)}', ha='center', va='bottom',
+                                 color='white', fontsize=9, fontfamily='monospace', fontweight='bold', alpha=0.9)
+            
+            # For each sport, compute accumulated minutes across the week
+            for sport in all_sports:
+                if sport not in time_per_sport_per_day:
+                    continue
+                    
+                daily_mins = time_per_sport_per_day[sport]
+                accumulated = []
+                total = 0
+                for day in days:
+                    total += daily_mins.get(day, 0)
+                    accumulated.append(total)
+                
+                color = sport_colors.get(sport, neon_color)
+                
+                # Area under the curve with alpha
+                ax_accum.fill_between(days, accumulated, alpha=0.15, color=color)
+                # Line with linewidth 2
+                ax_accum.plot(days, accumulated, color=color, linewidth=2, alpha=0.9, zorder=3)
+                
+                # Points and labels only when there's activity that day (change happens)
+                for d, val in zip(days, accumulated):
+                    day_mins = daily_mins.get(d, 0)
+                    if day_mins > 0:  # Only show point/label when activity happened that day
+                        # Vertical dashed line from point to bottom
+                        ax_accum.vlines(d, 0, val, colors=color, linestyles='dashed', alpha=0.2, linewidth=1, zorder=2)
+                        ax_accum.scatter([d], [val], color=color, s=50, zorder=5, edgecolors='white', linewidths=1)
+                        ax_accum.text(d, val - (max(total_accumulated) * 0.05 if max(total_accumulated) > 0 else 5), 
+                                     f'{int(val)}', ha='center', va='top',
+                                     color=color, fontsize=8, fontfamily='monospace', fontweight='bold')
+            
+            # Style the chart - cleaner without y-axis
+            ax_accum.set_xticks(days)
+            ax_accum.set_xticklabels(day_labels, color='white', fontsize=12, fontfamily='monospace', fontweight='bold')
+            ax_accum.tick_params(axis='x', colors='white', length=0)
+            ax_accum.set_yticks([])  # Remove y-axis ticks
+            ax_accum.spines['bottom'].set_color('white')
+            ax_accum.spines['bottom'].set_alpha(0.3)
+            ax_accum.spines['left'].set_visible(False)
+            ax_accum.spines['top'].set_visible(False)
+            ax_accum.spines['right'].set_visible(False)
+            ax_accum.grid(axis='y', color=neon_color, alpha=0.05, linestyle=':')
+            ax_accum.set_xlim(-0.5, 6.5)
+            
+            # Add some padding at the top for labels
+            ylim = ax_accum.get_ylim()
+            ax_accum.set_ylim(0, ylim[1] * 1.20 if ylim[1] > 0 else 10)
+        else:
+            ax_accum.set_axis_off()
         
         # --- Save ---
         # plt.tight_layout()
