@@ -1772,8 +1772,8 @@ class StravaVisualizer:
         
         # Instagram Story size: 9:16 aspect ratio
         fig = plt.figure(figsize=(9, 16), facecolor='black')
-        # Change this line
-        fig.subplots_adjust(left=0.02, right=0.98, top=0.95, bottom=0.02)
+        # Adjust margins - increased bottom margin for the accumulated plot
+        fig.subplots_adjust(left=0.02, right=0.98, top=0.95, bottom=0.05)
 
         
         # 1. DEFINE RATIOS
@@ -1781,7 +1781,7 @@ class StravaVisualizer:
         ratios = [1.0, 0.5, 1.0, 1.7, 2.0]
         
         # 2. CREATE GRID (5 rows now)
-        gs = fig.add_gridspec(5, 1, height_ratios=ratios, hspace=0.08)
+        gs = fig.add_gridspec(5, 1, height_ratios=ratios, hspace=0.10)
         
         # Extract data
         week_start = weekly_report.get(WeeklyReportFeatures.WEEK_START, "")
@@ -1943,7 +1943,7 @@ class StravaVisualizer:
         for i, (bar, count) in enumerate(zip(bars, counts)):
             if count > 0:
                 ax_chart.text(bar.get_width() + max_count * 0.05, bar.get_y() + bar.get_height() / 2,
-                             f'{count}', va='center', ha='left',
+                             f'{count}%', va='center', ha='left',
                              color=zone_colors[zones[i]], fontsize=12, fontfamily='monospace', fontweight='bold')
         
         # Style the chart - better centered
@@ -2213,11 +2213,11 @@ class StravaVisualizer:
         ax_accum.set_facecolor('black')
         
         # Add title - using ax_accum.text with transform for 0-1 positioning
-        ax_accum.text(0.15, 0.85, 'ACCUMULATED TRAINING TIME', 
-                     transform=ax_accum.transAxes,
-                     ha='left', va='top',
-                     color='white', fontsize=11,
-                     fontfamily='monospace', fontweight='bold', alpha=0.7)
+        # ax_accum.text(0.5, 0.90, 'ACCUMULATED TRAINING TIME', 
+        #              transform=ax_accum.transAxes,
+        #              ha='center', va='top',
+        #              color='white', fontsize=11,
+        #              fontfamily='monospace', fontweight='bold', alpha=0.7)
         
         time_per_sport_per_day = weekly_report.get(WeeklyReportFeatures.TIME_PER_SPORT_PER_DAY_MINS, {})
         
@@ -2288,10 +2288,9 @@ class StravaVisualizer:
             # Style the chart - cleaner without y-axis
             ax_accum.set_xticks(days)
             ax_accum.set_xticklabels(day_labels, color='white', fontsize=12, fontfamily='monospace', fontweight='bold')
-            ax_accum.tick_params(axis='x', colors='white', length=0)
+            ax_accum.tick_params(axis='x', colors='white', length=0, pad=10)
             ax_accum.set_yticks([])  # Remove y-axis ticks
-            ax_accum.spines['bottom'].set_color('white')
-            ax_accum.spines['bottom'].set_alpha(0.3)
+            ax_accum.spines['bottom'].set_visible(False)
             ax_accum.spines['left'].set_visible(False)
             ax_accum.spines['top'].set_visible(False)
             ax_accum.spines['right'].set_visible(False)
@@ -2312,7 +2311,7 @@ class StravaVisualizer:
                 loc='upper center',
                 ncol=min(3, len(sports_for_legend)),
                 frameon=False,
-                fontsize=8,
+                fontsize=11,
                 labelcolor='white',
             )
         else:

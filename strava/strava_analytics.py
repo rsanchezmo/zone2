@@ -1,4 +1,5 @@
 from enum import StrEnum
+import json
 import pandas as pd
 from strava.strava_activities_cache import StravaActivitiesCache
 from strava.strava_user_cache import StravaUserCache
@@ -322,27 +323,53 @@ class StravaAnalytics:
                 )['moving_time'].sum().reindex(range(7), fill_value=0) / 60.0  # Convert to minutes
                 time_per_sport_per_day_mins[sport] = {int(k): float(round(v, 1)) for k, v in time_per_day.to_dict().items()}
         
-        # HR Zone distribution (based on average_heartrate)
+        # HR Zone distribution (based on streams heart rate if available)
         # Default zones (% of max HR): Z1: 50-60%, Z2: 60-70%, Z3: 70-80%, Z4: 80-90%, Z5: 90-100%
-        hr_zone_distribution = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
-        if not activities_week.empty and 'average_heartrate' in activities_week.columns:
+        # Returns percentage of measurements in each zone
+        hr_zone_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+        total_hr_measurements = 0
+        
+        if not activities_week.empty:
             hr_max = self.get_max_heart_rate()
-            activities_with_hr = activities_week[activities_week['average_heartrate'].notna()]
             
-            for _, activity in activities_with_hr.iterrows():
-                avg_hr = activity['average_heartrate']
-                hr_percent = (avg_hr / hr_max) * 100
-                
-                if hr_percent < 60:
-                    hr_zone_distribution[1] += 1
-                elif hr_percent < 70:
-                    hr_zone_distribution[2] += 1
-                elif hr_percent < 80:
-                    hr_zone_distribution[3] += 1
-                elif hr_percent < 90:
-                    hr_zone_distribution[4] += 1
-                else:
-                    hr_zone_distribution[5] += 1
+            for _, activity in activities_week.iterrows():
+                # Try to use streams data if available
+                if 'streams' in activity and pd.notna(activity['streams']) and activity['streams']:
+                    try:
+                        streams_data = json.loads(activity['streams']) if isinstance(activity['streams'], str) else activity['streams']
+                        
+                        # streams_data is a list of dicts with 'time', 'heartrate', etc.
+                        if isinstance(streams_data, list) and len(streams_data) > 0:
+                            for point in streams_data:
+                                if 'heartrate' in point and point['heartrate'] is not None:
+                                    hr = point['heartrate']
+                                    hr_percent = (hr / hr_max) * 100
+                                    total_hr_measurements += 1
+                                    
+                                    # Assign to zone
+                                    if hr_percent < 60:
+                                        hr_zone_counts[1] += 1
+                                    elif hr_percent < 70:
+                                        hr_zone_counts[2] += 1
+                                    elif hr_percent < 80:
+                                        hr_zone_counts[3] += 1
+                                    elif hr_percent < 90:
+                                        hr_zone_counts[4] += 1
+                                    else:
+                                        hr_zone_counts[5] += 1
+                    except (json.JSONDecodeError, TypeError, KeyError):
+                        # If streams parsing fails, skip this activity
+                        pass
+        
+        # Calculate percentage for each zone
+        hr_zone_distribution = {}
+        if total_hr_measurements > 0:
+            hr_zone_distribution = {
+                zone: round((count / total_hr_measurements) * 100, 1) 
+                for zone, count in hr_zone_counts.items()
+            }
+        else:
+            hr_zone_distribution = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 5: 0.0}
         
         # Most active day
         if not activities_week.empty:

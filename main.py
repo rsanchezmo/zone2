@@ -5,7 +5,7 @@ from pathlib import Path
 if __name__ == "__main__":
 
     strava_intelligence = StravaIntelligence(workdir=Path("./strava_intelligence_workdir"))
-    strava_intelligence.ensure_activities_with_streams()
+    # strava_intelligence.ensure_activities_with_streams()
 
     strava_intelligence.plot_last_activity(sport_type='Run')
 
@@ -29,7 +29,7 @@ if __name__ == "__main__":
     #     sport_types=['Run'], region="europe")
 
     weekly_data = strava_intelligence.get_weekly_report()
-    weekly_data = strava_intelligence.get_weekly_report(week_start_date="2026-01-07")
+    weekly_data = strava_intelligence.get_weekly_report(week_start_date="2026-01-14")
     
     strava_year_in_sport = strava_intelligence.get_year_in_sport(year=2026, 
                                                                  main_sport='Run', 
