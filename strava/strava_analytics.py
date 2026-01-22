@@ -315,6 +315,7 @@ class StravaAnalytics:
         
         # Time per sport per day (minutes) - for accumulated line plot
         time_per_sport_per_day_mins = {}
+        activities_titles_per_day_per_sport = {}
         if not activities_week.empty:
             for sport in activities_week['sport_type'].unique():
                 sport_activities = activities_week[activities_week['sport_type'] == sport]
@@ -322,6 +323,13 @@ class StravaAnalytics:
                     sport_activities['start_date_local'].dt.weekday
                 )['moving_time'].sum().reindex(range(7), fill_value=0) / 60.0  # Convert to minutes
                 time_per_sport_per_day_mins[sport] = {int(k): float(round(v, 1)) for k, v in time_per_day.to_dict().items()}
+                
+                # Activity titles per day for this sport
+                titles_per_day = {}
+                for day in range(7):
+                    day_activities = sport_activities[sport_activities['start_date_local'].dt.weekday == day]
+                    titles_per_day[day] = day_activities['name'].tolist()
+                activities_titles_per_day_per_sport[sport] = titles_per_day
         
         # HR Zone distribution (based on streams heart rate if available)
         # Default zones (% of max HR): Z1: 50-60%, Z2: 60-70%, Z3: 70-80%, Z4: 80-90%, Z5: 90-100%
@@ -404,6 +412,7 @@ class StravaAnalytics:
             WeeklyReportFeatures.TIME_PER_SPORT_HOURS: {k: float(round(v, 2)) for k, v in time_per_sport.items()},
             WeeklyReportFeatures.SPORTS_PER_DAY: sports_per_day,
             WeeklyReportFeatures.TIME_PER_SPORT_PER_DAY_MINS: time_per_sport_per_day_mins,
+            WeeklyReportFeatures.ACTIVITIES_TITLES_PER_DAY_PER_SPORT: activities_titles_per_day_per_sport,
             WeeklyReportFeatures.HR_ZONE_DISTRIBUTION: hr_zone_distribution,
             WeeklyReportFeatures.MOST_ACTIVE_DAY: most_active_day,
             WeeklyReportFeatures.LONGEST_ACTIVITY_KM: float(round(longest_activity_km, 2)),
@@ -461,6 +470,7 @@ class WeeklyReportFeatures(StrEnum):
     TIME_PER_SPORT_HOURS = "time_per_sport_hours"  # dict: sport -> hours
     SPORTS_PER_DAY = "sports_per_day"  # dict: weekday (0-6) -> list of sports
     TIME_PER_SPORT_PER_DAY_MINS = "time_per_sport_per_day_mins"  # dict: sport -> dict: weekday (0-6) -> minutes
+    ACTIVITIES_TITLES_PER_DAY_PER_SPORT = "activities_titles_per_day_per_sport"  # dict: sport -> dict: weekday (0-6) -> list of activity titles
     HR_ZONE_DISTRIBUTION = "hr_zone_distribution"  # dict: zone (1-5) -> count of activities
     MOST_ACTIVE_DAY = "most_active_day"  # weekday (0-6)
     LONGEST_ACTIVITY_KM = "longest_activity_km"

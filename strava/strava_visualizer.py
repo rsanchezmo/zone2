@@ -2220,6 +2220,7 @@ class StravaVisualizer:
         #              fontfamily='monospace', fontweight='bold', alpha=0.7)
         
         time_per_sport_per_day = weekly_report.get(WeeklyReportFeatures.TIME_PER_SPORT_PER_DAY_MINS, {})
+        activities_titles_per_day_per_sport = weekly_report.get(WeeklyReportFeatures.ACTIVITIES_TITLES_PER_DAY_PER_SPORT, {})
         
         if time_per_sport_per_day and distance_per_sport:
             days = list(range(7))
@@ -2284,6 +2285,18 @@ class StravaVisualizer:
                         ax_accum.text(d, val - (max(total_accumulated) * 0.05 if max(total_accumulated) > 0 else 5), 
                                      f'{int(val)}', ha='center', va='top',
                                      color=color, fontsize=8, fontfamily='monospace', fontweight='bold')
+                        
+                        # Add activity titles if available (small text below the minutes)
+                        if sport in activities_titles_per_day_per_sport:
+                            titles = activities_titles_per_day_per_sport[sport].get(d, [])
+                            if titles:
+                                # Truncate long titles and join multiple activities
+                                max_size = 18
+                                short_titles = [t[:max_size] + '...' if len(t) > max_size else t for t in titles]
+                                title_text = ', '.join(short_titles)
+                                ax_accum.text(d, val - (max(total_accumulated) * 0.10 if max(total_accumulated) > 0 else 10), 
+                                             title_text, ha='center', va='top',
+                                             color=color, fontsize=7, fontfamily='monospace', alpha=0.8, fontweight='bold')
             
             # Style the chart - cleaner without y-axis
             ax_accum.set_xticks(days)
