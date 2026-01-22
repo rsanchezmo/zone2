@@ -440,7 +440,8 @@ class StravaVisualizer:
         strava_endpoint,
         folder: Path | None = None,
         title: str | None = None,
-        neon_color: str = "#fc0101"
+        neon_color: str = "#fc0101",
+        filename: str | None = None
     ) -> None:
         """
         Plot a single activity with neon style map and elevation profile below.
@@ -630,7 +631,7 @@ class StravaVisualizer:
         output_folder.mkdir(parents=True, exist_ok=True)
         
         safe_title = (title or activity_name).replace(' ', '_').lower()
-        filename = f"activity_{activity_id}_{safe_title}.png"
+        filename = f"activity_{activity_id}_{safe_title}.png" if filename is None else filename
         save_path = output_folder / filename
         
         plt.savefig(

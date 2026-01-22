@@ -15,10 +15,12 @@ A Python toolkit for analyzing and visualizing your Strava activities without pa
   - 🎛️ **HUD Dashboard**: Cyberpunk-style histograms for distance, heart rate, and pace
   - 📈 **Efficiency Factor**: Track your aerobic efficiency (speed/HR) over time
   - 🚀 **Performance Frontier**: Pareto frontier with Riegel's fatigue model fitting
+  - 📅 **Weekly Report**: Instagram Story-sized weekly training summary with HR zones, sports breakdown, and accumulated training time
   - 🎯 **Year in Sport**: Instagram Story-sized summaries of your yearly training (main sport & totals)
   - 🏆 **Activity Plots**: Neon-style individual activity visualization with elevation profile
 - **Analytics**: WIP
 - **GeoJSON Export**: Export your activities as GeoJSON for use in mapping applications sycg as QGIS
+- **Telegram Bot**: Automated scheduled delivery of weekly and monthly reports to your Telegram chat
 - **Smart Caching**: Efficient local caching with incremental sync supportm to avoid redundant API calls
 
 ## 📋 Prerequisites
@@ -71,6 +73,29 @@ STRAVA_CLIENT_SECRET=your_client_secret
 
 4. On first run, the app will open a browser for OAuth authorization. Follow the prompts to grant access.
 
+## 🤖 Telegram Bot Setup (Optional)
+
+You can optionally set up a Telegram bot to receive automated weekly reports (Sundays at 21:00) and monthly Year in Sport summaries (last day of month at 21:00).
+
+1. Create a Telegram bot via [@BotFather](https://t.me/botfather) and get your bot token
+2. Get your Telegram chat ID (send a message to your bot, then visit `https://api.telegram.org/bot<YourBOTToken>/getUpdates`)
+3. Add these to your `.env` file:
+
+```env
+TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_CHAT_ID=your_chat_id
+```
+
+4. Run the bot:
+
+```bash
+python telegram_bot.py
+```
+
+The bot supports manual commands:
+- `/weekly` - Generate and send current week's report
+- `/monthly` - Generate and send current year's report
+
 ## 🚀 Quick Start
 
 ```python
@@ -112,6 +137,9 @@ strava.get_year_in_sport(
     comparison_neon_color="#00aaff"
 )
 
+# Generate Weekly Report (Instagram Story format)
+strava.get_weekly_report(week_start_date="2026-01-12", neon_color="#fc0101")
+
 # Export activities as GeoJSON
 strava.save_geojson_activities()
 ```
@@ -145,6 +173,11 @@ Track your aerobic efficiency over time with rolling averages and variance bands
 Visualize your best performances across different distances with Riegel's power-law fatigue model fitting.
 
 ![Performance Frontier](readme_data/performance_frontier.png)
+
+### Weekly Report
+Generate Instagram Story-sized (9:16) weekly training summaries. Includes total stats (activities, km, hours, active days, elevation), HR zone distribution, sport breakdowns (distance and time pie charts), and accumulated training time line plot showing daily progression with activity titles.
+
+![Weekly Report](strava_intelligence_workdir/weekly_reports/weekly_report_2026-01-12.png)
 
 ### Bubble Map
 Geographic bubble visualization showing your activity locations with size proportional to distance or count. Great for visualizing where you train most.
@@ -215,6 +248,7 @@ StravaIntelligence(
 - `sync_activities(full_sync=False, include_streams=False)` - Sync activities from Strava
 - `save_geojson_activities()` - Export activities as GeoJSON
 - `get_year_in_sport(year, main_sport, neon_color, comparison_year=None, comparison_neon_color="#00aaff")` - Generate Year in Sport visualizations with optional year comparison
+- `get_weekly_report(week_start_date=None, neon_color="#fc0101")` - Generate weekly training report (defaults to current week)
 
 ### StravaVisualizer
 
@@ -226,6 +260,7 @@ Generates all visualizations.
 - `hud_dashboard(sport_types, bins)`
 - `plot_efficiency_factor(sport_types, window)`
 - `plot_performance_frontier(sport_types)`
+- `plot_weekly_report(weekly_report, folder, neon_color)`
 - `plot_year_in_sport_main(year, year_in_sport, main_sport, folder, neon_color)`
 - `plot_year_in_sport_totals(year, year_in_sport, folder, neon_color)`
 - `plot_activity(activity_id, strava_endpoint, folder, title, neon_color)`
@@ -241,6 +276,7 @@ Provides analytics calculations.
 
 ## 🗺️ Roadmap
 
+- [x] Telegram bot for automated weekly and monthly reports
 - [ ] Extend the analytics, use ML models to provide deeper insights, such as training load, fatigue estimation, and performance prediction
 - [ ] Add more visualizations
 - [ ] Create an mcp server to expose Strava data so you can access it from your LLM based agents

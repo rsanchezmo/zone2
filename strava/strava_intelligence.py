@@ -134,21 +134,24 @@ class StravaIntelligence:
             self.strava_endpoint,
             folder=output_folder, 
             title="Longest Activity (Time)",
-            neon_color=neon_color
+            neon_color=neon_color,
+            filename="longest_time_activity.png"
         )
         self.strava_visualizer.plot_activity(
             year_in_sport_main_sport[YearInSportFeatures.FASTEST_ACTIVITY_SPEED_ID], 
             self.strava_endpoint,
             folder=output_folder, 
             title="Fastest Activity",
-            neon_color=neon_color
+            neon_color=neon_color,
+            filename="fastest_activity.png"
         )
         self.strava_visualizer.plot_activity(
             year_in_sport_main_sport[YearInSportFeatures.LONGEST_ACTIVITY_KM_ID], 
             self.strava_endpoint,
             folder=output_folder, 
             title="Longest Activity (Distance)",
-            neon_color=neon_color
+            neon_color=neon_color,
+            filename="longest_distance_activity.png"
         )
         return year_in_sport
 
