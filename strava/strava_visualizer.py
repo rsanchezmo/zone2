@@ -1779,7 +1779,7 @@ class StravaVisualizer:
         
         # 1. DEFINE RATIOS
         # We split the bottom space: 1.7 for pies, 2.0 for accumulated plot
-        ratios = [1.0, 0.5, 1.0, 1.7, 2.0]
+        ratios = [0.75, 0.5, 1.0, 1.7, 2.0]
         
         # 2. CREATE GRID (5 rows now)
         gs = fig.add_gridspec(5, 1, height_ratios=ratios, hspace=0.10)
@@ -1854,7 +1854,7 @@ class StravaVisualizer:
             
             # Main value
             ax_stats.text(
-                box_center, 0.85, value,
+                box_center, 0.75, value,
                 transform=ax_stats.transAxes,
                 ha='center', va='center',
                 color=neon_color,
@@ -1865,7 +1865,7 @@ class StravaVisualizer:
             
             # Label
             ax_stats.text(
-                box_center, 0.5, label,
+                box_center, 0.45, label,
                 transform=ax_stats.transAxes,
                 ha='center', va='center',
                 color='white',
@@ -1966,134 +1966,6 @@ class StravaVisualizer:
         
         # Center the chart horizontally
         ax_chart.set_position([0.20, ax_chart.get_position().y0, 0.6, ax_chart.get_position().height])
-        
-        # # --- Daily Activity Bubbles (COMMENTED OUT) ---
-        # ax_chart = fig.add_subplot(gs[2])
-        # ax_chart.set_facecolor('black')
-        # ax_chart.set_axis_off()
-        # 
-        # day_names = ['L', 'M', 'X', 'J', 'V', 'S', 'D']  # Spanish weekday initials
-        # days = list(range(7))
-        # 
-        # # Get sports per day data
-        # sports_per_day = weekly_report.get(WeeklyReportFeatures.SPORTS_PER_DAY, {})
-        # 
-        # # Define sport colors - distinct neon colors for each sport
-        # sport_color_palette = [
-        #     '#fc0101',  # Red
-        #     '#00ff88',  # Green
-        #     '#00aaff',  # Blue
-        #     '#ff00ff',  # Magenta
-        #     '#faff00',  # Yellow
-        #     '#ff8800',  # Orange
-        #     '#00ffff',  # Cyan
-        #     '#ff0088',  # Pink
-        #     '#88ff00',  # Lime
-        #     '#8800ff',  # Purple
-        # ]
-        # 
-        # # Create sport color mapping from distance_per_sport (sorted by distance)
-        # if distance_per_sport:
-        #     sorted_sports = sorted(distance_per_sport.items(), key=lambda x: x[1], reverse=True)
-        #     all_sports = [s[0] for s in sorted_sports]
-        # else:
-        #     all_sports = []
-        # 
-        # sport_colors = {sport: sport_color_palette[i % len(sport_color_palette)] 
-        #                for i, sport in enumerate(all_sports)}
-        # 
-        # # Draw bubbles for each day
-        # # Account for aspect ratio: figure is 9x16, gs[2] gets 1.0/5.7 of height
-        # # Aspect ratio correction: width/height of this panel
-        # fig_width, fig_height = 9, 16
-        # total_height_ratio = sum(ratios)
-        # panel_height = fig_height * (1.0 / total_height_ratio)
-        # aspect_ratio = fig_width / panel_height  # ~3.2
-        # 
-        # bubble_radius_y = 0.15  # Vertical radius in axes coords
-        # bubble_radius_x = bubble_radius_y / aspect_ratio  # Horizontal radius adjusted
-        # y_center = 0.7
-        # 
-        # for i, day in enumerate(days):
-        #     x_center = (i + 0.5) / 7  # Distribute evenly across width
-        #     
-        #     day_sports = sports_per_day.get(day, [])
-        #     
-        #     if not day_sports:
-        #         # No training - empty ellipse with neon outline
-        #         ellipse = Ellipse((x_center, y_center), bubble_radius_x * 2, bubble_radius_y * 2, 
-        #                          facecolor='none', edgecolor='white', 
-        #                          linewidth=2, alpha=0.1, transform=ax_chart.transAxes)
-        #         ax_chart.add_patch(ellipse)
-        #     else:
-        #         # Get unique sports and their counts for this day
-        #         sport_counts = Counter(day_sports)
-        #         unique_sports = list(sport_counts.keys())
-        #         counts = list(sport_counts.values())
-        #         total = sum(counts)
-        #         
-        #         if len(unique_sports) == 1:
-        #             # Single sport - filled ellipse
-        #             sport = unique_sports[0]
-        #             color = sport_colors.get(sport, neon_color)
-        #             
-        #             # # Glow effect
-        #             # glow = Ellipse((x_center, y_center), bubble_radius_x * 2 * 1.3, bubble_radius_y * 2 * 1.3, 
-        #             #               facecolor=color, alpha=0.15, transform=ax_chart.transAxes)
-        #             # ax_chart.add_patch(glow)
-        #             
-        #             # Main ellipse
-        #             ellipse = Ellipse((x_center, y_center), bubble_radius_x * 2, bubble_radius_y * 2, 
-        #                              facecolor=color, edgecolor='white', 
-        #                              linewidth=2, alpha=0.6, transform=ax_chart.transAxes)
-        #             ax_chart.add_patch(ellipse)
-        #         else:
-        #             # Multiple sports - draw colored ellipse segments manually
-        #             # Glow effect (use first sport color)
-        #             first_color = sport_colors.get(unique_sports[0], neon_color)
-        #             glow = Ellipse((x_center, y_center), bubble_radius_x * 2 * 1.3, bubble_radius_y * 2 * 1.3, 
-        #                           facecolor=first_color, alpha=0.1, transform=ax_chart.transAxes)
-        #             ax_chart.add_patch(glow)
-        #             
-        #             # For multiple sports, use a simplified approach: draw colored ellipse with first sport
-        #             # and overlay smaller segments - or just blend colors
-        #             # Simplified: draw the dominant sport as main color
-        #             dominant_sport = unique_sports[0]  # Already sorted by count implicitly
-        #             color = sport_colors.get(dominant_sport, neon_color)
-        #             
-        #             ellipse = Ellipse((x_center, y_center), bubble_radius_x * 2, bubble_radius_y * 2, 
-        #                              facecolor=color, edgecolor='white', 
-        #                              linewidth=2, alpha=0.7, transform=ax_chart.transAxes)
-        #             ax_chart.add_patch(ellipse)
-        #             
-        #             # Add a small indicator dot for second sport if exists
-        #             if len(unique_sports) > 1:
-        #                 second_color = sport_colors.get(unique_sports[1], neon_color)
-        #                 dot = Ellipse((x_center + bubble_radius_x * 0.5, y_center + bubble_radius_y * 0.5), 
-        #                              bubble_radius_x * 0.6, bubble_radius_y * 0.6,
-        #                              facecolor=second_color, edgecolor='white', 
-        #                              linewidth=1, alpha=0.9, transform=ax_chart.transAxes)
-        #                 ax_chart.add_patch(dot)
-        #     
-        #     # Day label below bubble
-        #     ax_chart.text(x_center, y_center - bubble_radius_y - 0.1, day_names[i],
-        #                  ha='center', va='center', transform=ax_chart.transAxes,
-        #                  color='white', fontsize=14, fontfamily='monospace', 
-        #                  fontweight='bold', alpha=0.8)
-        # 
-        #                 # Create custom legend patches
-        #     from matplotlib.patches import Patch
-        #     sports = all_sports[:6] if len(all_sports) > 6 else all_sports
-        #     legend_patches = [Patch(facecolor=sport_colors.get(s, neon_color), edgecolor='white', label=s.upper()) 
-        #                     for s in sports]
-        #     ax_chart.legend(
-        #         handles=legend_patches,
-        #         loc='lower center',
-        #         ncol=min(3, len(sports)),
-        #         frameon=False,
-        #         fontsize=9,
-        #         labelcolor='white',
-        #     )
 
         # --- Sports Breakdown: Two Pie Charts Side by Side ---
         # Create a sub-gridspec for title, legend, and pie charts
