@@ -176,6 +176,10 @@ class StravaActivitiesCache:
             df = df[df['start_date'] <= to_date]
         if sports:
             df = df[df["sport_type"].isin(sports)]
+
+        # parse streams JSON if present
+        if 'streams' in df.columns:
+            df['streams'] = df['streams'].apply(lambda x: json.loads(x) if pd.notna(x) else None)
         
         return df
 

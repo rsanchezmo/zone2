@@ -5,18 +5,16 @@ from strava.strava_analytics import WeeklyReportFeatures
 
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-from matplotlib.patches import Circle, Wedge, Patch, Ellipse
 
 import geopandas as gpd
 import contextily as ctx
 import pandas as pd
 from pathlib import Path
-from shapely.geometry import Point
+from shapely.geometry import Point, LineString
 import numpy as np
 from scipy.optimize import curve_fit
 import matplotlib.ticker as ticker
 from datetime import datetime
-from collections import Counter
 
 
 
@@ -448,7 +446,6 @@ class StravaVisualizer:
         Fetches activity streams from Strava API for elevation data.
         Sized for Instagram Stories (9:16 aspect ratio).
         """
-        from shapely.geometry import LineString
         
         # Get activity from cache
         activities = self.strava_analytics.strava_activities_cache.activities
