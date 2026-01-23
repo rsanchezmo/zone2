@@ -342,7 +342,7 @@ class StravaAnalytics:
             
             for _, activity in activities_week.iterrows():
                 # Try to use streams data if available
-                if 'streams' in activity and pd.notna(activity['streams']) and activity['streams']:
+                if 'streams' in activity and activity['streams'] is not None:
                     try:
                         streams_data = json.loads(activity['streams']) if isinstance(activity['streams'], str) else activity['streams']
                         

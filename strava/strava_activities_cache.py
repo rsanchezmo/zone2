@@ -263,7 +263,7 @@ class StravaActivitiesCache:
             needs_update = False
             
             # Check if streams already exist (look for 'streams' field)
-            has_streams = 'streams' in activity and pd.notna(activity.get('streams')) and activity.get('streams')
+            has_streams = 'streams' in activity and activity['streams'] is not None
             
             if not has_streams:
                 print(f"  Fetching streams for activity {activity_id}...")
