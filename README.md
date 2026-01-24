@@ -177,7 +177,7 @@ Visualize your best performances across different distances with Riegel's power-
 ### Weekly Report
 Generate Instagram Story-sized (9:16) weekly training summaries. Includes total stats (activities, km, hours, active days, elevation), HR zone distribution, sport breakdowns (distance and time pie charts), and accumulated training time line plot showing daily progression with activity titles.
 
-![Weekly Report](strava_intelligence_workdir/weekly_reports/weekly_report_2026-01-12.png)
+![Weekly Report](readme_data/weekly_report_2026-01-12.png)
 
 ### Bubble Map
 Geographic bubble visualization showing your activity locations with size proportional to distance or count. Great for visualizing where you train most.
