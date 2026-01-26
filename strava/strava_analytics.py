@@ -1,9 +1,10 @@
 from enum import StrEnum
 import json
 import pandas as pd
+import numpy as np
 from strava.strava_activities_cache import StravaActivitiesCache
 from strava.strava_user_cache import StravaUserCache
-from strava.strava_utils import vo2_max, get_activities_as_gdf
+from strava.strava_utils import vo2_max
 
 
 class StravaAnalytics:
@@ -31,8 +32,30 @@ class StravaAnalytics:
     def get_max_heart_rate(self):
         """Get the athlete's max heart rate from cached zones estimated as Z4_max."""
         zones = self.strava_user_cache.get_athlete_zones()
-        hr_max = zones['heart_rate']['zones'][3]['max']
+        hr_max = zones['heart_rate']['zones'][4]['min']
         return hr_max
+    
+    def get_hr_zones(self):
+        """Get the athlete's heart rate zones from cached zones."""
+        zones = self.strava_user_cache.get_athlete_zones()
+        if zones['heart_rate']['custom_zones']:
+            return zones['heart_rate']['zones']
+        else:
+            hr_max = self.get_max_heart_rate()
+            zone_ranges = {
+                1: (0, int(hr_max * 0.60)),
+                2: (int(hr_max * 0.60), int(hr_max * 0.70)),
+                3: (int(hr_max * 0.70), int(hr_max * 0.80)),
+                4: (int(hr_max * 0.80), int(hr_max * 0.90)),
+                5: (int(hr_max * 0.90), hr_max),
+            }
+            hr_zones = []
+            for z in range(1, 6):
+                hr_zones.append({
+                    'min': zone_ranges[z][0],
+                    'max': zone_ranges[z][1],
+                })
+        return hr_zones
 
     def get_current_vo2_max(self):
         """
@@ -335,6 +358,7 @@ class StravaAnalytics:
         # Default zones (% of max HR): Z1: 50-60%, Z2: 60-70%, Z3: 70-80%, Z4: 80-90%, Z5: 90-100%
         # Returns percentage of measurements in each zone
         hr_zone_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+        hr_athlete_zones = self.get_hr_zones()
         total_hr_measurements = 0
         
         if not activities_week.empty:
@@ -351,17 +375,16 @@ class StravaAnalytics:
                             for point in streams_data:
                                 if 'heartrate' in point and point['heartrate'] is not None:
                                     hr = point['heartrate']
-                                    hr_percent = (hr / hr_max) * 100
                                     total_hr_measurements += 1
                                     
                                     # Assign to zone
-                                    if hr_percent < 60:
+                                    if hr_athlete_zones[0]['min'] <= hr < hr_athlete_zones[0]['max']:
                                         hr_zone_counts[1] += 1
-                                    elif hr_percent < 70:
+                                    elif hr_athlete_zones[1]['min'] <= hr < hr_athlete_zones[1]['max']:
                                         hr_zone_counts[2] += 1
-                                    elif hr_percent < 80:
+                                    elif hr_athlete_zones[2]['min'] <= hr < hr_athlete_zones[2]['max']:
                                         hr_zone_counts[3] += 1
-                                    elif hr_percent < 90:
+                                    elif hr_athlete_zones[3]['min'] <= hr < hr_athlete_zones[3]['max']:
                                         hr_zone_counts[4] += 1
                                     else:
                                         hr_zone_counts[5] += 1
@@ -417,8 +440,10 @@ class StravaAnalytics:
             WeeklyReportFeatures.MOST_ACTIVE_DAY: most_active_day,
             WeeklyReportFeatures.LONGEST_ACTIVITY_KM: float(round(longest_activity_km, 2)),
             WeeklyReportFeatures.LONGEST_ACTIVITY_NAME: longest_activity_name,
+            WeeklyReportFeatures.HR_ZONE_RANGES: {
+                i: (zone['min'], zone['max']) for i, zone in enumerate(hr_athlete_zones, start=1)
+            } if hr_athlete_zones else {}
         }
-
 
 class YearInSportFeatures(StrEnum):
     TOTAL_ACTIVITIES = "total_activities"
@@ -475,3 +500,4 @@ class WeeklyReportFeatures(StrEnum):
     MOST_ACTIVE_DAY = "most_active_day"  # weekday (0-6)
     LONGEST_ACTIVITY_KM = "longest_activity_km"
     LONGEST_ACTIVITY_NAME = "longest_activity_name"
+    HR_ZONE_RANGES = "hr_zone_ranges"  # dict: zone (1-5) -> (min_hr, max_hr)

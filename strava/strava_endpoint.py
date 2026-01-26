@@ -286,6 +286,14 @@ class StravaEndpoint:
         
         return response.json()
     
+    def get_user_gender(self) -> str | None:
+        athlete = self.get_athlete()
+        return athlete.get('sex')
+        
+    def get_user_weight_kg(self) -> float | None:
+        athlete = self.get_athlete()
+        return athlete.get('weight')
+    
 
     def get_athlete_stats(self) -> dict:
         """Fetch athlete stats from Strava API, Only includes data from activities set to Everyone visibilty."""

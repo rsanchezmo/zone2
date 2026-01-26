@@ -1918,13 +1918,7 @@ class StravaVisualizer:
         }
         
         # Calculate HR ranges for each zone
-        zone_ranges = {
-            1: (0, int(hr_max * 0.60)),
-            2: (int(hr_max * 0.60), int(hr_max * 0.70)),
-            3: (int(hr_max * 0.70), int(hr_max * 0.80)),
-            4: (int(hr_max * 0.80), int(hr_max * 0.90)),
-            5: (int(hr_max * 0.90), hr_max),
-        }
+        zone_ranges = weekly_report[WeeklyReportFeatures.HR_ZONE_RANGES]
         
         zone_labels = [f'Z{z} ({zone_ranges[z][0]}-{zone_ranges[z][1]})' for z in range(1, 6)]
         zones = [1, 2, 3, 4, 5]
