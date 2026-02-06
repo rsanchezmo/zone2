@@ -2,7 +2,7 @@ from strava.strava_intelligence import StravaIntelligence
 from strava.strava_map_matching import StravaMapMatcher
 from pathlib import Path
 
-from strava.strava_utils import get_activities_as_gdf
+from strava.strava_utils import get_activities_as_gdf, get_activities_as_gdf_from_streams
 
 
 if __name__ == "__main__":
@@ -17,21 +17,25 @@ if __name__ == "__main__":
         force_reload=False,
     )
     
-    activities_gdf = get_activities_as_gdf(
+    activities_gdf = get_activities_as_gdf_from_streams(
         strava_intelligence.strava_activities_cache.activities
     )
     
+    # get a dataframe with the activity id == 1234567890
+    # activities_gdf = activities_gdf[activities_gdf["id"] == 1234567890]
+
     matched_gdf, match_details = strava_map_matcher.match(activities_gdf)
     
     # Save matched routes (real OSM edge geometries)
-    matched_gdf.to_file(
-        strava_map_matcher.workdir / "matched_activities.gpkg", driver="GPKG"
-    )
+    if not matched_gdf.empty:
+        matched_gdf.to_file(
+            strava_map_matcher.workdir / "matched_activities.gpkg", driver="GPKG"
+        )
     
     # # Inspect per-activity matching details
-    # for activity_id, result in match_details.items():
-    #     print(f"\nActivity {activity_id} — quality: {result.quality}")
-    #     result.plot(save_path=workdir / f"map_match_{activity_id}.png")
+    for activity_id, result in match_details.items():
+        print(f"\nActivity {activity_id} — quality: {result.quality}")
+        result.plot(save_path=workdir / f"map_match_{activity_id}.png")
 
     # weekly_data = strava_intelligence.get_weekly_report()
 

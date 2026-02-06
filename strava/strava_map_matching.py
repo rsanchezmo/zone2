@@ -8,6 +8,8 @@ import matplotlib.lines as mlines
 from pathlib import Path
 from shapely.geometry import LineString, MultiLineString, Point
 from shapely.ops import linemerge
+from shapely.prepared import prep
+import numpy as np
 from dataclasses import dataclass, field
 
 
@@ -241,6 +243,67 @@ class StravaMapMatcher:
                 return self._edges_gdf.loc[full_key]
         return None
 
+    def _split_path_by_coverage(self, geom: LineString) -> list[list[tuple]]:
+        """Clip a LineString to the city boundary and return in-coverage segments.
+
+        Walks the linestring vertex-by-vertex to avoid planar noding issues
+        that `split()` / `intersection()` cause with self-intersecting loops.
+
+        1. If the geom is fully contained → return it directly (fast path).
+        2. Otherwise, classify each vertex as inside/outside the boundary,
+           group contiguous inside-runs into segments.
+        3. Further split each segment at large inter-point gaps.
+
+        Returns a list of sub-paths (each a list of coordinate tuples).
+        Only segments with >= 2 points are returned.
+        """
+        boundary_geom = self._city_boundary.union_all()
+
+        # Fast path: fully inside → skip point-by-point test
+        if boundary_geom.contains(geom):
+            return self._split_by_distance(list(geom.coords))
+
+        # Walk vertices and split into contiguous inside-runs
+        prepared_boundary = prep(boundary_geom)
+        coords = list(geom.coords)
+
+        segments: list[list[tuple]] = []
+        current: list[tuple] = []
+
+        for coord in coords:
+            if prepared_boundary.contains(Point(coord)):
+                current.append(coord)
+            else:
+                if len(current) >= 2:
+                    segments.append(current)
+                current = []
+
+        if len(current) >= 2:
+            segments.append(current)
+
+        # Further split each segment at large inter-point gaps
+        result: list[list[tuple]] = []
+        for seg in segments:
+            result.extend(self._split_by_distance(seg))
+
+        return result
+
+    @staticmethod
+    def _split_by_distance(coords: list[tuple], max_gap_m: float = 100.0) -> list[list[tuple]]:
+        """Split a coordinate list at consecutive points further than max_gap_m apart."""
+        n = len(coords)
+        if n < 2:
+            return []
+
+        a = np.asarray(coords)           # shape (n, 2)
+        d = np.diff(a, axis=0)                             # shape (n-1, 2)
+        dist2 = (d * d).sum(axis=1)
+        cuts = np.nonzero(dist2 > (max_gap_m * max_gap_m))[0] + 1
+
+        parts = np.split(a, cuts)                          # [web:25]
+        # Keep only segments with >= 2 points; convert back to list[tuple]
+        return [list(map(tuple, p)) for p in parts if len(p) >= 2]
+
     def _create_matcher(self) -> DistanceMatcher:
         """Create a fresh DistanceMatcher instance."""
         if self._map_con is None:
@@ -248,12 +311,13 @@ class StravaMapMatcher:
 
         return DistanceMatcher(
             self._map_con,
-            max_dist=200,
-            max_dist_init=100,
-            min_prob_norm=0.0001,
-            non_emitting_length_factor=0.9,
-            obs_noise=50,
-            dist_noise=50,
+            max_dist=50,
+            max_dist_init=50,
+            min_prob_norm=1e-3,
+            non_emitting_length_factor=0.75,
+            obs_noise=25,
+            obs_noise_ne=50,
+            dist_noise=35,
             max_lattice_width=20,
             non_emitting_states=True,
         )
@@ -394,66 +458,107 @@ class StravaMapMatcher:
                 continue
 
             activity_id = row.get('id', idx)
-            path = list(geom.coords)
+            full_path = list(geom.coords)
 
-            # Fresh matcher per activity to avoid stale state
-            matcher = self._create_matcher()
+            # Split path into contiguous in-coverage segments
+            segments = self._split_path_by_coverage(geom)
+            if not segments:
+                print(f"⚠️ Activity {activity_id}: no GPS points within city boundary")
+                continue
 
-            try:
-                states, last_idx = matcher.match(path)
+            # Match each segment independently and collect results
+            all_edges_gdfs: list[gpd.GeoDataFrame] = []
+            all_details_dfs: list[gpd.GeoDataFrame] = []
+            all_edge_geoms: list[LineString | MultiLineString] = []
+            total_matched = 0
+            total_observations = 0
 
-                if not states or len(states) == 0:
-                    print(f"⚠️ No match found for activity {activity_id}")
+            for seg_id, segment_path in enumerate(segments):
+                matcher = self._create_matcher()
+
+                try:
+                    states, last_idx = matcher.match(segment_path)
+                except Exception as e:
+                    print(f"  ⚠️ Segment {seg_id} failed: {e}")
                     continue
 
-                # 1. Build matched edges with real OSM geometries
-                matched_edges_gdf, matched_geometry = self._build_matched_edges(matcher, utm_crs)
+                if not states or len(states) == 0:
+                    continue
 
-                # 2. Build per-observation matching details
-                matching_details = self._build_matching_details(matcher, path, utm_crs)
+                seg_edges_gdf, seg_geometry = self._build_matched_edges(matcher, utm_crs)
+                seg_details = self._build_matching_details(matcher, segment_path, utm_crs)
 
-                # 3. Quality metrics
-                avg_dist = matching_details['dist_obs'].mean() if not matching_details.empty else None
-                max_dist = matching_details['dist_obs'].max() if not matching_details.empty else None
-                n_emitting = matching_details['is_emitting'].sum() if not matching_details.empty else 0
+                if not seg_details.empty:
+                    seg_details['segment_id'] = seg_id
+                if not seg_edges_gdf.empty:
+                    seg_edges_gdf['segment_id'] = seg_id
 
-                quality = {
-                    'num_observations': len(path),
-                    'num_matched': last_idx + 1,
-                    'num_emitting_states': int(n_emitting),
-                    'num_matched_edges': len(matched_edges_gdf),
-                    'avg_dist_obs_m': round(float(avg_dist), 2) if avg_dist is not None else None,
-                    'max_dist_obs_m': round(float(max_dist), 2) if max_dist is not None else None,
-                    'matched_path_distance_m': matcher.path_pred_distance(),
-                    'observation_distance_m': matcher.path_distance(),
-                    'early_stop_idx': matcher.early_stop_idx,
-                }
+                all_edges_gdfs.append(seg_edges_gdf)
+                all_details_dfs.append(seg_details)
+                if seg_geometry is not None:
+                    all_edge_geoms.append(seg_geometry)
 
-                match_results[activity_id] = MatchResult(
-                    activity_id=activity_id,
-                    original_geometry=geom,
-                    matched_geometry=matched_geometry,
-                    matched_edges_gdf=matched_edges_gdf,
-                    matching_details=matching_details,
-                    quality=quality,
-                )
+                total_matched += last_idx + 1
+                total_observations += len(segment_path)
 
-                result = row.to_dict()
-                result['matched_geometry'] = matched_geometry
-                result['num_matched_edges'] = quality['num_matched_edges']
-                result['avg_dist_obs_m'] = quality['avg_dist_obs_m']
-                result['max_dist_obs_m'] = quality['max_dist_obs_m']
-                result['matched_distance_m'] = quality['matched_path_distance_m']
-                result['early_stop_idx'] = quality['early_stop_idx']
-                matched_rows.append(result)
-
-                print(f"✅ Activity {activity_id}: {quality['num_matched_edges']} edges, "
-                      f"avg snap dist {quality['avg_dist_obs_m']}m, "
-                      f"early_stop={quality['early_stop_idx']}")
-
-            except Exception as e:
-                print(f"❌ Error matching activity {activity_id}: {e}")
+            if not all_edges_gdfs or all(df.empty for df in all_edges_gdfs):
+                print(f"⚠️ No match found for activity {activity_id}")
                 continue
+
+            # Merge all segments
+            matched_edges_gdf = pd.concat(all_edges_gdfs, ignore_index=True)  # type: ignore[assignment]
+            matching_details = pd.concat(all_details_dfs, ignore_index=True)  # type: ignore[assignment]
+
+            # Flatten any MultiLineStrings before merging
+            flat_lines: list[LineString] = []
+            for g in all_edge_geoms:
+                if isinstance(g, MultiLineString):
+                    flat_lines.extend(g.geoms)
+                elif isinstance(g, LineString):
+                    flat_lines.append(g)
+            matched_geometry = linemerge(MultiLineString(flat_lines)) if flat_lines else None
+
+            # Quality metrics (emitting states only for distance stats)
+            emitting = matching_details[matching_details['is_emitting']] if not matching_details.empty else matching_details
+            avg_dist = emitting['dist_obs'].mean() if not emitting.empty else None
+            max_dist = emitting['dist_obs'].max() if not emitting.empty else None
+            n_emitting = int(emitting.shape[0]) if not emitting.empty else 0
+
+            quality = {
+                'num_observations_total': len(full_path),
+                'num_observations_in_coverage': total_observations,
+                'num_matched': total_matched,
+                'num_segments': len(segments),
+                'num_segments_matched': sum(1 for df in all_edges_gdfs if not df.empty),
+                'num_emitting_states': n_emitting,
+                'num_matched_edges': len(matched_edges_gdf),
+                'avg_dist_obs_m': round(float(avg_dist), 2) if avg_dist is not None else None,
+                'max_dist_obs_m': round(float(max_dist), 2) if max_dist is not None else None,
+                'coverage_pct': round(100 * total_matched / len(full_path), 1) if full_path else 0,
+            }
+
+            match_results[activity_id] = MatchResult(
+                activity_id=activity_id,
+                original_geometry=geom,
+                matched_geometry=matched_geometry,
+                matched_edges_gdf=matched_edges_gdf,
+                matching_details=matching_details,
+                quality=quality,
+            )
+
+            result = row.to_dict()
+            result['matched_geometry'] = matched_geometry
+            result['num_matched_edges'] = quality['num_matched_edges']
+            result['avg_dist_obs_m'] = quality['avg_dist_obs_m']
+            result['max_dist_obs_m'] = quality['max_dist_obs_m']
+            result['num_segments'] = quality['num_segments']
+            result['coverage_pct'] = quality['coverage_pct']
+            matched_rows.append(result)
+
+            print(f"✅ Activity {activity_id}: {quality['num_matched_edges']} edges, "
+                  f"avg snap {quality['avg_dist_obs_m']}m, "
+                  f"{quality['num_segments_matched']}/{quality['num_segments']} segments, "
+                  f"coverage {quality['coverage_pct']}%")
 
         if not matched_rows:
             print("⚠️ No activities were successfully matched")

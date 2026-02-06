@@ -146,6 +146,50 @@ def get_activities_as_gdf(activities: pd.DataFrame) -> gpd.GeoDataFrame:
     return gpd.GeoDataFrame(activities, geometry='geometry', crs=BASE_CRS)  
 
 
+def get_activities_as_gdf_from_streams(activities: pd.DataFrame) -> gpd.GeoDataFrame:
+    """Convert activities to a GeoDataFrame using high-resolution GPS streams (lat/lng).
+
+    Falls back to summary_polyline for activities without cached streams.
+    """
+    activities = activities.copy()
+
+    def _parse_streams(row):
+        streams = row.get('streams')
+        if streams is not None:
+            if isinstance(streams, str):
+                try:
+                    streams = json.loads(streams)
+                except json.JSONDecodeError:
+                    streams = None
+
+            if isinstance(streams, list) and len(streams) >= 2:
+                coords = [(pt['lng'], pt['lat']) for pt in streams
+                          if 'lat' in pt and 'lng' in pt]
+                if len(coords) >= 2:
+                    return LineString(coords)
+
+        # Fallback to summary polyline
+        map_data = row.get('map')
+        if map_data is not None:
+            if isinstance(map_data, str):
+                try:
+                    map_data = json.loads(map_data)
+                except json.JSONDecodeError:
+                    return None
+            if isinstance(map_data, dict) and map_data.get('summary_polyline'):
+                decoded = polyline.decode(map_data['summary_polyline'], geojson=True)
+                return LineString(decoded)
+        return None
+
+    activities['geometry'] = activities.apply(_parse_streams, axis=1)
+    activities = activities.dropna(subset=['geometry'])
+
+    if activities.empty:
+        return gpd.GeoDataFrame(geometry=[], crs=BASE_CRS)
+
+    return gpd.GeoDataFrame(activities, geometry='geometry', crs=BASE_CRS)
+
+
 def vo2_max(hr_max: float, hr_rest: float) -> float:
     """
     Calculate VO2 Max based on Uth-Sørensen-Overgaard-Pedersen estimation:
