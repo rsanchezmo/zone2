@@ -2186,7 +2186,7 @@ class StravaVisualizer:
             ax_accum.legend(
                 handles=legend_patches,
                 loc='upper center',
-                ncol=min(3, len(sports_for_legend)),
+                ncol=min(4, len(sports_for_legend)),
                 frameon=False,
                 fontsize=11,
                 labelcolor='white',

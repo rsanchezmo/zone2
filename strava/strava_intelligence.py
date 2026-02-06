@@ -70,6 +70,13 @@ class StravaIntelligence:
         gdf.to_file(filepath, driver="GeoJSON")
         print(f"✓ Saved activities to {filepath}")
 
+    def save_gpkg_activities(self):
+        """Save activities as GeoPackage file."""
+        gdf = get_activities_as_gdf(self.strava_activities_cache.activities)
+        filepath = self.workdir / "activities.gpkg"
+        gdf.to_file(filepath, driver="GPKG")
+        print(f"✓ Saved activities to {filepath}")
+
     
     def plot_last_activity(self, sport_type: str):
         """Plot the last activity of the specified sport type."""
