@@ -18,8 +18,12 @@ A Python toolkit for analyzing and visualizing your Strava activities without pa
   - 📅 **Weekly Report**: Instagram Story-sized weekly training summary with HR zones, sports breakdown, and accumulated training time
   - 🎯 **Year in Sport**: Instagram Story-sized summaries of your yearly training (main sport & totals)
   - 🏆 **Activity Plots**: Neon-style individual activity visualization with elevation profile
+- **Map Matching**: Match GPS tracks to OpenStreetMap road networks using HMM-based matching:
+  - 🗺️ **Street Coverage Map**: Neon-glow visualization of all streets you've traversed in a city
+  - 📍 **Activity Match Plot**: Per-activity visualization showing GPS track, matched OSM edges, and snap points
+  - 📊 **Coverage Stats**: Track how many km of a city's street network you've covered
 - **Analytics**: WIP
-- **GeoJSON Export**: Export your activities as GeoJSON for use in mapping applications sycg as QGIS
+- **GeoJSON Export**: Export your activities as GeoJSON for use in mapping applications such as QGIS
 - **Telegram Bot**: Automated scheduled delivery of weekly and monthly reports to your Telegram chat
 - **Smart Caching**: Efficient local caching with incremental sync supportm to avoid redundant API calls
 
@@ -142,6 +146,32 @@ strava.get_weekly_report(week_start_date="2026-01-12", neon_color="#fc0101")
 
 # Export activities as GeoJSON
 strava.save_geojson_activities()
+
+# --- Map Matching & Street Coverage ---
+from strava.strava_map_matching import StravaMapMatcher
+from strava.strava_utils import get_activities_as_gdf_from_streams
+
+# Initialize the map matcher for a city
+map_matcher = StravaMapMatcher(
+    city_name="Paris, France",
+    workdir=Path("./strava_intelligence_workdir"),
+    force_reload=False,
+)
+
+# Build a GeoDataFrame from high-res GPS streams
+activities_gdf = get_activities_as_gdf_from_streams(
+    strava.strava_activities_cache.activities
+)
+
+# Match all activities to the OSM road network
+matched_gdf, match_details = map_matcher.match(activities_gdf)
+
+# Plot individual activity match results
+for activity_id, result in match_details.items():
+    result.plot(save_path=f"map_match_{activity_id}.png")
+
+# Generate a city-wide street coverage map
+map_matcher.plot_coverage(match_details, save_path="coverage.png")
 ```
 
 ## 📊 Visualizations
@@ -149,68 +179,52 @@ strava.save_geojson_activities()
 ### Thunderstorm Heatmap
 A stunning neon visualization of your activity routes on a dark canvas. Perfect for showcasing your training coverage in a specific area.
 
-![Thunderstorm Heatmap](readme_data/thunderstorm_run.png)
+| Thunderstorm Heatmap | Activity Clock |
+|:---:|:---:|
+| ![Thunderstorm Heatmap](readme_data/thunderstorm_run.png) | ![Activity Clock](readme_data/activity_clock_run.png) |
+| Neon-style route visualization on dark backgrounds | Polar plot showing training patterns by time of day |
 
-### Activity Clock
-A polar plot showing the distribution of your activities by time of day and distance. Discover your training patterns at a glance.
+### HUD Dashboard & Analytics
 
-![Activity Clock](readme_data/activity_clock_run.png)
+| HUD Dashboard | Efficiency Factor | Performance Frontier |
+|:---:|:---:|:---:|
+| ![HUD Dashboard](readme_data/hud_run.png) | ![Efficiency Factor](readme_data/efficiency_factor.png) | ![Performance Frontier](readme_data/performance_frontier.png) |
+| Distance, HR & Pace distributions | Aerobic efficiency over time | Best performances with Riegel's model |
 
-### HUD Dashboard
-Cyberpunk-inspired histograms displaying the distribution of:
-- Distance (km)
-- Heart Rate (bpm)
-- Pace (min/km)
+### Weekly Report & Bubble Map
 
-![HUD Dashboard](readme_data/hud_run.png)
-
-### Efficiency Factor
-Track your aerobic efficiency over time with rolling averages and variance bands. Identify peak performance periods.
-
-![Efficiency Factor](readme_data/efficiency_factor.png)
-
-### Performance Frontier
-Visualize your best performances across different distances with Riegel's power-law fatigue model fitting.
-
-![Performance Frontier](readme_data/performance_frontier.png)
-
-### Weekly Report
-Generate Instagram Story-sized (9:16) weekly training summaries. Includes total stats (activities, km, hours, active days, elevation), HR zone distribution, sport breakdowns (distance and time pie charts), and accumulated training time line plot showing daily progression with activity titles.
-
-![Weekly Report](readme_data/weekly_report_2026-01-12.png)
-
-### Bubble Map
-Geographic bubble visualization showing your activity locations with size proportional to distance or count. Great for visualizing where you train most.
-
-![Bubble Map](readme_data/bubble_map_country.png)
+| Weekly Report | Bubble Map |
+|:---:|:---:|
+| ![Weekly Report](readme_data/weekly_report_2026-01-12.png) | ![Bubble Map](readme_data/bubble_map_country.png) |
+| Instagram Story-sized weekly summary with HR zones, sport breakdowns, and training progression | Geographic bubble visualization of activity locations |
 
 ### Year in Sport
-Generate Instagram Story-sized (9:16) summaries of your yearly training. Includes stats for your main sport and totals across all activities, plus individual activity plots for your personal bests. Now with **year comparison** feature to compare your progress against previous years!
+Generate Instagram Story-sized (9:16) summaries of your yearly training with optional **year comparison**.
 
-**Main Sport Summary** - Shows total activities, kilometers, hours, elevation, monthly distance chart, and personal bests (longest distance, longest time, fastest pace).
+| Main Sport | All Sports | Activity Plot |
+|:---:|:---:|:---:|
+| ![Year in Sport - Main](readme_data/year_in_sport_2025_run.png) | ![Year in Sport - Totals](readme_data/year_in_sport_2025_totals.png) | ![Year in Sport - Activity](readme_data/year_in_sport_activity.png) |
+| Stats, monthly chart & personal bests | Aggregated stats across all sports | Route map with elevation profile |
 
-![Year in Sport - Main](readme_data/year_in_sport_2025_run.png)
+| Year Comparison — Run | Year Comparison — Totals |
+|:---:|:---:|
+| ![Comparison Run](readme_data/year_in_sport_2025_run_comparison.png) | ![Comparison Totals](readme_data/year_in_sport_2025_totals_comparison.png) |
+| Side-by-side stats with grouped bar charts | Cross-sport comparison with highlighted differences |
 
-**All Sports Summary** - Aggregated stats across all sports with breakdown by sport type.
+### Map Matching & Street Coverage
+Match your Strava activities to the OpenStreetMap road network using HMM-based map matching.
 
-![Year in Sport - Totals](readme_data/year_in_sport_2025_totals.png)
-
-**Year Comparison** - Compare your current year against a previous year with side-by-side stats, grouped bar charts, and highlighted differences.
-
-![Year in Sport - Comparison Run](readme_data/year_in_sport_2025_run_comparison.png)
-
-![Year in Sport - Comparison Totals](readme_data/year_in_sport_2025_totals_comparison.png)
-
-**Activity Plot** - Individual activity visualization with route map and elevation profile.
-
-![Year in Sport - Activity](readme_data/year_in_sport_activity.png)
+| Street Coverage Map | Activity Match Plot |
+|:---:|:---:|
+| ![Street Coverage Map](readme_data/coverage.png) | ![Activity Match Plot](readme_data/map_match_example.png) |
+| Traversed streets glow in neon against the dim untraversed network | GPS track (red), matched OSM edges (blue), snap connections (white) |
 
 ### QGIS GeoJSON Export
-Easily export your Strava activities as GeoJSON files for advanced mapping and spatial analysis in GIS software like QGIS.
+Export your activities as GeoJSON for advanced spatial analysis in QGIS.
 
-![QGIS All Activities](readme_data/qgis_all.png)
-
-![QGIS Activity Info](readme_data/qgis_info.png)
+| All Activities | Activity Info |
+|:---:|:---:|
+| ![QGIS All Activities](readme_data/qgis_all.png) | ![QGIS Activity Info](readme_data/qgis_info.png) |
 
 ## 🏗️ Project Structure
 
@@ -225,6 +239,7 @@ strava-intelligence/
     ├── strava_analytics.py    # Analytics calculations
     ├── strava_endpoint.py     # Strava API client
     ├── strava_intelligence.py # Main orchestrator class
+    ├── strava_map_matching.py # OSM map matching & coverage
     ├── strava_user_cache.py   # User data caching
     ├── strava_utils.py        # Utility functions
     └── strava_visualizer.py   # Visualization generators
@@ -264,6 +279,23 @@ Generates all visualizations.
 - `plot_year_in_sport_main(year, year_in_sport, main_sport, folder, neon_color)`
 - `plot_year_in_sport_totals(year, year_in_sport, folder, neon_color)`
 - `plot_activity(activity_id, strava_endpoint, folder, title, neon_color)`
+
+### StravaMapMatcher
+
+HMM-based map matching of GPS tracks to OSM road networks.
+
+```python
+StravaMapMatcher(
+    city_name: str,          # City name for OSM network download
+    workdir: Path,           # Working directory for cached maps
+    force_reload: bool = False  # Force re-download of OSM data
+)
+```
+
+**Current methods:**
+- `match(activities)` - Map match a GeoDataFrame of activities, returns matched GeoDataFrame + per-activity MatchResult dict
+- `coverage_stats(match_results)` - Compute city-wide street coverage statistics (km traversed, % covered, unique roads)
+- `plot_coverage(match_results, save_path, neon_color, figsize)` - Render a neon-glow coverage map of traversed vs untraversed streets
 
 ### [WIP] StravaAnalytics
 

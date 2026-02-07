@@ -311,14 +311,14 @@ class StravaMapMatcher:
 
         return DistanceMatcher(
             self._map_con,
-            max_dist=50,
-            max_dist_init=50,
+            max_dist=35,
+            max_dist_init=35,
             min_prob_norm=1e-3,
             non_emitting_length_factor=0.75,
-            obs_noise=25,
-            obs_noise_ne=50,
-            dist_noise=35,
-            max_lattice_width=20,
+            obs_noise=18,
+            obs_noise_ne=35,
+            dist_noise=25,
+            max_lattice_width=12,
             non_emitting_states=True,
         )
 
@@ -466,40 +466,61 @@ class StravaMapMatcher:
                 print(f"⚠️ Activity {activity_id}: no GPS points within city boundary")
                 continue
 
-            # Match each segment independently and collect results
+            # Match each segment independently and collect results.
+            # When the matcher dies early (lattice collapse), skip a few
+            # points past the failure and retry with the remaining tail.
+            SKIP_ON_FAILURE = 5   # points to skip past the failure point
+            MIN_SUBSEG_LEN = 10   # minimum points to attempt a match
+
             all_edges_gdfs: list[gpd.GeoDataFrame] = []
             all_details_dfs: list[gpd.GeoDataFrame] = []
             all_edge_geoms: list[LineString | MultiLineString] = []
             total_matched = 0
-            total_observations = 0
+            total_observations = sum(len(s) for s in segments)  # total in-coverage points
+            sub_id = 0           # monotonic sub-segment counter
 
-            for seg_id, segment_path in enumerate(segments):
-                matcher = self._create_matcher()
+            for segment_path in segments:
+                remaining = segment_path
 
-                try:
-                    states, last_idx = matcher.match(segment_path)
-                except Exception as e:
-                    print(f"  ⚠️ Segment {seg_id} failed: {e}")
-                    continue
+                while len(remaining) >= MIN_SUBSEG_LEN:
+                    matcher = self._create_matcher()
 
-                if not states or len(states) == 0:
-                    continue
+                    try:
+                        states, last_idx = matcher.match(remaining)
+                    except Exception as e:
+                        print(f"  ⚠️ Sub-segment {sub_id} failed: {e}")
+                        break  # give up on this segment entirely
 
-                seg_edges_gdf, seg_geometry = self._build_matched_edges(matcher, utm_crs)
-                seg_details = self._build_matching_details(matcher, segment_path, utm_crs)
+                    if not states or len(states) == 0:
+                        # No match at all — skip ahead and retry
+                        remaining = remaining[SKIP_ON_FAILURE:]
+                        sub_id += 1
+                        continue
 
-                if not seg_details.empty:
-                    seg_details['segment_id'] = seg_id
-                if not seg_edges_gdf.empty:
-                    seg_edges_gdf['segment_id'] = seg_id
+                    seg_edges_gdf, seg_geometry = self._build_matched_edges(matcher, utm_crs)
+                    seg_details = self._build_matching_details(matcher, remaining, utm_crs)
 
-                all_edges_gdfs.append(seg_edges_gdf)
-                all_details_dfs.append(seg_details)
-                if seg_geometry is not None:
-                    all_edge_geoms.append(seg_geometry)
+                    if not seg_details.empty:
+                        seg_details['segment_id'] = sub_id
+                    if not seg_edges_gdf.empty:
+                        seg_edges_gdf['segment_id'] = sub_id
 
-                total_matched += last_idx + 1
-                total_observations += len(segment_path)
+                    all_edges_gdfs.append(seg_edges_gdf)
+                    all_details_dfs.append(seg_details)
+                    if seg_geometry is not None:
+                        all_edge_geoms.append(seg_geometry)
+
+                    matched_count = last_idx + 1
+                    total_matched += matched_count
+                    sub_id += 1
+
+                    # If the matcher consumed all points, we're done
+                    if matched_count >= len(remaining):
+                        break
+
+                    # Otherwise skip past the failure point and retry the tail
+                    resume_at = matched_count + SKIP_ON_FAILURE
+                    remaining = remaining[resume_at:]
 
             if not all_edges_gdfs or all(df.empty for df in all_edges_gdfs):
                 print(f"⚠️ No match found for activity {activity_id}")
@@ -528,8 +549,9 @@ class StravaMapMatcher:
                 'num_observations_total': len(full_path),
                 'num_observations_in_coverage': total_observations,
                 'num_matched': total_matched,
-                'num_segments': len(segments),
-                'num_segments_matched': sum(1 for df in all_edges_gdfs if not df.empty),
+                'num_coverage_segments': len(segments),
+                'num_sub_segments': sub_id,
+                'num_sub_segments_matched': sum(1 for df in all_edges_gdfs if not df.empty),
                 'num_emitting_states': n_emitting,
                 'num_matched_edges': len(matched_edges_gdf),
                 'avg_dist_obs_m': round(float(avg_dist), 2) if avg_dist is not None else None,
@@ -551,13 +573,13 @@ class StravaMapMatcher:
             result['num_matched_edges'] = quality['num_matched_edges']
             result['avg_dist_obs_m'] = quality['avg_dist_obs_m']
             result['max_dist_obs_m'] = quality['max_dist_obs_m']
-            result['num_segments'] = quality['num_segments']
+            result['num_sub_segments'] = quality['num_sub_segments']
             result['coverage_pct'] = quality['coverage_pct']
             matched_rows.append(result)
 
             print(f"✅ Activity {activity_id}: {quality['num_matched_edges']} edges, "
                   f"avg snap {quality['avg_dist_obs_m']}m, "
-                  f"{quality['num_segments_matched']}/{quality['num_segments']} segments, "
+                  f"{quality['num_sub_segments_matched']}/{quality['num_sub_segments']} sub-segments, "
                   f"coverage {quality['coverage_pct']}%")
 
         if not matched_rows:
@@ -566,3 +588,150 @@ class StravaMapMatcher:
 
         result_gdf = gpd.GeoDataFrame(matched_rows, geometry='matched_geometry', crs=utm_crs)
         return result_gdf, match_results
+
+    # ------------------------------------------------------------------
+    # Coverage analysis
+    # ------------------------------------------------------------------
+
+    def coverage_stats(
+        self, match_results: dict[int | str, MatchResult]
+    ) -> dict:
+        """Compute city-wide street coverage statistics.
+
+        Deduplicates edges across all matched activities (an edge traversed
+        ten times still counts as one) and computes the fraction of the
+        full network covered.
+
+        Returns a dict with:
+            total_network_km   – total length of the OSM network in km
+            traversed_km       – unique edge length traversed in km
+            coverage_pct       – traversed / total * 100
+            num_unique_streets – number of unique undirected edges matched
+            _traversed_edge_set – set of (min(u,v), max(u,v)) for plot_coverage
+        """
+        # Collect unique undirected edges across all activities
+        traversed: set[tuple[int, int]] = set()
+        for result in match_results.values():
+            if result.matched_edges_gdf is None or result.matched_edges_gdf.empty:
+                continue
+            for _, row in result.matched_edges_gdf.iterrows():
+                u, v = int(row['edge_u']), int(row['edge_v'])
+                traversed.add((min(u, v), max(u, v)))
+
+        # Sum traversed edge lengths
+        traversed_length_m = 0.0
+        for u, v in traversed:
+            edge_row = self._get_edge_row(u, v)
+            if edge_row is not None and 'length' in edge_row.index:
+                traversed_length_m += float(edge_row['length'])
+
+        # Total network length (undirected)
+        total_length_m = 0.0
+        seen: set[tuple[int, int]] = set()
+        for idx_tuple in self._edges_gdf.index:
+            u, v = idx_tuple[0], idx_tuple[1]
+            key = (min(u, v), max(u, v))
+            if key not in seen:
+                seen.add(key)
+                total_length_m += float(self._edges_gdf.loc[idx_tuple, 'length'])
+
+        stats = {
+            'total_network_km': round(total_length_m / 1000, 2),
+            'traversed_km': round(traversed_length_m / 1000, 2),
+            'coverage_pct': round(100 * traversed_length_m / total_length_m, 2) if total_length_m > 0 else 0,
+            'num_unique_streets': len(traversed),
+            '_traversed_edge_set': traversed,
+        }
+
+        print(f"📊 Coverage: {stats['traversed_km']} km / {stats['total_network_km']} km "
+              f"({stats['coverage_pct']}%) — {stats['num_unique_streets']} unique edges")
+
+        return stats
+
+    def plot_coverage(
+        self,
+        match_results: dict[int | str, MatchResult],
+        save_path: Path | str | None = None,
+        neon_color: str = '#fc0101',
+        figsize: tuple[float, float] = (20, 20),
+    ) -> plt.Figure:
+        """Render a neon-glow coverage map of the city.
+
+        Untraversed edges are shown as a dim network base layer.
+        Traversed edges glow in neon (3-layer: atmosphere, glow, core).
+
+        Args:
+            match_results: dict returned by match().
+            save_path: Optional path to save the figure.
+            neon_color: Colour for the neon glow.
+            figsize: Figure size in inches.
+
+        Returns:
+            The matplotlib Figure.
+        """
+        stats = self.coverage_stats(match_results)
+        traversed_set: set[tuple[int, int]] = stats['_traversed_edge_set']
+
+        # Partition edges into traversed / untraversed GeoDataFrames
+        trav_rows = []
+        untrav_rows = []
+        for idx_tuple in self._edges_gdf.index:
+            u, v = idx_tuple[0], idx_tuple[1]
+            key = (min(u, v), max(u, v))
+            geom = self._edges_gdf.loc[idx_tuple, 'geometry']
+            if geom is None or geom.is_empty:
+                continue
+            if key in traversed_set:
+                trav_rows.append({'geometry': geom})
+            else:
+                untrav_rows.append({'geometry': geom})
+
+        crs = self._edges_gdf.crs
+        untrav_gdf = gpd.GeoDataFrame(untrav_rows, geometry='geometry', crs=crs) if untrav_rows else gpd.GeoDataFrame()
+        trav_gdf = gpd.GeoDataFrame(trav_rows, geometry='geometry', crs=crs) if trav_rows else gpd.GeoDataFrame()
+
+        # --- Plot ---
+        fig, ax = plt.subplots(figsize=figsize, facecolor='black')
+        ax.set_facecolor('black')
+        ax.set_axis_off()
+
+        # Layer 0: Dim untraversed network
+        if not untrav_gdf.empty:
+            untrav_gdf.plot(ax=ax, color='#1c2333', linewidth=0.3, alpha=0.85, zorder=0)
+
+        # Layer 1: City boundary outline
+        if self._city_boundary is not None and not self._city_boundary.empty:
+            self._city_boundary.boundary.plot(ax=ax, color='#30363d', linewidth=0.5, alpha=0.4, zorder=0)
+
+        if not trav_gdf.empty:
+            # Layer 2: Atmosphere (wide, very faint)
+            trav_gdf.plot(ax=ax, color=neon_color, linewidth=6, alpha=0.03, zorder=1)
+            # Layer 3: Glow (medium, soft)
+            trav_gdf.plot(ax=ax, color=neon_color, linewidth=2.5, alpha=0.15, zorder=2)
+            # Layer 4: Core (thin, bright white)
+            trav_gdf.plot(ax=ax, color='white', linewidth=0.5, alpha=0.9, zorder=3)
+
+        # Stats and title at bottom
+        subtitle = (
+            f"{stats['traversed_km']} km / {stats['total_network_km']} km  "
+            f"({stats['coverage_pct']}%)"
+        )
+        ax.text(
+            0.5, 0.1, subtitle.upper(),
+            transform=ax.transAxes, ha='center', va='top',
+            color='#8b949e', fontsize=14, fontfamily='monospace',
+        )
+        ax.text(
+            0.5, 0.07, f"{self.city_name} — Coverage".upper(),
+            transform=ax.transAxes, ha='center', va='top',
+            color=neon_color, fontsize=26, fontfamily='monospace',
+            fontweight='bold', alpha=0.9,
+        )
+
+        plt.tight_layout()
+
+        if save_path is not None:
+            fig.savefig(save_path, dpi=300, bbox_inches='tight', facecolor=fig.get_facecolor())
+            print(f"🗺️ Coverage map saved to {save_path}")
+
+        return fig
