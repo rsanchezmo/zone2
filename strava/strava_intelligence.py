@@ -178,12 +178,21 @@ class StravaIntelligence:
         """
         weekly_report = self.strava_analytics.get_weekly_report(week_start_date)
         
+        # Fetch previous week's report for delta comparison
+        from datetime import datetime, timedelta
+        week_start_str = weekly_report.get("week_start", None)
+        last_week_report = None
+        if week_start_str:
+            prev_monday = datetime.strptime(week_start_str, '%Y-%m-%d') - timedelta(days=7)
+            last_week_report = self.strava_analytics.get_weekly_report(prev_monday.strftime('%Y-%m-%d'))
+        
         output_folder = self.workdir / "weekly_reports"
         
         self.strava_visualizer.plot_weekly_report(
             weekly_report=weekly_report,
             folder=output_folder,
-            neon_color=neon_color
+            neon_color=neon_color,
+            last_week_report=last_week_report
         )
         
         return weekly_report

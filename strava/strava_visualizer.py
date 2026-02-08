@@ -1757,6 +1757,7 @@ class StravaVisualizer:
         weekly_report: dict,
         folder: Path | None = None,
         neon_color: str = "#fc0101",
+        last_week_report: dict | None = None,
     ) -> None:
         """
         Plot weekly report statistics in neon style for Instagram Stories.
@@ -1766,6 +1767,8 @@ class StravaVisualizer:
             weekly_report: Dictionary from get_weekly_report()
             folder: Output folder path (default: workdir/weekly_reports)
             neon_color: Primary neon color for the visualization
+            last_week_report: Dictionary from get_weekly_report() for the previous week.
+                              If provided, deltas (▲/▼) are shown below each main stat.
         """
         
         # Instagram Story size: 9:16 aspect ratio
@@ -1793,6 +1796,8 @@ class StravaVisualizer:
         distance_per_day_km = weekly_report.get(WeeklyReportFeatures.DISTANCE_PER_DAY_KM, {})
         distance_per_sport = weekly_report.get(WeeklyReportFeatures.DISTANCE_PER_SPORT_KM, {})
         activities_per_sport = weekly_report.get(WeeklyReportFeatures.ACTIVITIES_PER_SPORT, {})
+        num_sports = len(activities_per_sport)
+        longest_km = weekly_report.get(WeeklyReportFeatures.LONGEST_ACTIVITY_KM, 0)
         
         # --- Header Panel ---
         ax_header = fig.add_subplot(gs[0])
@@ -1835,12 +1840,58 @@ class StravaVisualizer:
         ax_stats.set_facecolor('black')
         ax_stats.set_axis_off()
         
+        # Compute deltas from last week if available
+        if last_week_report is not None:
+            prev_activities = last_week_report.get(WeeklyReportFeatures.TOTAL_ACTIVITIES, 0)
+            prev_km = last_week_report.get(WeeklyReportFeatures.TOTAL_DISTANCE_KM, 0)
+            prev_hours = last_week_report.get(WeeklyReportFeatures.TOTAL_TIME_HOURS, 0)
+            prev_active_days = last_week_report.get(WeeklyReportFeatures.ACTIVE_DAYS, 0)
+            prev_elevation = last_week_report.get(WeeklyReportFeatures.TOTAL_ELEVATION_M, 0)
+            prev_num_sports = len(last_week_report.get(WeeklyReportFeatures.ACTIVITIES_PER_SPORT, {}))
+            prev_longest_km = last_week_report.get(WeeklyReportFeatures.LONGEST_ACTIVITY_KM, 0)
+
+            delta_activities = total_activities - prev_activities
+            delta_km = total_km - prev_km
+            delta_hours = total_hours - prev_hours
+            delta_active_days = active_days - prev_active_days
+            delta_elevation = total_elevation - prev_elevation
+            delta_num_sports = num_sports - prev_num_sports
+            delta_longest_km = longest_km - prev_longest_km
+
+            def _fmt_delta(delta: float, fmt: str = ".1f") -> str:
+                arrow = "▲" if delta >= 0 else "▼"
+                return f"{arrow} {abs(delta):{fmt}}"
+
+            deltas = [
+                _fmt_delta(delta_activities, ".0f"),
+                _fmt_delta(delta_km, ".1f"),
+                _fmt_delta(delta_hours, ".1f"),
+                _fmt_delta(delta_active_days, ".0f"),
+                _fmt_delta(delta_elevation, ".0f"),
+                _fmt_delta(delta_num_sports, ".0f"),
+                _fmt_delta(delta_longest_km, ".1f"),
+            ]
+            delta_colors = [
+                '#00ff88' if delta_activities >= 0 else '#ff4444',
+                '#00ff88' if delta_km >= 0 else '#ff4444',
+                '#00ff88' if delta_hours >= 0 else '#ff4444',
+                '#00ff88' if delta_active_days >= 0 else '#ff4444',
+                '#00ff88' if delta_elevation >= 0 else '#ff4444',
+                '#00ff88' if delta_num_sports >= 0 else '#ff4444',
+                '#00ff88' if delta_longest_km >= 0 else '#ff4444',
+            ]
+        else:
+            deltas = [None] * 7
+            delta_colors = [None] * 7
+
         stats_data = [
             (f"{total_activities}", "ACTIVITIES"),
             (f"{total_km:,.1f}", "KM"),
             (f"{total_hours:,.1f}", "HOURS"),
             (f"{active_days}", "ACTIVE DAYS"),
             (f"{total_elevation:,.0f}", "↑ METERS"),
+            (f"{num_sports}", "SPORTS"),
+            (f"{longest_km:,.1f}", "LONGEST KM"),
         ]
         
         num_boxes = len(stats_data)
@@ -1851,18 +1902,32 @@ class StravaVisualizer:
             
             # Main value
             ax_stats.text(
-                box_center, 0.75, value,
+                box_center, 0.80, value,
                 transform=ax_stats.transAxes,
                 ha='center', va='center',
-                color=neon_color,
-                fontsize=32,
+                color="#cacaca",
+                fontsize=24,
                 fontfamily='monospace',
                 fontweight='bold'
             )
             
+            # Delta from last week (shown below value)
+            delta_text = deltas[i]
+            if delta_text is not None:
+                ax_stats.text(
+                    box_center, 0.52, delta_text,
+                    transform=ax_stats.transAxes,
+                    ha='center', va='center',
+                    color=delta_colors[i],
+                    fontsize=12,
+                    fontfamily='monospace',
+                    fontweight='bold',
+                    alpha=0.75
+                )
+            
             # Label
             ax_stats.text(
-                box_center, 0.45, label,
+                box_center, 0.28, label,
                 transform=ax_stats.transAxes,
                 ha='center', va='center',
                 color='white',
