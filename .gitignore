@@ -13,3 +13,7 @@ __pycache__/
 # Project workdir
 strava_intelligence_workdir/
 cache/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/

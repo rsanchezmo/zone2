@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+@theme {
+  --color-neon-red: #fc0101;
+  --color-neon-cyan: #00ffff;
+  --color-neon-magenta: #ff00ff;
+  --color-neon-green: #39ff14;
+  --color-neon-yellow: #ffd700;
+  --color-surface-900: #0a0a0f;
+  --color-surface-800: #12121a;
+  --color-surface-700: #1a1a2e;
+  --color-surface-600: #252540;
+}
+
+body {
+  @apply bg-surface-900 text-gray-100 antialiased;
+  margin: 0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* Neon glow utility */
+.neon-glow {
+  text-shadow: 0 0 7px currentColor, 0 0 10px currentColor, 0 0 21px currentColor;
+}
+
+.neon-border {
+  box-shadow: 0 0 5px currentColor, inset 0 0 5px rgba(255, 255, 255, 0.05);
+}
+
+/* Light mode overrides */
+.light {
+  --color-surface-900: #f5f5f7;
+  --color-surface-800: #ffffff;
+  --color-surface-700: #f0f0f2;
+  --color-surface-600: #d1d5db;
+
+  /* Remap light grays → dark equivalents so text stays readable */
+  --color-gray-100: #1f2937; /* was near-white, now gray-800 */
+  --color-gray-200: #374151; /* was light, now gray-700 */
+  --color-gray-300: #4b5563; /* was light, now gray-600 */
+  --color-gray-400: #6b7280; /* keep as mid-gray */
+
+  color: #1f2937;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0a0a0f;
+}
+::-webkit-scrollbar-thumb {
+  background: #252540;
+  border-radius: 3px;
+}
+
+.light ::-webkit-scrollbar-track {
+  background: #f5f5f7;
+}
+.light ::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+}

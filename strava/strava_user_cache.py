@@ -28,10 +28,10 @@ class StravaUserCache:
 
         return self._profile_cache or {}
     
-    def get_athlete_stats(self, max_age_hours: int = 24, force_refresh: bool = False) -> dict:
+    def get_athlete_stats(self, athlete_id: int | str | None = None, max_age_hours: int = 24, force_refresh: bool = False) -> dict:
         """Get athlete stats, using cache if not expired."""
         if force_refresh or self.__is_expired(self._stats_cached_at, max_age_hours):
-            self._stats_cache = self.strava_endpoint.get_athlete_stats()
+            self._stats_cache = self.strava_endpoint.get_athlete_stats(athlete_id=athlete_id)
             self._stats_cached_at = datetime.now()
 
         return self._stats_cache or {}

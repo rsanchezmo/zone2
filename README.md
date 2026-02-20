@@ -8,6 +8,13 @@ A Python toolkit for analyzing and visualizing your Strava activities without pa
 
 ## ✨ Current features
 
+- **Web Dashboard**: Full-featured React frontend with FastAPI backend:
+  - 📅 **Calendar**: Monthly calendar with activity display, training session planning, and weekly reports
+  - 🏃 **Activities**: Browsable activity list with detail views, stream charts, and map visualization
+  - 🌍 **World Footprint**: Interactive Leaflet map with all your routes, filterable by sport and year
+  - ⚡ **Year in Sport**: Yearly stats with monthly charts, records, and sport breakdowns
+  - 👤 **Profile**: Athlete profile with HR zones, subscription status, and personal info
+  - 🌗 **Dark/Light Mode**: Full theme toggle with persistent preference
 - **Activity Sync**: Automatically sync and cache your Strava activities locally using Parquet files
 - **Cool Visualizations**: Generate visualizations including:
   - ⚡ **Thunderstorm Heatmap**: Neon-style activity route visualization on dark backgrounds
@@ -25,7 +32,7 @@ A Python toolkit for analyzing and visualizing your Strava activities without pa
 - **Analytics**: WIP
 - **GeoJSON Export**: Export your activities as GeoJSON for use in mapping applications such as QGIS
 - **Telegram Bot**: Automated scheduled delivery of weekly and monthly reports to your Telegram chat
-- **Smart Caching**: Efficient local caching with incremental sync supportm to avoid redundant API calls
+- **Smart Caching**: Efficient local caching with incremental sync support to avoid redundant API calls
 
 ## 📋 Prerequisites
 
@@ -100,7 +107,22 @@ The bot supports manual commands:
 - `/weekly` - Generate and send current week's report
 - `/monthly` - Generate and send current year's report
 
-## 🚀 Quick Start
+## 🌐 Web Dashboard
+
+Run the full web app (FastAPI backend + React frontend):
+
+```bash
+# Install dependencies
+poetry install
+cd frontend && npm install && cd ..
+
+# Run both backend and frontend in development mode
+python run_dev.py
+```
+
+The app will be available at `http://localhost:5173`. The backend API runs on `http://localhost:8000`.
+
+## 🚀 Quick Start (Python API)
 
 ```python
 from strava.strava_intelligence import StravaIntelligence
@@ -230,10 +252,31 @@ Export your activities as GeoJSON for advanced spatial analysis in QGIS.
 
 ```
 strava-intelligence/
-├── main.py                    # Example usage
+├── main.py                    # Example usage (Python API)
+├── run_dev.py                 # Dev server launcher (backend + frontend)
 ├── pyproject.toml             # Poetry configuration
 ├── README.md
-└── strava/
+├── backend/                   # FastAPI backend
+│   ├── app.py                 # FastAPI application
+│   ├── config.py              # Settings
+│   ├── dependencies.py        # Dependency injection
+│   ├── db.py                  # SQLite for calendar sessions
+│   └── routers/               # API route handlers
+│       ├── activities.py
+│       ├── athlete.py
+│       ├── calendar.py
+│       ├── exports.py
+│       ├── stats.py
+│       └── sync.py
+├── frontend/                  # React + Vite frontend
+│   ├── src/
+│   │   ├── App.tsx
+│   │   ├── api/               # API client & React Query hooks
+│   │   ├── components/        # Shared components (MapView, charts, layout)
+│   │   ├── hooks/             # Custom hooks (useTheme)
+│   │   └── pages/             # Page components
+│   └── ...
+└── strava/                    # Core Python library
     ├── constants.py           # CRS constants
     ├── strava_activities_cache.py  # Activity caching logic
     ├── strava_analytics.py    # Analytics calculations
@@ -309,6 +352,9 @@ Provides analytics calculations.
 ## 🗺️ Roadmap
 
 - [x] Telegram bot for automated weekly and monthly reports
+- [x] Web dashboard with React frontend and FastAPI backend
+- [x] Dark/light mode support
+- [x] Athlete profile page with HR zones
 - [ ] Extend the analytics, use ML models to provide deeper insights, such as training load, fatigue estimation, and performance prediction
 - [ ] Add more visualizations
 - [ ] Create an mcp server to expose Strava data so you can access it from your LLM based agents

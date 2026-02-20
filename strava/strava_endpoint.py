@@ -1,4 +1,5 @@
 from datetime import datetime
+import logging
 import os
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -6,6 +7,8 @@ import requests
 import webbrowser
 from pathlib import Path
 import json
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -281,9 +284,9 @@ class StravaEndpoint:
         response = requests.get(StravaEndpoint.__ATHLETE_URL, headers=headers)
         
         if response.status_code != 200:
-            print(f"Failed to fetch athlete info: {response.json()}")
+            logger.error("Failed to fetch athlete info: %s", response.text)
             return {}
-        
+
         return response.json()
     
     def get_user_gender(self) -> str | None:
@@ -295,16 +298,25 @@ class StravaEndpoint:
         return athlete.get('weight')
     
 
-    def get_athlete_stats(self) -> dict:
+    def get_athlete_stats(self, athlete_id: int | str | None = None) -> dict:
         """Fetch athlete stats from Strava API, Only includes data from activities set to Everyone visibilty."""
         headers = self.__get_headers()
-        
-        response = requests.get(f"{StravaEndpoint.__ATHLETES_URL}/{self.__STRAVA_CLIENT_ID}/stats", headers=headers)
+        if athlete_id is None:
+            athlete_id = self.get_athlete().get('id')
+        if not athlete_id:
+            return {}
+
+        url = f"{StravaEndpoint.__ATHLETES_URL}/{athlete_id}/stats"
+        logger.info("Fetching athlete stats from: %s", url)
+        response = requests.get(url, headers=headers)
+        logger.info("Athlete stats response status: %s", response.status_code)
 
         if response.status_code != 200:
-            print(f"Failed to fetch athlete stats: {response.json()}")
+            logger.error("Failed to fetch athlete stats (athlete_id=%s, status=%s): %s", athlete_id, response.status_code, response.text)
             return {}
-        return response.json()
+        data = response.json()
+        logger.info("Athlete stats keys: %s", list(data.keys()))
+        return data
     
     def get_athlete_zones(self) -> dict:
         """
@@ -317,7 +329,7 @@ class StravaEndpoint:
         response = requests.get(f"{StravaEndpoint.__ATHLETE_URL}/zones", headers=headers)
         
         if response.status_code != 200:
-            print(f"Failed to fetch athlete zones: {response.json()}")
+            logger.error("Failed to fetch athlete zones: %s", response.text)
             return {}
         
         return response.json()

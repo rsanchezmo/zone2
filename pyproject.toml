@@ -6,6 +6,7 @@ authors = ["rsanchezmo"]
 readme = "README.md"
 packages = [
     { include = "strava" },
+    { include = "backend" },
 ]
 
 [tool.poetry.dependencies]
@@ -27,6 +28,10 @@ python-telegram-bot = {extras = ["job-queue"], version = "^21.0"}
 osmnx = "^2.0.7"
 leuvenmapmatching = "^1.1.4"
 rtree = "^1.4.1"
+fastapi = ">=0.115.0"
+uvicorn = {extras = ["standard"], version = "^0.41.0"}
+aiosqlite = ">=0.20.0"
+pydantic-settings = ">=2.7.0"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

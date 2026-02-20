@@ -77,18 +77,27 @@ class StravaAnalytics:
     ==================
     """
 
-    def get_year_in_sport(self, year: int, main_sport: str) -> dict:
-        """Get year in sport for the specified year."""
-        
+    def get_year_in_sport(self, year: int, main_sport: str, cutoff_month_day: tuple[int, int] | None = None) -> dict:
+        """Get year in sport for the specified year.
+
+        Args:
+            cutoff_month_day: Optional (month, day) tuple to filter activities up to that date.
+                              Used for fair year-over-year comparison (e.g. only up to Feb 20).
+        """
+
         # Use raw activities DataFrame (not GeoDataFrame) to include all activities
         activities = self.strava_activities_cache.activities.copy()
         activities['start_date_local'] = pd.to_datetime(activities['start_date_local'])
 
         # get activities for the specified year
-        activities_year = activities[
-            (activities['start_date_local'].dt.year == year) &
-            (activities['sport_type'] == main_sport)
-        ].copy()
+        mask = (activities['start_date_local'].dt.year == year) & (activities['sport_type'] == main_sport)
+        if cutoff_month_day:
+            cutoff = pd.Timestamp(year, cutoff_month_day[0], cutoff_month_day[1], 23, 59, 59)
+            # Match timezone if dates are tz-aware
+            if activities['start_date_local'].dt.tz is not None:
+                cutoff = cutoff.tz_localize(activities['start_date_local'].dt.tz)
+            mask = mask & (activities['start_date_local'] <= cutoff)
+        activities_year = activities[mask].copy()
 
         total_activities = len(activities_year)
         total_distance_km = activities_year['distance'].sum() / 1000.0
@@ -151,12 +160,16 @@ class StravaAnalytics:
         else:
             average_speed = 0.0
 
-        # activities per week (based on weeks in year with activity)
+        # activities per week (based on weeks elapsed in the year)
         if not activities_year.empty:
-            first_activity = activities_year['start_date_local'].min()
-            last_activity = activities_year['start_date_local'].max()
-            weeks_active = max(1, (last_activity - first_activity).days / 7)
-            activities_per_week = total_activities / weeks_active
+            from datetime import datetime, date
+            year_start = datetime(year, 1, 1)
+            if cutoff_month_day:
+                year_end_or_today = datetime(year, cutoff_month_day[0], cutoff_month_day[1])
+            else:
+                year_end_or_today = min(datetime.now(), datetime(year, 12, 31))
+            weeks_in_year = max(1, (year_end_or_today - year_start).days / 7)
+            activities_per_week = total_activities / weeks_in_year
         else:
             activities_per_week = 0.0
 
@@ -195,17 +208,25 @@ class StravaAnalytics:
         return year_in_sport_dict
 
 
-    def get_all_year_in_sport(self, year: int) -> dict:
-        """Get overall year in sport stats across all sports for the specified year."""
-        
+    def get_all_year_in_sport(self, year: int, cutoff_month_day: tuple[int, int] | None = None) -> dict:
+        """Get overall year in sport stats across all sports for the specified year.
+
+        Args:
+            cutoff_month_day: Optional (month, day) tuple to filter activities up to that date.
+        """
+
         # Use raw activities DataFrame (not GeoDataFrame) to include all activities
         activities = self.strava_activities_cache.activities.copy()
         activities['start_date_local'] = pd.to_datetime(activities['start_date_local'])
 
         # get activities for the specified year (all sports)
-        activities_year = activities[
-            activities['start_date_local'].dt.year == year
-        ].copy()
+        mask = activities['start_date_local'].dt.year == year
+        if cutoff_month_day:
+            cutoff = pd.Timestamp(year, cutoff_month_day[0], cutoff_month_day[1], 23, 59, 59)
+            if activities['start_date_local'].dt.tz is not None:
+                cutoff = cutoff.tz_localize(activities['start_date_local'].dt.tz)
+            mask = mask & (activities['start_date_local'] <= cutoff)
+        activities_year = activities[mask].copy()
 
         # total activities and distance
         total_activities = len(activities_year)
@@ -213,12 +234,16 @@ class StravaAnalytics:
         total_time_hours = activities_year['moving_time'].sum() / 3600.0  # Convert seconds to hours
         active_days = activities_year['start_date_local'].dt.date.nunique()
 
-        # activities per week
+        # activities per week (based on weeks elapsed in the year)
         if not activities_year.empty:
-            first_activity = activities_year['start_date_local'].min()
-            last_activity = activities_year['start_date_local'].max()
-            weeks_active = max(1, (last_activity - first_activity).days / 7)
-            activities_per_week = total_activities / weeks_active
+            from datetime import datetime
+            year_start = datetime(year, 1, 1)
+            if cutoff_month_day:
+                year_end_or_today = datetime(year, cutoff_month_day[0], cutoff_month_day[1])
+            else:
+                year_end_or_today = min(datetime.now(), datetime(year, 12, 31))
+            weeks_in_year = max(1, (year_end_or_today - year_start).days / 7)
+            activities_per_week = total_activities / weeks_in_year
         else:
             activities_per_week = 0.0
 
@@ -258,22 +283,24 @@ class StravaAnalytics:
         }
 
 
-    def get_weekly_report(self, week_start_date: str | None = None) -> dict:
+    def get_weekly_report(self, week_start_date: str | None = None, cutoff_date: str | None = None) -> dict:
         """
         Get weekly report for a given week.
-        
+
         Args:
             week_start_date: Start of the week in format 'YYYY-MM-DD'. If None, uses the last completed week.
                              The date will be adjusted to the Monday of that week.
-        
+            cutoff_date: Optional 'YYYY-MM-DD' to truncate the week (e.g. only count Mon-Thu).
+                         Used for fair comparison with an incomplete current week.
+
         Returns:
             Dictionary with weekly statistics.
         """
         from datetime import datetime, timedelta, timezone
-        
+
         activities = self.strava_activities_cache.activities.copy()
         activities['start_date_local'] = pd.to_datetime(activities['start_date_local'], utc=True)
-        
+
         # Determine the week to report on
         if week_start_date is None:
             # Use the current week
@@ -287,8 +314,12 @@ class StravaAnalytics:
             days_since_monday = week_start.weekday()
             week_start = week_start - timedelta(days=days_since_monday)
             week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
-        
-        week_end = week_start + timedelta(days=6, hours=23, minutes=59, seconds=59)
+
+        if cutoff_date:
+            cutoff = pd.to_datetime(cutoff_date, utc=True).replace(hour=23, minute=59, second=59)
+            week_end = cutoff
+        else:
+            week_end = week_start + timedelta(days=6, hours=23, minutes=59, seconds=59)
         
         # Filter activities for the week
         activities_week = activities[

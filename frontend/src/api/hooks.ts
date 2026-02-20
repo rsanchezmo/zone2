@@ -1,0 +1,190 @@
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import api from './client';
+
+// Activities
+export function usePolylines(sportType?: string, year?: number) {
+  return useQuery({
+    queryKey: ['polylines', sportType, year],
+    queryFn: () =>
+      api.get('/activities/polylines', { params: { sport_type: sportType, year: year } })
+        .then(r => r.data),
+  });
+}
+
+export function useActivities(page: number, perPage = 20, sportType?: string, year?: number) {
+  return useQuery({
+    queryKey: ['activities', page, perPage, sportType, year],
+    queryFn: () =>
+      api.get('/activities', { params: { page, per_page: perPage, sport_type: sportType, year } })
+        .then(r => r.data),
+  });
+}
+
+export function useActivitiesByDateRange(dateFrom?: string, dateTo?: string) {
+  return useQuery({
+    queryKey: ['activities-range', dateFrom, dateTo],
+    queryFn: () =>
+      api.get('/activities', { params: { page: 1, per_page: 100, date_from: dateFrom, date_to: dateTo } })
+        .then(r => r.data),
+    enabled: !!dateFrom && !!dateTo,
+  });
+}
+
+export function useActivity(id: number | string) {
+  return useQuery({
+    queryKey: ['activity', id],
+    queryFn: () => api.get(`/activities/${id}`).then(r => r.data),
+    enabled: !!id,
+  });
+}
+
+export function useSportTypes() {
+  return useQuery({
+    queryKey: ['sport-types'],
+    queryFn: () => api.get('/activities/sport-types').then(r => r.data),
+  });
+}
+
+export function useYears() {
+  return useQuery({
+    queryKey: ['years'],
+    queryFn: () => api.get('/activities/years').then(r => r.data),
+  });
+}
+
+// Stats
+export function useWeeklyReport(weekStart?: string) {
+  return useQuery({
+    queryKey: ['weekly-report', weekStart],
+    queryFn: () =>
+      api.get('/stats/weekly-report', { params: { week_start: weekStart } }).then(r => r.data),
+  });
+}
+
+export function useYearInSport(year: number, mainSport: string, comparisonYear?: number) {
+  return useQuery({
+    queryKey: ['year-in-sport', year, mainSport, comparisonYear],
+    queryFn: () =>
+      api.get('/stats/year-in-sport', {
+        params: { year, main_sport: mainSport, comparison_year: comparisonYear },
+      }).then(r => r.data),
+  });
+}
+
+export function useEfficiencyFactor(sportType: string, window = 14) {
+  return useQuery({
+    queryKey: ['efficiency-factor', sportType, window],
+    queryFn: () =>
+      api.get('/stats/efficiency-factor', { params: { sport_type: sportType, window } })
+        .then(r => r.data),
+  });
+}
+
+export function usePerformanceFrontier(sportTypes: string) {
+  return useQuery({
+    queryKey: ['performance-frontier', sportTypes],
+    queryFn: () =>
+      api.get('/stats/performance-frontier', { params: { sport_types: sportTypes } })
+        .then(r => r.data),
+  });
+}
+
+export function useActivityClock(sportTypes: string) {
+  return useQuery({
+    queryKey: ['activity-clock', sportTypes],
+    queryFn: () =>
+      api.get('/stats/activity-clock', { params: { sport_types: sportTypes } })
+        .then(r => r.data),
+  });
+}
+
+// Athlete
+export function useAthleteProfile() {
+  return useQuery({
+    queryKey: ['athlete-profile'],
+    queryFn: () => api.get('/athlete/profile').then(r => r.data),
+    staleTime: 1000 * 60 * 60, // 1 hour
+  });
+}
+
+
+export function useAthleteZones() {
+  return useQuery({
+    queryKey: ['athlete-zones'],
+    queryFn: () => api.get('/athlete/zones').then(r => r.data),
+    staleTime: 1000 * 60 * 60,
+  });
+}
+
+// Sync
+export function useSyncStatus() {
+  return useQuery({
+    queryKey: ['sync-status'],
+    queryFn: () => api.get('/sync/status').then(r => r.data),
+    refetchInterval: (query) => query.state.data?.syncing ? 2000 : false,
+  });
+}
+
+export function useTriggerSync() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (params: { full_sync?: boolean; include_streams?: boolean } = {}) =>
+      api.post('/sync', null, { params }).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sync-status'] });
+    },
+  });
+}
+
+// Calendar
+export function useCalendarSessions(month?: number, year?: number) {
+  return useQuery({
+    queryKey: ['calendar-sessions', month, year],
+    queryFn: () =>
+      api.get('/calendar/sessions', { params: { month, year } }).then(r => r.data),
+  });
+}
+
+export function useCalendarSessionsByRange(dateFrom?: string, dateTo?: string) {
+  return useQuery({
+    queryKey: ['calendar-sessions-range', dateFrom, dateTo],
+    queryFn: () =>
+      api.get('/calendar/sessions', { params: { date_from: dateFrom, date_to: dateTo } }).then(r => r.data),
+    enabled: !!dateFrom && !!dateTo,
+  });
+}
+
+export function useCreateSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Record<string, unknown>) =>
+      api.post('/calendar/sessions', data).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['calendar-sessions'] });
+      qc.invalidateQueries({ queryKey: ['calendar-sessions-range'] });
+    },
+  });
+}
+
+export function useUpdateSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: number } & Record<string, unknown>) =>
+      api.put(`/calendar/sessions/${id}`, data).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['calendar-sessions'] });
+      qc.invalidateQueries({ queryKey: ['calendar-sessions-range'] });
+    },
+  });
+}
+
+export function useDeleteSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.delete(`/calendar/sessions/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['calendar-sessions'] });
+      qc.invalidateQueries({ queryKey: ['calendar-sessions-range'] });
+    },
+  });
+}

@@ -15,15 +15,40 @@ import numpy as np
 from scipy.optimize import curve_fit
 import matplotlib.ticker as ticker
 from datetime import datetime
+import threading
+from io import BytesIO
 
 
 
 class StravaVisualizer:
+    _mpl_lock = threading.Lock()
+
     def __init__(self, strava_analytics: StravaAnalytics, workdir: Path):
         self.strava_analytics = strava_analytics
         self.workdir = workdir
         self.output_dir = self.workdir / "visualizations"
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def _finalize_figure(
+        self,
+        fig,
+        save_path: Path | None,
+        dpi: int = 300,
+        facecolor: str = 'black',
+        return_buffer: bool = False,
+        **kwargs
+    ) -> BytesIO | None:
+        if return_buffer:
+            buf = BytesIO()
+            fig.savefig(buf, format='png', dpi=dpi, facecolor=facecolor, bbox_inches='tight', **kwargs)
+            plt.close(fig)
+            buf.seek(0)
+            return buf
+        if save_path:
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(save_path, dpi=dpi, facecolor=facecolor, bbox_inches='tight', **kwargs)
+        plt.close(fig)
+        return None
 
     def _get_centroid_of_map(self, gdf: gpd.GeoDataFrame, center_latlon: tuple[float, float] | None) -> Point:
         """
@@ -40,16 +65,21 @@ class StravaVisualizer:
             np.median(centroids.y)
         )
 
-    def _filter_and_get_gdf(self, sport_types: list[str] | None = None, 
-                            radius_km: float | None = None, 
+    def _filter_and_get_gdf(self, sport_types: list[str] | None = None,
+                            radius_km: float | None = None,
                             location: str | None = None,
-                            filter_by_boundary: bool = False) -> tuple[gpd.GeoDataFrame | None, dict | None]:
-        """Filters by sport, projects to WebMercator, and spatially filters by radius or boundary."""
+                            filter_by_boundary: bool = False,
+                            year: int | None = None) -> tuple[gpd.GeoDataFrame | None, dict | None]:
+        """Filters by sport/year, projects to WebMercator, and spatially filters by radius or boundary."""
         activities = self.strava_analytics.strava_activities_cache.activities
         gdf = get_activities_as_gdf(activities)
 
         if sport_types:
             gdf = gdf[gdf['sport_type'].isin(sport_types)]
+
+        if year and 'start_date_local' in gdf.columns:
+            gdf['start_date_local'] = pd.to_datetime(gdf['start_date_local'])
+            gdf = gdf[gdf['start_date_local'].dt.year == year]
             
         if gdf.empty:
             print(f"No activities found for {sport_types}")
@@ -92,18 +122,20 @@ class StravaVisualizer:
         return gdf, region_coords
 
     def thunderstorm_heatmap(
-            self, 
+            self,
             location: str | None = None,
-            sport_types: list[str] | None = None, 
-            radius_km: float = 20.0, 
+            sport_types: list[str] | None = None,
+            radius_km: float = 20.0,
             add_basemap: bool = False,
             neon_color: str = "#fc0101", # Cyan default, try '#FF00FF' for Magenta
-            show_title: bool = True
-            ) -> None:
+            show_title: bool = True,
+            return_buffer: bool = False,
+            year: int | None = None,
+            ) -> BytesIO | None:
         """
         Generates a high-contrast 'Neon' visualization of activities.
         """
-        gdf, _ = self._filter_and_get_gdf(sport_types, radius_km, location)
+        gdf, _ = self._filter_and_get_gdf(sport_types, radius_km, location, year=year)
         if gdf is None or gdf.empty:
             print(f"No data found for the specified parameters.")
             return
@@ -167,16 +199,11 @@ class StravaVisualizer:
         # Save
         filename = f"thunderstorm_{location or 'median'}_{sport_str.replace(' ', '_')}.png"
         save_path = self.output_dir / filename.lower()
-        
-        plt.savefig(
-            save_path, 
-            dpi=600, 
-            facecolor='black', 
-            bbox_inches='tight',
-            pad_inches=0.2
-        )
-        print(f"⚡ Thunderstorm map saved to: {save_path}")
-        plt.close()
+
+        result = self._finalize_figure(fig, save_path, dpi=600, return_buffer=return_buffer, pad_inches=0.2)
+        if not return_buffer:
+            print(f"⚡ Thunderstorm map saved to: {save_path}")
+        return result
 
     def activity_bubble_map(
             self,
@@ -185,8 +212,9 @@ class StravaVisualizer:
             min_radius_scale: float = 100.0,
             grid_density: int = 100,  # if too low, bubbles may lose position accuracy
             neon_color: str = "#fc0101",
-            show_title: bool = False
-    ) -> None:
+            show_title: bool = False,
+            return_buffer: bool = False
+    ) -> BytesIO | None:
         """
         Generates a 'Bubble Map' where the size of the circle represents 
         the number of activities in that cluster.
@@ -331,19 +359,21 @@ class StravaVisualizer:
 
         filename = f"bubble_map_{region.replace(' ', '_')}.png"
         save_path = self.output_dir / filename.lower()
-        
-        plt.savefig(save_path, dpi=600, facecolor='black', bbox_inches='tight')
-        print(f"⚪ Bubble map saved to: {save_path}")
-        plt.close()
+
+        result = self._finalize_figure(fig, save_path, dpi=600, return_buffer=return_buffer)
+        if not return_buffer:
+            print(f"⚪ Bubble map saved to: {save_path}")
+        return result
 
 
     def activity_clock(
-        self, 
+        self,
         sport_types: list[str] | None = None,
         neon_color: str = "#fa2100",
         max_dist_km: float | None = None,
-        show_title: bool = True
-    ) -> None:
+        show_title: bool = True,
+        return_buffer: bool = False
+    ) -> BytesIO | None:
         """
         Generates a polar scatter plot of activities (Time vs Distance) 
         """
@@ -422,15 +452,11 @@ class StravaVisualizer:
         # 6. Save
         filename = f"activity_clock_{sport_str.replace(' ', '_')}.png"
         save_path = self.output_dir / filename.lower()
-        
-        plt.savefig(
-            save_path, 
-            dpi=600, 
-            facecolor='black', 
-            bbox_inches='tight'
-        )
-        print(f"🕑 Activity clock saved to: {save_path}")
-        plt.close()
+
+        result = self._finalize_figure(fig, save_path, dpi=600, return_buffer=return_buffer)
+        if not return_buffer:
+            print(f"🕑 Activity clock saved to: {save_path}")
+        return result
 
     def plot_activity(
         self,
@@ -439,8 +465,9 @@ class StravaVisualizer:
         folder: Path | None = None,
         title: str | None = None,
         neon_color: str = "#fc0101",
-        filename: str | None = None
-    ) -> None:
+        filename: str | None = None,
+        return_buffer: bool = False
+    ) -> BytesIO | None:
         """
         Plot a single activity with neon style map and elevation profile below.
         Fetches activity streams from Strava API for elevation data.
@@ -626,20 +653,15 @@ class StravaVisualizer:
         # Save
         output_folder = folder if folder else self.output_dir
         output_folder.mkdir(parents=True, exist_ok=True)
-        
+
         safe_title = (title or activity_name).replace(' ', '_').lower()
         filename = f"activity_{activity_id}_{safe_title}.png" if filename is None else filename
         save_path = output_folder / filename
-        
-        plt.savefig(
-            save_path,
-            dpi=300,
-            facecolor='black',
-            bbox_inches='tight',
-            pad_inches=0.3
-        )
-        print(f"🗺️ Activity plot saved to: {save_path}")
-        plt.close()
+
+        result = self._finalize_figure(fig, save_path, dpi=300, return_buffer=return_buffer, pad_inches=0.3)
+        if not return_buffer:
+            print(f"🗺️ Activity plot saved to: {save_path}")
+        return result
 
     def plot_year_in_sport_main(
         self,
@@ -650,8 +672,9 @@ class StravaVisualizer:
         neon_color: str = "#fc0101",
         comparison_year: int | None = None,
         comparison_data: dict | None = None,
-        comparison_neon_color: str = "#00aaff"
-    ) -> None:
+        comparison_neon_color: str = "#00aaff",
+        return_buffer: bool = False
+    ) -> BytesIO | None:
         """
         Plot main sport statistics in neon style for Instagram Stories.
         Shows sport-specific stats, monthly chart, and highlights.
@@ -1034,19 +1057,14 @@ class StravaVisualizer:
         # Save
         output_folder = folder if folder else self.output_dir
         output_folder.mkdir(parents=True, exist_ok=True)
-        
+
         filename = f"year_in_sport_{year}_{main_sport.lower()}.png"
         save_path = output_folder / filename
-        
-        plt.savefig(
-            save_path,
-            dpi=300,
-            facecolor='black',
-            bbox_inches='tight',
-            pad_inches=0.3
-        )
-        print(f"📊 Year in sport ({main_sport}) saved to: {save_path}")
-        plt.close()
+
+        result = self._finalize_figure(fig, save_path, dpi=300, return_buffer=return_buffer, pad_inches=0.3)
+        if not return_buffer:
+            print(f"📊 Year in sport ({main_sport}) saved to: {save_path}")
+        return result
 
     def plot_year_in_sport_totals(
         self,
@@ -1056,8 +1074,9 @@ class StravaVisualizer:
         neon_color: str = "#fc0101",
         comparison_year: int | None = None,
         comparison_data: dict | None = None,
-        comparison_neon_color: str = "#00aaff"
-    ) -> None:
+        comparison_neon_color: str = "#00aaff",
+        return_buffer: bool = False
+    ) -> BytesIO | None:
         """
         Plot total year statistics across all sports in neon style for Instagram Stories.
         Shows total stats, sports breakdown, and monthly activity.
@@ -1399,27 +1418,23 @@ class StravaVisualizer:
         # Save
         output_folder = folder if folder else self.output_dir
         output_folder.mkdir(parents=True, exist_ok=True)
-        
+
         filename = f"year_in_sport_{year}_totals.png"
         save_path = output_folder / filename
-        
-        plt.savefig(
-            save_path,
-            dpi=300,
-            facecolor='black',
-            bbox_inches='tight',
-            pad_inches=0.3
-        )
-        print(f"📊 Year in sport (totals) saved to: {save_path}")
-        plt.close()
+
+        result = self._finalize_figure(fig, save_path, dpi=300, return_buffer=return_buffer, pad_inches=0.3)
+        if not return_buffer:
+            print(f"📊 Year in sport (totals) saved to: {save_path}")
+        return result
 
     def hud_dashboard(
-        self, 
+        self,
         sport_type: str,
-        bins: int = 40
-    ) -> None:
+        bins: int = 40,
+        return_buffer: bool = False
+    ) -> BytesIO | None:
         """
-        Generates a 3-row 'Cyberpunk HUD' dashboard showing distributions of 
+        Generates a 3-row 'Cyberpunk HUD' dashboard showing distributions of
         Distance, Heart Rate, and Speed/Pace.
         Speed/Pace format adapts based on sport type.
         """
@@ -1514,12 +1529,13 @@ class StravaVisualizer:
         sport_str = sport_type.upper()
         filename = f"hud_{sport_str.replace(' ', '_')}.png"
         save_path = self.output_dir / filename.lower()
-        
-        plt.savefig(save_path, dpi=600, facecolor='black', bbox_inches='tight')
-        print(f"🎛️ HUD dashboard saved to: {save_path}")
-        plt.close()
 
-    def plot_efficiency_factor(self, sport_type: str, window=14):
+        result = self._finalize_figure(fig, save_path, dpi=600, return_buffer=return_buffer)
+        if not return_buffer:
+            print(f"🎛️ HUD dashboard saved to: {save_path}")
+        return result
+
+    def plot_efficiency_factor(self, sport_type: str, window=14, return_buffer: bool = False) -> BytesIO | None:
         """
         Plots Aerobic Efficiency (Speed / HR) with publication-quality styling.
         Includes rolling average, standard deviation bands, and peak annotations.
@@ -1623,11 +1639,13 @@ class StravaVisualizer:
             
             # Save
             output_path = self.output_dir / "efficiency_factor.png"
-            plt.savefig(output_path, dpi=600, bbox_inches='tight')
-            print(f"📈 Professional efficiency plot saved to {output_path}")
-            plt.close()
 
-    def plot_performance_frontier(self, sport_types=['Run']):
+            result = self._finalize_figure(fig, output_path, dpi=600, facecolor='white', return_buffer=return_buffer)
+            if not return_buffer:
+                print(f"📈 Professional efficiency plot saved to {output_path}")
+            return result
+
+    def plot_performance_frontier(self, sport_types=['Run'], return_buffer: bool = False) -> BytesIO | None:
         """
         Plots the Distance-Pace Frontier with Riegel's Fatigue Model fitting.
         
@@ -1747,9 +1765,11 @@ class StravaVisualizer:
 
             plt.tight_layout()
             out_path = self.output_dir / "performance_frontier.png"
-            plt.savefig(out_path, dpi=600, bbox_inches='tight')
-            print(f"🚀 Frontier plot saved to {out_path}")
-            plt.close()
+
+            result = self._finalize_figure(fig, out_path, dpi=600, facecolor='white', return_buffer=return_buffer)
+            if not return_buffer:
+                print(f"🚀 Frontier plot saved to {out_path}")
+            return result
 
 
     def plot_weekly_report(
@@ -1757,8 +1777,9 @@ class StravaVisualizer:
         weekly_report: dict,
         folder: Path | None = None,
         neon_color: str = "#fc0101",
+        return_buffer: bool = False,
         last_week_report: dict | None = None,
-    ) -> None:
+    ) -> BytesIO | None:
         """
         Plot weekly report statistics in neon style for Instagram Stories.
         Shows activities per day bar plot, sports breakdown pie charts, and key stats.
@@ -2265,15 +2286,14 @@ class StravaVisualizer:
             ax_accum.set_axis_off()
         
         # --- Save ---
-        # plt.tight_layout()
-        
-        # Determine output folder
         if folder is None:
             folder = self.workdir / "weekly_reports"
         folder.mkdir(parents=True, exist_ok=True)
-        
+
         filename = f"weekly_report_{week_start}.png"
         out_path = folder / filename
-        plt.savefig(out_path, dpi=300, facecolor='black')
-        print(f"📊 Weekly report saved to {out_path}")
-        plt.close()
+
+        result = self._finalize_figure(fig, out_path, dpi=300, return_buffer=return_buffer)
+        if not return_buffer:
+            print(f"📊 Weekly report saved to {out_path}")
+        return result
