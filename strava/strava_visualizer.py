@@ -1871,14 +1871,19 @@ class StravaVisualizer:
                 _fmt_delta(delta_num_sports, ".0f"),
                 _fmt_delta(delta_longest_km, ".1f"),
             ]
+            def _delta_color(delta: float) -> str:
+                if delta == 0:
+                    return '#888888'
+                return '#00ff88' if delta > 0 else '#ff4444'
+
             delta_colors = [
-                '#00ff88' if delta_activities >= 0 else '#ff4444',
-                '#00ff88' if delta_km >= 0 else '#ff4444',
-                '#00ff88' if delta_hours >= 0 else '#ff4444',
-                '#00ff88' if delta_active_days >= 0 else '#ff4444',
-                '#00ff88' if delta_elevation >= 0 else '#ff4444',
-                '#00ff88' if delta_num_sports >= 0 else '#ff4444',
-                '#00ff88' if delta_longest_km >= 0 else '#ff4444',
+                _delta_color(delta_activities),
+                _delta_color(delta_km),
+                _delta_color(delta_hours),
+                _delta_color(delta_active_days),
+                _delta_color(delta_elevation),
+                _delta_color(delta_num_sports),
+                _delta_color(delta_longest_km),
             ]
         else:
             deltas = [None] * 7
