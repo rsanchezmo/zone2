@@ -8,6 +8,8 @@ __pycache__/
 # Strava cache
 .strava/
 
+.vscode/
+
 # Project workdir
 strava_intelligence_workdir/
 cache/
