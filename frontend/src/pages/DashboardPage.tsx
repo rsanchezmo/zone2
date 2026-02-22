@@ -320,15 +320,22 @@ function RecordRow({ label, value, activityId, color }: { label: string; value: 
   return content
 }
 
-const CYCLING_SPORTS = ['ride', 'cycling', 'ebikeride', 'virtualride']
-const SWIMMING_SPORTS = ['swim', 'swimming']
+const CYCLING_SET = new Set([
+  'ride', 'virtualride', 'ebikeride', 'handcycle', 'velomobile',
+  'gravelride', 'mountainbikeride', 'emountainbikeride', 'rollerski',
+])
+const SWIMMING_SET = new Set(['swim'])
+const WATER_SET = new Set([
+  'canoeing', 'standuppaddling', 'kayaking', 'surfing', 'kitesurf',
+  'rowing', 'windsurf', 'sail',
+])
 
 function formatSpeed(speedMs: number, sportType: string): string {
-  const lower = sportType.toLowerCase()
-  if (CYCLING_SPORTS.some(s => lower.includes(s))) {
+  const key = sportType.toLowerCase().replace(/\s/g, '')
+  if (CYCLING_SET.has(key) || WATER_SET.has(key)) {
     return `${(speedMs * 3.6).toFixed(1)} km/h`
   }
-  if (SWIMMING_SPORTS.some(s => lower.includes(s))) {
+  if (SWIMMING_SET.has(key)) {
     const pace = (100 / speedMs) / 60
     const m = Math.floor(pace)
     const s = Math.round((pace - m) * 60)

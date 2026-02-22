@@ -7,11 +7,14 @@ import json
 from strava.constants import BASE_CRS
 
 
-# Sport category sets for reuse across functions
-CYCLING_SPORTS = {'ride', 'virtualride', 'ebikeride', 'handcycle', 'velomobile', 
-                  'gravel ride', 'gravelride', 'mountain bike ride', 'mountainbikeride'}
-SWIMMING_SPORTS = {'swim', 'openwater swim', 'openwaterswim'}
-RUNNING_SPORTS = {'run', 'trailrun', 'trail run', 'virtualrun', 'treadmill'}
+# Sport category sets for reuse across functions (lowercase for matching)
+CYCLING_SPORTS = {
+    'ride', 'virtualride', 'ebikeride', 'handcycle', 'velomobile',
+    'gravelride', 'mountainbikeride', 'emountainbikeride', 'rollerski',
+}
+SWIMMING_SPORTS = {'swim'}
+RUNNING_SPORTS = {'run', 'trailrun', 'virtualrun', 'walk', 'hike', 'snowshoe'}
+WATER_SPORTS = {'canoeing', 'standuppaddling', 'kayaking', 'surfing', 'kitesurf', 'rowing', 'windsurf', 'sail'}
 
 
 def get_sport_category(sport_type: str | None) -> str:
@@ -25,12 +28,14 @@ def get_sport_category(sport_type: str | None) -> str:
         Category string: 'cycling', 'swimming', or 'running' (default)
     """
     sport_type = sport_type or ""
-    sport_lower = sport_type.lower()
-    
-    if any(cycle in sport_lower for cycle in CYCLING_SPORTS):
+    sport_lower = sport_type.lower().replace(' ', '')
+
+    if sport_lower in CYCLING_SPORTS:
         return 'cycling'
-    elif any(swim in sport_lower for swim in SWIMMING_SPORTS):
+    elif sport_lower in SWIMMING_SPORTS:
         return 'swimming'
+    elif sport_lower in WATER_SPORTS:
+        return 'water'
     else:
         return 'running'
 
@@ -58,12 +63,12 @@ def convert_speed(speed_ms: float, sport_type: str | None = None) -> tuple[float
         # Swimming: pace per 100m (in minutes)
         pace_min_per_100m = (100 / speed_ms) / 60
         return (pace_min_per_100m, "min/100m")
-    
-    elif category == 'cycling':
-        # Cycling: speed in km/h
+
+    elif category in ('cycling', 'water'):
+        # Cycling & water sports: speed in km/h
         speed_kmh = speed_ms * 3.6
         return (speed_kmh, "km/h")
-    
+
     else:
         # Running and other sports: pace per km (in minutes)
         pace_min_per_km = 1000 / (60 * speed_ms)
@@ -100,8 +105,8 @@ def format_pace_or_speed(avg_speed: float, sport_type: str | None = None) -> str
             pace_secs = 0
         return f"{pace_mins}:{pace_secs:02d} /100m"
     
-    elif category == 'cycling':
-        # Cycling: speed in km/h
+    elif category in ('cycling', 'water'):
+        # Cycling & water sports: speed in km/h
         speed_kmh = avg_speed * 3.6  # m/s to km/h
         return f"{speed_kmh:.1f} km/h"
     

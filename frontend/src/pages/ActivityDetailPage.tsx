@@ -20,15 +20,29 @@ interface StreamPoint {
   latlng?: [number, number]
 }
 
-const CYCLING_SPORTS = ['ride', 'cycling', 'ebikeride', 'handcycle', 'velomobile', 'virtualride']
-const SWIMMING_SPORTS = ['swim', 'swimming']
-const SPEED_SPORTS = ['squash', 'tennis', 'pickleball', 'racquetball', 'weighttraining', 'workout', 'yoga', 'rockclimbing', 'alpineski', 'inlineskate', 'kayaking', 'standuppaddling']
+const CYCLING_SPORTS = new Set([
+  'ride', 'virtualride', 'ebikeride', 'handcycle', 'velomobile',
+  'gravelride', 'mountainbikeride', 'emountainbikeride', 'rollerski',
+])
+const SWIMMING_SPORTS = new Set(['swim'])
+const WATER_SPORTS = new Set([
+  'canoeing', 'standuppaddling', 'kayaking', 'surfing', 'kitesurf',
+  'rowing', 'windsurf', 'sail',
+])
+const SPEED_SPORTS = new Set([
+  'squash', 'tennis', 'pickleball', 'racquetball', 'badminton', 'tabletennis', 'padel',
+  'weighttraining', 'workout', 'yoga', 'pilates', 'crossfit', 'highintensityintervaltraining',
+  'elliptical', 'stairstepper', 'dance', 'rockclimbing', 'alpineski', 'backcountryski',
+  'nordicski', 'snowboard', 'iceskate', 'inlineskate', 'skateboard',
+  'soccer', 'basketball', 'volleyball', 'cricket', 'golf',
+])
 
-function getSportCategory(sportType: string | undefined): 'cycling' | 'swimming' | 'running' | 'speed' {
-  const lower = (sportType ?? '').toLowerCase()
-  if (CYCLING_SPORTS.some(s => lower.includes(s))) return 'cycling'
-  if (SWIMMING_SPORTS.some(s => lower.includes(s))) return 'swimming'
-  if (SPEED_SPORTS.some(s => lower.includes(s))) return 'speed'
+function getSportCategory(sportType: string | undefined): 'cycling' | 'swimming' | 'water' | 'running' | 'speed' {
+  const key = (sportType ?? '').toLowerCase().replace(/\s/g, '')
+  if (CYCLING_SPORTS.has(key)) return 'cycling'
+  if (SWIMMING_SPORTS.has(key)) return 'swimming'
+  if (WATER_SPORTS.has(key)) return 'water'
+  if (SPEED_SPORTS.has(key)) return 'speed'
   return 'running'
 }
 
@@ -37,7 +51,7 @@ function convertSpeed(speedMs: number, sportType: string | undefined): { value: 
   const cat = getSportCategory(sportType)
   if (cat === 'swimming') {
     return { value: (100 / speedMs) / 60, unit: 'min/100m' }
-  } else if (cat === 'cycling' || cat === 'speed') {
+  } else if (cat === 'cycling' || cat === 'speed' || cat === 'water') {
     return { value: speedMs * 3.6, unit: 'km/h' }
   }
   return { value: (1000 / speedMs) / 60, unit: 'min/km' }
@@ -49,7 +63,7 @@ export default function ActivityDetailPage() {
   const { data: athleteZones } = useAthleteZones()
 
   const sportCategory = getSportCategory(activity?.sport_type)
-  const useSpeedUnit = sportCategory === 'cycling' || sportCategory === 'speed'
+  const useSpeedUnit = sportCategory === 'cycling' || sportCategory === 'speed' || sportCategory === 'water'
 
   const { positions, streamSeries, paceUnit } = useMemo(() => {
     const pos: [number, number][] = []
