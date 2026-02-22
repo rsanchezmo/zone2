@@ -14,14 +14,6 @@ def main():
         cwd=os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend"),
     )
 
-    def shutdown(sig, frame):
-        backend.terminate()
-        frontend.terminate()
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, shutdown)
-    signal.signal(signal.SIGTERM, shutdown)
-
     try:
         backend.wait()
         frontend.wait()
