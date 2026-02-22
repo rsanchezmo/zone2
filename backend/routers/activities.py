@@ -185,3 +185,45 @@ def get_activity(activity_id: int, si: StravaIntelligence = Depends(get_si)):
     if row is None:
         raise HTTPException(status_code=404, detail="Activity not found")
     return _activity_to_dict(row, include_streams=True)
+
+
+@router.get("/{activity_id}/similar")
+def get_similar_activities(
+    activity_id: int,
+    limit: int = Query(5, ge=1, le=20),
+    si: StravaIntelligence = Depends(get_si),
+):
+    target = si.strava_activities_cache.get_activity_by_id(activity_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Activity not found")
+
+    activities = si.strava_activities_cache.activities_raw
+    if activities.empty:
+        return []
+
+    sport = target.get("sport_type")
+    distance = target.get("distance")
+    elevation = target.get("total_elevation_gain")
+
+    if not sport or distance is None or pd.isna(distance):
+        return []
+
+    df = activities.copy()
+    df = df[df["sport_type"] == sport]
+    df = df[df["id"] != activity_id]
+
+    # Distance within ±10%
+    dist_lo = float(distance) * 0.9
+    dist_hi = float(distance) * 1.1
+    df = df[(df["distance"] >= dist_lo) & (df["distance"] <= dist_hi)]
+
+    # Elevation within ±20% (if target has elevation)
+    if elevation is not None and not pd.isna(elevation) and float(elevation) > 0:
+        elev_lo = float(elevation) * 0.8
+        elev_hi = float(elevation) * 1.2
+        df = df[df["total_elevation_gain"].fillna(0).between(elev_lo, elev_hi)]
+
+    df["start_date_local"] = pd.to_datetime(df["start_date_local"])
+    df = df.sort_values("start_date_local", ascending=False).head(limit)
+
+    return [_activity_to_dict(row) for _, row in df.iterrows()]

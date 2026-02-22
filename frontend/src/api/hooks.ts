@@ -38,6 +38,14 @@ export function useActivity(id: number | string) {
   });
 }
 
+export function useSimilarActivities(id: number | string) {
+  return useQuery({
+    queryKey: ['similar-activities', id],
+    queryFn: () => api.get(`/activities/${id}/similar`).then(r => r.data),
+    enabled: !!id,
+  });
+}
+
 export function useSportTypes() {
   return useQuery({
     queryKey: ['sport-types'],
@@ -95,6 +103,31 @@ export function useActivityClock(sportTypes: string) {
     queryFn: () =>
       api.get('/stats/activity-clock', { params: { sport_types: sportTypes } })
         .then(r => r.data),
+  });
+}
+
+export function useCumulativeDistance(year: number, mainSport: string, comparisonYear?: number) {
+  return useQuery({
+    queryKey: ['cumulative-distance', year, mainSport, comparisonYear],
+    queryFn: () =>
+      api.get('/stats/cumulative-distance', {
+        params: { year, main_sport: mainSport, comparison_year: comparisonYear },
+      }).then(r => r.data),
+  });
+}
+
+export function useStreaks() {
+  return useQuery({
+    queryKey: ['streaks'],
+    queryFn: () => api.get('/stats/streaks').then(r => r.data),
+  });
+}
+
+export function usePersonalRecords() {
+  return useQuery({
+    queryKey: ['personal-records'],
+    queryFn: () => api.get('/stats/personal-records').then(r => r.data),
+    staleTime: 1000 * 60 * 30,
   });
 }
 

@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
-import { useParams } from 'react-router-dom'
-import { useActivity, useAthleteZones } from '../api/hooks'
+import { useParams, Link } from 'react-router-dom'
+import { useActivity, useAthleteZones, useSimilarActivities } from '../api/hooks'
 import StatCard from '../components/shared/StatCard'
 import MapView from '../components/shared/MapView'
 import StreamChart from '../components/shared/StreamChart'
@@ -57,27 +57,209 @@ function convertSpeed(speedMs: number, sportType: string | undefined): { value: 
   return { value: (1000 / speedMs) / 60, unit: 'min/km' }
 }
 
+interface Split {
+  km: number
+  isPartial: boolean
+  splitDistance: number // actual distance of this split in meters
+  time: number // seconds
+  avgPace: number // converted pace/speed value
+  gapPace: number | null // grade adjusted pace (running only)
+  avgHR: number | null
+  avgCadence: number | null
+  elevGain: number
+  elevLoss: number
+}
+
+/** Minetti metabolic cost factor for a given grade (as fraction, e.g. 0.05 = 5%) */
+function minettiCostFactor(grade: number): number {
+  const g = grade
+  return 155.4 * g ** 5 - 30.4 * g ** 4 - 43.3 * g ** 3 + 46.3 * g ** 2 + 19.5 * g + 3.6
+}
+
+const FLAT_COST = 3.6 // minettiCostFactor(0)
+
+/** Smooth an array with a simple moving average of given window size */
+function smoothArray(arr: number[], window: number): number[] {
+  const half = Math.floor(window / 2)
+  return arr.map((_, i) => {
+    let sum = 0
+    let count = 0
+    for (let j = Math.max(0, i - half); j <= Math.min(arr.length - 1, i + half); j++) {
+      sum += arr[j]
+      count++
+    }
+    return sum / count
+  })
+}
+
+/** Compute GAP-adjusted speed for each stream point (running only) */
+function computeGapSpeeds(streams: StreamPoint[]): number[] {
+  if (streams.length < 2) return []
+
+  // Compute raw grades
+  const rawGrades: number[] = [0]
+  for (let i = 1; i < streams.length; i++) {
+    const dDist = (streams[i].distance ?? 0) - (streams[i - 1].distance ?? 0)
+    const dAlt = (streams[i].altitude ?? 0) - (streams[i - 1].altitude ?? 0)
+    rawGrades.push(dDist > 0.5 ? dAlt / dDist : 0) // grade as fraction
+  }
+
+  // Smooth grades
+  const grades = smoothArray(rawGrades, 10)
+
+  // Compute GAP speed per point
+  return streams.map((pt, i) => {
+    const speed = pt.velocity_smooth ?? 0
+    if (speed <= 0.3) return 0
+    const cost = minettiCostFactor(grades[i])
+    return speed * (cost / FLAT_COST)
+  })
+}
+
+function formatTime(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+  const s = Math.round(seconds % 60)
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+function formatPace(value: number, useSpeed: boolean): string {
+  if (useSpeed) return value.toFixed(1)
+  const m = Math.floor(value)
+  const s = Math.round((value - m) * 60)
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+function computeSplits(streams: StreamPoint[], sportType: string | undefined, gapSpeeds?: number[]): Split[] {
+  if (!streams || streams.length < 2) return []
+
+  const cat = getSportCategory(sportType)
+  const useSpeed = cat === 'cycling' || cat === 'speed' || cat === 'water'
+  const isRunning = cat === 'running'
+  const splits: Split[] = []
+  let currentKm = 0
+  let splitStartIdx = 0
+
+  for (let i = 1; i < streams.length; i++) {
+    const dist = (streams[i].distance ?? 0) / 1000
+    const nextKm = currentKm + 1
+
+    if (dist >= nextKm || i === streams.length - 1) {
+      const isLast = i === streams.length - 1
+      const isPartial = isLast && dist < nextKm
+
+      // Gather points for this split
+      const splitPoints = streams.slice(splitStartIdx, i + 1)
+      const startDist = streams[splitStartIdx].distance ?? 0
+      const endDist = streams[i].distance ?? 0
+      const startTime = streams[splitStartIdx].time ?? 0
+      const endTime = streams[i].time ?? 0
+      const splitDistance = endDist - startDist
+      const time = endTime - startTime
+
+      // Average pace/speed from velocity_smooth
+      let speedSum = 0
+      let speedCount = 0
+      let gapSpeedSum = 0
+      let gapSpeedCount = 0
+      let hrSum = 0
+      let hrCount = 0
+      let cadSum = 0
+      let cadCount = 0
+      let elevGain = 0
+      let elevLoss = 0
+
+      for (let j = 0; j < splitPoints.length; j++) {
+        const pt = splitPoints[j]
+        const globalIdx = splitStartIdx + j
+        if (pt.velocity_smooth != null && pt.velocity_smooth > 0.3) {
+          speedSum += pt.velocity_smooth
+          speedCount++
+          if (isRunning && gapSpeeds && gapSpeeds[globalIdx] > 0) {
+            gapSpeedSum += gapSpeeds[globalIdx]
+            gapSpeedCount++
+          }
+        }
+        if (pt.heartrate != null && pt.heartrate > 0) {
+          hrSum += pt.heartrate
+          hrCount++
+        }
+        if (pt.cadence != null && pt.cadence > 0) {
+          cadSum += pt.cadence
+          cadCount++
+        }
+        if (j > 0 && pt.altitude != null && splitPoints[j - 1].altitude != null) {
+          const diff = pt.altitude! - splitPoints[j - 1].altitude!
+          if (diff > 0) elevGain += diff
+          else elevLoss += Math.abs(diff)
+        }
+      }
+
+      const avgSpeedMs = speedCount > 0 ? speedSum / speedCount : (splitDistance / time || 0)
+      const { value: avgPace } = convertSpeed(avgSpeedMs, sportType)
+
+      let gapPace: number | null = null
+      if (isRunning && gapSpeedCount > 0) {
+        const avgGapSpeed = gapSpeedSum / gapSpeedCount
+        const { value } = convertSpeed(avgGapSpeed, sportType)
+        gapPace = value
+      }
+
+      splits.push({
+        km: currentKm + 1,
+        isPartial: isPartial,
+        splitDistance,
+        time,
+        avgPace,
+        gapPace,
+        avgHR: hrCount > 0 ? Math.round(hrSum / hrCount) : null,
+        avgCadence: cadCount > 0 ? Math.round((cadSum / cadCount) * (cat === 'running' ? 2 : 1)) : null,
+        elevGain: Math.round(elevGain),
+        elevLoss: Math.round(elevLoss),
+      })
+
+      currentKm++
+      splitStartIdx = i
+    }
+  }
+
+  return splits
+}
+
 export default function ActivityDetailPage() {
   const { id } = useParams<{ id: string }>()
   const { data: activity, isLoading } = useActivity(Number(id))
   const { data: athleteZones } = useAthleteZones()
+  const { data: similarActivities } = useSimilarActivities(Number(id))
 
   const sportCategory = getSportCategory(activity?.sport_type)
   const useSpeedUnit = sportCategory === 'cycling' || sportCategory === 'speed' || sportCategory === 'water'
 
-  const { positions, streamSeries, paceUnit } = useMemo(() => {
+  const { positions, streamSeries, paceUnit, gapSpeeds, overallGap } = useMemo(() => {
     const pos: [number, number][] = []
     const series: {
       elevation: { distance: number; value: number }[]
       pace: { distance: number; value: number }[]
+      gap: { distance: number; value: number }[]
       heartrate: { distance: number; value: number }[]
       cadence: { distance: number; value: number }[]
-    } = { elevation: [], pace: [], heartrate: [], cadence: [] }
+    } = { elevation: [], pace: [], gap: [], heartrate: [], cadence: [] }
+    let gSpeeds: number[] = []
+    let avgGap: number | null = null
 
     if (activity?.streams && Array.isArray(activity.streams)) {
       const streams = activity.streams as StreamPoint[]
+      const isRunning = getSportCategory(activity?.sport_type) === 'running'
 
-      for (const pt of streams) {
+      // Compute GAP speeds for running
+      if (isRunning) {
+        gSpeeds = computeGapSpeeds(streams)
+      }
+
+      let gapSum = 0
+      let gapCount = 0
+
+      for (let idx = 0; idx < streams.length; idx++) {
+        const pt = streams[idx]
         const dist = (pt.distance ?? 0) / 1000
 
         // Positions
@@ -95,11 +277,20 @@ export default function ActivityDetailPage() {
         // Pace/Speed (sport-aware conversion)
         if (pt.velocity_smooth != null && pt.velocity_smooth > 0.3) {
           const { value: paceVal } = convertSpeed(pt.velocity_smooth, activity?.sport_type)
-          // Filter outliers based on sport
           const cat = getSportCategory(activity?.sport_type)
           const isOutlier = cat === 'swimming' ? paceVal > 5 : cat === 'cycling' ? paceVal < 1 : paceVal > 20
           if (!isOutlier) {
             series.pace.push({ distance: dist, value: paceVal })
+
+            // GAP line for running
+            if (isRunning && gSpeeds[idx] > 0) {
+              const { value: gapVal } = convertSpeed(gSpeeds[idx], activity?.sport_type)
+              if (gapVal <= 20) {
+                series.gap.push({ distance: dist, value: gapVal })
+                gapSum += gSpeeds[idx]
+                gapCount++
+              }
+            }
           }
         }
 
@@ -113,6 +304,11 @@ export default function ActivityDetailPage() {
           series.cadence.push({ distance: dist, value: pt.cadence })
         }
       }
+
+      if (gapCount > 0) {
+        const { value } = convertSpeed(gapSum / gapCount, activity?.sport_type)
+        avgGap = value
+      }
     }
 
     // Fallback to summary_polyline for map
@@ -125,8 +321,13 @@ export default function ActivityDetailPage() {
 
     // Determine pace unit from sport
     const { unit: pu } = convertSpeed(1, activity?.sport_type)
-    return { positions: pos, streamSeries: series, paceUnit: pu }
+    return { positions: pos, streamSeries: series, paceUnit: pu, gapSpeeds: gSpeeds, overallGap: avgGap }
   }, [activity])
+
+  const splits = useMemo(() => {
+    if (!activity?.streams || !Array.isArray(activity.streams)) return []
+    return computeSplits(activity.streams as StreamPoint[], activity.sport_type, gapSpeeds.length > 0 ? gapSpeeds : undefined)
+  }, [activity, gapSpeeds])
 
   const hrZoneBounds = athleteZones?.heart_rate?.zones as { min: number; max: number }[] | undefined
   const hrZoneDistribution = useMemo(() => {
@@ -152,6 +353,8 @@ export default function ActivityDetailPage() {
   const hasHR = streamSeries.heartrate.length > 0
   const hasElevation = streamSeries.elevation.length > 0
   const hasCadence = streamSeries.cadence.length > 0
+  const isRunning = sportCategory === 'running'
+  const hasGap = isRunning && streamSeries.gap.length > 0
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
@@ -198,6 +401,9 @@ export default function ActivityDetailPage() {
         {activity.suffer_score && (
           <StatCard label="Suffer Score" value={activity.suffer_score} color="text-neon-yellow" />
         )}
+        {hasGap && overallGap != null && (
+          <StatCard label="GAP" value={formatPace(overallGap, false)} unit={paceUnit} color="text-orange-400" />
+        )}
       </div>
 
       {/* HR Zone Distribution */}
@@ -227,6 +433,126 @@ export default function ActivityDetailPage() {
         </div>
       )}
 
+      {/* Per-km Splits */}
+      {splits.length > 1 && (() => {
+        const fullSplits = splits.filter(s => !s.isPartial)
+        const bestPace = fullSplits.length > 0
+          ? (useSpeedUnit
+              ? Math.max(...fullSplits.map(s => s.avgPace))
+              : Math.min(...fullSplits.map(s => s.avgPace)))
+          : null
+        const worstPace = fullSplits.length > 0
+          ? (useSpeedUnit
+              ? Math.min(...fullSplits.map(s => s.avgPace))
+              : Math.max(...fullSplits.map(s => s.avgPace)))
+          : null
+
+        return (
+          <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
+            <div className="text-xs text-gray-500 uppercase mb-3">Splits</div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-gray-500 text-xs uppercase border-b border-surface-600">
+                    <th className="text-left py-2 pr-3 font-medium">KM</th>
+                    <th className="text-right py-2 px-3 font-medium">{useSpeedUnit ? 'Speed' : 'Pace'}</th>
+                    {hasGap && (
+                      <th className="text-right py-2 px-3 font-medium">GAP</th>
+                    )}
+                    <th className="text-right py-2 px-3 font-medium">Time</th>
+                    {splits.some(s => s.avgHR !== null) && (
+                      <th className="text-right py-2 px-3 font-medium">HR</th>
+                    )}
+                    {splits.some(s => s.avgCadence !== null) && (
+                      <th className="text-right py-2 px-3 font-medium">Cadence</th>
+                    )}
+                    <th className="text-right py-2 px-3 font-medium">Elev +</th>
+                    <th className="text-right py-2 pl-3 font-medium">Elev −</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {splits.map(split => {
+                    const isBest = !split.isPartial && bestPace !== null && split.avgPace === bestPace
+                    const isWorst = !split.isPartial && worstPace !== null && split.avgPace === worstPace
+
+                    // Pace bar width relative to range
+                    const paceRange = bestPace !== null && worstPace !== null ? Math.abs(worstPace - bestPace) : 0
+                    const barWidth = paceRange > 0 && !split.isPartial
+                      ? useSpeedUnit
+                        ? ((split.avgPace - worstPace!) / paceRange) * 100
+                        : ((worstPace! - split.avgPace) / paceRange) * 100
+                      : 50
+
+                    return (
+                      <tr
+                        key={split.km}
+                        className="border-b border-surface-700 last:border-b-0"
+                      >
+                        <td className="py-2 pr-3 text-gray-400 font-medium">
+                          {split.isPartial
+                            ? `${(split.splitDistance / 1000).toFixed(2)}`
+                            : split.km}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono">
+                          <div className="flex items-center justify-end gap-2">
+                            <div className="w-16 h-1.5 rounded-full bg-surface-600 overflow-hidden hidden sm:block">
+                              <div
+                                className="h-full rounded-full"
+                                style={{
+                                  width: `${Math.max(5, barWidth)}%`,
+                                  backgroundColor: isBest
+                                    ? '#39ff14'
+                                    : isWorst
+                                      ? '#ff4444'
+                                      : getSportColor(activity.sport_type),
+                                }}
+                              />
+                            </div>
+                            <span className={
+                              isBest ? 'text-green-400 font-bold' :
+                              isWorst ? 'text-red-400' :
+                              'text-gray-200'
+                            }>
+                              {formatPace(split.avgPace, useSpeedUnit)}
+                              <span className="text-gray-500 text-xs ml-1">{paceUnit}</span>
+                            </span>
+                          </div>
+                        </td>
+                        {hasGap && (
+                          <td className="py-2 px-3 text-right text-orange-400 font-mono">
+                            {split.gapPace != null ? formatPace(split.gapPace, false) : '–'}
+                            <span className="text-gray-500 text-xs ml-1">{paceUnit}</span>
+                          </td>
+                        )}
+                        <td className="py-2 px-3 text-right text-gray-300 font-mono">
+                          {formatTime(split.time)}
+                        </td>
+                        {splits.some(s => s.avgHR !== null) && (
+                          <td className="py-2 px-3 text-right text-neon-magenta font-mono">
+                            {split.avgHR ?? '–'}
+                          </td>
+                        )}
+                        {splits.some(s => s.avgCadence !== null) && (
+                          <td className="py-2 px-3 text-right text-neon-cyan font-mono">
+                            {split.avgCadence ?? '–'}
+                          </td>
+                        )}
+                        <td className="py-2 px-3 text-right text-green-400/70 font-mono text-xs">
+                          {split.elevGain > 0 ? `+${split.elevGain}m` : '–'}
+                        </td>
+                        <td className="py-2 pl-3 text-right text-red-400/70 font-mono text-xs">
+                          {split.elevLoss > 0 ? `−${split.elevLoss}m` : '–'}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      })()}
+
       {/* Stream Charts */}
       {hasElevation && (
         <StreamChart
@@ -252,6 +578,9 @@ export default function ActivityDetailPage() {
             const s = Math.round((v - m) * 60)
             return `${m}:${s.toString().padStart(2, '0')}`
           })}
+          secondaryData={hasGap ? streamSeries.gap : undefined}
+          secondaryColor="#f97316"
+          secondaryLabel="GAP"
         />
       )}
 
@@ -273,6 +602,43 @@ export default function ActivityDetailPage() {
           gradientId="cadGrad"
           unit="spm"
         />
+      )}
+
+      {/* Similar Activities */}
+      {similarActivities && similarActivities.length > 0 && (
+        <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
+          <div className="text-xs text-gray-500 uppercase mb-3">Similar Activities</div>
+          <div className="divide-y divide-surface-700">
+            {similarActivities.map((sa: Record<string, unknown>) => (
+              <Link
+                key={sa.id as number}
+                to={`/activities/${sa.id}`}
+                className="flex items-center gap-3 py-2.5 px-1 -mx-1 rounded-lg hover:bg-surface-700 transition-colors group"
+              >
+                <span
+                  className="w-2 h-2 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: getSportColor(sa.sport_type as string) }}
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-gray-200 truncate group-hover:text-white transition-colors">
+                    {sa.name as string}
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    {sa.start_date_local ? new Date(sa.start_date_local as string).toLocaleDateString() : ''}
+                  </div>
+                </div>
+                <div className="flex items-center gap-4 text-xs text-gray-400 font-mono flex-shrink-0">
+                  <span>{(sa.distance_km as number)?.toFixed(1)} km</span>
+                  {sa.formatted_pace && <span>{sa.formatted_pace as string}</span>}
+                  {(sa.total_elevation_gain as number) > 0 && (
+                    <span className="text-green-400/70">+{Math.round(sa.total_elevation_gain as number)}m</span>
+                  )}
+                  <span>{sa.moving_time_formatted as string}</span>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   )
