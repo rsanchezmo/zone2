@@ -17,6 +17,7 @@ export default function ProfilePage() {
   const updatedAt = profile.updated_at ? new Date(profile.updated_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }) : null
 
   const hrZones = zones?.heart_rate?.zones as { min: number; max: number }[] | undefined
+  const maxHr = zones?.heart_rate?.max_hr as number | undefined
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -110,12 +111,13 @@ export default function ProfilePage() {
             {hrZones.map((zone, i) => {
               const color = HR_ZONE_COLORS[i] ?? '#6b7280'
               const name = HR_ZONE_NAMES[i] ?? `Zone ${i + 1}`
-              const maxLabel = zone.max === -1 ? 'max' : `${zone.max}`
-              const barMax = zone.max === -1 ? 220 : zone.max
+              const scale = (maxHr ?? 220) * 1.05 // 5% padding above max HR
+              const maxLabel = `${zone.max}`
+              const barMax = zone.max
               const barMin = zone.min
               // Bar width proportional to the zone range
-              const rangeWidth = ((barMax - barMin) / 220) * 100
-              const offsetLeft = (barMin / 220) * 100
+              const rangeWidth = ((barMax - barMin) / scale) * 100
+              const offsetLeft = (barMin / scale) * 100
               return (
                 <div key={i} className="flex items-center gap-3">
                   <span className="text-xs font-mono w-6 text-center font-bold" style={{ color }}>Z{i + 1}</span>
@@ -140,9 +142,11 @@ export default function ProfilePage() {
               )
             })}
           </div>
-          {zones?.heart_rate?.custom_zones && (
-            <div className="text-[11px] text-gray-500 mt-3">Custom zones configured</div>
-          )}
+          <div className="text-[11px] text-gray-500 mt-3">
+            {zones?.heart_rate?.custom_zones
+              ? 'Custom zones from Strava'
+              : `Estimated from activity data (max HR: ${maxHr ?? '?'} bpm)`}
+          </div>
         </div>
       )}
 

@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useParams } from 'react-router-dom'
-import { useActivity } from '../api/hooks'
+import { useActivity, useAthleteZones } from '../api/hooks'
 import StatCard from '../components/shared/StatCard'
 import MapView from '../components/shared/MapView'
 import StreamChart from '../components/shared/StreamChart'
@@ -46,6 +46,7 @@ function convertSpeed(speedMs: number, sportType: string | undefined): { value: 
 export default function ActivityDetailPage() {
   const { id } = useParams<{ id: string }>()
   const { data: activity, isLoading } = useActivity(Number(id))
+  const { data: athleteZones } = useAthleteZones()
 
   const sportCategory = getSportCategory(activity?.sport_type)
   const useSpeedUnit = sportCategory === 'cycling' || sportCategory === 'speed'
@@ -113,6 +114,23 @@ export default function ActivityDetailPage() {
     return { positions: pos, streamSeries: series, paceUnit: pu }
   }, [activity])
 
+  const hrZoneBounds = athleteZones?.heart_rate?.zones as { min: number; max: number }[] | undefined
+  const hrZoneDistribution = useMemo(() => {
+    if (streamSeries.heartrate.length === 0 || !hrZoneBounds || hrZoneBounds.length < 5) return null
+    const boundaries = hrZoneBounds.slice(0, 4).map(z => z.max)
+    const counts = [0, 0, 0, 0, 0]
+    for (const pt of streamSeries.heartrate) {
+      let bin = 4
+      for (let i = 0; i < boundaries.length; i++) {
+        if (pt.value < boundaries[i]) { bin = i; break }
+      }
+      counts[bin]++
+    }
+    const total = counts.reduce((a, b) => a + b, 0)
+    if (total === 0) return null
+    return counts.map(c => Math.round((c / total) * 1000) / 10)
+  }, [hrZoneBounds, streamSeries.heartrate])
+
   if (isLoading) return <div className="text-gray-500">Loading...</div>
   if (!activity) return <div className="text-gray-500">Activity not found</div>
 
@@ -167,6 +185,33 @@ export default function ActivityDetailPage() {
           <StatCard label="Suffer Score" value={activity.suffer_score} color="text-neon-yellow" />
         )}
       </div>
+
+      {/* HR Zone Distribution */}
+      {hrZoneDistribution && hrZoneDistribution.some(v => v > 0) && (
+        <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
+          <div className="text-xs text-gray-500 uppercase mb-3">HR Zone Distribution</div>
+          <div className="flex gap-0.5 h-8 rounded overflow-hidden">
+            {[1, 2, 3, 4, 5].map(z => {
+              const pct = hrZoneDistribution[z - 1]
+              const colors = ['bg-gray-500', 'bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-red-500']
+              const bounds = hrZoneBounds?.[z - 1]
+              const tooltip = bounds
+                ? `Z${z}: ${pct}% (${bounds.min}–${bounds.max} bpm)`
+                : `Z${z}: ${pct}%`
+              return pct > 0 ? (
+                <div
+                  key={z}
+                  className={`${colors[z - 1]} flex items-center justify-center text-[10px] font-bold text-white cursor-default`}
+                  style={{ width: `${pct}%`, minWidth: pct > 0 ? '4px' : 0 }}
+                  title={tooltip}
+                >
+                  {pct >= 8 ? `Z${z}: ${Math.round(pct)}%` : ''}
+                </div>
+              ) : null
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Stream Charts */}
       {hasElevation && (

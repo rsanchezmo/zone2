@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, BackgroundTasks, Query
 
 from backend.dependencies import get_si
+from backend.routers.stats import clear_stats_cache
 from strava.strava_intelligence import StravaIntelligence
 
 router = APIRouter()
@@ -18,6 +19,8 @@ def _run_sync(si: StravaIntelligence, full_sync: bool, include_streams: bool):
         _sync_status["last_error"] = str(e)
     finally:
         _sync_status["running"] = False
+        si.strava_analytics.invalidate_caches()
+        clear_stats_cache()
 
 
 @router.post("")
@@ -30,6 +33,31 @@ def trigger_sync(
     if _sync_status["running"]:
         return {"status": "already_running"}
     background_tasks.add_task(_run_sync, si, full_sync, include_streams)
+    return {"status": "started"}
+
+
+def _run_backfill_streams(si: StravaIntelligence):
+    global _sync_status
+    _sync_status["running"] = True
+    _sync_status["last_error"] = None
+    try:
+        si.ensure_activities_with_streams()
+    except Exception as e:
+        _sync_status["last_error"] = str(e)
+    finally:
+        _sync_status["running"] = False
+        si.strava_analytics.invalidate_caches()
+        clear_stats_cache()
+
+
+@router.post("/backfill-streams")
+def backfill_streams(
+    background_tasks: BackgroundTasks,
+    si: StravaIntelligence = Depends(get_si),
+):
+    if _sync_status["running"]:
+        return {"status": "already_running"}
+    background_tasks.add_task(_run_backfill_streams, si)
     return {"status": "started"}
 
 

@@ -5,7 +5,7 @@ import { getSportColor } from '../constants/sportColors'
 import StatCard from '../components/shared/StatCard'
 import ExportButton from '../components/shared/ExportButton'
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+  ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
 import { useTheme } from '../hooks/useTheme'
 
@@ -155,20 +155,25 @@ export default function DashboardPage() {
               )}
             </div>
             <ResponsiveContainer width="100%" height={250}>
-              <BarChart data={monthlyDistanceData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+              <ComposedChart data={monthlyDistanceData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={colors.gridStroke} />
                 <XAxis dataKey="month" tick={{ fill: colors.tickFill, fontSize: 11 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: colors.tickFillSecondary, fontSize: 10 }} axisLine={false} tickLine={false} width={40} tickFormatter={(v: number) => `${v}`} />
                 <Tooltip
                   contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
                   labelStyle={{ color: colors.labelColor }}
-                  formatter={(value: number, name: string) => [`${value.toFixed(1)} km`, name === 'prev' ? `${year - 1}` : `${year}`]}
+                  itemStyle={{ color: colors.labelColor }}
+                  formatter={(value: number, name: string) => [`${value.toFixed(1)} km`, name === 'prev' ? `${year - 1}` : name === 'distance' ? `${year}` : '']}
                 />
                 {comp && (
                   <Bar dataKey="prev" fill={sportColor} fillOpacity={0.15} stroke={sportColor} strokeOpacity={0.3} strokeWidth={1} radius={[3, 3, 0, 0]} />
                 )}
                 <Bar dataKey="distance" fill={sportColor} fillOpacity={0.7} radius={[3, 3, 0, 0]} />
-              </BarChart>
+                <Line dataKey="distance" stroke={sportColor} strokeWidth={2} dot={false} type="monotone" legendType="none" tooltipType="none" />
+                {comp && (
+                  <Line dataKey="prev" stroke={sportColor} strokeWidth={1.5} strokeDasharray="4 3" strokeOpacity={0.4} dot={false} type="monotone" legendType="none" tooltipType="none" />
+                )}
+              </ComposedChart>
             </ResponsiveContainer>
           </div>
 
@@ -190,20 +195,25 @@ export default function DashboardPage() {
               )}
             </div>
             <ResponsiveContainer width="100%" height={250}>
-              <BarChart data={monthlyActivitiesData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+              <ComposedChart data={monthlyActivitiesData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={colors.gridStroke} />
                 <XAxis dataKey="month" tick={{ fill: colors.tickFill, fontSize: 11 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: colors.tickFillSecondary, fontSize: 10 }} axisLine={false} tickLine={false} width={30} allowDecimals={false} />
                 <Tooltip
                   contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
                   labelStyle={{ color: colors.labelColor }}
-                  formatter={(value: number, name: string) => [`${value}`, name === 'prev' ? `${year - 1}` : `${year}`]}
+                  itemStyle={{ color: colors.labelColor }}
+                  formatter={(value: number, name: string) => [`${value}`, name === 'prev' ? `${year - 1}` : name === 'activities' ? `${year}` : '']}
                 />
                 {comp && (
                   <Bar dataKey="prev" fill={sportColor} fillOpacity={0.15} stroke={sportColor} strokeOpacity={0.3} strokeWidth={1} radius={[3, 3, 0, 0]} />
                 )}
                 <Bar dataKey="activities" fill={sportColor} fillOpacity={0.7} radius={[3, 3, 0, 0]} />
-              </BarChart>
+                <Line dataKey="activities" stroke={sportColor} strokeWidth={2} dot={false} type="monotone" legendType="none" tooltipType="none" />
+                {comp && (
+                  <Line dataKey="prev" stroke={sportColor} strokeWidth={1.5} strokeDasharray="4 3" strokeOpacity={0.4} dot={false} type="monotone" legendType="none" tooltipType="none" />
+                )}
+              </ComposedChart>
             </ResponsiveContainer>
           </div>
 

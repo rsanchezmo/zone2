@@ -11,6 +11,38 @@ class StravaAnalytics:
     def __init__(self, strava_activities_cache: StravaActivitiesCache, strava_user_cache: StravaUserCache):
         self.strava_activities_cache = strava_activities_cache # inmutable data (historical activities)
         self.strava_user_cache = strava_user_cache # mutable data (user profile, stats, zones)
+        self._prepared_activities = None
+        self._prepared_activities_len = -1
+        self._hr_zones_cache = None
+
+    def _get_prepared_activities(self) -> pd.DataFrame:
+        """Return activities DF with parsed dates, cached to avoid repeated copy+parse.
+
+        Reads directly from the cache's memory store to avoid the extra .copy()
+        that load_activities() does on every call. We do a single copy here and
+        cache it with parsed dates.
+        """
+        # Access the internal memory cache directly (triggers lazy load if needed)
+        raw = self.strava_activities_cache._load_to_memory()
+        current_len = len(raw)
+        if self._prepared_activities is None or current_len != self._prepared_activities_len:
+            df = raw.copy()
+            df['start_date_local'] = pd.to_datetime(df['start_date_local'], utc=True)
+            self._prepared_activities = df
+            self._prepared_activities_len = current_len
+        return self._prepared_activities
+
+    def invalidate_caches(self):
+        """Clear all analytics-level caches. Call after sync."""
+        self._prepared_activities = None
+        self._prepared_activities_len = -1
+        self._hr_zones_cache = None
+
+    def _get_hr_zones_cached(self):
+        """Cache HR zones to avoid repeated user cache reads."""
+        if self._hr_zones_cache is None:
+            self._hr_zones_cache = self.get_hr_zones()
+        return self._hr_zones_cache
 
 
     """
@@ -30,32 +62,60 @@ class StravaAnalytics:
         return hr_rest
     
     def get_max_heart_rate(self):
-        """Get the athlete's max heart rate from cached zones estimated as Z4_max."""
+        """Get the athlete's max heart rate. Prefers activity data to avoid API call."""
+        hr_max = self._estimate_hr_max_from_activities()
+        if hr_max and hr_max > 100:
+            return hr_max
         zones = self.strava_user_cache.get_athlete_zones()
-        hr_max = zones['heart_rate']['zones'][4]['min']
-        return hr_max
+        return zones['heart_rate']['zones'][4]['min']
     
+    def _estimate_hr_max_from_activities(self) -> int | None:
+        """Estimate max HR from activity data using the 99th percentile.
+        Uses percentile instead of absolute max to filter out sensor glitches."""
+        df = self.strava_activities_cache._load_to_memory()
+        if df.empty or 'max_heartrate' not in df.columns:
+            return None
+        hr_values = df['max_heartrate'].dropna()
+        if hr_values.empty:
+            return None
+        # Use 99th percentile to ignore sensor spikes
+        return int(np.percentile(hr_values, 99))
+
+    def _build_default_zones(self, hr_max: int) -> list[dict]:
+        """Build standard 5-zone HR zones from a max HR value."""
+        boundaries = [0.60, 0.70, 0.80, 0.90]
+        zones = []
+        low = 0
+        for pct in boundaries:
+            high = int(hr_max * pct)
+            zones.append({'min': low, 'max': high})
+            low = high
+        zones.append({'min': low, 'max': hr_max})
+        return zones
+
     def get_hr_zones(self):
-        """Get the athlete's heart rate zones from cached zones."""
+        """Get the athlete's heart rate zones.
+
+        Uses Strava custom zones if available (requires API call).
+        Otherwise, estimates from the highest max_heartrate in activity data (no API call).
+        """
+        # Try to get custom zones from Strava (only if already cached to avoid API call)
+        if self.strava_user_cache._zones_cache is not None:
+            zones = self.strava_user_cache._zones_cache
+            if zones.get('heart_rate', {}).get('custom_zones'):
+                return zones['heart_rate']['zones']
+
+        # Fast path: estimate from activity data, no API call needed
+        hr_max = self._estimate_hr_max_from_activities()
+        if hr_max and hr_max > 100:
+            return self._build_default_zones(hr_max)
+
+        # Fallback: fetch from API (only if we have no activity data at all)
         zones = self.strava_user_cache.get_athlete_zones()
-        if zones['heart_rate']['custom_zones']:
+        if zones.get('heart_rate', {}).get('custom_zones'):
             return zones['heart_rate']['zones']
-        else:
-            hr_max = self.get_max_heart_rate()
-            zone_ranges = {
-                1: (0, int(hr_max * 0.60)),
-                2: (int(hr_max * 0.60), int(hr_max * 0.70)),
-                3: (int(hr_max * 0.70), int(hr_max * 0.80)),
-                4: (int(hr_max * 0.80), int(hr_max * 0.90)),
-                5: (int(hr_max * 0.90), hr_max),
-            }
-            hr_zones = []
-            for z in range(1, 6):
-                hr_zones.append({
-                    'min': zone_ranges[z][0],
-                    'max': zone_ranges[z][1],
-                })
-        return hr_zones
+        hr_max = zones.get('heart_rate', {}).get('zones', [{}] * 5)[4].get('min', 190)
+        return self._build_default_zones(hr_max)
 
     def get_current_vo2_max(self):
         """
@@ -85,9 +145,7 @@ class StravaAnalytics:
                               Used for fair year-over-year comparison (e.g. only up to Feb 20).
         """
 
-        # Use raw activities DataFrame (not GeoDataFrame) to include all activities
-        activities = self.strava_activities_cache.activities.copy()
-        activities['start_date_local'] = pd.to_datetime(activities['start_date_local'])
+        activities = self._get_prepared_activities()
 
         # get activities for the specified year
         mask = (activities['start_date_local'].dt.year == year) & (activities['sport_type'] == main_sport)
@@ -215,9 +273,7 @@ class StravaAnalytics:
             cutoff_month_day: Optional (month, day) tuple to filter activities up to that date.
         """
 
-        # Use raw activities DataFrame (not GeoDataFrame) to include all activities
-        activities = self.strava_activities_cache.activities.copy()
-        activities['start_date_local'] = pd.to_datetime(activities['start_date_local'])
+        activities = self._get_prepared_activities()
 
         # get activities for the specified year (all sports)
         mask = activities['start_date_local'].dt.year == year
@@ -298,8 +354,7 @@ class StravaAnalytics:
         """
         from datetime import datetime, timedelta, timezone
 
-        activities = self.strava_activities_cache.activities.copy()
-        activities['start_date_local'] = pd.to_datetime(activities['start_date_local'], utc=True)
+        activities = self._get_prepared_activities()
 
         # Determine the week to report on
         if week_start_date is None:
@@ -385,53 +440,34 @@ class StravaAnalytics:
                     titles_per_day[day] = day_activities['name'].tolist()
                 activities_titles_per_day_per_sport[sport] = titles_per_day
         
-        # HR Zone distribution (based on streams heart rate if available)
-        # Default zones (% of max HR): Z1: 50-60%, Z2: 60-70%, Z3: 70-80%, Z4: 80-90%, Z5: 90-100%
-        # Returns percentage of measurements in each zone
-        hr_zone_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
-        hr_athlete_zones = self.get_hr_zones()
-        total_hr_measurements = 0
-        
-        if not activities_week.empty:
-            hr_max = self.get_max_heart_rate()
-            
-            for _, activity in activities_week.iterrows():
-                # Try to use streams data if available
-                if 'streams' in activity and activity['streams'] is not None:
-                    try:
-                        streams_data = json.loads(activity['streams']) if isinstance(activity['streams'], str) else activity['streams']
-                        
-                        # streams_data is a list of dicts with 'time', 'heartrate', etc.
-                        if isinstance(streams_data, list) and len(streams_data) > 0:
-                            for point in streams_data:
-                                if 'heartrate' in point and point['heartrate'] is not None:
-                                    hr = point['heartrate']
-                                    total_hr_measurements += 1
-                                    
-                                    # Assign to zone
-                                    if hr_athlete_zones[0]['min'] <= hr < hr_athlete_zones[0]['max']:
-                                        hr_zone_counts[1] += 1
-                                    elif hr_athlete_zones[1]['min'] <= hr < hr_athlete_zones[1]['max']:
-                                        hr_zone_counts[2] += 1
-                                    elif hr_athlete_zones[2]['min'] <= hr < hr_athlete_zones[2]['max']:
-                                        hr_zone_counts[3] += 1
-                                    elif hr_athlete_zones[3]['min'] <= hr < hr_athlete_zones[3]['max']:
-                                        hr_zone_counts[4] += 1
-                                    else:
-                                        hr_zone_counts[5] += 1
-                    except (json.JSONDecodeError, TypeError, KeyError):
-                        # If streams parsing fails, skip this activity
-                        pass
-        
-        # Calculate percentage for each zone
-        hr_zone_distribution = {}
-        if total_hr_measurements > 0:
-            hr_zone_distribution = {
-                zone: round((count / total_hr_measurements) * 100, 1) 
-                for zone, count in hr_zone_counts.items()
-            }
-        else:
-            hr_zone_distribution = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 5: 0.0}
+        # HR Zone distribution (vectorized with numpy for speed)
+        hr_athlete_zones = self._get_hr_zones_cached()
+        hr_zone_distribution = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 5: 0.0}
+
+        if not activities_week.empty and hr_athlete_zones and 'streams' in activities_week.columns:
+            # Collect all HR values from streams into a single numpy array
+            all_hr = []
+            for streams_raw in activities_week['streams'].dropna():
+                try:
+                    streams_data = json.loads(streams_raw) if isinstance(streams_raw, str) else streams_raw
+                    if isinstance(streams_data, list):
+                        all_hr.extend(
+                            p['heartrate'] for p in streams_data
+                            if p.get('heartrate') is not None
+                        )
+                except (json.JSONDecodeError, TypeError, KeyError):
+                    pass
+
+            if all_hr:
+                hr_arr = np.array(all_hr, dtype=np.float64)
+                total = len(hr_arr)
+                # Build zone boundaries: [z1_min, z1_max, z2_max, z3_max, z4_max]
+                boundaries = [z['max'] for z in hr_athlete_zones[:4]]
+                # np.digitize bins: < z1_max → 0, < z2_max → 1, etc.
+                bins = np.digitize(hr_arr, boundaries, right=False)
+                for zone_idx in range(5):
+                    count = int(np.sum(bins == zone_idx))
+                    hr_zone_distribution[zone_idx + 1] = round((count / total) * 100, 1)
         
         # Most active day
         if not activities_week.empty:

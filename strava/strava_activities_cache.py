@@ -224,6 +224,30 @@ class StravaActivitiesCache:
     def activities(self) -> pd.DataFrame:
         """Get all cached activities as a DataFrame."""
         return self.load_activities()
+
+    @property
+    def activities_raw(self) -> pd.DataFrame:
+        """Get all cached activities without copying or parsing streams.
+        WARNING: Do not modify the returned DataFrame — it's the live cache."""
+        return self._load_to_memory()
+
+    def get_activity_by_id(self, activity_id: int) -> pd.Series | None:
+        """Look up a single activity by ID from memory cache.
+        Parses streams JSON only for the matched row."""
+        df = self._load_to_memory()
+        if df.empty:
+            return None
+        match = df[df["id"] == activity_id]
+        if match.empty:
+            return None
+        row = match.iloc[0].copy()
+        # Parse streams JSON for this single row
+        if "streams" in row.index and row["streams"] is not None and isinstance(row["streams"], str):
+            try:
+                row["streams"] = json.loads(row["streams"])
+            except (json.JSONDecodeError, TypeError):
+                row["streams"] = None
+        return row
     
     def save_activities_df(self, df: pd.DataFrame):
         """Save a DataFrame of activities to the cache."""

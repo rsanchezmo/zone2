@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, date
+from functools import lru_cache
 from fastapi import APIRouter, Depends, Query
 import pandas as pd
 import numpy as np
@@ -8,10 +10,29 @@ from strava.strava_utils import convert_speed, get_sport_category
 
 router = APIRouter()
 
+# In-memory cache for stats (cleared on sync)
+_weekly_report_cache: dict[str, dict] = {}
+_year_in_sport_cache: dict[str, dict] = {}
+
+
+def clear_stats_cache():
+    """Call after sync to invalidate cached reports."""
+    _weekly_report_cache.clear()
+    _year_in_sport_cache.clear()
+
 
 def _serialize_enum_dict(d: dict) -> dict:
     """Convert StrEnum-keyed dicts to string-keyed for JSON."""
     return {str(k): v for k, v in d.items()}
+
+
+def _get_weekly_report_cached(si: StravaIntelligence, week_start: str | None, cutoff_date: str | None = None) -> dict:
+    cache_key = f"{week_start}|{cutoff_date}"
+    if cache_key in _weekly_report_cache:
+        return _weekly_report_cache[cache_key]
+    result = si.strava_analytics.get_weekly_report(week_start, cutoff_date=cutoff_date)
+    _weekly_report_cache[cache_key] = result
+    return result
 
 
 @router.get("/weekly-report")
@@ -19,32 +40,42 @@ def weekly_report(
     week_start: str | None = None,
     si: StravaIntelligence = Depends(get_si),
 ):
-    report = si.strava_analytics.get_weekly_report(week_start)
+    report = _get_weekly_report_cached(si, week_start)
     # Previous week for deltas — with same day-of-week cutoff for fairness
-    from datetime import datetime, timedelta, date
     week_start_str = report.get("week_start")
     prev_report = None
     if week_start_str:
         current_monday = datetime.strptime(week_start_str, "%Y-%m-%d").date()
         prev_monday = current_monday - timedelta(days=7)
-        prev_report = si.strava_analytics.get_weekly_report(prev_monday.strftime("%Y-%m-%d"))
 
         # If this is the current (incomplete) week, truncate previous week to same day
         today = date.today()
         current_week_end = current_monday + timedelta(days=6)
         if today <= current_week_end:
-            # Days elapsed in current week (0=Mon only, 6=full week)
             days_elapsed = (today - current_monday).days
             cutoff_day_prev = prev_monday + timedelta(days=days_elapsed)
-            prev_report = si.strava_analytics.get_weekly_report(
-                prev_monday.strftime("%Y-%m-%d"),
+            prev_report = _get_weekly_report_cached(
+                si, prev_monday.strftime("%Y-%m-%d"),
                 cutoff_date=cutoff_day_prev.strftime("%Y-%m-%d"),
             )
+        else:
+            prev_report = _get_weekly_report_cached(si, prev_monday.strftime("%Y-%m-%d"))
 
     return {
         "current": _serialize_enum_dict(report),
         "previous": _serialize_enum_dict(prev_report) if prev_report else None,
     }
+
+
+def _get_year_in_sport_cached(si: StravaIntelligence, cache_key: str, year: int, main_sport: str, cutoff):
+    if cache_key in _year_in_sport_cache:
+        return _year_in_sport_cache[cache_key]
+    result = {
+        "main": si.strava_analytics.get_year_in_sport(year, main_sport, cutoff_month_day=cutoff),
+        "all": si.strava_analytics.get_all_year_in_sport(year, cutoff_month_day=cutoff),
+    }
+    _year_in_sport_cache[cache_key] = result
+    return result
 
 
 @router.get("/year-in-sport")
@@ -54,30 +85,26 @@ def year_in_sport(
     comparison_year: int | None = None,
     si: StravaIntelligence = Depends(get_si),
 ):
-    from datetime import date
     today = date.today()
     is_current_year = year == today.year
 
     # Only apply cutoff when viewing the current (incomplete) year
     cutoff = (today.month, today.day) if is_current_year else None
 
-    main = si.strava_analytics.get_year_in_sport(year, main_sport, cutoff_month_day=cutoff)
-    all_sports = si.strava_analytics.get_all_year_in_sport(year, cutoff_month_day=cutoff)
+    data = _get_year_in_sport_cached(si, f"{year}|{main_sport}|{cutoff}", year, main_sport, cutoff)
 
     result = {
-        "main_sport": _serialize_enum_dict(main),
-        "all_sports": _serialize_enum_dict(all_sports),
+        "main_sport": _serialize_enum_dict(data["main"]),
+        "all_sports": _serialize_enum_dict(data["all"]),
         "year": year,
         "sport": main_sport,
     }
 
     if comparison_year:
-        # Same cutoff for comparison year so we compare the same period
-        comp_main = si.strava_analytics.get_year_in_sport(comparison_year, main_sport, cutoff_month_day=cutoff)
-        comp_all = si.strava_analytics.get_all_year_in_sport(comparison_year, cutoff_month_day=cutoff)
+        comp_data = _get_year_in_sport_cached(si, f"{comparison_year}|{main_sport}|{cutoff}", comparison_year, main_sport, cutoff)
         result["comparison"] = {
-            "main_sport": _serialize_enum_dict(comp_main),
-            "all_sports": _serialize_enum_dict(comp_all),
+            "main_sport": _serialize_enum_dict(comp_data["main"]),
+            "all_sports": _serialize_enum_dict(comp_data["all"]),
             "year": comparison_year,
         }
 
@@ -90,7 +117,7 @@ def efficiency_factor(
     window: int = Query(default=14, ge=3, le=90),
     si: StravaIntelligence = Depends(get_si),
 ):
-    activities = si.strava_activities_cache.activities.copy()
+    activities = si.strava_activities_cache.activities_raw.copy()
     activities["start_date_local"] = pd.to_datetime(activities["start_date_local"])
     filtered = activities[activities["sport_type"] == sport_type].copy()
 
@@ -133,7 +160,7 @@ def performance_frontier(
     si: StravaIntelligence = Depends(get_si),
 ):
     sport_list = [s.strip() for s in sport_types.split(",")]
-    activities = si.strava_activities_cache.activities.copy()
+    activities = si.strava_activities_cache.activities_raw.copy()
     filtered = activities[activities["sport_type"].isin(sport_list)].copy()
 
     if filtered.empty:
@@ -188,7 +215,7 @@ def activity_clock(
     si: StravaIntelligence = Depends(get_si),
 ):
     sport_list = [s.strip() for s in sport_types.split(",")]
-    activities = si.strava_activities_cache.activities.copy()
+    activities = si.strava_activities_cache.activities_raw.copy()
     activities["start_date_local"] = pd.to_datetime(activities["start_date_local"])
     filtered = activities[activities["sport_type"].isin(sport_list)].copy()
 

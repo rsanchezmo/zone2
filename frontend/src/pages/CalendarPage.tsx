@@ -1,12 +1,12 @@
-import { useState, useMemo } from 'react'
+import { Fragment, useState, useMemo, useRef, useEffect } from 'react'
 import {
   startOfMonth, endOfMonth, eachDayOfInterval, format, addMonths, subMonths, addDays, subDays,
-  isSameMonth, isToday, startOfWeek, endOfWeek,
+  isSameMonth, isToday, startOfWeek, endOfWeek, isSameWeek, parseISO,
 } from 'date-fns'
 import { Link } from 'react-router-dom'
 import {
   useActivitiesByDateRange, useCalendarSessions, useCalendarSessionsByRange,
-  useCreateSession, useUpdateSession, useDeleteSession, useWeeklyReport,
+  useCreateSession, useUpdateSession, useDeleteSession, useWeeklyReport, useAthleteZones,
 } from '../api/hooks'
 import { SPORT_COLORS_HEX, getSportColor } from '../constants/sportColors'
 import StatCard from '../components/shared/StatCard'
@@ -85,6 +85,7 @@ function SportPieChart({ title, data, formatValue, colorMap }: {
           </Pie>
           <Tooltip
             contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
+            itemStyle={{ color: colors.labelColor }}
             formatter={(value: number, name: string) => [formatValue(value), name]}
           />
         </PieChart>
@@ -180,6 +181,7 @@ function AccumulatedChart({ data, titles, colorMap }: AccumulatedChartProps) {
           <Tooltip
             contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
             labelStyle={{ color: colors.labelColor }}
+            itemStyle={{ color: colors.labelColor }}
             formatter={(value: number, name: string) => [`${value} min`, name]}
           />
           {sports.map(sport => (
@@ -267,23 +269,30 @@ function SessionModal({
           <div className="text-xs text-gray-500 uppercase">
             {editingId ? 'Edit Session' : 'Add Session'}
           </div>
-          <select
-            value={sportType}
-            onChange={e => setSportType(e.target.value)}
-            className="w-full bg-surface-700 border border-surface-600 rounded px-3 py-2 text-sm"
-          >
-            {Object.keys(SPORT_COLORS_HEX).map(s => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-            <option value="Other">Other</option>
-          </select>
-          <textarea
-            placeholder="Description (optional)"
-            value={description}
-            onChange={e => setDescription(e.target.value)}
-            className="w-full bg-surface-700 border border-surface-600 rounded px-3 py-2 text-sm"
-            rows={2}
-          />
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">Session Type</label>
+            <select
+              value={sportType}
+              onChange={e => setSportType(e.target.value)}
+              className="w-full bg-surface-700 border border-surface-600 rounded-lg px-4 py-3.5 text-sm"
+              style={{ color: getSportColor(sportType) }}
+            >
+              {Object.keys(SPORT_COLORS_HEX).map(s => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+              <option value="Other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">Description</label>
+            <textarea
+              placeholder="e.g. Easy 10k recovery run"
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              className="w-full bg-surface-700 border border-surface-600 rounded-lg px-3 py-2.5 text-sm"
+              rows={3}
+            />
+          </div>
           <div className="flex gap-2 pt-2">
             <button
               onClick={() => {
@@ -366,6 +375,143 @@ function UpcomingPlan({ sessions, todayStr }: { sessions: Record<string, unknown
   )
 }
 
+/* ── Week Picker ──────────────────────────────────── */
+function WeekPicker({ currentWeekStart, onSelect, onClose }: {
+  currentWeekStart: string
+  onSelect: (weekStart: string) => void
+  onClose: () => void
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [viewMonth, setViewMonth] = useState(() => {
+    try { return startOfMonth(parseISO(currentWeekStart)) }
+    catch { return startOfMonth(new Date()) }
+  })
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [onClose])
+
+  const mStart = startOfMonth(viewMonth)
+  const mEnd = endOfMonth(viewMonth)
+  const calStart = startOfWeek(mStart, { weekStartsOn: 1 })
+  const calEnd = endOfWeek(mEnd, { weekStartsOn: 1 })
+  const days = eachDayOfInterval({ start: calStart, end: calEnd })
+
+  const selectedMonday = (() => {
+    try { return parseISO(currentWeekStart) }
+    catch { return startOfWeek(new Date(), { weekStartsOn: 1 }) }
+  })()
+
+  return (
+    <div ref={ref} className="absolute top-full mt-1 z-50 bg-surface-800 border border-surface-600 rounded-xl p-3 shadow-xl w-[260px]">
+      <div className="flex items-center justify-between mb-2">
+        <button onClick={() => setViewMonth(m => subMonths(m, 1))} className="text-gray-400 hover:text-white px-1">&larr;</button>
+        <span className="text-xs font-medium text-gray-300">{format(viewMonth, 'MMMM yyyy')}</span>
+        <button onClick={() => setViewMonth(m => addMonths(m, 1))} className="text-gray-400 hover:text-white px-1">&rarr;</button>
+      </div>
+      <div className="grid grid-cols-7 text-center text-[10px] text-gray-500 mb-1">
+        {['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map(d => <span key={d}>{d}</span>)}
+      </div>
+      <div className="grid grid-cols-7 gap-px">
+        {days.map(day => {
+          const monday = startOfWeek(day, { weekStartsOn: 1 })
+          const isSelected = isSameWeek(day, selectedMonday, { weekStartsOn: 1 })
+          const isCurrent = isSameWeek(day, new Date(), { weekStartsOn: 1 })
+          const inMonth = isSameMonth(day, viewMonth)
+          return (
+            <button
+              key={day.toISOString()}
+              onClick={() => {
+                onSelect(format(monday, 'yyyy-MM-dd'))
+                onClose()
+              }}
+              className={clsx(
+                'text-[11px] py-1 rounded transition-colors',
+                isSelected ? 'bg-neon-red/30 text-white font-bold' :
+                isCurrent ? 'bg-surface-600 text-gray-300' :
+                inMonth ? 'text-gray-400 hover:bg-surface-700' : 'text-gray-600 hover:bg-surface-700',
+              )}
+            >
+              {format(day, 'd')}
+            </button>
+          )
+        })}
+      </div>
+      <button
+        onClick={() => {
+          onSelect(format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd'))
+          onClose()
+        }}
+        className="mt-2 w-full text-[11px] text-gray-400 hover:text-white py-1 bg-surface-700 rounded"
+      >
+        This week
+      </button>
+    </div>
+  )
+}
+
+/* ── Month Picker ─────────────────────────────────── */
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+function MonthPicker({ current, onSelect, onClose }: {
+  current: Date
+  onSelect: (d: Date) => void
+  onClose: () => void
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [viewYear, setViewYear] = useState(current.getFullYear())
+  const nowMonth = new Date().getMonth()
+  const nowYear = new Date().getFullYear()
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [onClose])
+
+  return (
+    <div ref={ref} className="absolute top-full mt-1 z-50 bg-surface-800 border border-surface-600 rounded-xl p-3 shadow-xl w-[220px]">
+      <div className="flex items-center justify-between mb-2">
+        <button onClick={() => setViewYear(y => y - 1)} className="text-gray-400 hover:text-white px-1">&larr;</button>
+        <span className="text-xs font-medium text-gray-300">{viewYear}</span>
+        <button onClick={() => setViewYear(y => y + 1)} className="text-gray-400 hover:text-white px-1">&rarr;</button>
+      </div>
+      <div className="grid grid-cols-3 gap-1">
+        {MONTH_NAMES.map((name, i) => {
+          const isSelected = current.getFullYear() === viewYear && current.getMonth() === i
+          const isCurrent = nowYear === viewYear && nowMonth === i
+          return (
+            <button
+              key={name}
+              onClick={() => { onSelect(new Date(viewYear, i, 1)); onClose() }}
+              className={clsx(
+                'text-[11px] py-1.5 rounded transition-colors',
+                isSelected ? 'bg-neon-red/30 text-white font-bold' :
+                isCurrent ? 'bg-surface-600 text-gray-300' :
+                'text-gray-400 hover:bg-surface-700',
+              )}
+            >
+              {name}
+            </button>
+          )
+        })}
+      </div>
+      <button
+        onClick={() => { onSelect(new Date(nowYear, nowMonth, 1)); onClose() }}
+        className="mt-2 w-full text-[11px] text-gray-400 hover:text-white py-1 bg-surface-700 rounded"
+      >
+        This month
+      </button>
+    </div>
+  )
+}
+
 /* ── Calendar Page ──────────────────────────────────── */
 export default function CalendarPage() {
   const { theme } = useTheme()
@@ -373,6 +519,7 @@ export default function CalendarPage() {
   const [currentMonth, setCurrentMonth] = useState(new Date())
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [showModal, setShowModal] = useState(false)
+  const [showMonthPicker, setShowMonthPicker] = useState(false)
 
   const month = currentMonth.getMonth() + 1
   const year = currentMonth.getFullYear()
@@ -393,12 +540,15 @@ export default function CalendarPage() {
   const deleteSession = useDeleteSession()
 
   // Weekly report
-  const [weekOffset, setWeekOffset] = useState(0)
-  const weekStart = format(
-    subDays(startOfWeek(new Date(), { weekStartsOn: 1 }), weekOffset * 7),
-    'yyyy-MM-dd'
+  const [weekStart, setWeekStart] = useState(() =>
+    format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd')
   )
+  const [showWeekPicker, setShowWeekPicker] = useState(false)
+  const thisWeekStart = format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd')
+  const isCurrentWeek = weekStart === thisWeekStart
   const { data: weekData, isLoading: weekLoading } = useWeeklyReport(weekStart)
+  const { data: athleteZones } = useAthleteZones()
+  const hrZoneBounds = athleteZones?.heart_rate?.zones as { min: number; max: number }[] | undefined
   const current = weekData?.current
   const previous = weekData?.previous
 
@@ -430,7 +580,7 @@ export default function CalendarPage() {
 
   // Build maps
   const activityMap = useMemo(() => {
-    const map: Record<string, Array<{ id: number; name: string; sport_type: string; distance_km: number }>> = {}
+    const map: Record<string, Array<{ id: number; name: string; sport_type: string; distance_km: number; moving_time?: number }>> = {}
     if (activitiesData?.items) {
       for (const a of activitiesData.items) {
         const dateStr = a.start_date_local ? format(new Date(a.start_date_local), 'yyyy-MM-dd') : null
@@ -468,10 +618,22 @@ export default function CalendarPage() {
       {/* Calendar header */}
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold">Calendar</h2>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 relative">
           <button onClick={() => setCurrentMonth(m => subMonths(m, 1))} className="bg-surface-700 hover:bg-surface-600 px-3 py-1 rounded text-sm">&larr;</button>
-          <span className="text-gray-300 min-w-[120px] text-center">{format(currentMonth, 'MMMM yyyy')}</span>
+          <button
+            onClick={() => setShowMonthPicker(v => !v)}
+            className="text-gray-300 hover:text-white min-w-[140px] text-center bg-surface-700 hover:bg-surface-600 px-2 py-1 rounded text-sm transition-colors"
+          >
+            {format(currentMonth, 'MMMM yyyy')}
+          </button>
           <button onClick={() => setCurrentMonth(m => addMonths(m, 1))} className="bg-surface-700 hover:bg-surface-600 px-3 py-1 rounded text-sm">&rarr;</button>
+          {showMonthPicker && (
+            <MonthPicker
+              current={currentMonth}
+              onSelect={setCurrentMonth}
+              onClose={() => setShowMonthPicker(false)}
+            />
+          )}
         </div>
       </div>
 
@@ -481,7 +643,7 @@ export default function CalendarPage() {
           <div key={d} className="text-center text-xs text-gray-500 py-1">{d}</div>
         ))}
 
-        {days.map(day => {
+        {days.map((day, idx) => {
           const dateStr = format(day, 'yyyy-MM-dd')
           const dayActivities = activityMap[dateStr] || []
           const daySessions = sessionMap[dateStr] || []
@@ -499,49 +661,79 @@ export default function CalendarPage() {
             planStatus = allMatched ? 'done' : 'missed'
           }
 
+          const weekSummary = idx % 7 === 0 ? (() => {
+            const weekDays = days.slice(idx, idx + 7)
+            let totalKm = 0
+            let totalSec = 0
+            for (const wd of weekDays) {
+              const ds = format(wd, 'yyyy-MM-dd')
+              const acts = activityMap[ds] || []
+              for (const a of acts) {
+                totalKm += a.distance_km ?? 0
+                totalSec += a.moving_time ?? 0
+              }
+            }
+            const totalMin = Math.floor(totalSec / 60)
+            const h = Math.floor(totalMin / 60)
+            const m = totalMin % 60
+            const timeStr = h > 0 ? `${h}h ${m}m` : `${m}m`
+            return (
+              <div key={`week-${idx}`} className="col-span-7 flex items-center justify-end gap-3 px-2 py-0.5">
+                <span className="text-[10px] text-gray-500 font-mono">
+                  {totalKm.toFixed(1)} km
+                </span>
+                <span className="text-[10px] text-gray-500 font-mono">
+                  {timeStr}
+                </span>
+              </div>
+            )
+          })() : null
+
           return (
-            <div
-              key={dateStr}
-              onClick={() => { setSelectedDate(dateStr); setShowModal(true) }}
-              className={clsx(
-                'relative min-h-[120px] p-2 rounded-lg border transition-colors',
-                'cursor-pointer',
-                inMonth ? 'border-surface-600 bg-surface-800' : 'border-transparent bg-surface-900/50',
-                isToday(day) && 'border-neon-red/40',
-                'hover:border-neon-red/30'
-              )}
-            >
-              <div className={clsx('text-xs mb-1', inMonth ? 'text-gray-400' : 'text-gray-600')}>
-                {format(day, 'd')}
+            <Fragment key={dateStr}>
+              {weekSummary}
+              <div
+                onClick={() => { setSelectedDate(dateStr); setShowModal(true) }}
+                className={clsx(
+                  'relative min-h-[120px] p-2 rounded-lg border transition-colors',
+                  'cursor-pointer',
+                  inMonth ? 'border-surface-600 bg-surface-800' : 'border-transparent bg-surface-900/50',
+                  isToday(day) && 'border-neon-red/40',
+                  'hover:border-neon-red/30'
+                )}
+              >
+                <div className={clsx('text-xs mb-1', inMonth ? 'text-gray-400' : 'text-gray-600')}>
+                  {format(day, 'd')}
+                </div>
+                {planStatus && (
+                  <span
+                    className={clsx('absolute top-1.5 right-1.5 w-2 h-2 rounded-full', planStatus === 'done' ? 'bg-green-400' : 'bg-red-400')}
+                    title={planStatus === 'done' ? 'Plan completed' : 'Plan missed'}
+                  />
+                )}
+                <div className="space-y-0.5">
+                  {dayActivities.map((a) => (
+                    <Link key={a.id} to={`/activities/${a.id}`} onClick={e => e.stopPropagation()} className="flex items-center gap-1 group">
+                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: getSportColor(a.sport_type) }} />
+                      <span className={clsx('text-[9px] text-gray-400 truncate leading-tight', isLight ? 'group-hover:text-gray-900' : 'group-hover:text-white')}>{a.name}</span>
+                    </Link>
+                  ))}
+                </div>
+                {daySessions.map((s) => {
+                  const sColor = getSportColor(s.sport_type as string)
+                  return (
+                    <div
+                      key={s.id as number}
+                      className="mt-0.5 text-[9px] px-1 py-0.5 rounded border border-dashed truncate"
+                      style={{ borderColor: `${sColor}60`, color: `${sColor}bb` }}
+                      title={s.description as string || s.sport_type as string}
+                    >
+                      {s.description ? `${s.sport_type}: ${s.description}` : s.sport_type as string}
+                    </div>
+                  )
+                })}
               </div>
-              {planStatus && (
-                <span
-                  className={clsx('absolute top-1.5 right-1.5 w-2 h-2 rounded-full', planStatus === 'done' ? 'bg-green-400' : 'bg-red-400')}
-                  title={planStatus === 'done' ? 'Plan completed' : 'Plan missed'}
-                />
-              )}
-              <div className="space-y-0.5">
-                {dayActivities.map((a) => (
-                  <Link key={a.id} to={`/activities/${a.id}`} onClick={e => e.stopPropagation()} className="flex items-center gap-1 group">
-                    <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: getSportColor(a.sport_type) }} />
-                    <span className={clsx('text-[9px] text-gray-400 truncate leading-tight', isLight ? 'group-hover:text-gray-900' : 'group-hover:text-white')}>{a.name}</span>
-                  </Link>
-                ))}
-              </div>
-              {daySessions.map((s) => {
-                const sColor = getSportColor(s.sport_type as string)
-                return (
-                  <div
-                    key={s.id as number}
-                    className="mt-0.5 text-[9px] px-1 py-0.5 rounded border border-dashed truncate"
-                    style={{ borderColor: `${sColor}60`, color: `${sColor}bb` }}
-                    title={s.description as string || s.sport_type as string}
-                  >
-                    {s.description ? `${s.sport_type}: ${s.description}` : s.sport_type as string}
-                  </div>
-                )
-              })}
-            </div>
+            </Fragment>
           )
         })}
       </div>
@@ -555,10 +747,32 @@ export default function CalendarPage() {
             label="Export"
             filename={`weekly_report_${weekStart}.png`}
           />
-          <div className="flex items-center gap-2">
-            <button onClick={() => setWeekOffset(o => o + 1)} className="bg-surface-700 hover:bg-surface-600 px-2 py-1 rounded text-sm">&larr;</button>
-            <span className="text-sm text-gray-400 min-w-[140px] text-center">{current?.week_start ?? weekStart}</span>
-            <button onClick={() => setWeekOffset(o => Math.max(0, o - 1))} disabled={weekOffset === 0} className="bg-surface-700 hover:bg-surface-600 px-2 py-1 rounded text-sm disabled:opacity-30">&rarr;</button>
+          <div className="flex items-center gap-2 relative">
+            <button
+              onClick={() => setWeekStart(w => format(subDays(parseISO(w), 7), 'yyyy-MM-dd'))}
+              className="bg-surface-700 hover:bg-surface-600 px-2 py-1 rounded text-sm"
+            >&larr;</button>
+            <button
+              onClick={() => setShowWeekPicker(v => !v)}
+              className="text-sm text-gray-400 hover:text-white min-w-[140px] text-center bg-surface-700 hover:bg-surface-600 px-2 py-1 rounded transition-colors"
+            >
+              {current?.week_start ?? weekStart}
+            </button>
+            <button
+              onClick={() => setWeekStart(w => {
+                const next = format(addDays(parseISO(w), 7), 'yyyy-MM-dd')
+                return next > thisWeekStart ? thisWeekStart : next
+              })}
+              disabled={isCurrentWeek}
+              className="bg-surface-700 hover:bg-surface-600 px-2 py-1 rounded text-sm disabled:opacity-30"
+            >&rarr;</button>
+            {showWeekPicker && (
+              <WeekPicker
+                currentWeekStart={weekStart}
+                onSelect={setWeekStart}
+                onClose={() => setShowWeekPicker(false)}
+              />
+            )}
           </div>
         </div>
 
@@ -628,18 +842,22 @@ export default function CalendarPage() {
             {current.hr_zone_distribution && Object.values(current.hr_zone_distribution).some((v: unknown) => (v as number) > 0) && (
               <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
                 <div className="text-xs text-gray-500 uppercase mb-3">HR Zone Distribution</div>
-                <div className="flex gap-1 h-6 rounded overflow-hidden">
+                <div className="flex gap-0.5 h-8 rounded overflow-hidden">
                   {[1, 2, 3, 4, 5].map(z => {
                     const pct = current.hr_zone_distribution?.[z] ?? 0
                     const colors = ['bg-gray-500', 'bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-red-500']
+                    const bounds = hrZoneBounds?.[z - 1]
+                    const tooltip = bounds
+                      ? `Z${z}: ${pct}% (${bounds.min}–${bounds.max} bpm)`
+                      : `Z${z}: ${pct}%`
                     return pct > 0 ? (
                       <div
                         key={z}
-                        className={`${colors[z - 1]} flex items-center justify-center text-[10px] font-bold text-white`}
-                        style={{ width: `${pct}%` }}
-                        title={`Z${z}: ${pct}%`}
+                        className={`${colors[z - 1]} flex items-center justify-center text-[10px] font-bold text-white cursor-default`}
+                        style={{ width: `${pct}%`, minWidth: pct > 0 ? '4px' : 0 }}
+                        title={tooltip}
                       >
-                        {pct > 5 ? `Z${z}` : ''}
+                        {pct >= 8 ? `Z${z}: ${Math.round(pct)}%` : ''}
                       </div>
                     ) : null
                   })}

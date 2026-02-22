@@ -136,6 +136,16 @@ export function useTriggerSync() {
   });
 }
 
+export function useBackfillStreams() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post('/sync/backfill-streams').then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sync-status'] });
+    },
+  });
+}
+
 // Calendar
 export function useCalendarSessions(month?: number, year?: number) {
   return useQuery({

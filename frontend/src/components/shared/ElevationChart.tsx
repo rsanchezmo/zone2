@@ -40,6 +40,8 @@ export default function ElevationChart({ data }: ElevationChartProps) {
         />
         <Tooltip
           contentStyle={{ background: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8 }}
+          labelStyle={{ color: colors.labelColor }}
+          itemStyle={{ color: colors.labelColor }}
           labelFormatter={v => `${Number(v).toFixed(2)} km`}
           formatter={(v: number | undefined) => [`${(v ?? 0).toFixed(0)} m`, 'Elevation']}
         />

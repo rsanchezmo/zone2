@@ -91,10 +91,11 @@ def list_activities(
     date_to: str | None = None,
     si: StravaIntelligence = Depends(get_si),
 ):
-    activities = si.strava_activities_cache.activities.copy()
+    activities = si.strava_activities_cache.activities_raw
     if activities.empty:
         return {"items": [], "total": 0, "page": page, "per_page": per_page}
 
+    activities = activities.copy()
     activities["start_date_local"] = pd.to_datetime(activities["start_date_local"])
 
     if sport_type:
@@ -126,7 +127,7 @@ def list_activities(
 
 @router.get("/sport-types")
 def get_sport_types(si: StravaIntelligence = Depends(get_si)):
-    activities = si.strava_activities_cache.activities
+    activities = si.strava_activities_cache.activities_raw
     if activities.empty:
         return []
     return sorted(activities["sport_type"].unique().tolist())
@@ -134,7 +135,7 @@ def get_sport_types(si: StravaIntelligence = Depends(get_si)):
 
 @router.get("/years")
 def get_years(si: StravaIntelligence = Depends(get_si)):
-    activities = si.strava_activities_cache.activities
+    activities = si.strava_activities_cache.activities_raw
     if activities.empty:
         return []
     dates = pd.to_datetime(activities["start_date_local"])
@@ -148,7 +149,7 @@ def get_polylines(
     si: StravaIntelligence = Depends(get_si),
 ):
     """Return lightweight polyline data for all activities (for world map view)."""
-    activities = si.strava_activities_cache.activities.copy()
+    activities = si.strava_activities_cache.activities_raw.copy()
     if activities.empty:
         return []
 
@@ -180,8 +181,7 @@ def get_polylines(
 
 @router.get("/{activity_id}")
 def get_activity(activity_id: int, si: StravaIntelligence = Depends(get_si)):
-    activities = si.strava_activities_cache.activities
-    match = activities[activities["id"] == activity_id]
-    if match.empty:
+    row = si.strava_activities_cache.get_activity_by_id(activity_id)
+    if row is None:
         raise HTTPException(status_code=404, detail="Activity not found")
-    return _activity_to_dict(match.iloc[0], include_streams=True)
+    return _activity_to_dict(row, include_streams=True)

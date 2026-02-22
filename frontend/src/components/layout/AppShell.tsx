@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
-import { useSyncStatus, useTriggerSync } from '../../api/hooks'
+import { useSyncStatus, useTriggerSync, useBackfillStreams } from '../../api/hooks'
 import { useTheme } from '../../hooks/useTheme'
 import clsx from 'clsx'
 
@@ -15,6 +15,7 @@ const NAV_ITEMS = [
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const { data: syncStatus } = useSyncStatus()
   const triggerSync = useTriggerSync()
+  const backfillStreams = useBackfillStreams()
   const { theme, toggleTheme } = useTheme()
   const [collapsed, setCollapsed] = useState(false)
   const isLight = theme === 'light'
@@ -88,7 +89,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           )}
           <button
-            onClick={() => triggerSync.mutate({})}
+            onClick={() => triggerSync.mutate({ include_streams: true })}
             disabled={syncStatus?.syncing || triggerSync.isPending}
             title={collapsed ? (syncStatus?.syncing ? 'Syncing...' : 'Sync') : undefined}
             className={clsx(
@@ -102,6 +103,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             )}
           >
             {collapsed ? '↻' : syncStatus?.syncing ? 'Syncing...' : 'Sync'}
+          </button>
+          <button
+            onClick={() => backfillStreams.mutate()}
+            disabled={syncStatus?.syncing || backfillStreams.isPending}
+            title="Fetch GPS/HR streams for activities that are missing them (e.g. synced before streams were enabled)"
+            className={clsx(
+              'w-full rounded-lg text-xs font-medium transition-colors',
+              collapsed ? 'px-2 py-2' : 'px-3 py-1.5',
+              isLight
+                ? 'bg-black/[0.04] text-gray-500 hover:bg-black/[0.08] hover:text-gray-700'
+                : 'bg-white/[0.04] text-gray-500 hover:bg-white/[0.08] hover:text-gray-300'
+            )}
+          >
+            {collapsed ? '⇣' : 'Backfill Streams'}
           </button>
         </div>
       </aside>
