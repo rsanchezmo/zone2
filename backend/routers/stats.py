@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, date
 from functools import lru_cache
+import json
 from fastapi import APIRouter, Depends, Query
 import pandas as pd
 import numpy as np
@@ -17,8 +18,10 @@ _year_in_sport_cache: dict[str, dict] = {}
 
 def clear_stats_cache():
     """Call after sync to invalidate cached reports."""
+    global _personal_records_cache
     _weekly_report_cache.clear()
     _year_in_sport_cache.clear()
+    _personal_records_cache = None
 
 
 def _serialize_enum_dict(d: dict) -> dict:
@@ -235,3 +238,119 @@ def activity_clock(
         })
 
     return {"data": points, "sport_types": sport_list}
+
+
+@router.get("/cumulative-distance")
+def cumulative_distance(
+    year: int = Query(default=2026),
+    main_sport: str = Query(default="Run"),
+    comparison_year: int | None = None,
+    si: StravaIntelligence = Depends(get_si),
+):
+    """Daily cumulative distance for a year (optionally with comparison year)."""
+    activities = si.strava_activities_cache.activities_raw.copy()
+    activities["start_date_local"] = pd.to_datetime(activities["start_date_local"])
+
+    def build_cumulative(yr: int) -> list[dict]:
+        mask = (activities["start_date_local"].dt.year == yr) & (activities["sport_type"] == main_sport)
+        filtered = activities[mask].copy()
+        if filtered.empty:
+            return []
+        filtered["date"] = filtered["start_date_local"].dt.date
+        daily = filtered.groupby("date")["distance"].sum().sort_index()
+        # Build day-of-year cumulative series
+        start = date(yr, 1, 1)
+        cumulative = 0.0
+        result = []
+        for day_offset in range(366):
+            d = start + timedelta(days=day_offset)
+            if d.year != yr:
+                break
+            km_today = float(daily.get(d, 0)) / 1000.0
+            cumulative += km_today
+            result.append({
+                "day": day_offset + 1,
+                "date": d.isoformat(),
+                "km": round(cumulative, 2),
+            })
+        return result
+
+    result = {"year": year, "sport": main_sport, "data": build_cumulative(year)}
+    if comparison_year:
+        result["comparison"] = {"year": comparison_year, "data": build_cumulative(comparison_year)}
+    return result
+
+
+@router.get("/streaks")
+def streaks(
+    si: StravaIntelligence = Depends(get_si),
+):
+    """Compute current and longest activity streaks (consecutive days with activities)."""
+    activities = si.strava_activities_cache.activities_raw.copy()
+    activities["start_date_local"] = pd.to_datetime(activities["start_date_local"])
+    active_dates = sorted(activities["start_date_local"].dt.date.unique())
+
+    if not len(active_dates):
+        return {"current_streak": 0, "longest_streak": 0, "longest_streak_start": None, "longest_streak_end": None}
+
+    today = date.today()
+    # Build streaks
+    longest = 1
+    longest_start = active_dates[0]
+    longest_end = active_dates[0]
+    current = 1
+    current_start = active_dates[0]
+    streak_start = active_dates[0]
+
+    for i in range(1, len(active_dates)):
+        if (active_dates[i] - active_dates[i - 1]).days == 1:
+            current += 1
+        else:
+            if current > longest:
+                longest = current
+                longest_start = streak_start
+                longest_end = active_dates[i - 1]
+            current = 1
+            streak_start = active_dates[i]
+
+    # Final check
+    if current > longest:
+        longest = current
+        longest_start = streak_start
+        longest_end = active_dates[-1]
+
+    # Current streak: must include today or yesterday
+    last_active = active_dates[-1]
+    if (today - last_active).days > 1:
+        current_streak = 0
+    else:
+        current_streak = 1
+        for i in range(len(active_dates) - 2, -1, -1):
+            if (active_dates[i + 1] - active_dates[i]).days == 1:
+                current_streak += 1
+            else:
+                break
+
+    return {
+        "current_streak": current_streak,
+        "longest_streak": longest,
+        "longest_streak_start": longest_start.isoformat() if longest_start else None,
+        "longest_streak_end": longest_end.isoformat() if longest_end else None,
+    }
+
+
+_personal_records_cache: dict | None = None
+
+
+@router.get("/personal-records")
+def personal_records(
+    si: StravaIntelligence = Depends(get_si),
+    bust_cache: bool = Query(default=False),
+):
+    """Personal records (best efforts) at standard distances for running, cycling, and swimming."""
+    global _personal_records_cache
+    if _personal_records_cache is not None and not bust_cache:
+        return _personal_records_cache
+    result = si.strava_analytics.get_personal_records()
+    _personal_records_cache = result
+    return result

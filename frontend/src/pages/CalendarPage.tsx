@@ -1,4 +1,4 @@
-import { Fragment, useState, useMemo, useRef, useEffect } from 'react'
+import { Fragment, useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import {
   startOfMonth, endOfMonth, eachDayOfInterval, format, addMonths, subMonths, addDays, subDays,
   isSameMonth, isToday, startOfWeek, endOfWeek, isSameWeek, parseISO,
@@ -7,6 +7,7 @@ import { Link } from 'react-router-dom'
 import {
   useActivitiesByDateRange, useCalendarSessions, useCalendarSessionsByRange,
   useCreateSession, useUpdateSession, useDeleteSession, useWeeklyReport, useAthleteZones,
+  useStreaks,
 } from '../api/hooks'
 import { SPORT_COLORS_HEX, getSportColor } from '../constants/sportColors'
 import StatCard from '../components/shared/StatCard'
@@ -219,6 +220,13 @@ function SessionModal({
   const [sportType, setSportType] = useState('Run')
   const [description, setDescription] = useState('')
   const [editingId, setEditingId] = useState<number | null>(null)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [onClose])
 
   function startEdit(s: Record<string, unknown>) {
     setEditingId(s.id as number)
@@ -233,8 +241,14 @@ function SessionModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-surface-800 border border-surface-600 rounded-xl p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
+    <div
+      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 animate-[fadeIn_150ms_ease-out]"
+      onClick={onClose}
+    >
+      <div
+        className="bg-surface-800 border border-surface-600 rounded-xl p-6 w-full max-w-md animate-[scaleIn_150ms_ease-out]"
+        onClick={e => e.stopPropagation()}
+      >
         <h3 className="text-lg font-bold mb-4">{date}</h3>
 
         {sessions.length > 0 && (
@@ -242,8 +256,9 @@ function SessionModal({
             <div className="text-xs text-gray-500 uppercase">Planned Sessions</div>
             {sessions.map(s => {
               const sColor = getSportColor(s.sport_type as string)
+              const isConfirming = confirmDeleteId === (s.id as number)
               return (
-                <div key={s.id as number} className="rounded p-2 border border-dashed"
+                <div key={s.id as number} className="rounded p-2 border border-dashed transition-colors"
                   style={{ borderColor: `${sColor}60`, backgroundColor: `${sColor}10` }}
                 >
                   <div className="flex items-center justify-between">
@@ -255,8 +270,18 @@ function SessionModal({
                       )}
                     </div>
                     <div className="flex gap-2 shrink-0 ml-2">
-                      <button onClick={() => startEdit(s)} className={clsx('text-gray-400 text-xs', isLight ? 'hover:text-gray-700' : 'hover:text-gray-200')}>Edit</button>
-                      <button onClick={() => onDelete(s.id as number)} className="text-red-400 hover:text-red-300 text-xs">Delete</button>
+                      {isConfirming ? (
+                        <>
+                          <span className="text-xs text-red-400">Delete?</span>
+                          <button onClick={() => { onDelete(s.id as number); setConfirmDeleteId(null) }} className="text-red-400 hover:text-red-300 text-xs font-bold">Yes</button>
+                          <button onClick={() => setConfirmDeleteId(null)} className={clsx('text-xs text-gray-400', isLight ? 'hover:text-gray-700' : 'hover:text-gray-200')}>No</button>
+                        </>
+                      ) : (
+                        <>
+                          <button onClick={() => startEdit(s)} className={clsx('text-gray-400 text-xs', isLight ? 'hover:text-gray-700' : 'hover:text-gray-200')}>Edit</button>
+                          <button onClick={() => setConfirmDeleteId(s.id as number)} className="text-red-400 hover:text-red-300 text-xs">Delete</button>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -520,6 +545,16 @@ export default function CalendarPage() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [showModal, setShowModal] = useState(false)
   const [showMonthPicker, setShowMonthPicker] = useState(false)
+  const [draggingSessionId, setDraggingSessionId] = useState<number | null>(null)
+  const [dragOverDate, setDragOverDate] = useState<string | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+
+  const showToast = useCallback((msg: string) => {
+    setToast(msg)
+    setTimeout(() => setToast(null), 2000)
+  }, [])
+
+  const { data: streakData } = useStreaks()
 
   const month = currentMonth.getMonth() + 1
   const year = currentMonth.getFullYear()
@@ -533,7 +568,7 @@ export default function CalendarPage() {
   const dateFrom = format(calStart, 'yyyy-MM-dd')
   const dateTo = format(calEnd, 'yyyy-MM-dd')
 
-  const { data: activitiesData } = useActivitiesByDateRange(dateFrom, dateTo)
+  const { data: activitiesData, isLoading: activitiesLoading } = useActivitiesByDateRange(dateFrom, dateTo)
   const { data: sessions } = useCalendarSessions(month, year)
   const createSession = useCreateSession()
   const updateSession = useUpdateSession()
@@ -618,6 +653,24 @@ export default function CalendarPage() {
       {/* Calendar header */}
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold">Calendar</h2>
+        {streakData && (streakData.current_streak > 0 || streakData.longest_streak > 0) && (
+          <div className="flex items-center gap-2">
+            {streakData.current_streak > 0 && (
+              <div className="flex items-center gap-1 bg-surface-800 border border-surface-600 rounded px-2 py-1" title="Current streak — consecutive days with activities">
+                <span className="text-xs">&#x1f525;</span>
+                <span className="text-xs font-bold text-neon-red">{streakData.current_streak}</span>
+                <span className="text-[10px] text-gray-500">day{streakData.current_streak !== 1 ? 's' : ''}</span>
+              </div>
+            )}
+            {streakData.longest_streak > 0 && (
+              <div className="flex items-center gap-1 bg-surface-800 border border-surface-600 rounded px-2 py-1" title={`Longest streak: ${streakData.longest_streak_start} to ${streakData.longest_streak_end}`}>
+                <span className="text-xs">&#x1f3c6;</span>
+                <span className="text-xs font-bold text-neon-yellow">{streakData.longest_streak}</span>
+                <span className="text-[10px] text-gray-500">best</span>
+              </div>
+            )}
+          </div>
+        )}
         <div className="flex items-center gap-3 relative">
           <button onClick={() => setCurrentMonth(m => subMonths(m, 1))} className="bg-surface-700 hover:bg-surface-600 px-3 py-1 rounded text-sm">&larr;</button>
           <button
@@ -638,12 +691,26 @@ export default function CalendarPage() {
       </div>
 
       {/* Calendar grid */}
-      <div className="grid grid-cols-7 gap-1">
+      <div className="grid grid-cols-7 gap-1" key={format(currentMonth, 'yyyy-MM')} style={{ animation: 'fadeIn 200ms ease-out' }}>
         {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(d => (
           <div key={d} className="text-center text-xs text-gray-500 py-1">{d}</div>
         ))}
 
-        {days.map((day, idx) => {
+        {activitiesLoading ? (
+          <>
+            {Array.from({ length: 35 }).map((_, i) => (
+              <div key={i} className="min-h-[120px] rounded-lg bg-surface-800 border border-surface-600 animate-pulse">
+                <div className="p-2">
+                  <div className="h-3 w-4 bg-surface-600 rounded mb-2" />
+                  <div className="space-y-1">
+                    <div className="h-2 w-3/4 bg-surface-600 rounded" />
+                    <div className="h-2 w-1/2 bg-surface-600 rounded" />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </>
+        ) : days.map((day, idx) => {
           const dateStr = format(day, 'yyyy-MM-dd')
           const dayActivities = activityMap[dateStr] || []
           const daySessions = sessionMap[dateStr] || []
@@ -694,12 +761,24 @@ export default function CalendarPage() {
               {weekSummary}
               <div
                 onClick={() => { setSelectedDate(dateStr); setShowModal(true) }}
+                onDragOver={(e) => { e.preventDefault(); setDragOverDate(dateStr) }}
+                onDragLeave={() => setDragOverDate(prev => prev === dateStr ? null : prev)}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  const sessionId = e.dataTransfer.getData('text/plain')
+                  if (sessionId) {
+                    updateSession.mutate({ id: Number(sessionId), date: dateStr })
+                    showToast(`Session moved to ${format(day, 'EEE, MMM d')}`)
+                  }
+                  setDragOverDate(null)
+                  setDraggingSessionId(null)
+                }}
                 className={clsx(
                   'relative min-h-[120px] p-2 rounded-lg border transition-colors',
                   'cursor-pointer',
                   inMonth ? 'border-surface-600 bg-surface-800' : 'border-transparent bg-surface-900/50',
                   isToday(day) && 'border-neon-red/40',
-                  'hover:border-neon-red/30'
+                  dragOverDate === dateStr ? 'border-neon-red/60 ring-2 ring-neon-red/20 bg-neon-red/[0.03]' : 'hover:border-neon-red/30',
                 )}
               >
                 <div className={clsx('text-xs mb-1', inMonth ? 'text-gray-400' : 'text-gray-600')}>
@@ -713,7 +792,7 @@ export default function CalendarPage() {
                 )}
                 <div className="space-y-0.5">
                   {dayActivities.map((a) => (
-                    <Link key={a.id} to={`/activities/${a.id}`} onClick={e => e.stopPropagation()} className="flex items-center gap-1 group">
+                    <Link key={a.id} to={`/activities/${a.id}`} onClick={e => e.stopPropagation()} className="flex items-center gap-1 group rounded px-0.5 -mx-0.5 transition-colors hover:bg-white/[0.04]">
                       <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: getSportColor(a.sport_type) }} />
                       <span className={clsx('text-[9px] text-gray-400 truncate leading-tight', isLight ? 'group-hover:text-gray-900' : 'group-hover:text-white')}>{a.name}</span>
                     </Link>
@@ -724,8 +803,25 @@ export default function CalendarPage() {
                   return (
                     <div
                       key={s.id as number}
-                      className="mt-0.5 text-[9px] px-1 py-0.5 rounded border border-dashed truncate"
-                      style={{ borderColor: `${sColor}60`, color: `${sColor}bb` }}
+                      draggable
+                      onDragStart={(e) => {
+                        e.stopPropagation()
+                        e.dataTransfer.setData('text/plain', String(s.id))
+                        e.dataTransfer.effectAllowed = 'move'
+                        setDraggingSessionId(s.id as number)
+                      }}
+                      onDragEnd={() => { setDraggingSessionId(null); setDragOverDate(null) }}
+                      className={clsx(
+                        'mt-0.5 text-[9px] px-1 py-0.5 rounded border border-dashed truncate cursor-grab active:cursor-grabbing',
+                        'transition-all duration-150 hover:scale-[1.03]',
+                        draggingSessionId === (s.id as number) && 'opacity-40 scale-95 rotate-1',
+                      )}
+                      style={{
+                        borderColor: `${sColor}60`,
+                        color: `${sColor}bb`,
+                      }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = `0 0 8px ${sColor}30` }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = 'none' }}
                       title={s.description as string || s.sport_type as string}
                     >
                       {s.description ? `${s.sport_type}: ${s.description}` : s.sport_type as string}
@@ -738,7 +834,11 @@ export default function CalendarPage() {
         })}
       </div>
 
-      {/* Weekly Report */}
+      {/* Weekly Report — fade in */}
+      <style>{`
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes scaleIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+      `}</style>
       <section>
         <div className="flex items-center gap-3 mb-4">
           <h3 className="text-lg font-semibold text-gray-300">Weekly Report</h3>
@@ -777,9 +877,19 @@ export default function CalendarPage() {
         </div>
 
         {weekLoading ? (
-          <div className="text-gray-500">Loading...</div>
+          <div className="space-y-4 animate-pulse">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-surface-800 border border-surface-600 rounded-xl p-4 h-48" />
+              <div className="bg-surface-800 border border-surface-600 rounded-xl p-4 h-48" />
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="bg-surface-800 border border-surface-600 rounded-xl p-4 h-24" />
+              ))}
+            </div>
+          </div>
         ) : current ? (
-          <div className="space-y-4">
+          <div className="space-y-4" style={{ animation: 'fadeIn 300ms ease-out' }}>
             {/* Activities this week + Upcoming plan side by side */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Activities this week */}
@@ -898,6 +1008,13 @@ export default function CalendarPage() {
           onDelete={(id: number) => deleteSession.mutate(id)}
           onClose={() => setShowModal(false)}
         />
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-surface-700 border border-surface-600 text-sm text-gray-200 px-4 py-2 rounded-lg shadow-xl animate-[scaleIn_150ms_ease-out]">
+          {toast}
+        </div>
       )}
     </div>
   )

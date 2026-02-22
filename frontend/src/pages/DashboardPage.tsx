@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useYearInSport, useYears, useSportTypes } from '../api/hooks'
+import { useYearInSport, useYears, useSportTypes, useCumulativeDistance } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
 import StatCard from '../components/shared/StatCard'
 import ExportButton from '../components/shared/ExportButton'
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+  AreaChart, Area,
 } from 'recharts'
 import { useTheme } from '../hooks/useTheme'
 
@@ -21,6 +22,7 @@ export default function DashboardPage() {
   const [mainSport, setMainSport] = useState('Run')
 
   const { data: yearData, isLoading: yearLoading } = useYearInSport(year, mainSport, year - 1)
+  const { data: cumulativeData } = useCumulativeDistance(year, mainSport, year - 1)
 
   const comp = yearData?.comparison
   function yearDelta(section: 'main_sport' | 'all_sports', key: string): number | string | null {
@@ -55,6 +57,29 @@ export default function DashboardPage() {
       prev: compActMap[i + 1] ?? 0,
     }))
   }, [yearData, comp])
+
+  // Cumulative distance chart data
+  const cumulativeChartData = useMemo(() => {
+    if (!cumulativeData?.data) return []
+    const currentPoints = cumulativeData.data as { day: number; date: string; km: number }[]
+    const compPoints = (cumulativeData.comparison?.data ?? []) as { day: number; date: string; km: number }[]
+    const compMap = new Map(compPoints.map((p: { day: number; km: number }) => [p.day, p.km]))
+
+    // Sample ~52 points (weekly) to keep chart clean
+    const step = Math.max(1, Math.floor(currentPoints.length / 52))
+    return currentPoints
+      .filter((_: unknown, i: number) => i % step === 0 || i === currentPoints.length - 1)
+      .map((p: { day: number; date: string; km: number }) => {
+        const d = new Date(p.date)
+        const label = `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+        return {
+          day: p.day,
+          label,
+          current: p.km,
+          prev: compMap.get(p.day) ?? null,
+        }
+      })
+  }, [cumulativeData])
 
   // Sport breakdown pie data
   const sportPieData = useMemo(() => {
@@ -216,6 +241,82 @@ export default function DashboardPage() {
               </ComposedChart>
             </ResponsiveContainer>
           </div>
+
+          {/* Cumulative Distance */}
+          {cumulativeChartData.length > 0 && (
+            <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-xs text-gray-500 uppercase">Cumulative Distance — {mainSport}</div>
+                {comp && (
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-3 h-0.5 rounded-sm" style={{ backgroundColor: sportColor }} />
+                      <span className="text-[11px] text-gray-400">{year}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-3 h-0.5 rounded-sm border-b border-dashed" style={{ borderColor: sportColor, opacity: 0.5 }} />
+                      <span className="text-[11px] text-gray-500">{year - 1}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <ResponsiveContainer width="100%" height={280}>
+                <AreaChart data={cumulativeChartData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="cumulGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={sportColor} stopOpacity={0.3} />
+                      <stop offset="100%" stopColor={sportColor} stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke={colors.gridStroke} />
+                  <XAxis
+                    dataKey="label"
+                    tick={{ fill: colors.tickFill, fontSize: 10 }}
+                    axisLine={false}
+                    tickLine={false}
+                    interval="equidistantPreserveStart"
+                  />
+                  <YAxis
+                    tick={{ fill: colors.tickFillSecondary, fontSize: 10 }}
+                    axisLine={false}
+                    tickLine={false}
+                    width={50}
+                    tickFormatter={(v: number) => `${v} km`}
+                  />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
+                    labelStyle={{ color: colors.labelColor }}
+                    itemStyle={{ color: colors.labelColor }}
+                    formatter={(value: number, name: string) => [
+                      `${value.toFixed(1)} km`,
+                      name === 'prev' ? `${year - 1}` : `${year}`,
+                    ]}
+                  />
+                  {comp && (
+                    <Area
+                      type="monotone"
+                      dataKey="prev"
+                      stroke={sportColor}
+                      strokeWidth={1.5}
+                      strokeDasharray="6 3"
+                      strokeOpacity={0.4}
+                      fill="none"
+                      dot={false}
+                      connectNulls
+                    />
+                  )}
+                  <Area
+                    type="monotone"
+                    dataKey="current"
+                    stroke={sportColor}
+                    strokeWidth={2.5}
+                    fill="url(#cumulGrad)"
+                    dot={false}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          )}
 
           {/* Sport breakdown + Records side by side */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

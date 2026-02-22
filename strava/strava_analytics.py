@@ -512,6 +512,150 @@ class StravaAnalytics:
             } if hr_athlete_zones else {}
         }
 
+    # ── Personal Records ──────────────────────────────────────────────
+
+    # Standard distances per sport category (meters)
+    RUNNING_DISTANCES = [
+        (400, "400m"),
+        (1000, "1K"),
+        (5000, "5K"),
+        (10000, "10K"),
+        (15000, "15K"),
+        (20000, "20K"),
+        (21097, "Half Marathon"),
+        (42195, "Marathon"),
+    ]
+    CYCLING_DISTANCES = [
+        (10000, "10K"),
+        (20000, "20K"),
+        (40000, "40K"),
+        (100000, "100K"),
+        (160000, "100 mi"),
+    ]
+    SWIMMING_DISTANCES = [
+        (100, "100m"),
+        (200, "200m"),
+        (400, "400m"),
+        (800, "800m"),
+        (1500, "1500m"),
+    ]
+
+    # Maximum plausible speed per sport (m/s) — used to filter GPS drift / bad data
+    # Running: 2:20/km = ~7.14 m/s (world record ~800m pace)
+    # Cycling: 75 km/h = 20.8 m/s (pro sprint)
+    # Swimming: 0:50/100m = 2.0 m/s (world record 100m freestyle)
+    MAX_SPEED_MS = {
+        "running": 7.2,
+        "cycling": 21.0,
+        "swimming": 2.0,
+    }
+
+    def get_personal_records(self) -> dict:
+        """Compute best efforts at standard distances for running, cycling, and swimming.
+
+        Uses a sliding window over each activity's distance/time streams to find
+        the fastest elapsed time for each standard distance.
+        """
+        from strava.strava_utils import get_sport_category
+
+        activities = self._get_prepared_activities()
+
+        sport_configs = {
+            "running": self.RUNNING_DISTANCES,
+            "cycling": self.CYCLING_DISTANCES,
+            "swimming": self.SWIMMING_DISTANCES,
+        }
+
+        # best[category][distance_m] = {time_s, activity_id, activity_name, date}
+        best: dict[str, dict[int, dict]] = {cat: {} for cat in sport_configs}
+
+        for _, row in activities.iterrows():
+            sport_type = row.get("sport_type", "")
+            category = get_sport_category(sport_type)
+            if category not in sport_configs:
+                continue
+
+            streams = row.get("streams")
+            if streams is None:
+                continue
+            if isinstance(streams, str):
+                try:
+                    streams = json.loads(streams)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            if not isinstance(streams, list) or len(streams) < 2:
+                continue
+
+            # Extract distance and time arrays
+            distances = []
+            times = []
+            for pt in streams:
+                d = pt.get("distance")
+                t = pt.get("time")
+                if d is not None and t is not None:
+                    distances.append(float(d))
+                    times.append(float(t))
+
+            if len(distances) < 2:
+                continue
+
+            activity_id = row.get("id")
+            activity_name = row.get("name", "")
+            activity_date = str(row.get("start_date_local", ""))
+            total_distance = distances[-1]
+            max_speed = self.MAX_SPEED_MS[category]
+
+            target_distances = sport_configs[category]
+
+            for target_m, _ in target_distances:
+                if total_distance < target_m:
+                    continue
+
+                # Sliding window: find min time to cover target_m meters
+                left = 0
+                best_time = None
+                for right in range(len(distances)):
+                    while distances[right] - distances[left] >= target_m:
+                        elapsed = times[right] - times[left]
+                        if elapsed > 0:
+                            avg_speed = target_m / elapsed
+                            # Reject physically impossible speeds (GPS drift)
+                            if avg_speed <= max_speed:
+                                if best_time is None or elapsed < best_time:
+                                    best_time = elapsed
+                        left += 1
+
+                if best_time is not None and best_time > 0:
+                    current_best = best[category].get(target_m)
+                    if current_best is None or best_time < current_best["time_s"]:
+                        best[category][target_m] = {
+                            "time_s": best_time,
+                            "activity_id": activity_id,
+                            "activity_name": activity_name,
+                            "date": activity_date,
+                        }
+
+        # Format results
+        result = {}
+        for category, target_distances in sport_configs.items():
+            records = []
+            for target_m, label in target_distances:
+                record = best[category].get(target_m)
+                if record:
+                    records.append({
+                        "distance_m": target_m,
+                        "label": label,
+                        "time_s": record["time_s"],
+                        "activity_id": record["activity_id"],
+                        "activity_name": record["activity_name"],
+                        "date": record["date"],
+                    })
+            if records:
+                result[category] = records
+
+        return result
+
+
 class YearInSportFeatures(StrEnum):
     TOTAL_ACTIVITIES = "total_activities"
     TOTAL_DISTANCE_KM = "total_distance_km"

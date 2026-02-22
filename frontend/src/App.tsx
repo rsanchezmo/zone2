@@ -7,6 +7,7 @@ import ActivityDetailPage from './pages/ActivityDetailPage'
 import AggregationsPage from './pages/AggregationsPage'
 import CalendarPage from './pages/CalendarPage'
 import ProfilePage from './pages/ProfilePage'
+import PersonalRecordsPage from './pages/PersonalRecordsPage'
 
 export default function App() {
   return (
@@ -19,6 +20,7 @@ export default function App() {
           <Route path="/activities/:id" element={<ActivityDetailPage />} />
           <Route path="/aggregations" element={<AggregationsPage />} />
           <Route path="/calendar" element={<CalendarPage />} />
+          <Route path="/records" element={<PersonalRecordsPage />} />
           <Route path="/profile" element={<ProfilePage />} />
         </Routes>
       </AppShell>

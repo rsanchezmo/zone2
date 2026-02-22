@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { to: '/activities', label: 'Activities', icon: '🏃' },
   { to: '/aggregations', label: 'World Footprint', icon: '🌍' },
   { to: '/dashboard', label: 'Year in Sport', icon: '⚡' },
+  { to: '/records', label: 'Personal Records', icon: '🏆' },
   { to: '/profile', label: 'Profile', icon: '👤' },
 ]
 
