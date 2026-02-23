@@ -245,11 +245,16 @@ def cumulative_distance(
     year: int = Query(default=2026),
     main_sport: str = Query(default="Run"),
     comparison_year: int | None = None,
+    yearly_target_km: float | None = None,
     si: StravaIntelligence = Depends(get_si),
 ):
-    """Daily cumulative distance for a year (optionally with comparison year)."""
+    """Daily cumulative distance for a year (optionally with comparison year and target)."""
+    import calendar as cal
+
     activities = si.strava_activities_cache.activities_raw.copy()
     activities["start_date_local"] = pd.to_datetime(activities["start_date_local"])
+
+    days_in_year = 366 if cal.isleap(year) else 365
 
     def build_cumulative(yr: int) -> list[dict]:
         mask = (activities["start_date_local"].dt.year == yr) & (activities["sport_type"] == main_sport)
@@ -268,11 +273,14 @@ def cumulative_distance(
                 break
             km_today = float(daily.get(d, 0)) / 1000.0
             cumulative += km_today
-            result.append({
+            point: dict = {
                 "day": day_offset + 1,
                 "date": d.isoformat(),
                 "km": round(cumulative, 2),
-            })
+            }
+            if yearly_target_km is not None and yr == year:
+                point["target"] = round(yearly_target_km * (day_offset + 1) / days_in_year, 2)
+            result.append(point)
         return result
 
     result = {"year": year, "sport": main_sport, "data": build_cumulative(year)}

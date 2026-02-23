@@ -1,12 +1,45 @@
-import { useAthleteProfile, useAthleteZones, useSyncStatus } from '../api/hooks'
+import { useState } from 'react'
+import { useAthleteProfile, useAthleteZones, useSyncStatus, useSportTypes, useGoals, useCreateGoal, useUpdateGoal, useDeleteGoal } from '../api/hooks'
+import { getSportColor } from '../constants/sportColors'
 
 const HR_ZONE_COLORS = ['#6b7280', '#3b82f6', '#22c55e', '#eab308', '#ef4444']
 const HR_ZONE_NAMES = ['Recovery', 'Aerobic', 'Tempo', 'Threshold', 'VO2max']
+
+const METRIC_OPTIONS = [
+  { value: 'distance_km', label: 'Distance (km)' },
+  { value: 'time_hours', label: 'Time (hours)' },
+  { value: 'activities', label: 'Activities' },
+  { value: 'elevation_m', label: 'Elevation (m)' },
+]
+
+const PERIOD_OPTIONS = [
+  { value: 'weekly', label: 'Weekly' },
+  { value: 'monthly', label: 'Monthly' },
+  { value: 'yearly', label: 'Yearly' },
+]
+
+function metricLabel(metric: string): string {
+  return METRIC_OPTIONS.find(m => m.value === metric)?.label ?? metric
+}
+
+function periodLabel(period: string): string {
+  return PERIOD_OPTIONS.find(p => p.value === period)?.label ?? period
+}
 
 export default function ProfilePage() {
   const { data: profile, isLoading: profileLoading } = useAthleteProfile()
   const { data: zones } = useAthleteZones()
   const { data: syncStatus } = useSyncStatus()
+  const { data: sportTypes } = useSportTypes()
+  const { data: goals } = useGoals()
+  const createGoal = useCreateGoal()
+  const updateGoal = useUpdateGoal()
+  const deleteGoal = useDeleteGoal()
+
+  const [showGoalForm, setShowGoalForm] = useState(false)
+  const [editingGoalId, setEditingGoalId] = useState<number | null>(null)
+  const currentYear = new Date().getFullYear()
+  const [goalForm, setGoalForm] = useState({ year: String(currentYear), sport_type: 'Run', metric: 'distance_km', period: 'weekly', target_value: '' })
 
   if (profileLoading) return <div className="text-gray-500 p-6">Loading profile...</div>
   if (!profile) return <div className="text-gray-500 p-6">Unable to load profile</div>
@@ -18,6 +51,40 @@ export default function ProfilePage() {
 
   const hrZones = zones?.heart_rate?.zones as { min: number; max: number }[] | undefined
   const maxHr = zones?.heart_rate?.max_hr as number | undefined
+
+  const handleGoalSubmit = () => {
+    const target = parseFloat(goalForm.target_value)
+    const yearNum = parseInt(goalForm.year)
+    if (!target || target <= 0 || !yearNum) return
+    const payload = { year: yearNum, sport_type: goalForm.sport_type, metric: goalForm.metric, period: goalForm.period, target_value: target }
+    if (editingGoalId != null) {
+      updateGoal.mutate({ id: editingGoalId, ...payload }, {
+        onSuccess: () => { setEditingGoalId(null); setShowGoalForm(false) },
+      })
+    } else {
+      createGoal.mutate(payload, {
+        onSuccess: () => { setShowGoalForm(false); setGoalForm({ year: String(currentYear), sport_type: 'Run', metric: 'distance_km', period: 'weekly', target_value: '' }) },
+      })
+    }
+  }
+
+  const startEdit = (goal: Record<string, unknown>) => {
+    setEditingGoalId(goal.id as number)
+    setGoalForm({
+      year: String(goal.year),
+      sport_type: goal.sport_type as string,
+      metric: goal.metric as string,
+      period: goal.period as string,
+      target_value: String(goal.target_value),
+    })
+    setShowGoalForm(true)
+  }
+
+  const cancelForm = () => {
+    setShowGoalForm(false)
+    setEditingGoalId(null)
+    setGoalForm({ year: String(currentYear), sport_type: 'Run', metric: 'distance_km', period: 'weekly', target_value: '' })
+  }
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -149,6 +216,123 @@ export default function ProfilePage() {
           </div>
         </div>
       )}
+
+      {/* Goals */}
+      <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-xs text-gray-500 uppercase tracking-wider">Goals</div>
+          {!showGoalForm && (
+            <button
+              onClick={() => { setEditingGoalId(null); setGoalForm({ year: String(currentYear), sport_type: 'Run', metric: 'distance_km', period: 'weekly', target_value: '' }); setShowGoalForm(true) }}
+              className="text-xs bg-surface-700 hover:bg-surface-600 px-3 py-1.5 rounded-lg transition-colors"
+            >
+              + Add Goal
+            </button>
+          )}
+        </div>
+
+        {/* Goal form */}
+        {showGoalForm && (
+          <div className="mb-4 p-3 bg-surface-700 rounded-lg space-y-3">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+              <input
+                type="number"
+                min="2020"
+                max="2040"
+                placeholder="Year"
+                value={goalForm.year}
+                onChange={e => setGoalForm(f => ({ ...f, year: e.target.value }))}
+                className="bg-surface-800 border border-surface-600 rounded px-2 py-1.5 text-sm"
+              />
+              <select
+                value={goalForm.sport_type}
+                onChange={e => setGoalForm(f => ({ ...f, sport_type: e.target.value }))}
+                className="bg-surface-800 border border-surface-600 rounded px-2 py-1.5 text-sm"
+              >
+                <option value="__all__">All Sports</option>
+                {(sportTypes ?? []).map((s: string) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+              <select
+                value={goalForm.metric}
+                onChange={e => setGoalForm(f => ({ ...f, metric: e.target.value }))}
+                className="bg-surface-800 border border-surface-600 rounded px-2 py-1.5 text-sm"
+              >
+                {METRIC_OPTIONS.map(m => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+              <select
+                value={goalForm.period}
+                onChange={e => setGoalForm(f => ({ ...f, period: e.target.value }))}
+                className="bg-surface-800 border border-surface-600 rounded px-2 py-1.5 text-sm"
+              >
+                {PERIOD_OPTIONS.map(p => (
+                  <option key={p.value} value={p.value}>{p.label}</option>
+                ))}
+              </select>
+              <input
+                type="number"
+                step="any"
+                min="0"
+                placeholder="Target value"
+                value={goalForm.target_value}
+                onChange={e => setGoalForm(f => ({ ...f, target_value: e.target.value }))}
+                className="bg-surface-800 border border-surface-600 rounded px-2 py-1.5 text-sm"
+              />
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleGoalSubmit}
+                disabled={!goalForm.target_value || parseFloat(goalForm.target_value) <= 0}
+                className="text-xs bg-neon-red/20 text-neon-red hover:bg-neon-red/30 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-30"
+              >
+                {editingGoalId != null ? 'Update' : 'Create'}
+              </button>
+              <button
+                onClick={cancelForm}
+                className="text-xs bg-surface-600 hover:bg-surface-500 px-3 py-1.5 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Goals list */}
+        {goals && goals.length > 0 ? (
+          <div className="space-y-2">
+            {goals.map((goal: Record<string, unknown>) => {
+              const sport = goal.sport_type as string
+              const color = sport === '__all__' ? '#9ca3af' : getSportColor(sport)
+              return (
+                <div key={goal.id as number} className="flex items-center gap-3 py-2 px-2 rounded-lg hover:bg-surface-700/50 transition-colors group">
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                  <span className="text-xs font-mono text-gray-500 min-w-[36px]">{goal.year as number}</span>
+                  <span className="text-sm text-gray-300 min-w-[80px]">{sport === '__all__' ? 'All Sports' : sport}</span>
+                  <span className="text-xs text-gray-500">{metricLabel(goal.metric as string)}</span>
+                  <span className="text-xs font-mono text-gray-400 ml-auto">{goal.target_value as number} / {periodLabel(goal.period as string).toLowerCase()}</span>
+                  <button
+                    onClick={() => startEdit(goal)}
+                    className="text-xs text-gray-500 hover:text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => deleteGoal.mutate(goal.id as number)}
+                    className="text-xs text-red-400 hover:text-red-300 opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    Delete
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        ) : !showGoalForm ? (
+          <div className="text-sm text-gray-600">No goals set. Add a goal to track your progress.</div>
+        ) : null}
+      </div>
 
     </div>
   )

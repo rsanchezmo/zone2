@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { useActivity, useAthleteZones, useSimilarActivities } from '../api/hooks'
 import StatCard from '../components/shared/StatCard'
 import MapView from '../components/shared/MapView'
+import type { KmMarker } from '../components/shared/MapView'
 import StreamChart from '../components/shared/StreamChart'
 import polyline from '@mapbox/polyline'
 import ExportButton from '../components/shared/ExportButton'
@@ -329,6 +330,52 @@ export default function ActivityDetailPage() {
     return computeSplits(activity.streams as StreamPoint[], activity.sport_type, gapSpeeds.length > 0 ? gapSpeeds : undefined)
   }, [activity, gapSpeeds])
 
+  // Compute km markers for the map
+  const kmMarkers: KmMarker[] = useMemo(() => {
+    if (!activity?.streams || !Array.isArray(activity.streams) || positions.length === 0 || splits.length === 0) return []
+    const streams = activity.streams as StreamPoint[]
+    const markers: KmMarker[] = []
+    const { unit: pu } = convertSpeed(1, activity?.sport_type)
+
+    for (const split of splits) {
+      if (split.isPartial) continue
+      // Find the stream point closest to this km boundary
+      const targetDist = split.km * 1000
+      let bestIdx = 0
+      let bestDiff = Infinity
+      for (let i = 0; i < streams.length; i++) {
+        const diff = Math.abs((streams[i].distance ?? 0) - targetDist)
+        if (diff < bestDiff) { bestDiff = diff; bestIdx = i }
+      }
+      // Get position at that index
+      const pt = streams[bestIdx]
+      let pos: [number, number] | null = null
+      if (pt.lat != null && pt.lng != null) pos = [pt.lat, pt.lng]
+      else if (pt.latlng) pos = [pt.latlng[0], pt.latlng[1]]
+      if (!pos) continue
+
+      // Format time
+      const mins = Math.floor(split.time / 60)
+      const secs = Math.round(split.time % 60)
+      const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`
+
+      // Format pace
+      const paceMin = Math.floor(split.avgPace)
+      const paceSec = Math.round((split.avgPace - paceMin) * 60)
+      const paceStr = pu.includes('min') ? `${paceMin}:${paceSec.toString().padStart(2, '0')} ${pu}` : `${split.avgPace.toFixed(1)} ${pu}`
+
+      let tooltip = `<b>Km ${split.km}</b><br/>`
+      tooltip += `Pace: ${paceStr}<br/>`
+      tooltip += `Time: ${timeStr}`
+      if (split.avgHR != null) tooltip += `<br/>HR: ${split.avgHR} bpm`
+      if (split.elevGain > 0 || split.elevLoss > 0) tooltip += `<br/>Elev: +${split.elevGain}m / -${split.elevLoss}m`
+      if (split.avgCadence != null) tooltip += `<br/>Cadence: ${split.avgCadence} spm`
+
+      markers.push({ position: pos, km: split.km, tooltip })
+    }
+    return markers
+  }, [activity, positions, splits])
+
   const hrZoneBounds = athleteZones?.heart_rate?.zones as { min: number; max: number }[] | undefined
   const hrZoneDistribution = useMemo(() => {
     if (streamSeries.heartrate.length === 0 || !hrZoneBounds || hrZoneBounds.length < 5) return null
@@ -379,7 +426,7 @@ export default function ActivityDetailPage() {
       {/* Map */}
       {positions.length > 0 && (
         <div className="h-[400px] rounded-xl overflow-hidden border border-surface-600">
-          <MapView positions={positions} color={getSportColor(activity.sport_type)} />
+          <MapView positions={positions} color={getSportColor(activity.sport_type)} kmMarkers={kmMarkers} />
         </div>
       )}
 

@@ -1,4 +1,4 @@
-import { MapContainer, TileLayer, Polyline, Marker, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Polyline, Marker, Tooltip, CircleMarker, useMap } from 'react-leaflet'
 import { useState, useEffect, useMemo } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -53,13 +53,20 @@ function createEndIcon() {
   })
 }
 
+export interface KmMarker {
+  position: [number, number]
+  km: number
+  tooltip: string // HTML or plain text for tooltip
+}
+
 interface MapViewProps {
   positions: [number, number][]
   color?: string
   showMarkers?: boolean
+  kmMarkers?: KmMarker[]
 }
 
-export default function MapView({ positions, color = '#fc0101', showMarkers = true }: MapViewProps) {
+export default function MapView({ positions, color = '#fc0101', showMarkers = true, kmMarkers }: MapViewProps) {
   const { theme, colors } = useTheme()
   const isLight = theme === 'light'
   const [expanded, setExpanded] = useState(false)
@@ -119,9 +126,49 @@ export default function MapView({ positions, color = '#fc0101', showMarkers = tr
             <Marker position={endPos} icon={endIcon} />
           </>
         )}
+        {/* Km markers */}
+        {kmMarkers && kmMarkers.map((m) => (
+          <CircleMarker
+            key={m.km}
+            center={m.position}
+            radius={4}
+            pathOptions={{
+              color: isLight ? '#374151' : '#d1d5db',
+              fillColor: isLight ? '#fff' : '#1f2937',
+              fillOpacity: 0.9,
+              weight: 1.5,
+            }}
+          >
+            <Tooltip
+              direction="top"
+              offset={[0, -8]}
+              className="km-marker-tooltip"
+            >
+              <div dangerouslySetInnerHTML={{ __html: m.tooltip }} />
+            </Tooltip>
+          </CircleMarker>
+        ))}
         <FitBounds positions={positions} />
         <InvalidateSize expanded={expanded} />
       </MapContainer>
+
+      {/* Km marker tooltip styles */}
+      <style>{`
+        .km-marker-tooltip {
+          background: ${isLight ? '#fff' : '#1e293b'} !important;
+          border: 1px solid ${isLight ? '#e5e7eb' : '#334155'} !important;
+          border-radius: 8px !important;
+          padding: 6px 10px !important;
+          font-size: 11px !important;
+          font-family: ui-monospace, monospace !important;
+          color: ${isLight ? '#111827' : '#e5e7eb'} !important;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
+          line-height: 1.5 !important;
+        }
+        .km-marker-tooltip::before {
+          border-top-color: ${isLight ? '#fff' : '#1e293b'} !important;
+        }
+      `}</style>
 
       {/* Fullscreen toggle */}
       <button

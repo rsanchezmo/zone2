@@ -7,7 +7,7 @@ import { Link } from 'react-router-dom'
 import {
   useActivitiesByDateRange, useCalendarSessions, useCalendarSessionsByRange,
   useCreateSession, useUpdateSession, useDeleteSession, useWeeklyReport, useAthleteZones,
-  useStreaks,
+  useStreaks, useGoalProgress, useGoals,
 } from '../api/hooks'
 import { SPORT_COLORS_HEX, getSportColor } from '../constants/sportColors'
 import StatCard from '../components/shared/StatCard'
@@ -555,6 +555,7 @@ export default function CalendarPage() {
   }, [])
 
   const { data: streakData } = useStreaks()
+  const { data: calGoals } = useGoals(currentMonth.getFullYear())
 
   const month = currentMonth.getMonth() + 1
   const year = currentMonth.getFullYear()
@@ -588,6 +589,7 @@ export default function CalendarPage() {
   const previous = weekData?.previous
 
   const { data: weekActivities } = useActivitiesByDateRange(current?.week_start, current?.week_end)
+  const { data: goalProgressData } = useGoalProgress(weekStart)
 
   // Upcoming planned sessions (next 7 days)
   const todayStr = format(new Date(), 'yyyy-MM-dd')
@@ -608,8 +610,8 @@ export default function CalendarPage() {
     if (!current || !previous) return null
     const c = current[key]
     const p = previous[key]
-    if (c == null) return null
-    if (!p || p === 0) return c > 0 ? 'new' : null
+    if (c == null || c === 0) return null
+    if (!p || p === 0) return 'new'
     return ((c - p) / p) * 100
   }
 
@@ -744,8 +746,45 @@ export default function CalendarPage() {
             const h = Math.floor(totalMin / 60)
             const m = totalMin % 60
             const timeStr = h > 0 ? `${h}h ${m}m` : `${m}m`
+
+            // Compute weekly goal progress client-side for this week row
+            const weeklyGoalProgress = (calGoals ?? [])
+              .filter((g: Record<string, unknown>) => g.period === 'weekly')
+              .map((g: Record<string, unknown>) => {
+                let current = 0
+                for (const wd of weekDays) {
+                  const ds = format(wd, 'yyyy-MM-dd')
+                  const acts = activityMap[ds] || []
+                  for (const a of acts) {
+                    if (g.sport_type !== '__all__' && a.sport_type !== g.sport_type) continue
+                    if (g.metric === 'distance_km') current += a.distance_km ?? 0
+                    else if (g.metric === 'time_hours') current += (a.moving_time ?? 0) / 3600
+                    else if (g.metric === 'activities') current += 1
+                  }
+                }
+                const target = g.target_value as number
+                const pct = target > 0 ? (current / target) * 100 : 0
+                return { ...g, current_value: current, percentage: pct }
+              })
+
             return (
               <div key={`week-${idx}`} className="col-span-7 flex items-center justify-end gap-3 px-2 py-0.5">
+                {weeklyGoalProgress.map((g: Record<string, unknown>) => {
+                  const sport = g.sport_type as string
+                  const color = sport === '__all__' ? '#9ca3af' : getSportColor(sport)
+                  const pct = Math.min(g.percentage as number, 100)
+                  return (
+                    <div key={g.id as number} className="flex items-center gap-1" title={`${sport === '__all__' ? 'All' : sport}: ${(g.current_value as number).toFixed(1)} / ${g.target_value as number} ${(g.metric as string).replace('_', ' ')} (${(g.percentage as number).toFixed(0)}%)`}>
+                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                      <div className="w-16 h-1.5 bg-surface-700 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: (g.percentage as number) >= 100 ? '#22c55e' : color }} />
+                      </div>
+                      <span className="text-[9px] font-mono" style={{ color: (g.percentage as number) >= 100 ? '#22c55e' : '#6b7280' }}>
+                        {(g.percentage as number).toFixed(0)}%
+                      </span>
+                    </div>
+                  )
+                })}
                 <span className="text-[10px] text-gray-500 font-mono">
                   {totalKm.toFixed(1)} km
                 </span>
@@ -946,6 +985,43 @@ export default function CalendarPage() {
                 titles={current.activities_titles_per_day_per_sport}
                 colorMap={weekSportColors}
               />
+            )}
+
+            {/* Goal Progress */}
+            {goalProgressData?.goals && goalProgressData.goals.length > 0 && (
+              <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
+                <div className="text-xs text-gray-500 uppercase mb-3">Goal Progress</div>
+                <div className="space-y-3.5">
+                  {goalProgressData.goals.map((g: Record<string, unknown>) => {
+                    const sport = g.sport_type as string
+                    const color = sport === '__all__' ? '#9ca3af' : getSportColor(sport)
+                    const pct = Math.min(g.percentage as number, 100)
+                    const isComplete = (g.percentage as number) >= 100
+                    const metricStr = (g.metric as string).replace('_', ' ')
+                    const periodStr = g.period as string
+                    return (
+                      <div key={g.id as number}>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
+                            <span className="text-xs text-gray-300">{sport === '__all__' ? 'All Sports' : sport}</span>
+                            <span className="text-[11px] text-gray-500">{metricStr} / {periodStr}</span>
+                          </div>
+                          <span className="text-xs font-mono" style={{ color: isComplete ? '#22c55e' : color }}>
+                            {(g.current_value as number).toFixed(1)} / {g.target_value as number} ({(g.percentage as number).toFixed(0)}%)
+                          </span>
+                        </div>
+                        <div className="h-1.5 bg-surface-700 rounded-full overflow-hidden">
+                          <div
+                            className="h-full rounded-full transition-all duration-500"
+                            style={{ width: `${pct}%`, backgroundColor: isComplete ? '#22c55e' : color }}
+                          />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
             )}
 
             {/* HR Zone Distribution */}

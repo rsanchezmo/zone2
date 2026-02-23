@@ -106,12 +106,12 @@ export function useActivityClock(sportTypes: string) {
   });
 }
 
-export function useCumulativeDistance(year: number, mainSport: string, comparisonYear?: number) {
+export function useCumulativeDistance(year: number, mainSport: string, comparisonYear?: number, yearlyTargetKm?: number) {
   return useQuery({
-    queryKey: ['cumulative-distance', year, mainSport, comparisonYear],
+    queryKey: ['cumulative-distance', year, mainSport, comparisonYear, yearlyTargetKm],
     queryFn: () =>
       api.get('/stats/cumulative-distance', {
-        params: { year, main_sport: mainSport, comparison_year: comparisonYear },
+        params: { year, main_sport: mainSport, comparison_year: comparisonYear, yearly_target_km: yearlyTargetKm },
       }).then(r => r.data),
   });
 }
@@ -229,5 +229,57 @@ export function useDeleteSession() {
       qc.invalidateQueries({ queryKey: ['calendar-sessions'] });
       qc.invalidateQueries({ queryKey: ['calendar-sessions-range'] });
     },
+  });
+}
+
+// Goals
+export function useGoals(year?: number) {
+  return useQuery({
+    queryKey: ['goals', year],
+    queryFn: () => api.get('/goals/', { params: year ? { year } : {} }).then(r => r.data),
+  });
+}
+
+export function useCreateGoal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { year: number; sport_type: string; metric: string; period: string; target_value: number }) =>
+      api.post('/goals/', data).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['goals'] });
+      qc.invalidateQueries({ queryKey: ['goal-progress'] });
+    },
+  });
+}
+
+export function useUpdateGoal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: number } & Record<string, unknown>) =>
+      api.put(`/goals/${id}`, data).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['goals'] });
+      qc.invalidateQueries({ queryKey: ['goal-progress'] });
+    },
+  });
+}
+
+export function useDeleteGoal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.delete(`/goals/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['goals'] });
+      qc.invalidateQueries({ queryKey: ['goal-progress'] });
+    },
+  });
+}
+
+export function useGoalProgress(weekStart?: string) {
+  return useQuery({
+    queryKey: ['goal-progress', weekStart],
+    queryFn: () =>
+      api.get('/goals/progress', { params: { week_start: weekStart } }).then(r => r.data),
+    enabled: !!weekStart,
   });
 }

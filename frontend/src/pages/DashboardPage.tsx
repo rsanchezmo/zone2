@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useYearInSport, useYears, useSportTypes, useCumulativeDistance } from '../api/hooks'
+import { useYearInSport, useYears, useSportTypes, useCumulativeDistance, useGoals } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
 import StatCard from '../components/shared/StatCard'
 import ExportButton from '../components/shared/ExportButton'
@@ -21,16 +21,32 @@ export default function DashboardPage() {
   const [year, setYear] = useState(new Date().getFullYear())
   const [mainSport, setMainSport] = useState('Run')
 
+  const { data: goalsData } = useGoals(year)
+  const yearlyDistanceGoal = useMemo(() => {
+    if (!goalsData) return undefined
+    // Find a distance goal for this sport (or __all__), any period
+    const goal = goalsData.find((g: Record<string, unknown>) =>
+      g.metric === 'distance_km' &&
+      (g.sport_type === mainSport || g.sport_type === '__all__')
+    )
+    if (!goal) return undefined
+    const target = goal.target_value as number
+    // Project to yearly
+    if (goal.period === 'weekly') return Math.round(target * 52)
+    if (goal.period === 'monthly') return Math.round(target * 12)
+    return target // yearly
+  }, [goalsData, mainSport])
+
   const { data: yearData, isLoading: yearLoading } = useYearInSport(year, mainSport, year - 1)
-  const { data: cumulativeData } = useCumulativeDistance(year, mainSport, year - 1)
+  const { data: cumulativeData } = useCumulativeDistance(year, mainSport, year - 1, yearlyDistanceGoal)
 
   const comp = yearData?.comparison
   function yearDelta(section: 'main_sport' | 'all_sports', key: string): number | string | null {
     if (!yearData || !comp) return null
     const c = yearData[section]?.[key]
     const p = comp[section]?.[key]
-    if (c == null) return null
-    if (!p || p === 0) return c > 0 ? 'new' : null
+    if (c == null || c === 0) return null
+    if (!p || p === 0) return 'new'
     return ((c - p) / p) * 100
   }
 
@@ -61,7 +77,7 @@ export default function DashboardPage() {
   // Cumulative distance chart data
   const cumulativeChartData = useMemo(() => {
     if (!cumulativeData?.data) return []
-    const currentPoints = cumulativeData.data as { day: number; date: string; km: number }[]
+    const currentPoints = cumulativeData.data as { day: number; date: string; km: number; target?: number }[]
     const compPoints = (cumulativeData.comparison?.data ?? []) as { day: number; date: string; km: number }[]
     const compMap = new Map(compPoints.map((p: { day: number; km: number }) => [p.day, p.km]))
 
@@ -69,7 +85,7 @@ export default function DashboardPage() {
     const step = Math.max(1, Math.floor(currentPoints.length / 52))
     return currentPoints
       .filter((_: unknown, i: number) => i % step === 0 || i === currentPoints.length - 1)
-      .map((p: { day: number; date: string; km: number }) => {
+      .map((p: { day: number; date: string; km: number; target?: number }) => {
         const d = new Date(p.date)
         const label = `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
         return {
@@ -77,6 +93,7 @@ export default function DashboardPage() {
           label,
           current: p.km,
           prev: compMap.get(p.day) ?? null,
+          target: p.target ?? null,
         }
       })
   }, [cumulativeData])
@@ -188,7 +205,7 @@ export default function DashboardPage() {
                   contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
                   labelStyle={{ color: colors.labelColor }}
                   itemStyle={{ color: colors.labelColor }}
-                  formatter={(value: number, name: string) => [`${value.toFixed(1)} km`, name === 'prev' ? `${year - 1}` : name === 'distance' ? `${year}` : '']}
+                  formatter={(value: any, name: any) => [`${Number(value).toFixed(1)} km`, name === 'prev' ? `${year - 1}` : name === 'distance' ? `${year}` : '']}
                 />
                 {comp && (
                   <Bar dataKey="prev" fill={sportColor} fillOpacity={0.15} stroke={sportColor} strokeOpacity={0.3} strokeWidth={1} radius={[3, 3, 0, 0]} />
@@ -228,7 +245,7 @@ export default function DashboardPage() {
                   contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
                   labelStyle={{ color: colors.labelColor }}
                   itemStyle={{ color: colors.labelColor }}
-                  formatter={(value: number, name: string) => [`${value}`, name === 'prev' ? `${year - 1}` : name === 'activities' ? `${year}` : '']}
+                  formatter={(value: any, name: any) => [`${value ?? 0}`, name === 'prev' ? `${year - 1}` : name === 'activities' ? `${year}` : '']}
                 />
                 {comp && (
                   <Bar dataKey="prev" fill={sportColor} fillOpacity={0.15} stroke={sportColor} strokeOpacity={0.3} strokeWidth={1} radius={[3, 3, 0, 0]} />
@@ -247,18 +264,24 @@ export default function DashboardPage() {
             <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
               <div className="flex items-center justify-between mb-3">
                 <div className="text-xs text-gray-500 uppercase">Cumulative Distance — {mainSport}</div>
-                {comp && (
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-1.5">
-                      <span className="w-3 h-0.5 rounded-sm" style={{ backgroundColor: sportColor }} />
-                      <span className="text-[11px] text-gray-400">{year}</span>
-                    </div>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-3 h-0.5 rounded-sm" style={{ backgroundColor: sportColor }} />
+                    <span className="text-[11px] text-gray-400">{year}</span>
+                  </div>
+                  {comp && (
                     <div className="flex items-center gap-1.5">
                       <span className="w-3 h-0.5 rounded-sm border-b border-dashed" style={{ borderColor: sportColor, opacity: 0.5 }} />
                       <span className="text-[11px] text-gray-500">{year - 1}</span>
                     </div>
-                  </div>
-                )}
+                  )}
+                  {yearlyDistanceGoal && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-3 h-0.5 rounded-sm border-b border-dashed" style={{ borderColor: '#9ca3af' }} />
+                      <span className="text-[11px] text-gray-500">Target ({yearlyDistanceGoal} km)</span>
+                    </div>
+                  )}
+                </div>
               </div>
               <ResponsiveContainer width="100%" height={280}>
                 <AreaChart data={cumulativeChartData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
@@ -287,9 +310,9 @@ export default function DashboardPage() {
                     contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
                     labelStyle={{ color: colors.labelColor }}
                     itemStyle={{ color: colors.labelColor }}
-                    formatter={(value: number, name: string) => [
-                      `${value.toFixed(1)} km`,
-                      name === 'prev' ? `${year - 1}` : `${year}`,
+                    formatter={(value: any, name: any) => [
+                      `${Number(value ?? 0).toFixed(1)} km`,
+                      name === 'prev' ? `${year - 1}` : name === 'target' ? 'Target' : `${year}`,
                     ]}
                   />
                   {comp && (
@@ -313,6 +336,17 @@ export default function DashboardPage() {
                     fill="url(#cumulGrad)"
                     dot={false}
                   />
+                  {yearlyDistanceGoal && (
+                    <Line
+                      type="monotone"
+                      dataKey="target"
+                      stroke="#9ca3af"
+                      strokeWidth={1.5}
+                      strokeDasharray="6 4"
+                      dot={false}
+                      connectNulls
+                    />
+                  )}
                 </AreaChart>
               </ResponsiveContainer>
             </div>
