@@ -205,6 +205,8 @@ export function useCreateSession() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['calendar-sessions'] });
       qc.invalidateQueries({ queryKey: ['calendar-sessions-range'] });
+      qc.invalidateQueries({ queryKey: ['session-scores'] });
+      qc.invalidateQueries({ queryKey: ['activity-score'] });
     },
   });
 }
@@ -217,6 +219,8 @@ export function useUpdateSession() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['calendar-sessions'] });
       qc.invalidateQueries({ queryKey: ['calendar-sessions-range'] });
+      qc.invalidateQueries({ queryKey: ['session-scores'] });
+      qc.invalidateQueries({ queryKey: ['activity-score'] });
     },
   });
 }
@@ -228,7 +232,29 @@ export function useDeleteSession() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['calendar-sessions'] });
       qc.invalidateQueries({ queryKey: ['calendar-sessions-range'] });
+      qc.invalidateQueries({ queryKey: ['session-scores'] });
+      qc.invalidateQueries({ queryKey: ['activity-score'] });
     },
+  });
+}
+
+export function useSessionScores(dateFrom?: string, dateTo?: string) {
+  return useQuery({
+    queryKey: ['session-scores', dateFrom, dateTo],
+    queryFn: () =>
+      api.get('/calendar/sessions/scores', { params: { date_from: dateFrom, date_to: dateTo } }).then(r => r.data),
+    enabled: !!dateFrom && !!dateTo,
+    staleTime: 1000 * 60 * 5,
+  });
+}
+
+export function useActivityScore(activityId?: number) {
+  return useQuery({
+    queryKey: ['activity-score', activityId],
+    queryFn: () =>
+      api.get(`/calendar/sessions/score-by-activity/${activityId}`).then(r => r.data),
+    enabled: !!activityId,
+    staleTime: 1000 * 60 * 5,
   });
 }
 
@@ -281,5 +307,46 @@ export function useGoalProgress(weekStart?: string) {
     queryFn: () =>
       api.get('/goals/progress', { params: { week_start: weekStart } }).then(r => r.data),
     enabled: !!weekStart,
+  });
+}
+
+// Workout Templates
+export function useWorkoutTemplates(sportType?: string) {
+  return useQuery({
+    queryKey: ['workout-templates', sportType],
+    queryFn: () =>
+      api.get('/workouts', { params: sportType ? { sport_type: sportType } : {} }).then(r => r.data),
+  });
+}
+
+export function useCreateWorkoutTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { name: string; sport_type: string; description?: string; segments: Record<string, unknown>[] }) =>
+      api.post('/workouts', data).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['workout-templates'] });
+    },
+  });
+}
+
+export function useUpdateWorkoutTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: number } & Record<string, unknown>) =>
+      api.put(`/workouts/${id}`, data).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['workout-templates'] });
+    },
+  });
+}
+
+export function useDeleteWorkoutTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.delete(`/workouts/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['workout-templates'] });
+    },
   });
 }

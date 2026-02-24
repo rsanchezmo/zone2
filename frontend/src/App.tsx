@@ -8,6 +8,7 @@ import AggregationsPage from './pages/AggregationsPage'
 import CalendarPage from './pages/CalendarPage'
 import ProfilePage from './pages/ProfilePage'
 import PersonalRecordsPage from './pages/PersonalRecordsPage'
+import WorkoutsPage from './pages/WorkoutsPage'
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
           <Route path="/aggregations" element={<AggregationsPage />} />
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/records" element={<PersonalRecordsPage />} />
+          <Route path="/workouts" element={<WorkoutsPage />} />
           <Route path="/profile" element={<ProfilePage />} />
         </Routes>
       </AppShell>

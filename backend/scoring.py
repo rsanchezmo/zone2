@@ -1,0 +1,779 @@
+"""Execution scoring engine for training sessions.
+
+Pure functions — no DB or framework dependencies.
+"""
+
+from __future__ import annotations
+
+import json
+from strava.strava_utils import convert_speed, get_sport_category
+
+
+def match_activity(
+    session: dict,
+    activities_on_day: list[dict],
+) -> dict | None:
+    """Match a session to the best activity on the same day.
+
+    1. Filter by sport_type (exact match).
+    2. If multiple: sort by closest planned_distance_km (if set),
+       else planned_duration_mins, else first.
+    3. Return best match or None.
+    """
+    sport = session.get("sport_type", "")
+    candidates = [a for a in activities_on_day if a.get("sport_type") == sport]
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+
+    planned_dist = session.get("planned_distance_km")
+    planned_dur = session.get("planned_duration_mins")
+
+    if planned_dist is not None:
+        candidates.sort(key=lambda a: abs((a.get("distance_km") or 0) - planned_dist))
+    elif planned_dur is not None:
+        candidates.sort(key=lambda a: abs((a.get("moving_time") or 0) / 60 - planned_dur))
+
+    return candidates[0]
+
+
+def _clamp(value: float, lo: float = 0.0, hi: float = 100.0) -> float:
+    return max(lo, min(hi, value))
+
+
+def _score_distance(target_km: float, actual_km: float) -> dict:
+    if target_km <= 0:
+        return {"target": target_km, "actual": actual_km, "score": 0, "unit": "km"}
+    score = _clamp(100 - abs(1 - actual_km / target_km) * 100)
+    return {"target": target_km, "actual": round(actual_km, 2), "score": round(score), "unit": "km"}
+
+
+def _score_duration(target_mins: float, actual_mins: float) -> dict:
+    if target_mins <= 0:
+        return {"target": target_mins, "actual": actual_mins, "score": 0, "unit": "min"}
+    score = _clamp(100 - abs(1 - actual_mins / target_mins) * 100)
+    return {"target": target_mins, "actual": round(actual_mins, 1), "score": round(score), "unit": "min"}
+
+
+def _pace_penalty(deviation: float, unit: str) -> float:
+    """Convert a fractional deviation to a score penalty.
+
+    For pace-based sports (min/km, min/100m) the penalty is steeper (×2)
+    because small numeric differences represent large real-world gaps.
+    For speed-based sports (km/h) the linear 1:1 mapping is fine.
+    """
+    if unit in ("min/km", "min/100m"):
+        return deviation * 200
+    return deviation * 100
+
+
+def _score_pace(
+    target_min: float | None,
+    target_max: float | None,
+    actual_pace: float,
+    unit: str,
+) -> dict:
+    """Score pace/speed against a target range (either or both sides optional).
+
+    For running (min/km): lower pace = faster.
+      target_min = fastest allowed pace (lower number)
+      target_max = slowest allowed pace (higher number)
+    For cycling (km/h): higher = faster.
+      target_min = minimum speed, target_max = maximum speed.
+
+    Single-sided:
+      Only target_min set: score 100 if actual >= target_min (running: not too fast),
+        penalty for being below.
+      Only target_max set: score 100 if actual <= target_max (running: not too slow),
+        penalty for being above.
+    """
+    result = {
+        "target_min": target_min,
+        "target_max": target_max,
+        "actual": round(actual_pace, 2),
+        "score": 0,
+        "unit": unit,
+    }
+
+    if target_min is not None and target_max is not None:
+        # Both sides set — range scoring
+        lo = min(target_min, target_max)
+        hi = max(target_min, target_max)
+        range_width = hi - lo if hi > lo else 1.0
+
+        if lo <= actual_pace <= hi:
+            result["score"] = 100
+        else:
+            overshoot = min(abs(actual_pace - lo), abs(actual_pace - hi))
+            deviation = overshoot / range_width
+            result["score"] = round(_clamp(100 - _pace_penalty(deviation, unit)))
+
+    elif target_min is not None:
+        # Only fastest/minimum set
+        # For running: actual should be >= target_min (slower or equal is OK)
+        # For cycling: actual should be >= target_min (faster or equal is OK)
+        if actual_pace >= target_min:
+            result["score"] = 100
+        else:
+            ref = target_min if target_min != 0 else 1.0
+            deviation = abs(actual_pace - target_min) / ref
+            result["score"] = round(_clamp(100 - _pace_penalty(deviation, unit)))
+
+    elif target_max is not None:
+        # Only slowest/maximum set
+        # For running: actual should be <= target_max (faster or equal is OK)
+        # For cycling: actual should be <= target_max
+        if actual_pace <= target_max:
+            result["score"] = 100
+        else:
+            ref = target_max if target_max != 0 else 1.0
+            deviation = abs(actual_pace - target_max) / ref
+            result["score"] = round(_clamp(100 - _pace_penalty(deviation, unit)))
+
+    return result
+
+
+def _compute_hr_zone_pct(
+    streams: list[dict],
+    target_zone: int,
+    hr_zones: list[dict],
+) -> float | None:
+    """Compute percentage of time spent in target HR zone from stream data."""
+    if not streams or not hr_zones or target_zone < 1 or target_zone > len(hr_zones):
+        return None
+
+    zone = hr_zones[target_zone - 1]
+    zone_min = zone.get("min", 0)
+    zone_max = zone.get("max", 999)
+
+    hr_points = [p.get("heartrate") for p in streams if p.get("heartrate")]
+    if not hr_points:
+        return None
+
+    in_zone = sum(1 for hr in hr_points if zone_min <= hr <= zone_max)
+    return round(in_zone / len(hr_points) * 100, 1)
+
+
+def _score_hr_zone(target_pct: float, actual_pct: float) -> dict:
+    if target_pct <= 0:
+        return {"target_pct": target_pct, "actual_pct": actual_pct, "score": 0}
+    score = _clamp(actual_pct / target_pct * 100)
+    return {"target_pct": target_pct, "actual_pct": actual_pct, "score": round(score)}
+
+
+def _parse_streams(activity: dict) -> list[dict] | None:
+    """Extract streams from an activity dict, handling JSON strings."""
+    streams = activity.get("streams")
+    if streams is None:
+        return None
+    if isinstance(streams, str):
+        try:
+            streams = json.loads(streams)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    if isinstance(streams, list):
+        return streams
+    return None
+
+
+def _advance_by_distance(streams: list[dict], pos: int, distance_m: float) -> tuple[list[dict], int]:
+    """Walk streams from pos, collecting points until distance_m is covered.
+
+    Uses the cumulative 'distance' field in each stream point.
+    Returns (collected_points, new_pos).
+    """
+    if pos >= len(streams):
+        return [], pos
+    start_dist = streams[pos].get("distance", 0)
+    points = []
+    i = pos
+    while i < len(streams):
+        points.append(streams[i])
+        current_dist = streams[i].get("distance", 0) - start_dist
+        if current_dist >= distance_m:
+            i += 1
+            break
+        i += 1
+    return points, i
+
+
+def _advance_by_duration(streams: list[dict], pos: int, duration_s: float) -> tuple[list[dict], int]:
+    """Walk streams from pos, collecting points until duration_s is covered.
+
+    Uses the 'time' field in each stream point.
+    Returns (collected_points, new_pos).
+    """
+    if pos >= len(streams):
+        return [], pos
+    start_time = streams[pos].get("time", 0)
+    points = []
+    i = pos
+    while i < len(streams):
+        points.append(streams[i])
+        elapsed = streams[i].get("time", 0) - start_time
+        if elapsed >= duration_s:
+            i += 1
+            break
+        i += 1
+    return points, i
+
+
+def _detect_velocity_phases(
+    streams: list[dict],
+    fast_threshold: float = 4.0,
+    slow_threshold: float = 2.5,
+    min_points: int = 3,
+) -> list[dict]:
+    """Detect fast/slow/moderate phases from velocity_smooth data.
+
+    Returns list of phase dicts:
+      {phase: "fast"|"slow"|"moderate", i_start, i_end, distance_m, duration_s}
+    """
+    if len(streams) < min_points * 2:
+        return []
+
+    phases: list[dict] = []
+    current_phase = None
+    phase_start = 0
+
+    for i, p in enumerate(streams):
+        v = p.get("velocity_smooth", 0)
+        if v > fast_threshold:
+            phase = "fast"
+        elif v < slow_threshold:
+            phase = "slow"
+        else:
+            phase = "moderate"
+
+        if phase != current_phase:
+            if current_phase is not None and i - phase_start >= min_points:
+                phases.append(_build_phase(streams, current_phase, phase_start, i - 1))
+            current_phase = phase
+            phase_start = i
+
+    # Last phase
+    if current_phase is not None and len(streams) - phase_start >= min_points:
+        phases.append(_build_phase(streams, current_phase, phase_start, len(streams) - 1))
+
+    return phases
+
+
+def _build_phase(streams: list[dict], phase: str, i_start: int, i_end: int) -> dict:
+    return {
+        "phase": phase,
+        "i_start": i_start,
+        "i_end": i_end,
+        "distance_m": streams[i_end].get("distance", 0) - streams[i_start].get("distance", 0),
+        "duration_s": streams[i_end].get("time", 0) - streams[i_start].get("time", 0),
+    }
+
+
+def _has_rep_work_segments(segments: list[dict]) -> bool:
+    """Check if any segment has repetitions > 1 (interval workout)."""
+    return any((s.get("repetitions") or 1) > 1 for s in segments)
+
+
+def _compute_fast_threshold(streams: list[dict]) -> tuple[float, float]:
+    """Compute adaptive fast/slow thresholds from the velocity distribution.
+
+    Uses the bimodal distribution typical of interval workouts:
+    fast_threshold = midpoint between the two velocity peaks.
+    """
+    velocities = sorted(v for p in streams if (v := p.get("velocity_smooth", 0)) > 0.5)
+    if len(velocities) < 20:
+        return 4.0, 2.5
+
+    # Split into slow half and fast half at the median
+    mid = len(velocities) // 2
+    slow_median = velocities[mid // 2]
+    fast_median = velocities[mid + mid // 2]
+
+    if fast_median <= slow_median * 1.2:
+        # Not bimodal — no clear interval pattern
+        return 4.0, 2.5
+
+    midpoint = (slow_median + fast_median) / 2
+    return midpoint + 0.2, midpoint - 0.2
+
+
+def _slice_intervals_by_velocity(
+    streams: list[dict],
+    segments: list[dict],
+) -> list[dict] | None:
+    """Slice an interval workout by detecting fast/slow velocity phases.
+
+    Only used when segments contain reps > 1. Returns None if phase detection
+    doesn't match the expected structure, falling back to sequential slicing.
+    """
+    # Find the work segment with reps
+    work_idx = None
+    work_seg = None
+    for i, seg in enumerate(segments):
+        if (seg.get("repetitions") or 1) > 1:
+            work_idx = i
+            work_seg = seg
+            break
+    if work_seg is None:
+        return None
+
+    reps = work_seg.get("repetitions", 1)
+    fast_thresh, slow_thresh = _compute_fast_threshold(streams)
+    phases = _detect_velocity_phases(streams, fast_thresh, slow_thresh)
+
+    fast_phases = [p for p in phases if p["phase"] == "fast"]
+    if len(fast_phases) < reps:
+        # Can't match — not enough fast phases detected
+        return None
+
+    # Take the `reps` best-matching fast phases (by distance closest to target)
+    target_dist = (work_seg.get("distance_km") or 0) * 1000
+    if target_dist > 0:
+        fast_phases.sort(key=lambda p: abs(p["distance_m"] - target_dist))
+        matched_fast = sorted(fast_phases[:reps], key=lambda p: p["i_start"])
+    else:
+        # No target distance — take the first N fast phases
+        matched_fast = fast_phases[:reps]
+
+    slices = []
+
+    # --- Pre-work segments (warmup etc.) ---
+    work_start_idx = matched_fast[0]["i_start"]
+    pos = 0
+    for seg_idx in range(work_idx):
+        seg = segments[seg_idx]
+        dist_m = (seg.get("distance_km") or 0) * 1000
+        dur_s = (seg.get("duration_mins") or 0) * 60
+
+        if dist_m > 0:
+            points, pos = _advance_by_distance(streams, pos, dist_m)
+        elif dur_s > 0:
+            points, pos = _advance_by_duration(streams, pos, dur_s)
+        else:
+            # Consume up to where intervals start
+            points = streams[pos:work_start_idx]
+            pos = work_start_idx
+
+        slices.append({
+            "segment_idx": seg_idx,
+            "segment": seg,
+            "is_recovery": False,
+            "rep": 1,
+            "points": points,
+        })
+
+    # --- Work reps + recovery ---
+    for rep_i, fast_phase in enumerate(matched_fast):
+        # Work slice = the fast phase
+        work_points = streams[fast_phase["i_start"]:fast_phase["i_end"] + 1]
+        slices.append({
+            "segment_idx": work_idx,
+            "segment": work_seg,
+            "is_recovery": False,
+            "rep": rep_i + 1,
+            "points": work_points,
+        })
+
+        # Recovery slice = everything between this fast phase end and next fast phase start
+        if rep_i < len(matched_fast) - 1:
+            rec_start = fast_phase["i_end"] + 1
+            rec_end = matched_fast[rep_i + 1]["i_start"]
+            rec_points = streams[rec_start:rec_end]
+            if rec_points:
+                rec_segment = {
+                    "type": "recovery",
+                    "distance_km": work_seg.get("recovery_distance_km"),
+                    "duration_mins": work_seg.get("recovery_duration_mins"),
+                }
+                slices.append({
+                    "segment_idx": work_idx,
+                    "segment": rec_segment,
+                    "is_recovery": True,
+                    "rep": rep_i + 1,
+                    "points": rec_points,
+                })
+
+    # --- Post-work segments (cooldown etc.) ---
+    pos = matched_fast[-1]["i_end"] + 1
+    # Skip the last recovery gap before cooldown segments
+    # Find the next non-slow phase after last interval
+    while pos < len(streams) and streams[pos].get("velocity_smooth", 0) < slow_thresh:
+        pos += 1
+
+    for seg_idx in range(work_idx + 1, len(segments)):
+        seg = segments[seg_idx]
+        dist_m = (seg.get("distance_km") or 0) * 1000
+        dur_s = (seg.get("duration_mins") or 0) * 60
+
+        if dist_m > 0:
+            points, pos = _advance_by_distance(streams, pos, dist_m)
+        elif dur_s > 0:
+            points, pos = _advance_by_duration(streams, pos, dur_s)
+        else:
+            points = streams[pos:]
+            pos = len(streams)
+
+        slices.append({
+            "segment_idx": seg_idx,
+            "segment": seg,
+            "is_recovery": False,
+            "rep": 1,
+            "points": points,
+        })
+
+    return slices
+
+
+def slice_streams_by_segments(
+    streams: list[dict],
+    segments: list[dict],
+    sport_type: str = "",
+) -> list[dict]:
+    """Slice stream data into segments for scoring.
+
+    For interval workouts (segments with reps > 1), uses velocity-based phase
+    detection to accurately identify fast/recovery phases. Falls back to
+    sequential distance/time walking for simple workouts or when phase
+    detection doesn't match.
+
+    Returns list of slice dicts:
+      {segment_idx, segment, is_recovery, rep, points}
+    """
+    # Try velocity-based interval detection for rep workouts
+    if _has_rep_work_segments(segments):
+        result = _slice_intervals_by_velocity(streams, segments)
+        if result is not None:
+            return result
+
+    # Fallback: sequential distance/time walking
+    #
+    # Two-pass approach: first walk defined segments (those with distance or
+    # duration) to compute how much stream they consume, then distribute the
+    # remaining stream evenly among undefined segments.
+
+    # Compute total distance/time required by defined segments
+    total_defined_m = 0
+    total_defined_s = 0
+    undefined_count = 0
+    for seg in segments:
+        reps = max(1, seg.get("repetitions") or 1)
+        dist_m = (seg.get("distance_km") or 0) * 1000
+        dur_s = (seg.get("duration_mins") or 0) * 60
+        if dist_m > 0:
+            total_defined_m += dist_m * reps
+        elif dur_s > 0:
+            total_defined_s += dur_s * reps
+        else:
+            undefined_count += 1
+        # Account for recovery between reps
+        rec_dist_m = (seg.get("recovery_distance_km") or 0) * 1000
+        rec_dur_s = (seg.get("recovery_duration_mins") or 0) * 60
+        if reps > 1:
+            if rec_dist_m > 0:
+                total_defined_m += rec_dist_m * (reps - 1)
+            elif rec_dur_s > 0:
+                total_defined_s += rec_dur_s * (reps - 1)
+
+    # Compute leftover distance for undefined segments
+    if len(streams) >= 2:
+        total_stream_m = streams[-1].get("distance", 0) - streams[0].get("distance", 0)
+        total_stream_s = streams[-1].get("time", 0) - streams[0].get("time", 0)
+    else:
+        total_stream_m = 0
+        total_stream_s = 0
+
+    leftover_m = max(0, total_stream_m - total_defined_m)
+    share_m = leftover_m / undefined_count if undefined_count > 0 else 0
+
+    slices = []
+    pos = 0
+
+    for seg_idx, seg in enumerate(segments):
+        reps = max(1, seg.get("repetitions") or 1)
+        for rep in range(reps):
+            dist_m = (seg.get("distance_km") or 0) * 1000
+            dur_s = (seg.get("duration_mins") or 0) * 60
+
+            if dist_m > 0:
+                points, pos = _advance_by_distance(streams, pos, dist_m)
+            elif dur_s > 0:
+                points, pos = _advance_by_duration(streams, pos, dur_s)
+            elif share_m > 0:
+                # Undefined segment: consume its share of leftover distance
+                points, pos = _advance_by_distance(streams, pos, share_m)
+            else:
+                points = streams[pos:]
+                pos = len(streams)
+
+            slices.append({
+                "segment_idx": seg_idx,
+                "segment": seg,
+                "is_recovery": False,
+                "rep": rep + 1,
+                "points": points,
+            })
+
+            # Recovery between reps
+            rec_dur_s = (seg.get("recovery_duration_mins") or 0) * 60
+            rec_dist_m = (seg.get("recovery_distance_km") or 0) * 1000
+            has_recovery = rec_dur_s > 0 or rec_dist_m > 0
+            if has_recovery and rep < reps - 1:
+                if rec_dist_m > 0:
+                    rec_points, pos = _advance_by_distance(streams, pos, rec_dist_m)
+                elif rec_dur_s > 0:
+                    rec_points, pos = _advance_by_duration(streams, pos, rec_dur_s)
+                else:
+                    rec_points = []
+
+                if rec_points:
+                    rec_segment = {
+                        "type": "recovery",
+                        "distance_km": seg.get("recovery_distance_km"),
+                        "duration_mins": seg.get("recovery_duration_mins"),
+                    }
+                    slices.append({
+                        "segment_idx": seg_idx,
+                        "segment": rec_segment,
+                        "is_recovery": True,
+                        "rep": rep + 1,
+                        "points": rec_points,
+                    })
+
+    return slices
+
+
+def _avg_speed_from_points(points: list[dict]) -> float:
+    """Compute average speed (m/s) from a slice of stream points."""
+    if len(points) < 2:
+        return 0.0
+    dist = (points[-1].get("distance", 0) - points[0].get("distance", 0))
+    elapsed = (points[-1].get("time", 0) - points[0].get("time", 0))
+    if elapsed <= 0:
+        return 0.0
+    return dist / elapsed
+
+
+def _score_segment_slice(
+    segment: dict,
+    points: list[dict],
+    sport_type: str,
+    hr_zones: list[dict] | None,
+) -> dict:
+    """Score a single segment slice against its targets.
+
+    Scores distance accuracy for distance-based segments, duration accuracy
+    for time-based segments, pace if pace targets are set, and HR zone
+    if HR zone target is set.
+    """
+    metrics: dict[str, dict] = {}
+
+    if len(points) < 2:
+        return {"overall_score": 0, "metrics": metrics}
+
+    actual_dist_m = points[-1].get("distance", 0) - points[0].get("distance", 0)
+    actual_time_s = points[-1].get("time", 0) - points[0].get("time", 0)
+
+    # Distance accuracy (only if segment is distance-based)
+    dist_km = segment.get("distance_km")
+    if dist_km:
+        metrics["distance"] = _score_distance(dist_km, actual_dist_m / 1000)
+
+    # Duration accuracy (only if segment is time-based, not distance-based)
+    dur_mins = segment.get("duration_mins")
+    if dur_mins and not dist_km:
+        metrics["duration"] = _score_duration(dur_mins, actual_time_s / 60)
+
+    # Pace
+    pace_min = segment.get("target_pace_min")
+    pace_max = segment.get("target_pace_max")
+    if (pace_min is not None or pace_max is not None):
+        avg_spd = _avg_speed_from_points(points)
+        if avg_spd > 0:
+            actual_pace, unit = convert_speed(avg_spd, sport_type)
+            metrics["pace"] = _score_pace(pace_min, pace_max, actual_pace, unit)
+
+    # HR Zone
+    target_zone = segment.get("target_hr_zone")
+    target_pct = segment.get("target_zone_pct") or 80
+    if target_zone is not None and hr_zones:
+        actual_pct = _compute_hr_zone_pct(points, target_zone, hr_zones)
+        if actual_pct is not None:
+            metrics["hr_zone"] = {
+                "target_zone": target_zone,
+                **_score_hr_zone(target_pct, actual_pct),
+            }
+
+    # Always compute actual pace for display purposes
+    avg_spd = _avg_speed_from_points(points)
+    if avg_spd > 0:
+        actual_pace_val, pace_unit = convert_speed(avg_spd, sport_type)
+        actual_pace_display = round(actual_pace_val, 2)
+    else:
+        actual_pace_display = None
+        pace_unit = ""
+
+    scores = [m["score"] for m in metrics.values()]
+    overall = round(sum(scores) / len(scores)) if scores else None
+
+    return {"overall_score": overall, "metrics": metrics, "actual_pace": actual_pace_display, "pace_unit": pace_unit}
+
+
+def _compute_segmented_score(
+    session: dict,
+    activity: dict,
+    segments: list[dict],
+    hr_zones: list[dict] | None,
+    streams: list[dict],
+) -> dict:
+    """Orchestrate segment slicing + scoring for a structured workout."""
+    sport_type = session.get("sport_type", "")
+    slices = slice_streams_by_segments(streams, segments, sport_type)
+
+    segment_scores = []
+    work_scores = []
+    work_distances = []
+
+    for sl in slices:
+        seg = sl["segment"]
+        pts = sl["points"]
+        score_data = _score_segment_slice(seg, pts, session.get("sport_type", ""), hr_zones)
+
+        # Compute actual distance/duration from stream points
+        if len(pts) >= 2:
+            actual_dist_m = pts[-1].get("distance", 0) - pts[0].get("distance", 0)
+            actual_time_s = pts[-1].get("time", 0) - pts[0].get("time", 0)
+        else:
+            actual_dist_m = 0
+            actual_time_s = 0
+
+        entry = {
+            "segment_idx": sl["segment_idx"],
+            "type": seg.get("type", "work"),
+            "is_recovery": sl["is_recovery"],
+            "rep": sl["rep"],
+            "label": seg.get("label"),
+            "distance_km": seg.get("distance_km"),
+            "duration_mins": seg.get("duration_mins"),
+            "actual_distance_km": round(actual_dist_m / 1000, 3),
+            "actual_duration_mins": round(actual_time_s / 60, 2),
+            **score_data,
+        }
+        segment_scores.append(entry)
+
+        # Only work segments (non-recovery) with actual targets count toward overall score
+        if not sl["is_recovery"] and seg.get("type") in ("work", "warmup", "cooldown") and score_data["overall_score"] is not None:
+            dist_weight = seg.get("distance_km") or seg.get("duration_mins") or 1
+            work_scores.append(score_data["overall_score"])
+            work_distances.append(dist_weight)
+
+    # Distance-weighted average of work segment scores
+    if work_scores and sum(work_distances) > 0:
+        total_weight = sum(work_distances)
+        overall = round(sum(s * w for s, w in zip(work_scores, work_distances)) / total_weight)
+    else:
+        overall = 0
+
+    return {
+        "overall_score": overall,
+        "matched_activity_id": activity.get("id"),
+        "mode": "segmented",
+        "segment_scores": segment_scores,
+    }
+
+
+def compute_execution_score(
+    session: dict,
+    activity: dict,
+    hr_zones: list[dict] | None = None,
+    activity_streams: list[dict] | None = None,
+) -> dict:
+    """Compute execution score comparing actual activity against session targets.
+
+    Returns dict with overall_score, matched_activity_id, and per-metric breakdown.
+    Only metrics with targets set in the session are included.
+    If the session has segments, delegates to segmented scoring.
+    """
+    # Segmented scoring path
+    segments = session.get("segments")
+    if segments and isinstance(segments, list) and len(segments) > 0:
+        streams = activity_streams or _parse_streams(activity)
+        if streams:
+            return _compute_segmented_score(session, activity, segments, hr_zones, streams)
+
+    metrics: dict[str, dict] = {}
+
+    # Distance
+    planned_dist = session.get("planned_distance_km")
+    if planned_dist is not None:
+        actual_dist = activity.get("distance_km") or (activity.get("distance", 0) / 1000)
+        metrics["distance"] = _score_distance(planned_dist, actual_dist)
+
+    # Duration
+    planned_dur = session.get("planned_duration_mins")
+    if planned_dur is not None:
+        actual_secs = activity.get("moving_time") or 0
+        metrics["duration"] = _score_duration(planned_dur, actual_secs / 60)
+
+    # Avg Pace (single target)
+    target_avg_pace = session.get("target_avg_pace")
+    if target_avg_pace is not None:
+        avg_speed = activity.get("average_speed") or 0
+        if avg_speed > 0:
+            actual_pace, unit = convert_speed(avg_speed, activity.get("sport_type"))
+            if target_avg_pace > 0:
+                deviation = abs(1 - actual_pace / target_avg_pace)
+                penalty = _pace_penalty(deviation, unit)
+                score = _clamp(100 - penalty)
+            else:
+                score = 0
+            metrics["avg_pace"] = {
+                "target": target_avg_pace,
+                "actual": round(actual_pace, 2),
+                "score": round(score),
+                "unit": unit,
+            }
+
+    # Pace Range (supports single-sided targets)
+    target_pace_min = session.get("target_pace_min")
+    target_pace_max = session.get("target_pace_max")
+    if target_pace_min is not None or target_pace_max is not None:
+        avg_speed = activity.get("average_speed") or 0
+        if avg_speed > 0:
+            actual_pace, unit = convert_speed(avg_speed, activity.get("sport_type"))
+            metrics["pace"] = _score_pace(target_pace_min, target_pace_max, actual_pace, unit)
+
+    # HR Zone
+    target_hr_zone = session.get("target_hr_zone")
+    target_zone_pct = session.get("target_zone_pct") or 80
+    if target_hr_zone is not None and hr_zones:
+        streams = activity_streams or _parse_streams(activity)
+        if streams:
+            actual_pct = _compute_hr_zone_pct(streams, target_hr_zone, hr_zones)
+            if actual_pct is not None:
+                metrics["hr_zone"] = {
+                    "target_zone": target_hr_zone,
+                    **_score_hr_zone(target_zone_pct, actual_pct),
+                }
+
+    # Overall score: average of individual metric scores
+    scores = [m["score"] for m in metrics.values()]
+    overall = round(sum(scores) / len(scores)) if scores else 0
+
+    return {
+        "overall_score": overall,
+        "matched_activity_id": activity.get("id"),
+        "metrics": metrics,
+    }
+
+
+def has_targets(session: dict) -> bool:
+    """Check if a session has any scoring targets set."""
+    segments = session.get("segments")
+    if segments and isinstance(segments, list) and len(segments) > 0:
+        return True
+    return any(
+        session.get(k) is not None
+        for k in ("planned_distance_km", "planned_duration_mins",
+                   "target_avg_pace", "target_pace_min", "target_pace_max",
+                   "target_hr_zone")
+    )

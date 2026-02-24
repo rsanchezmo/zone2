@@ -13,6 +13,12 @@ CREATE TABLE IF NOT EXISTS training_sessions (
     planned_distance_km REAL,
     planned_duration_mins REAL,
     planned_intensity TEXT,
+    target_pace_min REAL,
+    target_pace_max REAL,
+    target_hr_zone INTEGER,
+    target_zone_pct REAL,
+    segments TEXT,
+    workout_template_id INTEGER,
     completed BOOLEAN DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now'))
 );
@@ -26,6 +32,15 @@ CREATE TABLE IF NOT EXISTS goals (
     target_value REAL NOT NULL,
     created_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS workout_templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    sport_type TEXT NOT NULL,
+    description TEXT,
+    segments TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+);
 """
 
 
@@ -33,6 +48,22 @@ async def init_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executescript(_SCHEMA)
+        # Migration: add scoring target columns to training_sessions
+        cursor = await db.execute("PRAGMA table_info(training_sessions)")
+        ts_columns = {row[1] for row in await cursor.fetchall()}
+        for col, col_type in [
+            ("target_pace_min", "REAL"),
+            ("target_pace_max", "REAL"),
+            ("target_avg_pace", "REAL"),
+            ("target_hr_zone", "INTEGER"),
+            ("target_zone_pct", "REAL"),
+            ("segments", "TEXT"),
+            ("workout_template_id", "INTEGER"),
+        ]:
+            if col not in ts_columns:
+                await db.execute(f"ALTER TABLE training_sessions ADD COLUMN {col} {col_type}")
+        await db.commit()
+
         # Migration: add year column if goals table existed without it
         cursor = await db.execute("PRAGMA table_info(goals)")
         columns = {row[1] for row in await cursor.fetchall()}

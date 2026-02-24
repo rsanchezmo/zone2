@@ -7,7 +7,7 @@ import { Link } from 'react-router-dom'
 import {
   useActivitiesByDateRange, useCalendarSessions, useCalendarSessionsByRange,
   useCreateSession, useUpdateSession, useDeleteSession, useWeeklyReport, useAthleteZones,
-  useStreaks, useGoalProgress, useGoals,
+  useStreaks, useGoalProgress, useGoals, useSessionScores, useWorkoutTemplates, useCreateWorkoutTemplate,
 } from '../api/hooks'
 import { SPORT_COLORS_HEX, getSportColor } from '../constants/sportColors'
 import StatCard from '../components/shared/StatCard'
@@ -18,6 +18,7 @@ import {
   PieChart, Pie, Cell,
 } from 'recharts'
 import { useTheme } from '../hooks/useTheme'
+import SegmentListBuilder, { SegmentSummary, getSegmentColor, type Segment } from '../components/shared/SegmentListBuilder'
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
@@ -204,14 +205,33 @@ function AccumulatedChart({ data, titles, colorMap }: AccumulatedChartProps) {
   )
 }
 
+/* ── Score color helper ────────────────────────────── */
+function scoreColor(score: number): string {
+  if (score >= 80) return '#22c55e'
+  if (score >= 50) return '#eab308'
+  return '#ef4444'
+}
+
+
+
+/* ── Pace unit helper ─────────────────────────────── */
+function getPaceUnit(sportType: string): string {
+  const st = sportType.toLowerCase().replace(/\s/g, '')
+  const cycling = new Set(['ride', 'virtualride', 'ebikeride', 'gravelride', 'mountainbikeride'])
+  if (cycling.has(st)) return 'km/h'
+  return 'min/km'
+}
+
 /* ── Session Modal ──────────────────────────────────── */
 function SessionModal({
-  date, sessions, onAdd, onUpdate, onDelete, onClose,
+  date, sessions, scores, onAdd, onCopy, onUpdate, onDelete, onClose,
 }: {
   date: string
   sessions: Record<string, unknown>[]
-  onAdd: (data: { sport_type: string; description?: string }) => void
-  onUpdate: (id: number, data: { sport_type: string; description?: string }) => void
+  scores: Record<string, Record<string, unknown>> | undefined
+  onAdd: (data: Record<string, unknown>) => void
+  onCopy: (session: Record<string, unknown>, targetDate: string) => void
+  onUpdate: (id: number, data: Record<string, unknown>) => void
   onDelete: (id: number) => void
   onClose: () => void
 }) {
@@ -221,6 +241,24 @@ function SessionModal({
   const [description, setDescription] = useState('')
   const [editingId, setEditingId] = useState<number | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
+  const [copyingSessionId, setCopyingSessionId] = useState<number | null>(null)
+  const [copyMonth, setCopyMonth] = useState(() => startOfMonth(parseISO(date)))
+  const [activeGoals, setActiveGoals] = useState<Set<string>>(new Set())
+  const [plannedDistanceKm, setPlannedDistanceKm] = useState<string>('')
+  const [plannedDurationMins, setPlannedDurationMins] = useState<string>('')
+  const [targetAvgPace, setTargetAvgPace] = useState<string>('')
+  const [targetPaceMin, setTargetPaceMin] = useState<string>('')
+  const [targetPaceMax, setTargetPaceMax] = useState<string>('')
+  const [targetHrZone, setTargetHrZone] = useState<string>('')
+  const [targetZonePct, setTargetZonePct] = useState<string>('80')
+  const [showGoalPicker, setShowGoalPicker] = useState(false)
+  const [segments, setSegments] = useState<Segment[]>([])
+  const [workoutTemplateId, setWorkoutTemplateId] = useState<number | null>(null)
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false)
+  const [saveTemplateName, setSaveTemplateName] = useState('')
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false)
+  const { data: templates } = useWorkoutTemplates(sportType)
+  const createTemplate = useCreateWorkoutTemplate()
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -232,13 +270,141 @@ function SessionModal({
     setEditingId(s.id as number)
     setSportType(s.sport_type as string)
     setDescription((s.description as string) || '')
+    const goals = new Set<string>()
+    const hasSegments = s.segments && Array.isArray(s.segments) && (s.segments as Segment[]).length > 0
+    // Don't show distance as a separate goal if it was auto-computed from segments
+    if (s.planned_distance_km != null && !hasSegments) { goals.add('distance'); setPlannedDistanceKm(String(s.planned_distance_km)) } else { setPlannedDistanceKm('') }
+    if (s.planned_duration_mins != null) { goals.add('duration'); setPlannedDurationMins(String(s.planned_duration_mins)) } else { setPlannedDurationMins('') }
+    if (s.target_avg_pace != null) { goals.add('avg_pace'); setTargetAvgPace(String(s.target_avg_pace)) } else { setTargetAvgPace('') }
+    if (s.target_pace_min != null || s.target_pace_max != null) { goals.add('pace_range') }
+    setTargetPaceMin(s.target_pace_min != null ? String(s.target_pace_min) : '')
+    setTargetPaceMax(s.target_pace_max != null ? String(s.target_pace_max) : '')
+    if (s.target_hr_zone != null) { goals.add('hr_zone') }
+    setTargetHrZone(s.target_hr_zone != null ? String(s.target_hr_zone) : '')
+    setTargetZonePct(s.target_zone_pct != null ? String(s.target_zone_pct) : '80')
+    if (hasSegments) {
+      goals.add('segments')
+      setSegments(s.segments as Segment[])
+      setWorkoutTemplateId((s.workout_template_id as number) ?? null)
+    } else {
+      setSegments([])
+      setWorkoutTemplateId(null)
+    }
+    setActiveGoals(goals)
+    setShowGoalPicker(false)
+    setShowTemplatePicker(false)
   }
 
   function cancelEdit() {
     setEditingId(null)
     setSportType('Run')
     setDescription('')
+    setActiveGoals(new Set())
+    setPlannedDistanceKm('')
+    setPlannedDurationMins('')
+    setTargetAvgPace('')
+    setTargetPaceMin('')
+    setTargetPaceMax('')
+    setTargetHrZone('')
+    setTargetZonePct('80')
+    setShowGoalPicker(false)
+    setSegments([])
+    setWorkoutTemplateId(null)
+    setShowTemplatePicker(false)
   }
+
+  function buildPayload() {
+    const data: Record<string, unknown> = {
+      sport_type: sportType,
+      description: description || undefined,
+    }
+    // Distance
+    if (activeGoals.has('distance') && plannedDistanceKm) {
+      data.planned_distance_km = parseFloat(plannedDistanceKm)
+    } else {
+      data.planned_distance_km = null
+    }
+    // Duration
+    if (activeGoals.has('duration') && plannedDurationMins) {
+      data.planned_duration_mins = parseFloat(plannedDurationMins)
+    } else {
+      data.planned_duration_mins = null
+    }
+    // Avg Pace
+    if (activeGoals.has('avg_pace') && targetAvgPace) {
+      data.target_avg_pace = parseFloat(targetAvgPace)
+    } else {
+      data.target_avg_pace = null
+    }
+    // Pace Range
+    if (activeGoals.has('pace_range')) {
+      data.target_pace_min = targetPaceMin ? parseFloat(targetPaceMin) : null
+      data.target_pace_max = targetPaceMax ? parseFloat(targetPaceMax) : null
+    } else {
+      data.target_pace_min = null
+      data.target_pace_max = null
+    }
+    // HR Zone
+    if (activeGoals.has('hr_zone') && targetHrZone) {
+      data.target_hr_zone = parseInt(targetHrZone)
+      data.target_zone_pct = targetZonePct ? parseFloat(targetZonePct) : 80
+    } else {
+      data.target_hr_zone = null
+      data.target_zone_pct = null
+    }
+    // Structured Workout
+    if (activeGoals.has('segments') && segments.length > 0) {
+      data.segments = segments
+      data.workout_template_id = workoutTemplateId
+      // Auto-compute planned distance from segments for activity matching
+      const totalKm = segments.reduce((sum, s) => {
+        const dist = s.distance_km ?? 0
+        const reps = s.repetitions ?? 1
+        const recDist = s.recovery_distance_km ?? 0
+        return sum + (dist * reps) + (recDist * Math.max(0, reps - 1))
+      }, 0)
+      if (totalKm > 0 && !data.planned_distance_km) {
+        data.planned_distance_km = Math.round(totalKm * 10) / 10
+      }
+    } else {
+      data.segments = null
+      data.workout_template_id = null
+    }
+    return data
+  }
+
+  function addGoal(key: string) {
+    setActiveGoals(prev => new Set(prev).add(key))
+    setShowGoalPicker(false)
+    if (key === 'distance' && !plannedDistanceKm) setPlannedDistanceKm('10')
+    if (key === 'duration' && !plannedDurationMins) setPlannedDurationMins('60')
+    if (key === 'avg_pace' && !targetAvgPace) {
+      setTargetAvgPace(getPaceUnit(sportType) === 'min/km' ? '5.5' : '28')
+    }
+    if (key === 'pace_range') {
+      if (!targetPaceMin) setTargetPaceMin(getPaceUnit(sportType) === 'min/km' ? '5.0' : '25')
+      if (!targetPaceMax) setTargetPaceMax(getPaceUnit(sportType) === 'min/km' ? '6.0' : '32')
+    }
+    if (key === 'hr_zone' && !targetHrZone) setTargetHrZone('2')
+  }
+
+  function removeGoal(key: string) {
+    setActiveGoals(prev => {
+      const next = new Set(prev)
+      next.delete(key)
+      return next
+    })
+    // Clear values for removed goal
+    if (key === 'distance') setPlannedDistanceKm('')
+    if (key === 'duration') setPlannedDurationMins('')
+    if (key === 'avg_pace') setTargetAvgPace('')
+    if (key === 'pace_range') { setTargetPaceMin(''); setTargetPaceMax('') }
+    if (key === 'hr_zone') { setTargetHrZone(''); setTargetZonePct('80') }
+    if (key === 'segments') { setSegments([]); setWorkoutTemplateId(null); setShowTemplatePicker(false) }
+  }
+
+  const paceUnit = getPaceUnit(sportType)
+  const isPastDate = date < new Date().toISOString().slice(0, 10)
 
   return (
     <div
@@ -246,7 +412,7 @@ function SessionModal({
       onClick={onClose}
     >
       <div
-        className="bg-surface-800 border border-surface-600 rounded-xl p-6 w-full max-w-md animate-[scaleIn_150ms_ease-out]"
+        className="bg-surface-800 border border-surface-600 rounded-xl p-6 w-full max-w-md max-h-[85vh] overflow-y-auto animate-[scaleIn_150ms_ease-out]"
         onClick={e => e.stopPropagation()}
       >
         <h3 className="text-lg font-bold mb-4">{date}</h3>
@@ -257,33 +423,93 @@ function SessionModal({
             {sessions.map(s => {
               const sColor = getSportColor(s.sport_type as string)
               const isConfirming = confirmDeleteId === (s.id as number)
+              const sessionScore = scores?.[String(s.id as number)]
               return (
-                <div key={s.id as number} className="rounded p-2 border border-dashed transition-colors"
-                  style={{ borderColor: `${sColor}60`, backgroundColor: `${sColor}10` }}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 min-w-0 cursor-pointer" onClick={() => startEdit(s)}>
-                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: sColor }} />
-                      <span className="text-sm" style={{ color: sColor }}>{s.sport_type as string}</span>
-                      {s.description && (
-                        <span className="text-xs text-gray-400 truncate">{s.description as string}</span>
-                      )}
+                <div key={s.id as number}>
+                  <div className="rounded p-2 border border-dashed transition-colors"
+                    style={{ borderColor: `${sColor}60`, backgroundColor: `${sColor}10` }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 min-w-0 cursor-pointer" onClick={() => startEdit(s)}>
+                        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: sColor }} />
+                        <span className="text-sm" style={{ color: sColor }}>{s.sport_type as string}</span>
+                        {s.description && (
+                          <span className="text-xs text-gray-400 truncate">{s.description as string}</span>
+                        )}
+                        {sessionScore && (
+                          <span
+                            className="text-xs font-bold font-mono px-1.5 py-0.5 rounded"
+                            style={{ color: scoreColor(sessionScore.overall_score as number), backgroundColor: `${scoreColor(sessionScore.overall_score as number)}15` }}
+                          >
+                            {sessionScore.overall_score as number}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex gap-2 shrink-0 ml-2">
+                        {isConfirming ? (
+                          <>
+                            <span className="text-xs text-red-400">Delete?</span>
+                            <button onClick={() => { onDelete(s.id as number); setConfirmDeleteId(null) }} className="text-red-400 hover:text-red-300 text-xs font-bold">Yes</button>
+                            <button onClick={() => setConfirmDeleteId(null)} className={clsx('text-xs text-gray-400', isLight ? 'hover:text-gray-700' : 'hover:text-gray-200')}>No</button>
+                          </>
+                        ) : (
+                          <>
+                            <button onClick={() => setCopyingSessionId(copyingSessionId === (s.id as number) ? null : s.id as number)} className={clsx('text-xs', copyingSessionId === (s.id as number) ? 'text-neon-cyan' : 'text-gray-400', isLight ? 'hover:text-gray-700' : 'hover:text-gray-200')}>Copy</button>
+                            <button onClick={() => startEdit(s)} className={clsx('text-gray-400 text-xs', isLight ? 'hover:text-gray-700' : 'hover:text-gray-200')}>Edit</button>
+                            <button onClick={() => setConfirmDeleteId(s.id as number)} className="text-red-400 hover:text-red-300 text-xs">Delete</button>
+                          </>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex gap-2 shrink-0 ml-2">
-                      {isConfirming ? (
-                        <>
-                          <span className="text-xs text-red-400">Delete?</span>
-                          <button onClick={() => { onDelete(s.id as number); setConfirmDeleteId(null) }} className="text-red-400 hover:text-red-300 text-xs font-bold">Yes</button>
-                          <button onClick={() => setConfirmDeleteId(null)} className={clsx('text-xs text-gray-400', isLight ? 'hover:text-gray-700' : 'hover:text-gray-200')}>No</button>
-                        </>
-                      ) : (
-                        <>
-                          <button onClick={() => startEdit(s)} className={clsx('text-gray-400 text-xs', isLight ? 'hover:text-gray-700' : 'hover:text-gray-200')}>Edit</button>
-                          <button onClick={() => setConfirmDeleteId(s.id as number)} className="text-red-400 hover:text-red-300 text-xs">Delete</button>
-                        </>
-                      )}
-                    </div>
+                    {/* Segment summary */}
+                    {s.segments && Array.isArray(s.segments) && (s.segments as Segment[]).length > 0 && (
+                      <div className="mt-1.5">
+                        <SegmentSummary segments={s.segments as Segment[]} />
+                      </div>
+                    )}
                   </div>
+                  {copyingSessionId === (s.id as number) && (() => {
+                    const mStart = startOfWeek(startOfMonth(copyMonth), { weekStartsOn: 1 })
+                    const mEnd = endOfWeek(endOfMonth(copyMonth), { weekStartsOn: 1 })
+                    const mDays = eachDayOfInterval({ start: mStart, end: mEnd })
+                    return (
+                      <div className="mt-1 p-2 bg-surface-700/50 border border-surface-600 rounded-lg">
+                        <div className="flex items-center justify-between mb-2">
+                          <button onClick={() => setCopyMonth(m => subMonths(m, 1))} className="text-gray-400 hover:text-gray-200 text-xs px-1">&lt;</button>
+                          <span className="text-xs text-gray-300 font-medium">{format(copyMonth, 'MMM yyyy')}</span>
+                          <button onClick={() => setCopyMonth(m => addMonths(m, 1))} className="text-gray-400 hover:text-gray-200 text-xs px-1">&gt;</button>
+                        </div>
+                        <div className="grid grid-cols-7 gap-0.5 text-center">
+                          {['M','T','W','T','F','S','S'].map((d, i) => (
+                            <div key={i} className="text-[9px] text-gray-600 py-0.5">{d}</div>
+                          ))}
+                          {mDays.map(d => {
+                            const ds = format(d, 'yyyy-MM-dd')
+                            const inM = isSameMonth(d, copyMonth)
+                            const isCurrent = ds === date
+                            return (
+                              <button
+                                key={ds}
+                                disabled={isCurrent}
+                                onClick={() => {
+                                  onCopy(s, ds)
+                                  setCopyingSessionId(null)
+                                }}
+                                className={clsx(
+                                  'text-[10px] py-1 rounded transition-colors',
+                                  isCurrent ? 'text-gray-600 cursor-not-allowed' : 'hover:bg-neon-cyan/20 hover:text-neon-cyan',
+                                  inM ? 'text-gray-400' : 'text-gray-600',
+                                  isToday(d) && 'font-bold text-neon-red',
+                                )}
+                              >
+                                {format(d, 'd')}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )
+                  })()}
                 </div>
               )
             })}
@@ -318,15 +544,323 @@ function SessionModal({
               rows={3}
             />
           </div>
+
+          {/* Goal cards */}
+          {activeGoals.size > 0 && (
+            <div className="space-y-2">
+              {activeGoals.has('distance') && (
+                <div className="flex rounded-lg overflow-hidden border" style={{ borderColor: '#3b82f620' }}>
+                  <div className="w-1 shrink-0" style={{ backgroundColor: '#3b82f6' }} />
+                  <div className="flex-1 p-2.5" style={{ backgroundColor: '#3b82f608' }}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-medium flex items-center gap-1.5" style={{ color: '#3b82f6' }}>
+                        <span>↔</span> Distance
+                      </span>
+                      <button onClick={() => removeGoal('distance')} className="text-gray-500 hover:text-gray-300 text-xs leading-none px-1">✕</button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text" inputMode="decimal" placeholder="10"
+                        value={plannedDistanceKm} onChange={e => setPlannedDistanceKm(e.target.value)}
+                        className="w-24 bg-surface-700 border border-surface-600 rounded px-2 py-1.5 text-sm"
+                      />
+                      <span className="text-xs text-gray-500">km</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeGoals.has('duration') && (
+                <div className="flex rounded-lg overflow-hidden border" style={{ borderColor: '#22c55e20' }}>
+                  <div className="w-1 shrink-0" style={{ backgroundColor: '#22c55e' }} />
+                  <div className="flex-1 p-2.5" style={{ backgroundColor: '#22c55e08' }}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-medium flex items-center gap-1.5" style={{ color: '#22c55e' }}>
+                        <span>⏱</span> Duration
+                      </span>
+                      <button onClick={() => removeGoal('duration')} className="text-gray-500 hover:text-gray-300 text-xs leading-none px-1">✕</button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text" inputMode="decimal" placeholder="60"
+                        value={plannedDurationMins} onChange={e => setPlannedDurationMins(e.target.value)}
+                        className="w-24 bg-surface-700 border border-surface-600 rounded px-2 py-1.5 text-sm"
+                      />
+                      <span className="text-xs text-gray-500">min</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeGoals.has('avg_pace') && (
+                <div className="flex rounded-lg overflow-hidden border" style={{ borderColor: '#f9731620' }}>
+                  <div className="w-1 shrink-0" style={{ backgroundColor: '#f97316' }} />
+                  <div className="flex-1 p-2.5" style={{ backgroundColor: '#f9731608' }}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-medium flex items-center gap-1.5" style={{ color: '#f97316' }}>
+                        <span>⚡</span> Avg Pace
+                      </span>
+                      <button onClick={() => removeGoal('avg_pace')} className="text-gray-500 hover:text-gray-300 text-xs leading-none px-1">✕</button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text" inputMode="decimal" placeholder={paceUnit === 'min/km' ? '5:10' : '28'}
+                        value={targetAvgPace} onChange={e => setTargetAvgPace(e.target.value)}
+                        className="w-24 bg-surface-700 border border-surface-600 rounded px-2 py-1.5 text-sm"
+                      />
+                      <span className="text-xs text-gray-500">{paceUnit}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeGoals.has('pace_range') && (
+                <div className="flex rounded-lg overflow-hidden border" style={{ borderColor: '#a855f720' }}>
+                  <div className="w-1 shrink-0" style={{ backgroundColor: '#a855f7' }} />
+                  <div className="flex-1 p-2.5" style={{ backgroundColor: '#a855f708' }}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-medium flex items-center gap-1.5" style={{ color: '#a855f7' }}>
+                        <span>↕</span> Pace Range
+                      </span>
+                      <button onClick={() => removeGoal('pace_range')} className="text-gray-500 hover:text-gray-300 text-xs leading-none px-1">✕</button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] text-gray-500 mb-0.5 block">
+                          {paceUnit === 'min/km' ? 'Fastest' : 'Min speed'} ({paceUnit})
+                        </label>
+                        <input
+                          type="text" inputMode="decimal" placeholder={paceUnit === 'min/km' ? '4:50' : '25'}
+                          value={targetPaceMin} onChange={e => setTargetPaceMin(e.target.value)}
+                          className="w-full bg-surface-700 border border-surface-600 rounded px-2 py-1.5 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-gray-500 mb-0.5 block">
+                          {paceUnit === 'min/km' ? 'Slowest' : 'Max speed'} ({paceUnit})
+                        </label>
+                        <input
+                          type="text" inputMode="decimal" placeholder={paceUnit === 'min/km' ? '5:20' : '32'}
+                          value={targetPaceMax} onChange={e => setTargetPaceMax(e.target.value)}
+                          className="w-full bg-surface-700 border border-surface-600 rounded px-2 py-1.5 text-sm"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeGoals.has('hr_zone') && (
+                <div className="flex rounded-lg overflow-hidden border" style={{ borderColor: '#ef444420' }}>
+                  <div className="w-1 shrink-0" style={{ backgroundColor: '#ef4444' }} />
+                  <div className="flex-1 p-2.5" style={{ backgroundColor: '#ef444408' }}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-medium flex items-center gap-1.5" style={{ color: '#ef4444' }}>
+                        <span>♥</span> HR Zone
+                      </span>
+                      <button onClick={() => removeGoal('hr_zone')} className="text-gray-500 hover:text-gray-300 text-xs leading-none px-1">✕</button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] text-gray-500 mb-0.5 block">Zone</label>
+                        <select
+                          value={targetHrZone} onChange={e => setTargetHrZone(e.target.value)}
+                          className="w-full bg-surface-700 border border-surface-600 rounded px-2 py-1.5 text-sm"
+                        >
+                          <option value="">Select</option>
+                          {[1, 2, 3, 4, 5].map(z => <option key={z} value={z}>Zone {z}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-gray-500 mb-0.5 block">Target %</label>
+                        <input
+                          type="text" inputMode="decimal" placeholder="80"
+                          value={targetZonePct} onChange={e => setTargetZonePct(e.target.value)}
+                          className="w-full bg-surface-700 border border-surface-600 rounded px-2 py-1.5 text-sm"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeGoals.has('segments') && (
+                <div className="flex rounded-lg overflow-hidden border" style={{ borderColor: '#22d3ee20' }}>
+                  <div className="w-1 shrink-0" style={{ backgroundColor: '#22d3ee' }} />
+                  <div className="flex-1 p-2.5" style={{ backgroundColor: '#22d3ee08' }}>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-medium flex items-center gap-1.5" style={{ color: '#22d3ee' }}>
+                        Structured Workout
+                      </span>
+                      <button onClick={() => removeGoal('segments')} className="text-gray-500 hover:text-gray-300 text-xs leading-none px-1">{'\u2715'}</button>
+                    </div>
+                    {/* Template picker */}
+                    <div className="mb-2">
+                      <button
+                        onClick={() => setShowTemplatePicker(v => !v)}
+                        className="text-[11px] rounded px-2 py-1 border transition-all"
+                        style={{ borderColor: '#22d3ee40', color: '#22d3ee', backgroundColor: '#22d3ee10' }}
+                      >
+                        {showTemplatePicker ? 'Hide templates' : 'Pick from library'}
+                      </button>
+                      {showTemplatePicker && templates && (templates as Record<string, unknown>[]).length > 0 && (
+                        <div className="mt-1.5 space-y-1 max-h-32 overflow-y-auto">
+                          {(templates as Record<string, unknown>[]).map(t => (
+                            <button
+                              key={t.id as number}
+                              onClick={() => {
+                                setSegments((t.segments as Segment[]) || [])
+                                setWorkoutTemplateId(t.id as number)
+                                setShowTemplatePicker(false)
+                              }}
+                              className={clsx(
+                                'w-full text-left text-xs rounded px-2 py-1.5 border transition-colors',
+                                workoutTemplateId === (t.id as number)
+                                  ? 'border-neon-cyan/40 bg-neon-cyan/10 text-neon-cyan'
+                                  : 'border-surface-600 hover:border-surface-500 text-gray-300'
+                              )}
+                            >
+                              <div className="font-medium">{t.name as string}</div>
+                              <SegmentSummary segments={(t.segments as Segment[]) || []} />
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {showTemplatePicker && (!templates || (templates as Record<string, unknown>[]).length === 0) && (
+                        <div className="text-[10px] text-gray-500 mt-1">No templates for {sportType}</div>
+                      )}
+                    </div>
+                    <SegmentListBuilder
+                      segments={segments}
+                      onChange={setSegments}
+                      paceUnit={paceUnit}
+                      compact
+                    />
+                    {/* Save as template */}
+                    {segments.length > 0 && (
+                      <div className="mt-2">
+                        {!showSaveTemplate ? (
+                          <button
+                            onClick={() => { setShowSaveTemplate(true); setSaveTemplateName(title || '') }}
+                            className="text-[11px] rounded px-2 py-1 border transition-all"
+                            style={{ borderColor: '#a855f740', color: '#a855f7', backgroundColor: '#a855f710' }}
+                          >
+                            Save as template
+                          </button>
+                        ) : (
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="text"
+                              placeholder="Template name"
+                              value={saveTemplateName}
+                              onChange={e => setSaveTemplateName(e.target.value)}
+                              className="flex-1 bg-surface-700 border border-surface-600 rounded px-2 py-1 text-xs text-white placeholder-gray-500"
+                              autoFocus
+                              onKeyDown={e => {
+                                if (e.key === 'Enter' && saveTemplateName.trim()) {
+                                  createTemplate.mutate({ name: saveTemplateName.trim(), sport_type: sportType, segments: segments as unknown as Record<string, unknown>[] })
+                                  setShowSaveTemplate(false)
+                                  setSaveTemplateName('')
+                                }
+                                if (e.key === 'Escape') { setShowSaveTemplate(false) }
+                              }}
+                            />
+                            <button
+                              onClick={() => {
+                                if (!saveTemplateName.trim()) return
+                                createTemplate.mutate({ name: saveTemplateName.trim(), sport_type: sportType, segments: segments as unknown as Record<string, unknown>[] })
+                                setShowSaveTemplate(false)
+                                setSaveTemplateName('')
+                              }}
+                              className="text-[11px] rounded px-2 py-1 border transition-all"
+                              style={{ borderColor: '#22c55e40', color: '#22c55e', backgroundColor: '#22c55e10' }}
+                            >
+                              Save
+                            </button>
+                            <button
+                              onClick={() => setShowSaveTemplate(false)}
+                              className="text-gray-500 hover:text-gray-300 text-xs px-1"
+                            >
+                              {'\u2715'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Add Goal button + chip picker */}
+          <div>
+            <button
+              onClick={() => setShowGoalPicker(v => !v)}
+              className="text-xs flex items-center gap-1 transition-colors rounded-md px-2 py-1"
+              style={{
+                color: showGoalPicker ? '#ef4444' : '#9ca3af',
+                backgroundColor: showGoalPicker ? '#ef444410' : 'transparent',
+              }}
+            >
+              <span className="text-sm">{showGoalPicker ? '−' : '+'}</span>
+              <span>{showGoalPicker ? 'Cancel' : 'Add Goal'}</span>
+            </button>
+            {showGoalPicker && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {([
+                  { key: 'distance', label: 'Distance', color: '#3b82f6', icon: '↔' },
+                  { key: 'duration', label: 'Duration', color: '#22c55e', icon: '⏱' },
+                  { key: 'avg_pace', label: 'Avg Pace', color: '#f97316', icon: '⚡' },
+                  { key: 'pace_range', label: 'Pace Range', color: '#a855f7', icon: '↕' },
+                  { key: 'hr_zone', label: 'HR Zone', color: '#ef4444', icon: '♥' },
+                  { key: 'segments', label: 'Structured', color: '#22d3ee', icon: '▦' },
+                ] as const).map(g => {
+                  const isActive = activeGoals.has(g.key)
+                  return (
+                    <button
+                      key={g.key}
+                      disabled={isActive}
+                      onClick={() => addGoal(g.key)}
+                      className="text-xs rounded-full px-2.5 py-1 border transition-all"
+                      style={{
+                        borderColor: isActive ? '#4b5563' : `${g.color}50`,
+                        color: isActive ? '#6b7280' : g.color,
+                        backgroundColor: isActive ? 'transparent' : `${g.color}10`,
+                        opacity: isActive ? 0.5 : 1,
+                        cursor: isActive ? 'not-allowed' : 'pointer',
+                      }}
+                    >
+                      {g.icon} {g.label}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
           <div className="flex gap-2 pt-2">
             <button
               onClick={() => {
+                const payload = buildPayload()
                 if (editingId) {
-                  onUpdate(editingId, { sport_type: sportType, description: description || undefined })
+                  onUpdate(editingId, payload)
                   cancelEdit()
                 } else {
-                  onAdd({ sport_type: sportType, description: description || undefined })
+                  onAdd(payload)
                   setDescription('')
+                  setActiveGoals(new Set())
+                  setPlannedDistanceKm('')
+                  setPlannedDurationMins('')
+                  setTargetAvgPace('')
+                  setTargetPaceMin('')
+                  setTargetPaceMax('')
+                  setTargetHrZone('')
+                  setTargetZonePct('80')
+                  setShowGoalPicker(false)
+                  setSegments([])
+                  setWorkoutTemplateId(null)
+                  setShowTemplatePicker(false)
                 }
               }}
               className="flex-1 bg-neon-red/20 text-neon-red border border-neon-red/30 rounded py-2 text-sm hover:bg-neon-red/30 transition-colors"
@@ -382,13 +916,58 @@ function UpcomingPlan({ sessions, todayStr }: { sessions: Record<string, unknown
                   </span>
                   <span className="text-[10px] text-gray-600 shrink-0">{isExpanded ? '▲' : '▼'}</span>
                 </div>
-                {isExpanded && (
-                  <div className="px-3 pb-3 pt-1 border-t border-dashed" style={{ borderColor: `${color}20` }}>
-                    <p className="text-sm text-gray-300 whitespace-pre-wrap">
-                      {(s.description as string) || 'No description'}
-                    </p>
-                  </div>
-                )}
+                {isExpanded && (() => {
+                  const goals: { icon: string; color: string; label: string }[] = []
+                  const cardHasSegments = s.segments && Array.isArray(s.segments) && (s.segments as Segment[]).length > 0
+                  if (s.planned_distance_km != null && !cardHasSegments) goals.push({ icon: '↔', color: '#3b82f6', label: `${s.planned_distance_km} km` })
+                  if (s.planned_duration_mins != null) goals.push({ icon: '⏱', color: '#22c55e', label: `${s.planned_duration_mins} min` })
+                  if (s.target_avg_pace != null) {
+                    const pu = getPaceUnit(s.sport_type as string)
+                    goals.push({ icon: '⚡', color: '#f97316', label: `${s.target_avg_pace} ${pu}` })
+                  }
+                  if (s.target_pace_min != null || s.target_pace_max != null) {
+                    const pu = getPaceUnit(s.sport_type as string)
+                    const isRun = pu === 'min/km'
+                    const parts: string[] = []
+                    if (s.target_pace_min != null) parts.push(`${isRun ? 'fastest' : 'min'} ${s.target_pace_min}`)
+                    if (s.target_pace_max != null) parts.push(`${isRun ? 'slowest' : 'max'} ${s.target_pace_max}`)
+                    goals.push({ icon: '↕', color: '#a855f7', label: `${parts.join(' – ')} ${pu}` })
+                  }
+                  if (s.target_hr_zone != null) {
+                    const pct = s.target_zone_pct ?? 80
+                    goals.push({ icon: '♥', color: '#ef4444', label: `Zone ${s.target_hr_zone} @ ${pct}%` })
+                  }
+                  return (
+                    <div className="px-3 pb-3 pt-1 border-t border-dashed" style={{ borderColor: `${color}20` }}>
+                      {s.description && (
+                        <p className="text-sm text-gray-300 whitespace-pre-wrap">
+                          {s.description as string}
+                        </p>
+                      )}
+                      {goals.length > 0 && (
+                        <div className={clsx('flex flex-wrap gap-1.5', s.description && 'mt-2')}>
+                          {goals.map((g, i) => (
+                            <span
+                              key={i}
+                              className="text-[11px] rounded-full px-2 py-0.5 border font-mono"
+                              style={{ color: g.color, borderColor: `${g.color}40`, backgroundColor: `${g.color}10` }}
+                            >
+                              {g.icon} {g.label}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {s.segments && Array.isArray(s.segments) && (s.segments as Segment[]).length > 0 && (
+                        <div className={clsx('mt-2')}>
+                          <SegmentSummary segments={s.segments as Segment[]} />
+                        </div>
+                      )}
+                      {!s.description && goals.length === 0 && !(s.segments && Array.isArray(s.segments) && (s.segments as Segment[]).length > 0) && (
+                        <p className="text-sm text-gray-500">No description</p>
+                      )}
+                    </div>
+                  )
+                })()}
               </div>
             )
           })}
@@ -546,6 +1125,7 @@ export default function CalendarPage() {
   const [showModal, setShowModal] = useState(false)
   const [showMonthPicker, setShowMonthPicker] = useState(false)
   const [draggingSessionId, setDraggingSessionId] = useState<number | null>(null)
+  const [draggingSession, setDraggingSession] = useState<Record<string, unknown> | null>(null)
   const [dragOverDate, setDragOverDate] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
 
@@ -571,6 +1151,7 @@ export default function CalendarPage() {
 
   const { data: activitiesData, isLoading: activitiesLoading } = useActivitiesByDateRange(dateFrom, dateTo)
   const { data: sessions } = useCalendarSessions(month, year)
+  const { data: sessionScores } = useSessionScores(dateFrom, dateTo)
   const createSession = useCreateSession()
   const updateSession = useUpdateSession()
   const deleteSession = useDeleteSession()
@@ -641,13 +1222,28 @@ export default function CalendarPage() {
     return map
   }, [sessions])
 
-  function handleAddSession(data: { sport_type: string; description?: string }) {
+  function handleAddSession(data: Record<string, unknown>) {
     if (!selectedDate) return
-    createSession.mutate({ date: selectedDate, title: data.sport_type, ...data })
+    createSession.mutate({ date: selectedDate, title: data.sport_type as string, ...data })
   }
 
-  function handleUpdateSession(id: number, data: { sport_type: string; description?: string }) {
-    updateSession.mutate({ id, title: data.sport_type, ...data })
+  function handleCopySession(session: Record<string, unknown>, targetDate: string) {
+    const copyFields = [
+      'sport_type', 'description',
+      'planned_distance_km', 'planned_duration_mins', 'planned_intensity',
+      'target_avg_pace', 'target_pace_min', 'target_pace_max',
+      'target_hr_zone', 'target_zone_pct',
+    ]
+    const data: Record<string, unknown> = { date: targetDate, title: session.sport_type as string }
+    for (const f of copyFields) {
+      if (session[f] != null) data[f] = session[f]
+    }
+    createSession.mutate(data)
+    showToast(`Session copied to ${format(parseISO(targetDate), 'EEE, MMM d')}`)
+  }
+
+  function handleUpdateSession(id: number, data: Record<string, unknown>) {
+    updateSession.mutate({ id, title: data.sport_type as string, ...data })
   }
 
   return (
@@ -659,14 +1255,14 @@ export default function CalendarPage() {
           <div className="flex items-center gap-2">
             {streakData.current_streak > 0 && (
               <div className="flex items-center gap-1 bg-surface-800 border border-surface-600 rounded px-2 py-1" title="Current streak — consecutive days with activities">
-                <span className="text-xs">&#x1f525;</span>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-neon-red shrink-0"><path d="M8 1C6.5 4 4 5.5 4 8.5a4 4 0 008 0C12 5.5 9.5 4 8 1z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
                 <span className="text-xs font-bold text-neon-red">{streakData.current_streak}</span>
                 <span className="text-[10px] text-gray-500">day{streakData.current_streak !== 1 ? 's' : ''}</span>
               </div>
             )}
             {streakData.longest_streak > 0 && (
               <div className="flex items-center gap-1 bg-surface-800 border border-surface-600 rounded px-2 py-1" title={`Longest streak: ${streakData.longest_streak_start} to ${streakData.longest_streak_end}`}>
-                <span className="text-xs">&#x1f3c6;</span>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-neon-yellow shrink-0"><path d="M4 2h8l-1 5h2l-5 7 1-4H5.5z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
                 <span className="text-xs font-bold text-neon-yellow">{streakData.longest_streak}</span>
                 <span className="text-[10px] text-gray-500">best</span>
               </div>
@@ -717,10 +1313,10 @@ export default function CalendarPage() {
           const dayActivities = activityMap[dateStr] || []
           const daySessions = sessionMap[dateStr] || []
           const inMonth = isSameMonth(day, currentMonth)
-          const isPast = day < new Date(new Date().setHours(0, 0, 0, 0))
+          const isPastOrToday = day <= new Date(new Date().setHours(23, 59, 59, 999))
 
           let planStatus: 'done' | 'missed' | null = null
-          if (daySessions.length > 0 && isPast) {
+          if (daySessions.length > 0 && isPastOrToday) {
             const activitySports = new Set(dayActivities.map(a => a.sport_type))
             const allMatched = daySessions.every(s => {
               const sport = (s.sport_type as string).toLowerCase()
@@ -806,11 +1402,16 @@ export default function CalendarPage() {
                   e.preventDefault()
                   const sessionId = e.dataTransfer.getData('text/plain')
                   if (sessionId) {
-                    updateSession.mutate({ id: Number(sessionId), date: dateStr })
-                    showToast(`Session moved to ${format(day, 'EEE, MMM d')}`)
+                    if (e.altKey && draggingSession) {
+                      handleCopySession(draggingSession, dateStr)
+                    } else {
+                      updateSession.mutate({ id: Number(sessionId), date: dateStr })
+                      showToast(`Session moved to ${format(day, 'EEE, MMM d')}`)
+                    }
                   }
                   setDragOverDate(null)
                   setDraggingSessionId(null)
+                  setDraggingSession(null)
                 }}
                 className={clsx(
                   'relative min-h-[120px] p-2 rounded-lg border transition-colors',
@@ -823,12 +1424,32 @@ export default function CalendarPage() {
                 <div className={clsx('text-xs mb-1', inMonth ? 'text-gray-400' : 'text-gray-600')}>
                   {format(day, 'd')}
                 </div>
-                {planStatus && (
-                  <span
-                    className={clsx('absolute top-1.5 right-1.5 w-2 h-2 rounded-full', planStatus === 'done' ? 'bg-green-400' : 'bg-red-400')}
-                    title={planStatus === 'done' ? 'Plan completed' : 'Plan missed'}
-                  />
-                )}
+                {planStatus && (() => {
+                  // Compute average score for sessions on this day
+                  const dayScores = daySessions
+                    .map(s => sessionScores?.[String(s.id as number)])
+                    .filter((sc): sc is Record<string, unknown> => sc != null && sc.overall_score != null)
+                  const avgScore = dayScores.length > 0
+                    ? Math.round(dayScores.reduce((sum, sc) => sum + (sc.overall_score as number), 0) / dayScores.length)
+                    : null
+
+                  return (
+                    <div className="absolute top-1 right-1 flex items-center gap-1">
+                      {avgScore !== null && (
+                        <span
+                          className="text-[9px] font-bold font-mono px-1 rounded"
+                          style={{ color: scoreColor(avgScore), backgroundColor: `${scoreColor(avgScore)}15` }}
+                        >
+                          {avgScore}
+                        </span>
+                      )}
+                      <span
+                        className={clsx('w-2 h-2 rounded-full', planStatus === 'done' ? 'bg-green-400' : 'bg-red-400')}
+                        title={planStatus === 'done' ? 'Plan completed' : 'Plan missed'}
+                      />
+                    </div>
+                  )
+                })()}
                 <div className="space-y-0.5">
                   {dayActivities.map((a) => (
                     <Link key={a.id} to={`/activities/${a.id}`} onClick={e => e.stopPropagation()} className="flex items-center gap-1 group rounded px-0.5 -mx-0.5 transition-colors hover:bg-white/[0.04]">
@@ -846,10 +1467,11 @@ export default function CalendarPage() {
                       onDragStart={(e) => {
                         e.stopPropagation()
                         e.dataTransfer.setData('text/plain', String(s.id))
-                        e.dataTransfer.effectAllowed = 'move'
+                        e.dataTransfer.effectAllowed = 'copyMove'
                         setDraggingSessionId(s.id as number)
+                        setDraggingSession(s)
                       }}
-                      onDragEnd={() => { setDraggingSessionId(null); setDragOverDate(null) }}
+                      onDragEnd={() => { setDraggingSessionId(null); setDraggingSession(null); setDragOverDate(null) }}
                       className={clsx(
                         'mt-0.5 text-[9px] px-1 py-0.5 rounded border border-dashed truncate cursor-grab active:cursor-grabbing',
                         'transition-all duration-150 hover:scale-[1.03]',
@@ -1079,7 +1701,9 @@ export default function CalendarPage() {
         <SessionModal
           date={selectedDate}
           sessions={sessionMap[selectedDate] || []}
+          scores={sessionScores}
           onAdd={handleAddSession}
+          onCopy={handleCopySession}
           onUpdate={handleUpdateSession}
           onDelete={(id: number) => deleteSession.mutate(id)}
           onClose={() => setShowModal(false)}

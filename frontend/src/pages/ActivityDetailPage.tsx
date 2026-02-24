@@ -1,6 +1,6 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { useActivity, useAthleteZones, useSimilarActivities } from '../api/hooks'
+import { useActivity, useAthleteZones, useSimilarActivities, useActivityScore } from '../api/hooks'
 import StatCard from '../components/shared/StatCard'
 import MapView from '../components/shared/MapView'
 import type { KmMarker } from '../components/shared/MapView'
@@ -8,6 +8,7 @@ import StreamChart from '../components/shared/StreamChart'
 import polyline from '@mapbox/polyline'
 import ExportButton from '../components/shared/ExportButton'
 import { getSportColor } from '../constants/sportColors'
+import { SegmentSummary, getSegmentColor, type Segment } from '../components/shared/SegmentListBuilder'
 
 interface StreamPoint {
   time?: number
@@ -226,11 +227,173 @@ function computeSplits(streams: StreamPoint[], sportType: string | undefined, ga
   return splits
 }
 
+/* Collapsible execution score section */
+function ExecutionScoreCollapsible({
+  overall, isSegmented, session, sessionSegments, segmentScores, metrics,
+  sc, metricConfig, formatGoal, formatActual, segTypeLabels, formatSegDist, formatDetected, hasBreakdown,
+}: {
+  overall: number
+  isSegmented: boolean
+  session: Record<string, unknown> | undefined
+  sessionSegments: Segment[] | undefined
+  segmentScores: Record<string, unknown>[] | undefined
+  metrics: Record<string, Record<string, unknown>> | undefined
+  sc: (s: number) => string
+  metricConfig: Record<string, { label: string; icon: string; color: string }>
+  formatGoal: (key: string, m: Record<string, unknown>) => string
+  formatActual: (key: string, m: Record<string, unknown>) => string
+  segTypeLabels: Record<string, string>
+  formatSegDist: (km: number | null | undefined) => string
+  formatDetected: (km: number | null | undefined, mins: number | null | undefined) => string | null
+  hasBreakdown: boolean
+}) {
+  const [expanded, setExpanded] = useState(!isSegmented)
+
+  return (
+    <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
+      {/* Header — always visible */}
+      <div
+        className="flex items-center justify-between cursor-pointer select-none"
+        onClick={() => hasBreakdown && setExpanded(e => !e)}
+      >
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-gray-500 uppercase">Execution Score</span>
+          <span className="text-2xl font-bold font-mono" style={{ color: sc(overall) }}>{overall}</span>
+          {isSegmented && (
+            <span className="text-[10px] text-gray-500 border border-surface-600 rounded-full px-2 py-0.5">structured</span>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          {session?.description && (
+            <span className="text-xs text-gray-400 italic truncate">{session.description as string}</span>
+          )}
+          {hasBreakdown && (
+            <span className="text-gray-500 text-xs transition-transform" style={{ transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+              {'\u25BC'}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Collapsible breakdown */}
+      {expanded && (
+        <div className="mt-4">
+          {/* Segment summary bar */}
+          {isSegmented && sessionSegments && sessionSegments.length > 0 && (
+            <div className="mb-3">
+              <SegmentSummary segments={sessionSegments} />
+            </div>
+          )}
+
+          {/* Segmented score: per-segment breakdown */}
+          {isSegmented && segmentScores && segmentScores.length > 0 && (
+            <div className="grid gap-2">
+              {segmentScores.map((ss, i) => {
+                const segColor = getSegmentColor(ss.type as string)
+                const segScore = ss.overall_score as number | null
+                const isRecovery = ss.is_recovery as boolean
+                const segMetrics = ss.metrics as Record<string, Record<string, unknown>> | undefined
+                const typeLabel = segTypeLabels[ss.type as string] ?? (ss.type as string)
+                const distLabel = formatSegDist(ss.distance_km as number | null)
+                const durLabel = ss.duration_mins ? `${ss.duration_mins}'` : ''
+                const repLabel = (ss.rep as number) > 0 ? ` #${ss.rep}` : ''
+                const headerLabel = `${isRecovery ? 'Recovery' : typeLabel}${distLabel ? ` ${distLabel}` : ''}${durLabel ? ` ${durLabel}` : ''}${repLabel}`
+                const detected = formatDetected(ss.actual_distance_km as number | null, ss.actual_duration_mins as number | null, ss.actual_pace as number | null, ss.pace_unit as string | undefined)
+                const hasScore = segScore != null
+
+                return (
+                  <div key={i} className="flex rounded-lg overflow-hidden border" style={{ borderColor: `${segColor}20` }}>
+                    <div className="w-1 shrink-0" style={{ backgroundColor: segColor }} />
+                    <div className="flex-1 p-3" style={{ backgroundColor: `${segColor}08` }}>
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-medium" style={{ color: segColor }}>
+                            {headerLabel}
+                          </span>
+                          {detected && (
+                            <span className="text-[10px] text-gray-500 font-mono">
+                              ({detected})
+                            </span>
+                          )}
+                        </div>
+                        {hasScore ? (
+                          <span className="text-sm font-bold font-mono" style={{ color: sc(segScore) }}>
+                            {segScore}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-gray-600 italic">no targets</span>
+                        )}
+                      </div>
+                      {/* Per-metric details within this segment */}
+                      {segMetrics && Object.keys(segMetrics).length > 0 && (
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1">
+                          {Object.entries(segMetrics).map(([key, m]) => {
+                            const cfg = metricConfig[key] ?? { label: key, icon: '?', color: '#9ca3af' }
+                            const metricScore = m.score as number
+                            return (
+                              <div key={key} className="flex items-center gap-1.5 text-[11px]">
+                                <span style={{ color: cfg.color }}>{cfg.icon}</span>
+                                <span className="text-gray-500">{formatGoal(key, m)}</span>
+                                <span className="text-gray-600">{'\u2192'}</span>
+                                <span className="font-mono text-gray-300">{formatActual(key, m)}</span>
+                                <span className="font-bold font-mono" style={{ color: sc(metricScore) }}>{metricScore}</span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Flat score: per-metric breakdown (non-segmented) */}
+          {!isSegmented && metrics && (
+            <div className="grid gap-2">
+              {Object.entries(metrics).map(([key, m]) => {
+                const s = m.score as number
+                const cfg = metricConfig[key] ?? { label: key, icon: '?', color: '#9ca3af' }
+                return (
+                  <div key={key} className="flex rounded-lg overflow-hidden border" style={{ borderColor: `${cfg.color}20` }}>
+                    <div className="w-1 shrink-0" style={{ backgroundColor: cfg.color }} />
+                    <div className="flex-1 p-3" style={{ backgroundColor: `${cfg.color}08` }}>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-medium flex items-center gap-1.5" style={{ color: cfg.color }}>
+                          <span>{cfg.icon}</span> {cfg.label}
+                        </span>
+                        <span className="text-sm font-bold font-mono" style={{ color: sc(s) }}>{s}</span>
+                      </div>
+                      <div className="flex items-center gap-3 text-xs">
+                        <div className="flex-1">
+                          <div className="text-[10px] text-gray-500 uppercase mb-0.5">Goal</div>
+                          <div className="font-mono text-gray-400">{formatGoal(key, m)}</div>
+                        </div>
+                        <div className="text-gray-600 text-lg">{'\u2192'}</div>
+                        <div className="flex-1">
+                          <div className="text-[10px] text-gray-500 uppercase mb-0.5">Actual</div>
+                          <div className="font-mono text-white">{formatActual(key, m)}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function ActivityDetailPage() {
   const { id } = useParams<{ id: string }>()
   const { data: activity, isLoading } = useActivity(Number(id))
   const { data: athleteZones } = useAthleteZones()
   const { data: similarActivities } = useSimilarActivities(Number(id))
+  const { data: activityScore } = useActivityScore(Number(id))
 
   const sportCategory = getSportCategory(activity?.sport_type)
   const useSpeedUnit = sportCategory === 'cycling' || sportCategory === 'speed' || sportCategory === 'water'
@@ -452,6 +615,97 @@ export default function ActivityDetailPage() {
           <StatCard label="GAP" value={formatPace(overallGap, false)} unit={paceUnit} color="text-orange-400" />
         )}
       </div>
+
+      {/* Execution Score */}
+      {activityScore?.score && (() => {
+        const overall = activityScore.score.overall_score as number
+        const metrics = activityScore.score.metrics as Record<string, Record<string, unknown>> | undefined
+        const segmentScores = activityScore.score.segment_scores as Record<string, unknown>[] | undefined
+        const isSegmented = activityScore.score.mode === 'segmented'
+        const session = activityScore.session as Record<string, unknown> | undefined
+        const sessionSegments = session?.segments as Segment[] | undefined
+        const sc = (s: number) => s >= 80 ? '#22c55e' : s >= 50 ? '#eab308' : '#ef4444'
+
+        const metricConfig: Record<string, { label: string; icon: string; color: string }> = {
+          distance: { label: 'Distance', icon: '↔', color: '#3b82f6' },
+          duration: { label: 'Duration', icon: '⏱', color: '#22c55e' },
+          avg_pace: { label: 'Avg Pace', icon: '⚡', color: '#f97316' },
+          pace: { label: 'Pace Range', icon: '↕', color: '#a855f7' },
+          hr_zone: { label: 'HR Zone', icon: '♥', color: '#ef4444' },
+        }
+
+        const formatGoal = (key: string, m: Record<string, unknown>) => {
+          if (key === 'distance') return `${m.target} ${m.unit}`
+          if (key === 'duration') return `${m.target} ${m.unit}`
+          if (key === 'avg_pace') return `${m.target} ${m.unit}`
+          if (key === 'pace') {
+            const parts = []
+            if (m.target_min != null) parts.push(String(m.target_min))
+            if (m.target_max != null) parts.push(String(m.target_max))
+            return `${parts.join(' \u2013 ')} ${m.unit}`
+          }
+          if (key === 'hr_zone') return `Zone ${(m as any).target_zone} @ ${(m as any).target_pct}%`
+          return ''
+        }
+
+        const formatActual = (key: string, m: Record<string, unknown>) => {
+          if (key === 'distance') return `${m.actual} ${m.unit}`
+          if (key === 'duration') return `${m.actual} ${m.unit}`
+          if (key === 'avg_pace') return `${m.actual} ${m.unit}`
+          if (key === 'pace') return `${m.actual} ${m.unit}`
+          if (key === 'hr_zone') return `${(m as any).actual_pct}%`
+          return ''
+        }
+
+        const segTypeLabels: Record<string, string> = {
+          warmup: 'Warmup', work: 'Work', recovery: 'Recovery', cooldown: 'Cooldown', rest: 'Rest',
+        }
+
+        const formatSegDist = (km: number | null | undefined) => {
+          if (!km) return ''
+          return km >= 1 ? `${km}km` : `${Math.round(km * 1000)}m`
+        }
+
+        const formatPaceVal = (pace: number, unit: string) => {
+          if (unit === 'min/km' || unit === 'min/100m') {
+            const mins = Math.floor(pace)
+            const secs = Math.round((pace - mins) * 60)
+            return `${mins}:${secs.toString().padStart(2, '0')} ${unit}`
+          }
+          return `${Math.round(pace * 10) / 10} ${unit}`
+        }
+
+        const formatDetected = (km: number | null | undefined, mins: number | null | undefined, pace?: number | null, paceUnit?: string) => {
+          const parts: string[] = []
+          if (km && km > 0) parts.push(km >= 1 ? `${Math.round(km * 1000) / 1000}km` : `${Math.round(km * 1000)}m`)
+          if (mins && mins > 0) parts.push(`${Math.round(mins * 10) / 10}'`)
+          if (pace && paceUnit) parts.push(formatPaceVal(pace, paceUnit))
+          return parts.length > 0 ? parts.join(' / ') : null
+        }
+
+        const hasBreakdown = isSegmented
+          ? (segmentScores && segmentScores.length > 0)
+          : (metrics && Object.keys(metrics).length > 0)
+
+        return (
+          <ExecutionScoreCollapsible
+            overall={overall}
+            isSegmented={isSegmented}
+            session={session}
+            sessionSegments={sessionSegments}
+            segmentScores={segmentScores}
+            metrics={metrics}
+            sc={sc}
+            metricConfig={metricConfig}
+            formatGoal={formatGoal}
+            formatActual={formatActual}
+            segTypeLabels={segTypeLabels}
+            formatSegDist={formatSegDist}
+            formatDetected={formatDetected}
+            hasBreakdown={!!hasBreakdown}
+          />
+        )
+      })()}
 
       {/* HR Zone Distribution */}
       {hrZoneDistribution && hrZoneDistribution.some(v => v > 0) && (

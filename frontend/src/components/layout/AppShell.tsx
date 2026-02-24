@@ -1,16 +1,45 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useSyncStatus, useTriggerSync, useBackfillStreams } from '../../api/hooks'
 import { useTheme } from '../../hooks/useTheme'
 import clsx from 'clsx'
 
-const NAV_ITEMS = [
-  { to: '/calendar', label: 'Calendar', icon: '📅' },
-  { to: '/activities', label: 'Activities', icon: '🏃' },
-  { to: '/aggregations', label: 'World Footprint', icon: '🌍' },
-  { to: '/dashboard', label: 'Year in Sport', icon: '⚡' },
-  { to: '/records', label: 'Personal Records', icon: '🏆' },
-  { to: '/profile', label: 'Profile', icon: '👤' },
+const NAV_ITEMS: { to: string; label: string; color: string; icon: React.ReactNode }[] = [
+  { to: '/calendar', label: 'Calendar', color: '#60a5fa', icon: (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="3" width="12" height="11" rx="1.5" /><path d="M5 1v3M11 1v3M2 7h12" />
+    </svg>
+  )},
+  { to: '/activities', label: 'Activities', color: '#34d399', icon: (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 4h12M2 8h12M2 12h8" />
+    </svg>
+  )},
+  { to: '/aggregations', label: 'World Footprint', color: '#a78bfa', icon: (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="8" r="6" /><path d="M2 8h12M8 2c-2 2-2 10 0 12M8 2c2 2 2 10 0 12" />
+    </svg>
+  )},
+  { to: '/dashboard', label: 'Year in Sport', color: '#fbbf24', icon: (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 1.5l2.5 5 5.5.8-4 3.9.9 5.3L8 13.8l-4.9 2.7.9-5.3-4-3.9 5.5-.8z" />
+    </svg>
+  )},
+  { to: '/records', label: 'Personal Records', color: '#f87171', icon: (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 14V9M8 14V6M12 14V3" />
+    </svg>
+  )},
+  { to: '/workouts', label: 'Workouts', color: '#22d3ee', icon: (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1" y="6" width="3" height="4" rx="0.5" /><rect x="12" y="6" width="3" height="4" rx="0.5" /><rect x="4" y="4" width="3" height="8" rx="0.5" /><rect x="9" y="4" width="3" height="8" rx="0.5" /><line x1="7" y1="8" x2="9" y2="8" />
+    </svg>
+  )},
+  { to: '/profile', label: 'Profile', color: '#94a3b8', icon: (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="5" r="2.5" /><path d="M3 14c0-2.8 2.2-5 5-5s5 2.2 5 5" />
+    </svg>
+  )},
 ]
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
@@ -20,6 +49,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const { theme, toggleTheme } = useTheme()
   const [collapsed, setCollapsed] = useState(false)
   const isLight = theme === 'light'
+
+  // Auto-sync on session start when data is stale
+  useEffect(() => {
+    if (syncStatus?.needs_sync && !syncStatus?.syncing && !triggerSync.isPending) {
+      triggerSync.mutate({ include_streams: true })
+    }
+  }, [syncStatus?.needs_sync])
 
   return (
     <div className="flex h-screen">
@@ -73,8 +109,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 )
               }
             >
-              <span className="text-base leading-none">{item.icon}</span>
-              {!collapsed && <span>{item.label}</span>}
+              {({ isActive }) => (
+                <>
+                  <span className="w-4 h-4 shrink-0" style={{ color: isActive ? item.color : undefined }}>{item.icon}</span>
+                  {!collapsed && <span>{item.label}</span>}
+                </>
+              )}
             </NavLink>
           ))}
         </nav>
@@ -103,7 +143,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   : 'bg-white/[0.04] text-gray-500 hover:bg-white/[0.08] hover:text-gray-300'
             )}
           >
-            {collapsed ? '↻' : syncStatus?.syncing ? 'Syncing...' : 'Sync'}
+            {collapsed ? (
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mx-auto">
+                <path d="M2 8a6 6 0 0110.5-4M14 8a6 6 0 01-10.5 4" /><path d="M12.5 1v3h-3M3.5 15v-3h3" />
+              </svg>
+            ) : syncStatus?.syncing ? 'Syncing...' : 'Sync'}
           </button>
           <button
             onClick={() => backfillStreams.mutate()}
@@ -117,7 +161,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 : 'bg-white/[0.04] text-gray-500 hover:bg-white/[0.08] hover:text-gray-300'
             )}
           >
-            {collapsed ? '⇣' : 'Backfill Streams'}
+            {collapsed ? (
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mx-auto">
+                <path d="M8 2v9M4.5 8.5L8 12l3.5-3.5M3 14h10" />
+              </svg>
+            ) : 'Backfill Streams'}
           </button>
         </div>
       </aside>
