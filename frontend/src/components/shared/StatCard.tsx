@@ -5,10 +5,11 @@ interface StatCardProps {
   value: string | number
   unit?: string
   delta?: number | string | null
+  sublabel?: string
   color?: string
 }
 
-export default function StatCard({ label, value, unit, delta, color = 'text-neon-red' }: StatCardProps) {
+export default function StatCard({ label, value, unit, delta, sublabel, color = 'text-neon-red' }: StatCardProps) {
   return (
     <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
       <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">{label}</div>
@@ -23,6 +24,7 @@ export default function StatCard({ label, value, unit, delta, color = 'text-neon
           {delta === 'new' ? <span className="inline-block w-2 h-2 rounded-full bg-green-400" /> : `${(delta as number) >= 0 ? '+' : ''}${(delta as number).toFixed(1)}%`}
         </div>
       )}
+      {sublabel && <div className="text-[11px] text-gray-500 mt-1">{sublabel}</div>}
     </div>
   )
 }
