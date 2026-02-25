@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+.venv/
+
+# Build artifacts
+frontend/dist/
+__pycache__/
+*.pyc
+
+# Local data
+.strava/
+strava_intelligence_workdir/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# Environment
+.env
+
+# Misc
+*.md
+LICENSE
+readme_data/
+visualizations/
+.claude/

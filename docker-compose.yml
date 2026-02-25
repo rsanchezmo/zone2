@@ -1,0 +1,23 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file: .env
+    volumes:
+      - strava-data:/app/.strava
+      - strava-workdir:/app/strava_intelligence_workdir
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - app
+    restart: unless-stopped
+
+volumes:
+  strava-data:
+  strava-workdir:
