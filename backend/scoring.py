@@ -219,11 +219,75 @@ def _advance_by_duration(streams: list[dict], pos: int, duration_s: float) -> tu
     return points, i
 
 
+def _merge_nearby_fast_phases(
+    phases: list[dict],
+    streams: list[dict],
+    max_gap_seconds: float = 15,
+) -> list[dict]:
+    """Merge fast phases separated by short non-fast gaps.
+
+    During intervals, brief velocity dips (corners, GPS noise, slight
+    deceleration) can split a single work rep into multiple fast phases.
+    This merges them back together if the total time gap between two fast
+    phases is within max_gap_seconds, even across multiple intermediate
+    non-fast phases.
+    """
+    if not phases:
+        return phases
+
+    # First pass: collect fast phases and compute actual time gaps between them
+    fast_indices = [i for i, p in enumerate(phases) if p["phase"] == "fast"]
+    if len(fast_indices) < 2:
+        return phases
+
+    # Determine which consecutive fast phases should be merged
+    merge_groups: list[list[int]] = [[fast_indices[0]]]
+    for k in range(1, len(fast_indices)):
+        prev_fi = fast_indices[k - 1]
+        curr_fi = fast_indices[k]
+        prev_phase = phases[prev_fi]
+        curr_phase = phases[curr_fi]
+        gap_s = (streams[curr_phase["i_start"]].get("time", 0)
+                 - streams[prev_phase["i_end"]].get("time", 0))
+        if gap_s <= max_gap_seconds:
+            merge_groups[-1].append(curr_fi)
+        else:
+            merge_groups.append([curr_fi])
+
+    # Build merged fast phases
+    merged_fast = {}  # maps first phase index in group → merged phase
+    skip_indices = set()
+    for group in merge_groups:
+        first = phases[group[0]]
+        last = phases[group[-1]]
+        merged_phase = _build_phase(streams, "fast", first["i_start"], last["i_end"])
+        merged_fast[group[0]] = merged_phase
+        for fi in group[1:]:
+            skip_indices.add(fi)
+        # Also skip non-fast phases between merged fast phases
+        for fi_a, fi_b in zip(group, group[1:]):
+            for mid in range(fi_a + 1, fi_b):
+                skip_indices.add(mid)
+
+    # Rebuild phase list
+    result: list[dict] = []
+    for i, p in enumerate(phases):
+        if i in skip_indices:
+            continue
+        if i in merged_fast:
+            result.append(merged_fast[i])
+        else:
+            result.append(p)
+
+    return result
+
+
 def _detect_velocity_phases(
     streams: list[dict],
     fast_threshold: float = 4.0,
     slow_threshold: float = 2.5,
     min_points: int = 3,
+    max_merge_gap_seconds: float = 15,
 ) -> list[dict]:
     """Detect fast/slow/moderate phases from velocity_smooth data.
 
@@ -255,6 +319,9 @@ def _detect_velocity_phases(
     # Last phase
     if current_phase is not None and len(streams) - phase_start >= min_points:
         phases.append(_build_phase(streams, current_phase, phase_start, len(streams) - 1))
+
+    # Merge fast phases broken by short gaps (GPS noise, corners, etc.)
+    phases = _merge_nearby_fast_phases(phases, streams, max_merge_gap_seconds)
 
     return phases
 
@@ -319,15 +386,40 @@ def _slice_intervals_by_velocity(
 
     reps = work_seg.get("repetitions", 1)
     fast_thresh, slow_thresh = _compute_fast_threshold(streams)
-    phases = _detect_velocity_phases(streams, fast_thresh, slow_thresh)
+
+    # Scale merge gap with expected rep duration: longer intervals tolerate
+    # longer mid-rep velocity dips. Estimate rep time from target distance
+    # and the fast threshold velocity, then allow gaps up to 10% of that.
+    target_dist_m = (work_seg.get("distance_km") or 0) * 1000
+    if target_dist_m > 0 and fast_thresh > 0:
+        expected_rep_s = target_dist_m / fast_thresh
+        max_merge_gap = max(15, min(expected_rep_s * 0.15, 90))
+    else:
+        max_merge_gap = 15
+
+    phases = _detect_velocity_phases(
+        streams, fast_thresh, slow_thresh,
+        max_merge_gap_seconds=max_merge_gap,
+    )
 
     fast_phases = [p for p in phases if p["phase"] == "fast"]
+
+    # Filter out noise: discard phases shorter than 30% of the target distance
+    # or shorter than 5 seconds (catches GPS spikes, warmup strides, etc.)
+    target_dist = (work_seg.get("distance_km") or 0) * 1000
+    target_dur = (work_seg.get("duration_mins") or 0) * 60
+    min_dist = target_dist * 0.3 if target_dist > 0 else 0
+    min_dur = max(target_dur * 0.3, 5)
+    fast_phases = [
+        p for p in fast_phases
+        if p["distance_m"] >= min_dist and p["duration_s"] >= min_dur
+    ]
+
     if len(fast_phases) < reps:
         # Can't match — not enough fast phases detected
         return None
 
     # Take the `reps` best-matching fast phases (by distance closest to target)
-    target_dist = (work_seg.get("distance_km") or 0) * 1000
     if target_dist > 0:
         fast_phases.sort(key=lambda p: abs(p["distance_m"] - target_dist))
         matched_fast = sorted(fast_phases[:reps], key=lambda p: p["i_start"])

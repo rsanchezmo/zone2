@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { NavLink } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { useSyncStatus, useTriggerSync, useBackfillStreams } from '../../api/hooks'
 import { useTheme } from '../../hooks/useTheme'
 import clsx from 'clsx'
@@ -50,12 +51,30 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false)
   const isLight = theme === 'light'
 
+  const qc = useQueryClient()
+  const wasSyncing = useRef(false)
+
   // Auto-sync on session start when data is stale
   useEffect(() => {
     if (syncStatus?.needs_sync && !syncStatus?.syncing && !triggerSync.isPending) {
       triggerSync.mutate({ include_streams: true })
     }
   }, [syncStatus?.needs_sync])
+
+  // Invalidate all data queries when sync completes
+  useEffect(() => {
+    if (wasSyncing.current && syncStatus?.syncing === false) {
+      qc.invalidateQueries({ queryKey: ['activities'] })
+      qc.invalidateQueries({ queryKey: ['activities-range'] })
+      qc.invalidateQueries({ queryKey: ['calendar-sessions'] })
+      qc.invalidateQueries({ queryKey: ['calendar-sessions-range'] })
+      qc.invalidateQueries({ queryKey: ['session-scores'] })
+      qc.invalidateQueries({ queryKey: ['stats'] })
+      qc.invalidateQueries({ queryKey: ['records'] })
+      qc.invalidateQueries({ queryKey: ['goals'] })
+    }
+    wasSyncing.current = syncStatus?.syncing ?? false
+  }, [syncStatus?.syncing])
 
   return (
     <div className="flex h-screen">

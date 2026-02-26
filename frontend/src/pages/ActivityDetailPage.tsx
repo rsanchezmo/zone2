@@ -398,8 +398,9 @@ export default function ActivityDetailPage() {
   const sportCategory = getSportCategory(activity?.sport_type)
   const useSpeedUnit = sportCategory === 'cycling' || sportCategory === 'speed' || sportCategory === 'water'
 
-  const { positions, streamSeries, paceUnit, gapSpeeds, overallGap } = useMemo(() => {
+  const { positions, velocities, streamSeries, paceUnit, gapSpeeds, overallGap } = useMemo(() => {
     const pos: [number, number][] = []
+    const vels: number[] = []
     const series: {
       elevation: { distance: number; value: number }[]
       pace: { distance: number; value: number }[]
@@ -426,11 +427,13 @@ export default function ActivityDetailPage() {
         const pt = streams[idx]
         const dist = (pt.distance ?? 0) / 1000
 
-        // Positions
+        // Positions + velocities (kept in sync)
         if (pt.lat != null && pt.lng != null) {
           pos.push([pt.lat, pt.lng])
+          vels.push(pt.velocity_smooth ?? 0)
         } else if (pt.latlng) {
           pos.push([pt.latlng[0], pt.latlng[1]])
+          vels.push(pt.velocity_smooth ?? 0)
         }
 
         // Elevation
@@ -485,13 +488,28 @@ export default function ActivityDetailPage() {
 
     // Determine pace unit from sport
     const { unit: pu } = convertSpeed(1, activity?.sport_type)
-    return { positions: pos, streamSeries: series, paceUnit: pu, gapSpeeds: gSpeeds, overallGap: avgGap }
+    return { positions: pos, velocities: vels, streamSeries: series, paceUnit: pu, gapSpeeds: gSpeeds, overallGap: avgGap }
   }, [activity])
 
   const splits = useMemo(() => {
     if (!activity?.streams || !Array.isArray(activity.streams)) return []
     return computeSplits(activity.streams as StreamPoint[], activity.sport_type, gapSpeeds.length > 0 ? gapSpeeds : undefined)
   }, [activity, gapSpeeds])
+
+  // Compute gradient legend labels (fast/slow pace or speed at p5/p95)
+  const { gradientFastLabel, gradientSlowLabel } = useMemo(() => {
+    if (!velocities || velocities.length === 0) return { gradientFastLabel: undefined, gradientSlowLabel: undefined }
+    const valid = velocities.filter(v => v > 0.3)
+    if (valid.length === 0) return { gradientFastLabel: undefined, gradientSlowLabel: undefined }
+    const sorted = [...valid].sort((a, b) => a - b)
+    const p5 = sorted[Math.floor(sorted.length * 0.05)]
+    const p95 = sorted[Math.floor(sorted.length * 0.95)]
+    const fmt = (ms: number) => {
+      const { value, unit } = convertSpeed(ms, activity?.sport_type)
+      return `${formatPace(value, useSpeedUnit)} ${unit}`
+    }
+    return { gradientFastLabel: fmt(p95), gradientSlowLabel: fmt(p5) }
+  }, [velocities, activity?.sport_type, useSpeedUnit])
 
   // Compute km markers for the map
   const kmMarkers: KmMarker[] = useMemo(() => {
@@ -589,7 +607,15 @@ export default function ActivityDetailPage() {
       {/* Map */}
       {positions.length > 0 && (
         <div className="h-[400px] rounded-xl overflow-hidden border border-surface-600">
-          <MapView positions={positions} color={getSportColor(activity.sport_type)} kmMarkers={kmMarkers} />
+          <MapView
+            positions={positions}
+            color={getSportColor(activity.sport_type)}
+            kmMarkers={kmMarkers}
+            velocities={velocities.length === positions.length ? velocities : undefined}
+            invertGradient={sportCategory !== 'cycling' && sportCategory !== 'speed' && sportCategory !== 'water'}
+            gradientFastLabel={gradientFastLabel}
+            gradientSlowLabel={gradientSlowLabel}
+          />
         </div>
       )}
 
