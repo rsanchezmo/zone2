@@ -1,4 +1,5 @@
 import clsx from 'clsx'
+import { useTheme } from '../../hooks/useTheme'
 
 interface StatCardProps {
   label: string
@@ -9,13 +10,15 @@ interface StatCardProps {
   color?: string
 }
 
-export default function StatCard({ label, value, unit, delta, sublabel, color = 'text-neon-red' }: StatCardProps) {
+export default function StatCard({ label, value, unit, delta, sublabel, color }: StatCardProps) {
+  const { theme } = useTheme()
+  const isLight = theme === 'light'
   return (
-    <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
-      <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">{label}</div>
-      <div className={clsx('text-2xl font-bold', color)}>
+    <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
+      <div className={clsx('text-xs uppercase tracking-wider mb-1', isLight ? 'text-gray-500' : 'text-gray-500')}>{label}</div>
+      <div className={clsx('text-2xl font-bold', color ?? (isLight ? 'text-gray-900' : 'text-gray-100'))}>
         {value}
-        {unit && <span className="text-sm text-gray-400 ml-1">{unit}</span>}
+        {unit && <span className={clsx('text-sm ml-1', isLight ? 'text-gray-400' : 'text-gray-400')}>{unit}</span>}
       </div>
       {delta !== undefined && delta !== null && (
         <div className={clsx('text-xs mt-1',

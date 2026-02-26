@@ -339,11 +339,65 @@ def streaks(
             else:
                 break
 
+    # ── Week streaks (consecutive ISO weeks with at least 1 activity) ──
+    active_weeks = sorted({d.isocalendar()[:2] for d in active_dates})  # (year, week)
+
+    def week_diff(a: tuple, b: tuple) -> int:
+        """Return the number of ISO weeks between two (year, week) tuples."""
+        d_a = date.fromisocalendar(a[0], a[1], 1)
+        d_b = date.fromisocalendar(b[0], b[1], 1)
+        return (d_b - d_a).days // 7
+
+    longest_week = 0
+    longest_week_start = None
+    longest_week_end = None
+    current_week_streak = 0
+
+    if active_weeks:
+        cur = 1
+        cur_start = active_weeks[0]
+        for i in range(1, len(active_weeks)):
+            if week_diff(active_weeks[i - 1], active_weeks[i]) == 1:
+                cur += 1
+            else:
+                if cur > longest_week:
+                    longest_week = cur
+                    longest_week_start = cur_start
+                    longest_week_end = active_weeks[i - 1]
+                cur = 1
+                cur_start = active_weeks[i]
+        if cur > longest_week:
+            longest_week = cur
+            longest_week_start = cur_start
+            longest_week_end = active_weeks[-1]
+
+        # Current week streak: must include this week or last week
+        this_week = today.isocalendar()[:2]
+        last_week_date = today - timedelta(days=7)
+        last_week = last_week_date.isocalendar()[:2]
+        last_active_week = active_weeks[-1]
+        if last_active_week >= last_week:
+            current_week_streak = 1
+            for i in range(len(active_weeks) - 2, -1, -1):
+                if week_diff(active_weeks[i], active_weeks[i + 1]) == 1:
+                    current_week_streak += 1
+                else:
+                    break
+
+    def week_label(yw: tuple | None) -> str | None:
+        if yw is None:
+            return None
+        return date.fromisocalendar(yw[0], yw[1], 1).isoformat()
+
     return {
         "current_streak": current_streak,
         "longest_streak": longest,
         "longest_streak_start": longest_start.isoformat() if longest_start else None,
         "longest_streak_end": longest_end.isoformat() if longest_end else None,
+        "current_week_streak": current_week_streak,
+        "longest_week_streak": longest_week,
+        "longest_week_streak_start": week_label(longest_week_start),
+        "longest_week_streak_end": week_label(longest_week_end),
     }
 
 

@@ -14,6 +14,11 @@ def get_athlete_profile(si: StravaIntelligence = Depends(get_si)):
     return si.strava_user_cache.get_athlete_profile()
 
 
+@router.get("/rate-limits")
+def get_rate_limits(si: StravaIntelligence = Depends(get_si)):
+    return si.strava_endpoint.get_rate_limits()
+
+
 @router.get("/zones")
 def get_athlete_zones(si: StravaIntelligence = Depends(get_si)):
     """Return HR zones using smart estimation (activity data) instead of raw Strava zones."""

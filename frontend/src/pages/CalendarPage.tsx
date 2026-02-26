@@ -57,7 +57,7 @@ function SportPieChart({ title, data, formatValue, colorMap }: {
   }
 
   return (
-    <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
+    <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
       <div className="text-xs text-gray-500 uppercase mb-2">{title}</div>
       <div className="flex gap-3 mb-2 flex-wrap">
         {pieData.map(d => (
@@ -82,7 +82,7 @@ function SportPieChart({ title, data, formatValue, colorMap }: {
             labelLine={false}
           >
             {pieData.map((d, i) => (
-              <Cell key={i} fill={d.color} fillOpacity={0.3} stroke={d.color} strokeWidth={2} strokeOpacity={1} />
+              <Cell key={i} fill={d.color} fillOpacity={0.7} stroke={d.color} strokeWidth={1} strokeOpacity={0.3} />
             ))}
           </Pie>
           <Tooltip
@@ -145,7 +145,7 @@ function AccumulatedChart({ data, titles, colorMap }: AccumulatedChartProps) {
     return (props: Record<string, unknown>) => {
       const { cx, cy, index } = props as { cx: number; cy: number; index: number }
       if (!activeDays[sport]?.has(index)) return <g />
-      return <circle cx={cx} cy={cy} r={4} fill={color} stroke={isLight ? '#1f2937' : '#fff'} strokeWidth={1.5} />
+      return <circle cx={cx} cy={cy} r={3} fill={color} fillOpacity={0.8} stroke={isLight ? '#e5e5e5' : '#1a1a1a'} strokeWidth={1} />
     }
   }
 
@@ -165,7 +165,7 @@ function AccumulatedChart({ data, titles, colorMap }: AccumulatedChartProps) {
   }
 
   return (
-    <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
+    <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
       <div className="text-xs text-gray-500 uppercase mb-1">Accumulated Training Time</div>
       <div className="flex gap-3 mb-3 flex-wrap">
         {sports.map(s => (
@@ -192,9 +192,10 @@ function AccumulatedChart({ data, titles, colorMap }: AccumulatedChartProps) {
               type="monotone"
               dataKey={sport}
               stroke={sportColorMap[sport]}
+              strokeOpacity={0.6}
               fill={sportColorMap[sport]}
-              fillOpacity={0.15}
-              strokeWidth={2}
+              fillOpacity={0.08}
+              strokeWidth={1.5}
               dot={makeActiveDot(sport, sportColorMap[sport]) as any}
               label={makeLabel(sport, sportColorMap[sport]) as any}
             />
@@ -408,14 +409,19 @@ function SessionModal({
 
   return (
     <div
-      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 animate-[fadeIn_150ms_ease-out]"
+      className={clsx('fixed inset-0 flex items-center justify-center z-50 animate-[fadeIn_150ms_ease-out]', isLight ? 'bg-black/30' : 'bg-black/60')}
       onClick={onClose}
     >
       <div
-        className="bg-surface-800 border border-surface-600 rounded-xl p-6 w-full max-w-md max-h-[85vh] overflow-y-auto animate-[scaleIn_150ms_ease-out]"
+        className={clsx('border rounded-xl p-6 w-full max-w-md max-h-[85vh] overflow-y-auto animate-[scaleIn_150ms_ease-out]', isLight ? 'bg-white border-gray-200 shadow-xl' : 'bg-surface-800 border-surface-600 shadow-xl')}
         onClick={e => e.stopPropagation()}
       >
-        <h3 className="text-lg font-bold mb-4">{date}</h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold">{format(parseISO(date), 'EEEE, MMM d, yyyy')}</h3>
+          <button onClick={onClose} className={clsx('p-1 rounded transition-colors', isLight ? 'text-gray-400 hover:text-gray-700 hover:bg-black/5' : 'text-gray-500 hover:text-gray-200 hover:bg-white/5')}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
 
         {sessions.length > 0 && (
           <div className="mb-4 space-y-2">
@@ -454,7 +460,7 @@ function SessionModal({
                           </>
                         ) : (
                           <>
-                            <button onClick={() => setCopyingSessionId(copyingSessionId === (s.id as number) ? null : s.id as number)} className={clsx('text-xs', copyingSessionId === (s.id as number) ? 'text-neon-cyan' : 'text-gray-400', isLight ? 'hover:text-gray-700' : 'hover:text-gray-200')}>Copy</button>
+                            <button onClick={() => setCopyingSessionId(copyingSessionId === (s.id as number) ? null : s.id as number)} className={clsx('text-xs', copyingSessionId === (s.id as number) ? 'text-blue-400' : 'text-gray-400', isLight ? 'hover:text-gray-700' : 'hover:text-gray-200')}>Copy</button>
                             <button onClick={() => startEdit(s)} className={clsx('text-gray-400 text-xs', isLight ? 'hover:text-gray-700' : 'hover:text-gray-200')}>Edit</button>
                             <button onClick={() => setConfirmDeleteId(s.id as number)} className="text-red-400 hover:text-red-300 text-xs">Delete</button>
                           </>
@@ -473,7 +479,7 @@ function SessionModal({
                     const mEnd = endOfWeek(endOfMonth(copyMonth), { weekStartsOn: 1 })
                     const mDays = eachDayOfInterval({ start: mStart, end: mEnd })
                     return (
-                      <div className="mt-1 p-2 bg-surface-700/50 border border-surface-600 rounded-lg">
+                      <div className={clsx('mt-1 p-2 border rounded-lg', isLight ? 'bg-gray-50 border-gray-200' : 'bg-surface-700/50 border-surface-600')}>
                         <div className="flex items-center justify-between mb-2">
                           <button onClick={() => setCopyMonth(m => subMonths(m, 1))} className="text-gray-400 hover:text-gray-200 text-xs px-1">&lt;</button>
                           <span className="text-xs text-gray-300 font-medium">{format(copyMonth, 'MMM yyyy')}</span>
@@ -497,9 +503,9 @@ function SessionModal({
                                 }}
                                 className={clsx(
                                   'text-[10px] py-1 rounded transition-colors',
-                                  isCurrent ? 'text-gray-600 cursor-not-allowed' : 'hover:bg-neon-cyan/20 hover:text-neon-cyan',
+                                  isCurrent ? 'text-gray-600 cursor-not-allowed' : 'hover:bg-blue-400/20 hover:text-blue-400',
                                   inM ? 'text-gray-400' : 'text-gray-600',
-                                  isToday(d) && 'font-bold text-neon-red',
+                                  isToday(d) && 'font-bold text-gray-100',
                                 )}
                               >
                                 {format(d, 'd')}
@@ -525,7 +531,7 @@ function SessionModal({
             <select
               value={sportType}
               onChange={e => setSportType(e.target.value)}
-              className="w-full bg-surface-700 border border-surface-600 rounded-lg px-4 py-3.5 text-sm"
+              className={clsx('w-full border rounded-lg px-4 py-3.5 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
               style={{ color: getSportColor(sportType) }}
             >
               {Object.keys(SPORT_COLORS_HEX).map(s => (
@@ -540,7 +546,7 @@ function SessionModal({
               placeholder="e.g. Easy 10k recovery run"
               value={description}
               onChange={e => setDescription(e.target.value)}
-              className="w-full bg-surface-700 border border-surface-600 rounded-lg px-3 py-2.5 text-sm"
+              className={clsx('w-full border rounded-lg px-3 py-2.5 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
               rows={3}
             />
           </div>
@@ -562,7 +568,7 @@ function SessionModal({
                       <input
                         type="text" inputMode="decimal" placeholder="10"
                         value={plannedDistanceKm} onChange={e => setPlannedDistanceKm(e.target.value)}
-                        className="w-24 bg-surface-700 border border-surface-600 rounded px-2 py-1.5 text-sm"
+                        className={clsx('w-24 border rounded px-2 py-1.5 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
                       />
                       <span className="text-xs text-gray-500">km</span>
                     </div>
@@ -584,7 +590,7 @@ function SessionModal({
                       <input
                         type="text" inputMode="decimal" placeholder="60"
                         value={plannedDurationMins} onChange={e => setPlannedDurationMins(e.target.value)}
-                        className="w-24 bg-surface-700 border border-surface-600 rounded px-2 py-1.5 text-sm"
+                        className={clsx('w-24 border rounded px-2 py-1.5 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
                       />
                       <span className="text-xs text-gray-500">min</span>
                     </div>
@@ -606,7 +612,7 @@ function SessionModal({
                       <input
                         type="text" inputMode="decimal" placeholder={paceUnit === 'min/km' ? '5:10' : '28'}
                         value={targetAvgPace} onChange={e => setTargetAvgPace(e.target.value)}
-                        className="w-24 bg-surface-700 border border-surface-600 rounded px-2 py-1.5 text-sm"
+                        className={clsx('w-24 border rounded px-2 py-1.5 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
                       />
                       <span className="text-xs text-gray-500">{paceUnit}</span>
                     </div>
@@ -632,7 +638,7 @@ function SessionModal({
                         <input
                           type="text" inputMode="decimal" placeholder={paceUnit === 'min/km' ? '4:50' : '25'}
                           value={targetPaceMin} onChange={e => setTargetPaceMin(e.target.value)}
-                          className="w-full bg-surface-700 border border-surface-600 rounded px-2 py-1.5 text-sm"
+                          className={clsx('w-full border rounded px-2 py-1.5 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
                         />
                       </div>
                       <div>
@@ -642,7 +648,7 @@ function SessionModal({
                         <input
                           type="text" inputMode="decimal" placeholder={paceUnit === 'min/km' ? '5:20' : '32'}
                           value={targetPaceMax} onChange={e => setTargetPaceMax(e.target.value)}
-                          className="w-full bg-surface-700 border border-surface-600 rounded px-2 py-1.5 text-sm"
+                          className={clsx('w-full border rounded px-2 py-1.5 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
                         />
                       </div>
                     </div>
@@ -665,7 +671,7 @@ function SessionModal({
                         <label className="text-[10px] text-gray-500 mb-0.5 block">Zone</label>
                         <select
                           value={targetHrZone} onChange={e => setTargetHrZone(e.target.value)}
-                          className="w-full bg-surface-700 border border-surface-600 rounded px-2 py-1.5 text-sm"
+                          className={clsx('w-full border rounded px-2 py-1.5 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
                         >
                           <option value="">Select</option>
                           {[1, 2, 3, 4, 5].map(z => <option key={z} value={z}>Zone {z}</option>)}
@@ -676,7 +682,7 @@ function SessionModal({
                         <input
                           type="text" inputMode="decimal" placeholder="80"
                           value={targetZonePct} onChange={e => setTargetZonePct(e.target.value)}
-                          className="w-full bg-surface-700 border border-surface-600 rounded px-2 py-1.5 text-sm"
+                          className={clsx('w-full border rounded px-2 py-1.5 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
                         />
                       </div>
                     </div>
@@ -716,7 +722,7 @@ function SessionModal({
                               className={clsx(
                                 'w-full text-left text-xs rounded px-2 py-1.5 border transition-colors',
                                 workoutTemplateId === (t.id as number)
-                                  ? 'border-neon-cyan/40 bg-neon-cyan/10 text-neon-cyan'
+                                  ? 'border-blue-400/40 bg-blue-400/10 text-blue-400'
                                   : 'border-surface-600 hover:border-surface-500 text-gray-300'
                               )}
                             >
@@ -754,7 +760,7 @@ function SessionModal({
                               placeholder="Template name"
                               value={saveTemplateName}
                               onChange={e => setSaveTemplateName(e.target.value)}
-                              className="flex-1 bg-surface-700 border border-surface-600 rounded px-2 py-1 text-xs text-white placeholder-gray-500"
+                              className={clsx('flex-1 border rounded px-2 py-1 text-xs placeholder-gray-500', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600 text-gray-100')}
                               autoFocus
                               onKeyDown={e => {
                                 if (e.key === 'Enter' && saveTemplateName.trim()) {
@@ -863,16 +869,16 @@ function SessionModal({
                   setShowTemplatePicker(false)
                 }
               }}
-              className="flex-1 bg-neon-red/20 text-neon-red border border-neon-red/30 rounded py-2 text-sm hover:bg-neon-red/30 transition-colors"
+              className={clsx('flex-1 rounded py-2 text-sm font-medium transition-colors', isLight ? 'bg-gray-900 text-white hover:bg-gray-800' : 'bg-white/15 text-gray-100 border border-white/20 hover:bg-white/20')}
             >
               {editingId ? 'Save' : 'Add'}
             </button>
             {editingId ? (
-              <button onClick={cancelEdit} className={clsx('flex-1 bg-surface-700 rounded py-2 text-sm text-gray-400', isLight ? 'hover:text-gray-700' : 'hover:text-gray-200')}>
+              <button onClick={cancelEdit} className={clsx('flex-1 rounded py-2 text-sm text-gray-400', isLight ? 'bg-gray-100 hover:text-gray-700' : 'bg-surface-700 hover:text-gray-200')}>
                 Cancel Edit
               </button>
             ) : (
-              <button onClick={onClose} className={clsx('flex-1 bg-surface-700 rounded py-2 text-sm text-gray-400', isLight ? 'hover:text-gray-700' : 'hover:text-gray-200')}>
+              <button onClick={onClose} className={clsx('flex-1 rounded py-2 text-sm text-gray-400', isLight ? 'bg-gray-100 hover:text-gray-700' : 'bg-surface-700 hover:text-gray-200')}>
                 Cancel
               </button>
             )}
@@ -885,10 +891,12 @@ function SessionModal({
 
 /* ── Upcoming Plan (expandable) ─────────────────────── */
 function UpcomingPlan({ sessions, todayStr }: { sessions: Record<string, unknown>[] | undefined; todayStr: string }) {
+  const { theme } = useTheme()
+  const isLight = theme === 'light'
   const [expandedId, setExpandedId] = useState<number | null>(null)
 
   return (
-    <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
+    <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
       <div className="text-xs text-gray-500 uppercase mb-3">Upcoming Plan (7 days)</div>
       {sessions && sessions.length > 0 ? (
         <div className="space-y-2">
@@ -973,7 +981,7 @@ function UpcomingPlan({ sessions, todayStr }: { sessions: Record<string, unknown
           })}
         </div>
       ) : (
-        <div className="text-sm text-gray-600">No upcoming sessions</div>
+        <div className="text-sm text-gray-500">No upcoming sessions</div>
       )}
     </div>
   )
@@ -985,6 +993,8 @@ function WeekPicker({ currentWeekStart, onSelect, onClose }: {
   onSelect: (weekStart: string) => void
   onClose: () => void
 }) {
+  const { theme } = useTheme()
+  const isLight = theme === 'light'
   const ref = useRef<HTMLDivElement>(null)
   const [viewMonth, setViewMonth] = useState(() => {
     try { return startOfMonth(parseISO(currentWeekStart)) }
@@ -1011,11 +1021,14 @@ function WeekPicker({ currentWeekStart, onSelect, onClose }: {
   })()
 
   return (
-    <div ref={ref} className="absolute top-full mt-1 z-50 bg-surface-800 border border-surface-600 rounded-xl p-3 shadow-xl w-[260px]">
+    <div ref={ref} className={clsx(
+      'absolute top-full mt-1 z-50 rounded-xl p-3 shadow-xl w-[260px] border',
+      isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
+    )}>
       <div className="flex items-center justify-between mb-2">
-        <button onClick={() => setViewMonth(m => subMonths(m, 1))} className="text-gray-400 hover:text-white px-1">&larr;</button>
-        <span className="text-xs font-medium text-gray-300">{format(viewMonth, 'MMMM yyyy')}</span>
-        <button onClick={() => setViewMonth(m => addMonths(m, 1))} className="text-gray-400 hover:text-white px-1">&rarr;</button>
+        <button onClick={() => setViewMonth(m => subMonths(m, 1))} className={clsx('px-1', isLight ? 'text-gray-400 hover:text-gray-700' : 'text-gray-400 hover:text-gray-100')}>&larr;</button>
+        <span className={clsx('text-xs font-medium', isLight ? 'text-gray-700' : 'text-gray-300')}>{format(viewMonth, 'MMMM yyyy')}</span>
+        <button onClick={() => setViewMonth(m => addMonths(m, 1))} className={clsx('px-1', isLight ? 'text-gray-400 hover:text-gray-700' : 'text-gray-400 hover:text-gray-100')}>&rarr;</button>
       </div>
       <div className="grid grid-cols-7 text-center text-[10px] text-gray-500 mb-1">
         {['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map(d => <span key={d}>{d}</span>)}
@@ -1035,9 +1048,13 @@ function WeekPicker({ currentWeekStart, onSelect, onClose }: {
               }}
               className={clsx(
                 'text-[11px] py-1 rounded transition-colors',
-                isSelected ? 'bg-neon-red/30 text-white font-bold' :
-                isCurrent ? 'bg-surface-600 text-gray-300' :
-                inMonth ? 'text-gray-400 hover:bg-surface-700' : 'text-gray-600 hover:bg-surface-700',
+                isSelected
+                  ? isLight ? 'bg-gray-900/10 text-gray-900 font-bold' : 'bg-gray-400/20 text-gray-100 font-bold'
+                  : isCurrent
+                    ? isLight ? 'bg-gray-100 text-gray-700' : 'bg-surface-600 text-gray-300'
+                    : inMonth
+                      ? isLight ? 'text-gray-600 hover:bg-gray-100' : 'text-gray-400 hover:bg-surface-700'
+                      : isLight ? 'text-gray-300 hover:bg-gray-50' : 'text-gray-600 hover:bg-surface-700',
               )}
             >
               {format(day, 'd')}
@@ -1050,7 +1067,10 @@ function WeekPicker({ currentWeekStart, onSelect, onClose }: {
           onSelect(format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd'))
           onClose()
         }}
-        className="mt-2 w-full text-[11px] text-gray-400 hover:text-white py-1 bg-surface-700 rounded"
+        className={clsx(
+          'mt-2 w-full text-[11px] py-1 rounded transition-colors',
+          isLight ? 'text-gray-500 hover:text-gray-800 bg-gray-100 hover:bg-gray-200' : 'text-gray-400 hover:text-gray-100 bg-surface-700',
+        )}
       >
         This week
       </button>
@@ -1066,6 +1086,8 @@ function MonthPicker({ current, onSelect, onClose }: {
   onSelect: (d: Date) => void
   onClose: () => void
 }) {
+  const { theme } = useTheme()
+  const isLight = theme === 'light'
   const ref = useRef<HTMLDivElement>(null)
   const [viewYear, setViewYear] = useState(current.getFullYear())
   const nowMonth = new Date().getMonth()
@@ -1080,11 +1102,14 @@ function MonthPicker({ current, onSelect, onClose }: {
   }, [onClose])
 
   return (
-    <div ref={ref} className="absolute top-full mt-1 z-50 bg-surface-800 border border-surface-600 rounded-xl p-3 shadow-xl w-[220px]">
+    <div ref={ref} className={clsx(
+      'absolute top-full mt-1 z-50 rounded-xl p-3 shadow-xl w-[220px] border',
+      isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
+    )}>
       <div className="flex items-center justify-between mb-2">
-        <button onClick={() => setViewYear(y => y - 1)} className="text-gray-400 hover:text-white px-1">&larr;</button>
-        <span className="text-xs font-medium text-gray-300">{viewYear}</span>
-        <button onClick={() => setViewYear(y => y + 1)} className="text-gray-400 hover:text-white px-1">&rarr;</button>
+        <button onClick={() => setViewYear(y => y - 1)} className={clsx('px-1', isLight ? 'text-gray-400 hover:text-gray-700' : 'text-gray-400 hover:text-gray-100')}>&larr;</button>
+        <span className={clsx('text-xs font-medium', isLight ? 'text-gray-700' : 'text-gray-300')}>{viewYear}</span>
+        <button onClick={() => setViewYear(y => y + 1)} className={clsx('px-1', isLight ? 'text-gray-400 hover:text-gray-700' : 'text-gray-400 hover:text-gray-100')}>&rarr;</button>
       </div>
       <div className="grid grid-cols-3 gap-1">
         {MONTH_NAMES.map((name, i) => {
@@ -1096,9 +1121,11 @@ function MonthPicker({ current, onSelect, onClose }: {
               onClick={() => { onSelect(new Date(viewYear, i, 1)); onClose() }}
               className={clsx(
                 'text-[11px] py-1.5 rounded transition-colors',
-                isSelected ? 'bg-neon-red/30 text-white font-bold' :
-                isCurrent ? 'bg-surface-600 text-gray-300' :
-                'text-gray-400 hover:bg-surface-700',
+                isSelected
+                  ? isLight ? 'bg-gray-900/10 text-gray-900 font-bold' : 'bg-gray-400/20 text-gray-100 font-bold'
+                  : isCurrent
+                    ? isLight ? 'bg-gray-100 text-gray-700' : 'bg-surface-600 text-gray-300'
+                    : isLight ? 'text-gray-600 hover:bg-gray-100' : 'text-gray-400 hover:bg-surface-700',
               )}
             >
               {name}
@@ -1108,7 +1135,10 @@ function MonthPicker({ current, onSelect, onClose }: {
       </div>
       <button
         onClick={() => { onSelect(new Date(nowYear, nowMonth, 1)); onClose() }}
-        className="mt-2 w-full text-[11px] text-gray-400 hover:text-white py-1 bg-surface-700 rounded"
+        className={clsx(
+          'mt-2 w-full text-[11px] py-1 rounded transition-colors',
+          isLight ? 'text-gray-500 hover:text-gray-800 bg-gray-100 hover:bg-gray-200' : 'text-gray-400 hover:text-gray-100 bg-surface-700',
+        )}
       >
         This month
       </button>
@@ -1249,55 +1279,72 @@ export default function CalendarPage() {
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       {/* Calendar header */}
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Calendar</h2>
-        {streakData && (streakData.current_streak > 0 || streakData.longest_streak > 0) && (
-          <div className="flex items-center gap-2">
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-bold tracking-tight">Calendar</h2>
+          <div className="flex items-center gap-3 relative">
+            <button onClick={() => setCurrentMonth(m => subMonths(m, 1))} className={clsx('px-3 py-1 rounded text-sm transition-colors', isLight ? 'bg-white border border-gray-300 hover:bg-gray-50 text-gray-600' : 'bg-surface-700 hover:bg-surface-600')}>&larr;</button>
+            <button
+              onClick={() => setShowMonthPicker(v => !v)}
+              className={clsx('min-w-[140px] text-center px-2 py-1 rounded text-sm transition-colors', isLight ? 'text-gray-700 hover:text-gray-900 bg-white border border-gray-300 hover:bg-gray-50' : 'text-gray-300 hover:text-gray-100 bg-surface-700 hover:bg-surface-600')}
+            >
+              {format(currentMonth, 'MMMM yyyy')}
+            </button>
+            <button onClick={() => setCurrentMonth(m => addMonths(m, 1))} className={clsx('px-3 py-1 rounded text-sm transition-colors', isLight ? 'bg-white border border-gray-300 hover:bg-gray-50 text-gray-600' : 'bg-surface-700 hover:bg-surface-600')}>&rarr;</button>
+            {showMonthPicker && (
+              <MonthPicker
+                current={currentMonth}
+                onSelect={setCurrentMonth}
+                onClose={() => setShowMonthPicker(false)}
+              />
+            )}
+          </div>
+        </div>
+        {/* Streak badges */}
+        {streakData && (streakData.current_streak > 0 || streakData.longest_streak > 0 || streakData.current_week_streak > 0 || streakData.longest_week_streak > 0) && (
+          <div className="flex items-center gap-2 flex-wrap">
             {streakData.current_streak > 0 && (
-              <div className="flex items-center gap-1 bg-surface-800 border border-surface-600 rounded px-2 py-1" title="Current streak — consecutive days with activities">
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-neon-red shrink-0"><path d="M8 1C6.5 4 4 5.5 4 8.5a4 4 0 008 0C12 5.5 9.5 4 8 1z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                <span className="text-xs font-bold text-neon-red">{streakData.current_streak}</span>
+              <div className={clsx('flex items-center gap-1 border rounded-lg px-2.5 py-1', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')} title="Current streak — consecutive days with activities">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={clsx('shrink-0', isLight ? 'text-gray-700' : 'text-gray-300')}><circle cx="10" cy="3" r="1.5" fill="currentColor" stroke="none" /><path d="M5 7l3-1.5 2 2.5 2-1M4 10l3 1 1.5-2M6 12.5l1 2.5M9.5 10l1 5" /></svg>
+                <span className={clsx('text-xs font-bold', isLight ? 'text-gray-800' : 'text-gray-200')}>{streakData.current_streak}</span>
                 <span className="text-[10px] text-gray-500">day{streakData.current_streak !== 1 ? 's' : ''}</span>
               </div>
             )}
             {streakData.longest_streak > 0 && (
-              <div className="flex items-center gap-1 bg-surface-800 border border-surface-600 rounded px-2 py-1" title={`Longest streak: ${streakData.longest_streak_start} to ${streakData.longest_streak_end}`}>
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-neon-yellow shrink-0"><path d="M4 2h8l-1 5h2l-5 7 1-4H5.5z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                <span className="text-xs font-bold text-neon-yellow">{streakData.longest_streak}</span>
-                <span className="text-[10px] text-gray-500">best</span>
+              <div className={clsx('flex items-center gap-1 border rounded-lg px-2.5 py-1', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')} title={`Longest day streak: ${streakData.longest_streak_start} to ${streakData.longest_streak_end}`}>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className={clsx('shrink-0', isLight ? 'text-amber-600' : 'text-amber-400')}><path d="M9 1.5L4 9h4l-1 5.5L12 7H8z" fill="currentColor" /></svg>
+                <span className={clsx('text-xs font-bold', isLight ? 'text-amber-600' : 'text-amber-400')}>{streakData.longest_streak}</span>
+                <span className="text-[10px] text-gray-500">best days</span>
+              </div>
+            )}
+            {streakData.current_week_streak > 0 && (
+              <div className={clsx('flex items-center gap-1 border rounded-lg px-2.5 py-1', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')} title="Current streak — consecutive weeks with activities">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={clsx('shrink-0', isLight ? 'text-gray-700' : 'text-gray-300')}><circle cx="10" cy="3" r="1.5" fill="currentColor" stroke="none" /><path d="M5 7l3-1.5 2 2.5 2-1M4 10l3 1 1.5-2M6 12.5l1 2.5M9.5 10l1 5" /></svg>
+                <span className={clsx('text-xs font-bold', isLight ? 'text-gray-800' : 'text-gray-200')}>{streakData.current_week_streak}</span>
+                <span className="text-[10px] text-gray-500">wk{streakData.current_week_streak !== 1 ? 's' : ''}</span>
+              </div>
+            )}
+            {streakData.longest_week_streak > 0 && (
+              <div className={clsx('flex items-center gap-1 border rounded-lg px-2.5 py-1', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')} title={`Longest week streak: ${streakData.longest_week_streak_start} to ${streakData.longest_week_streak_end}`}>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className={clsx('shrink-0', isLight ? 'text-amber-600' : 'text-amber-400')}><path d="M9 1.5L4 9h4l-1 5.5L12 7H8z" fill="currentColor" /></svg>
+                <span className={clsx('text-xs font-bold', isLight ? 'text-amber-600' : 'text-amber-400')}>{streakData.longest_week_streak}</span>
+                <span className="text-[10px] text-gray-500">best wks</span>
               </div>
             )}
           </div>
         )}
-        <div className="flex items-center gap-3 relative">
-          <button onClick={() => setCurrentMonth(m => subMonths(m, 1))} className="bg-surface-700 hover:bg-surface-600 px-3 py-1 rounded text-sm">&larr;</button>
-          <button
-            onClick={() => setShowMonthPicker(v => !v)}
-            className="text-gray-300 hover:text-white min-w-[140px] text-center bg-surface-700 hover:bg-surface-600 px-2 py-1 rounded text-sm transition-colors"
-          >
-            {format(currentMonth, 'MMMM yyyy')}
-          </button>
-          <button onClick={() => setCurrentMonth(m => addMonths(m, 1))} className="bg-surface-700 hover:bg-surface-600 px-3 py-1 rounded text-sm">&rarr;</button>
-          {showMonthPicker && (
-            <MonthPicker
-              current={currentMonth}
-              onSelect={setCurrentMonth}
-              onClose={() => setShowMonthPicker(false)}
-            />
-          )}
-        </div>
       </div>
 
       {/* Calendar grid */}
       <div className="grid grid-cols-7 gap-1" key={format(currentMonth, 'yyyy-MM')} style={{ animation: 'fadeIn 200ms ease-out' }}>
         {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(d => (
-          <div key={d} className="text-center text-xs text-gray-500 py-1">{d}</div>
+          <div key={d} className={clsx('text-center text-xs py-1 font-medium', isLight ? 'text-gray-400' : 'text-gray-500')}>{d}</div>
         ))}
 
         {activitiesLoading ? (
           <>
             {Array.from({ length: 35 }).map((_, i) => (
-              <div key={i} className="min-h-[120px] rounded-lg bg-surface-800 border border-surface-600 animate-pulse">
+              <div key={i} className={clsx('min-h-[120px] rounded-lg border animate-pulse', isLight ? 'bg-gray-100 border-gray-200' : 'bg-surface-800 border-surface-600')}>
                 <div className="p-2">
                   <div className="h-3 w-4 bg-surface-600 rounded mb-2" />
                   <div className="space-y-1">
@@ -1364,7 +1411,7 @@ export default function CalendarPage() {
               })
 
             return (
-              <div key={`week-${idx}`} className="col-span-7 flex items-center justify-end gap-3 px-2 py-0.5">
+              <div key={`week-${idx}`} className={clsx('col-span-7 flex items-center justify-end gap-3 px-3 py-1 rounded-lg', isLight ? 'bg-gray-50/80' : 'bg-surface-800/50')}>
                 {weeklyGoalProgress.map((g: Record<string, unknown>) => {
                   const sport = g.sport_type as string
                   const color = sport === '__all__' ? '#9ca3af' : getSportColor(sport)
@@ -1372,7 +1419,7 @@ export default function CalendarPage() {
                   return (
                     <div key={g.id as number} className="flex items-center gap-1" title={`${sport === '__all__' ? 'All' : sport}: ${(g.current_value as number).toFixed(1)} / ${g.target_value as number} ${(g.metric as string).replace('_', ' ')} (${(g.percentage as number).toFixed(0)}%)`}>
                       <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                      <div className="w-16 h-1.5 bg-surface-700 rounded-full overflow-hidden">
+                      <div className={clsx('w-16 h-1.5 rounded-full overflow-hidden', isLight ? 'bg-gray-200' : 'bg-surface-700')}>
                         <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: (g.percentage as number) >= 100 ? '#22c55e' : color }} />
                       </div>
                       <span className="text-[9px] font-mono" style={{ color: (g.percentage as number) >= 100 ? '#22c55e' : '#6b7280' }}>
@@ -1414,15 +1461,24 @@ export default function CalendarPage() {
                   setDraggingSession(null)
                 }}
                 className={clsx(
-                  'relative min-h-[120px] p-2 rounded-lg border transition-colors',
+                  'relative min-h-[120px] p-2 rounded-lg border transition-all duration-150',
                   'cursor-pointer',
-                  inMonth ? 'border-surface-600 bg-surface-800' : 'border-transparent bg-surface-900/50',
-                  isToday(day) && 'border-neon-red/40',
-                  dragOverDate === dateStr ? 'border-neon-red/60 ring-2 ring-neon-red/20 bg-neon-red/[0.03]' : 'hover:border-neon-red/30',
+                  inMonth
+                    ? isLight ? 'border-gray-200 bg-white' : 'border-surface-600 bg-surface-800'
+                    : isLight ? 'border-transparent bg-gray-50/50' : 'border-transparent bg-surface-900/50',
+                  isToday(day) && (isLight ? 'ring-1 ring-gray-400/40 border-gray-300' : 'ring-1 ring-gray-500/30 border-gray-500/40'),
+                  dragOverDate === dateStr ? 'border-gray-400/60 ring-2 ring-gray-400/20 bg-gray-400/[0.03]' : 'hover:border-surface-500',
                 )}
               >
-                <div className={clsx('text-xs mb-1', inMonth ? 'text-gray-400' : 'text-gray-600')}>
-                  {format(day, 'd')}
+                <div className="flex items-center justify-between mb-1">
+                  <span className={clsx(
+                    'text-xs font-medium',
+                    isToday(day) ? (isLight ? 'bg-gray-900 text-white w-5 h-5 rounded-full flex items-center justify-center text-[10px]' : 'bg-gray-400/20 text-gray-100 w-5 h-5 rounded-full flex items-center justify-center text-[10px]')
+                      : inMonth ? (isLight ? 'text-gray-600' : 'text-gray-400')
+                      : 'text-gray-600',
+                  )}>
+                    {format(day, 'd')}
+                  </span>
                 </div>
                 {planStatus && (() => {
                   // Compute average score for sessions on this day
@@ -1452,9 +1508,9 @@ export default function CalendarPage() {
                 })()}
                 <div className="space-y-0.5">
                   {dayActivities.map((a) => (
-                    <Link key={a.id} to={`/activities/${a.id}`} onClick={e => e.stopPropagation()} className="flex items-center gap-1 group rounded px-0.5 -mx-0.5 transition-colors hover:bg-white/[0.04]">
+                    <Link key={a.id} to={`/activities/${a.id}`} onClick={e => e.stopPropagation()} className={clsx('flex items-center gap-1.5 group rounded px-1 py-0.5 -mx-1 transition-colors', isLight ? 'hover:bg-black/[0.04]' : 'hover:bg-white/[0.04]')}>
                       <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: getSportColor(a.sport_type) }} />
-                      <span className={clsx('text-[9px] text-gray-400 truncate leading-tight', isLight ? 'group-hover:text-gray-900' : 'group-hover:text-white')}>{a.name}</span>
+                      <span className={clsx('text-[10px] truncate leading-tight', isLight ? 'text-gray-500 group-hover:text-gray-900' : 'text-gray-400 group-hover:text-gray-100')}>{a.name}</span>
                     </Link>
                   ))}
                 </div>
@@ -1473,8 +1529,8 @@ export default function CalendarPage() {
                       }}
                       onDragEnd={() => { setDraggingSessionId(null); setDraggingSession(null); setDragOverDate(null) }}
                       className={clsx(
-                        'mt-0.5 text-[9px] px-1 py-0.5 rounded border border-dashed truncate cursor-grab active:cursor-grabbing',
-                        'transition-all duration-150 hover:scale-[1.03]',
+                        'mt-0.5 text-[10px] px-1.5 py-0.5 rounded border border-dashed truncate cursor-grab active:cursor-grabbing',
+                        'transition-all duration-150 hover:scale-[1.02]',
                         draggingSessionId === (s.id as number) && 'opacity-40 scale-95 rotate-1',
                       )}
                       style={{
@@ -1501,21 +1557,23 @@ export default function CalendarPage() {
         @keyframes scaleIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
       `}</style>
       <section>
-        <div className="flex items-center gap-3 mb-4">
-          <h3 className="text-lg font-semibold text-gray-300">Weekly Report</h3>
-          <ExportButton
-            url={`/api/exports/weekly-report?week_start=${weekStart}`}
-            label="Export"
-            filename={`weekly_report_${weekStart}.png`}
-          />
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <h3 className={clsx('text-lg font-semibold', isLight ? 'text-gray-800' : 'text-gray-200')}>Weekly Report</h3>
+            <ExportButton
+              url={`/api/exports/weekly-report?week_start=${weekStart}`}
+              label="Export"
+              filename={`weekly_report_${weekStart}.png`}
+            />
+          </div>
           <div className="flex items-center gap-2 relative">
             <button
               onClick={() => setWeekStart(w => format(subDays(parseISO(w), 7), 'yyyy-MM-dd'))}
-              className="bg-surface-700 hover:bg-surface-600 px-2 py-1 rounded text-sm"
+              className={clsx('px-2.5 py-1 rounded text-sm transition-colors', isLight ? 'bg-white border border-gray-300 hover:bg-gray-50 text-gray-600' : 'bg-surface-700 hover:bg-surface-600')}
             >&larr;</button>
             <button
               onClick={() => setShowWeekPicker(v => !v)}
-              className="text-sm text-gray-400 hover:text-white min-w-[140px] text-center bg-surface-700 hover:bg-surface-600 px-2 py-1 rounded transition-colors"
+              className={clsx('text-sm min-w-[140px] text-center px-2 py-1 rounded transition-colors', isLight ? 'text-gray-700 hover:text-gray-900 bg-white border border-gray-300 hover:bg-gray-50' : 'text-gray-300 hover:text-gray-100 bg-surface-700 hover:bg-surface-600')}
             >
               {current?.week_start ?? weekStart}
             </button>
@@ -1525,7 +1583,7 @@ export default function CalendarPage() {
                 return next > thisWeekStart ? thisWeekStart : next
               })}
               disabled={isCurrentWeek}
-              className="bg-surface-700 hover:bg-surface-600 px-2 py-1 rounded text-sm disabled:opacity-30"
+              className={clsx('px-2.5 py-1 rounded text-sm transition-colors disabled:opacity-30', isLight ? 'bg-white border border-gray-300 hover:bg-gray-50 text-gray-600' : 'bg-surface-700 hover:bg-surface-600')}
             >&rarr;</button>
             {showWeekPicker && (
               <WeekPicker
@@ -1540,12 +1598,12 @@ export default function CalendarPage() {
         {weekLoading ? (
           <div className="space-y-4 animate-pulse">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-surface-800 border border-surface-600 rounded-xl p-4 h-48" />
-              <div className="bg-surface-800 border border-surface-600 rounded-xl p-4 h-48" />
+              <div className={clsx('rounded-xl p-4 h-48 border animate-pulse', isLight ? 'bg-gray-100 border-gray-200' : 'bg-surface-800 border-surface-600')} />
+              <div className={clsx('rounded-xl p-4 h-48 border animate-pulse', isLight ? 'bg-gray-100 border-gray-200' : 'bg-surface-800 border-surface-600')} />
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
               {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="bg-surface-800 border border-surface-600 rounded-xl p-4 h-24" />
+                <div key={i} className={clsx('rounded-xl p-4 h-24 border animate-pulse', isLight ? 'bg-gray-100 border-gray-200' : 'bg-surface-800 border-surface-600')} />
               ))}
             </div>
           </div>
@@ -1554,7 +1612,7 @@ export default function CalendarPage() {
             {/* Activities this week + Upcoming plan side by side */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Activities this week */}
-              <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
+              <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
                 <div className="text-xs text-gray-500 uppercase mb-3">Activities This Week</div>
                 {weekActivities?.items && weekActivities.items.length > 0 ? (
                   <div className="space-y-2">
@@ -1567,7 +1625,7 @@ export default function CalendarPage() {
                           className={clsx('flex items-center gap-3 px-3 py-2 rounded-lg transition-colors group', isLight ? 'hover:bg-black/[0.04]' : 'hover:bg-white/[0.04]')}
                         >
                           <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                          <span className={clsx('text-sm text-gray-300 truncate flex-1', isLight ? 'group-hover:text-gray-900' : 'group-hover:text-white')}>{a.name as string}</span>
+                          <span className={clsx('text-sm truncate flex-1', isLight ? 'text-gray-600 group-hover:text-gray-900' : 'text-gray-300 group-hover:text-gray-100')}>{a.name as string}</span>
                           <span className="text-xs text-gray-500 shrink-0">{a.sport_type as string}</span>
                           {a.distance_km != null && (
                             <span className="text-xs font-mono shrink-0" style={{ color }}>{(a.distance_km as number).toFixed(1)} km</span>
@@ -1583,7 +1641,7 @@ export default function CalendarPage() {
                     })}
                   </div>
                 ) : (
-                  <div className="text-sm text-gray-600">No activities yet</div>
+                  <div className={clsx('text-sm', isLight ? 'text-gray-400' : 'text-gray-600')}>No activities yet</div>
                 )}
               </div>
 
@@ -1611,7 +1669,7 @@ export default function CalendarPage() {
 
             {/* Goal Progress */}
             {goalProgressData?.goals && goalProgressData.goals.length > 0 && (
-              <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
+              <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
                 <div className="text-xs text-gray-500 uppercase mb-3">Goal Progress</div>
                 <div className="space-y-3.5">
                   {goalProgressData.goals.map((g: Record<string, unknown>) => {
@@ -1633,7 +1691,7 @@ export default function CalendarPage() {
                             {(g.current_value as number).toFixed(1)} / {g.target_value as number} ({(g.percentage as number).toFixed(0)}%)
                           </span>
                         </div>
-                        <div className="h-1.5 bg-surface-700 rounded-full overflow-hidden">
+                        <div className={clsx('h-1.5 rounded-full overflow-hidden', isLight ? 'bg-gray-200' : 'bg-surface-700')}>
                           <div
                             className="h-full rounded-full transition-all duration-500"
                             style={{ width: `${pct}%`, backgroundColor: isComplete ? '#22c55e' : color }}
@@ -1648,7 +1706,7 @@ export default function CalendarPage() {
 
             {/* HR Zone Distribution */}
             {current.hr_zone_distribution && Object.values(current.hr_zone_distribution).some((v: unknown) => (v as number) > 0) && (
-              <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
+              <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
                 <div className="text-xs text-gray-500 uppercase mb-3">HR Zone Distribution</div>
                 <div className="flex gap-0.5 h-8 rounded overflow-hidden">
                   {[1, 2, 3, 4, 5].map(z => {
@@ -1712,7 +1770,7 @@ export default function CalendarPage() {
 
       {/* Toast */}
       {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-surface-700 border border-surface-600 text-sm text-gray-200 px-4 py-2 rounded-lg shadow-xl animate-[scaleIn_150ms_ease-out]">
+        <div className={clsx('fixed bottom-6 left-1/2 -translate-x-1/2 z-50 text-sm px-4 py-2 rounded-lg shadow-xl border animate-[scaleIn_150ms_ease-out]', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600 text-gray-200')}>
           {toast}
         </div>
       )}

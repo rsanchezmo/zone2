@@ -37,6 +37,16 @@ export default function WorkoutsPage() {
   const updateTemplate = useUpdateWorkoutTemplate()
   const deleteTemplate = useDeleteWorkoutTemplate()
 
+  const cardClass = clsx(
+    'rounded-xl border',
+    isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
+  )
+
+  const inputClass = clsx(
+    'w-full border rounded-lg px-3 py-2.5 text-sm',
+    isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600 text-gray-200',
+  )
+
   function resetForm() {
     setName('')
     setSportType('Run')
@@ -73,11 +83,16 @@ export default function WorkoutsPage() {
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Workout Templates</h1>
+        <h1 className={clsx('text-2xl font-bold', isLight ? 'text-gray-900' : 'text-white')}>Workout Templates</h1>
         {!showBuilder && (
           <button
             onClick={() => { resetForm(); setShowBuilder(true) }}
-            className="bg-neon-cyan/20 text-neon-cyan border border-neon-cyan/30 rounded-lg px-4 py-2 text-sm hover:bg-neon-cyan/30 transition-colors"
+            className={clsx(
+              'border rounded-lg px-4 py-2 text-sm transition-colors',
+              isLight
+                ? 'bg-gray-900 text-white border-gray-900 hover:bg-gray-800'
+                : 'bg-white/10 text-gray-300 border-white/20 hover:bg-white/15',
+            )}
           >
             + New Workout
           </button>
@@ -96,7 +111,7 @@ export default function WorkoutsPage() {
               className="text-xs rounded-full px-3 py-1.5 border transition-all"
               style={{
                 borderColor: active ? color : `${color}30`,
-                color: active ? '#fff' : color,
+                color: active ? (isLight ? '#fff' : '#fff') : color,
                 backgroundColor: active ? `${color}30` : 'transparent',
               }}
             >
@@ -108,8 +123,8 @@ export default function WorkoutsPage() {
 
       {/* Builder form */}
       {showBuilder && (
-        <div className="bg-surface-800 border border-surface-600 rounded-xl p-5 space-y-4">
-          <div className="text-sm font-medium text-gray-300">
+        <div className={clsx(cardClass, 'p-5 space-y-4')}>
+          <div className={clsx('text-sm font-medium', isLight ? 'text-gray-700' : 'text-gray-300')}>
             {editingTemplate ? 'Edit Workout' : 'New Workout'}
           </div>
 
@@ -119,14 +134,14 @@ export default function WorkoutsPage() {
               <input
                 type="text" placeholder="e.g. Tempo 5x1km"
                 value={name} onChange={e => setName(e.target.value)}
-                className="w-full bg-surface-700 border border-surface-600 rounded-lg px-3 py-2.5 text-sm"
+                className={inputClass}
               />
             </div>
             <div>
               <label className="text-xs text-gray-500 mb-1 block">Sport Type</label>
               <select
                 value={sportType} onChange={e => setSportType(e.target.value)}
-                className="w-full bg-surface-700 border border-surface-600 rounded-lg px-3 py-2.5 text-sm"
+                className={inputClass}
                 style={{ color: getSportColor(sportType) }}
               >
                 {Object.keys(SPORT_COLORS_HEX).map(s => (
@@ -142,7 +157,7 @@ export default function WorkoutsPage() {
             <textarea
               placeholder="Optional description..."
               value={description} onChange={e => setDescription(e.target.value)}
-              className="w-full bg-surface-700 border border-surface-600 rounded-lg px-3 py-2 text-sm"
+              className={inputClass}
               rows={2}
             />
           </div>
@@ -160,13 +175,21 @@ export default function WorkoutsPage() {
             <button
               onClick={handleSave}
               disabled={!name.trim() || segments.length === 0}
-              className="flex-1 bg-neon-cyan/20 text-neon-cyan border border-neon-cyan/30 rounded py-2 text-sm hover:bg-neon-cyan/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className={clsx(
+                'flex-1 border rounded py-2 text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed',
+                isLight
+                  ? 'bg-gray-900 text-white border-gray-900 hover:bg-gray-800'
+                  : 'bg-white/10 text-gray-300 border-white/20 hover:bg-white/15',
+              )}
             >
               {editingTemplate ? 'Save Changes' : 'Create Template'}
             </button>
             <button
               onClick={resetForm}
-              className={clsx('flex-1 bg-surface-700 rounded py-2 text-sm text-gray-400', isLight ? 'hover:text-gray-700' : 'hover:text-gray-200')}
+              className={clsx(
+                'flex-1 rounded py-2 text-sm transition-colors',
+                isLight ? 'bg-gray-100 text-gray-500 hover:text-gray-700' : 'bg-surface-700 text-gray-400 hover:text-gray-200',
+              )}
             >
               Cancel
             </button>
@@ -176,11 +199,24 @@ export default function WorkoutsPage() {
 
       {/* Template list */}
       {isLoading ? (
-        <div className="text-sm text-gray-500">Loading...</div>
+        <div className="grid gap-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className={clsx(cardClass, 'p-4 animate-pulse')}>
+              <div className="flex items-center gap-2 mb-3">
+                <div className={clsx('h-4 w-32 rounded', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
+                <div className={clsx('h-4 w-12 rounded-full', isLight ? 'bg-gray-100' : 'bg-surface-700')} />
+              </div>
+              <div className={clsx('h-8 rounded', isLight ? 'bg-gray-100' : 'bg-surface-700')} />
+            </div>
+          ))}
+        </div>
       ) : !templates || templates.length === 0 ? (
-        <div className="bg-surface-800 border border-surface-600 rounded-xl p-8 text-center text-gray-500">
-          <div className="text-lg mb-1">No workout templates yet</div>
-          <div className="text-sm">Create your first structured workout above</div>
+        <div className={clsx(cardClass, 'p-8 text-center')}>
+          <svg className={clsx('w-10 h-10 mx-auto mb-3', isLight ? 'text-gray-300' : 'text-gray-600')} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+          </svg>
+          <div className={clsx('text-sm mb-1', isLight ? 'text-gray-500' : 'text-gray-500')}>No workout templates yet</div>
+          <div className={clsx('text-xs', isLight ? 'text-gray-400' : 'text-gray-600')}>Create your first structured workout above</div>
         </div>
       ) : (
         <div className="grid gap-3">
@@ -190,12 +226,12 @@ export default function WorkoutsPage() {
             return (
               <div
                 key={t.id as number}
-                className="bg-surface-800 border border-surface-600 rounded-xl p-4 transition-colors hover:border-surface-500"
+                className={clsx(cardClass, 'p-4 transition-colors', isLight ? 'hover:border-gray-300' : 'hover:border-surface-500')}
               >
                 <div className="flex items-start justify-between mb-2">
                   <div>
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="font-medium text-sm">{t.name as string}</span>
+                      <span className={clsx('font-medium text-sm', isLight ? 'text-gray-900' : 'text-gray-100')}>{t.name as string}</span>
                       <span
                         className="text-[10px] rounded-full px-2 py-0.5 border"
                         style={{ color: sColor, borderColor: `${sColor}40`, backgroundColor: `${sColor}10` }}
@@ -217,12 +253,12 @@ export default function WorkoutsPage() {
                         >Yes</button>
                         <button
                           onClick={() => setConfirmDeleteId(null)}
-                          className="text-gray-400 hover:text-gray-200 text-xs"
+                          className={clsx('text-xs', isLight ? 'text-gray-400 hover:text-gray-600' : 'text-gray-400 hover:text-gray-200')}
                         >No</button>
                       </>
                     ) : (
                       <>
-                        <button onClick={() => startEdit(t)} className="text-gray-400 hover:text-gray-200 text-xs">Edit</button>
+                        <button onClick={() => startEdit(t)} className={clsx('text-xs', isLight ? 'text-gray-400 hover:text-gray-600' : 'text-gray-400 hover:text-gray-200')}>Edit</button>
                         <button onClick={() => setConfirmDeleteId(t.id as number)} className="text-red-400 hover:text-red-300 text-xs">Delete</button>
                       </>
                     )}

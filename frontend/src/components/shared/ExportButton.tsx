@@ -36,7 +36,7 @@ export default function ExportButton({ url, label = 'Export to PNG', filename = 
         'px-3 py-1.5 rounded text-xs font-medium transition-colors',
         loading
           ? 'bg-surface-600 text-gray-500'
-          : 'bg-neon-red/20 text-neon-red hover:bg-neon-red/30'
+          : 'bg-white/10 text-gray-300 hover:bg-white/15'
       )}
     >
       {loading ? 'Exporting...' : label}

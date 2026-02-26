@@ -255,59 +255,101 @@ class StravaActivitiesCache:
         self.save_activities(activities)
     
     def sync_streams(self, strava_endpoint, activity_ids: list[int] | None = None):
-        """Sync streams for activities that don't already have them.
-        
+        """Sync streams, detail fields (description, calories, splits, best_efforts), and photos.
+
         Args:
             strava_endpoint: The StravaEndpoint instance to fetch data from
-            include_zones: Whether to fetch zones data
             activity_ids: List of activity IDs to sync. If None, syncs all activities.
         """
-        
+
         # Load all activities
         df = self.load_activities(force_reload=True)
-        
+
         if df.empty:
             print("No activities to sync")
             return
-        
+
         # Filter to specific activity IDs if provided
         if activity_ids is not None:
             df = df[df['id'].isin(activity_ids)]
-        
+
         if df.empty:
             print("No matching activities found")
             return
-        
+
+        # Detail fields we want from the detailed endpoint
+        DETAIL_FIELDS = ['description', 'calories', 'splits_metric', 'best_efforts', 'laps', 'gear', 'perceived_exertion', 'suffer_score']
+
+        # Pre-filter: only iterate activities that actually need work (recent first)
+        needs_work = []
+        for idx, activity in df.sort_values('start_date', ascending=False).iterrows():
+            has_streams = 'streams' in activity and activity['streams'] is not None
+            has_detail = 'calories' in activity and activity['calories'] is not None and not (isinstance(activity['calories'], float) and pd.isna(activity['calories']))
+            has_photos = 'photos' in activity and activity['photos'] is not None
+            photo_count = int(activity.get('total_photo_count', 0) or 0)
+            needs_photos = not has_photos and photo_count > 0
+
+            if not has_streams or not has_detail or needs_photos:
+                needs_work.append((idx, activity, has_streams, has_detail, needs_photos, photo_count))
+
+        total = len(df)
+        skipped_count = total - len(needs_work)
+        print(f"  {len(needs_work)} activities need work, {skipped_count} already complete")
+
         synced_count = 0
-        skipped_count = 0
         updated_activities = []
-        
-        for idx, activity in df.iterrows():
+        BATCH_SIZE = 50  # Save every 50 to avoid losing progress
+
+        for i, (idx, activity, has_streams, has_detail, needs_photos, photo_count) in enumerate(needs_work):
             activity_id = activity['id']
             needs_update = False
-            
-            # Check if streams already exist (look for 'streams' field)
-            has_streams = 'streams' in activity and activity['streams'] is not None
-            
+
             if not has_streams:
-                print(f"  Fetching streams for activity {activity_id}...")
+                print(f"  [{i+1}/{len(needs_work)}] Fetching streams for activity {activity_id}...")
                 streams = strava_endpoint.get_activity_streams(activity_id)
                 if streams:
                     activity['streams'] = json.dumps(streams)
                     needs_update = True
                 else:
                     print(f"    No streams found for activity {activity_id}")
-            
+
+            # TODO: re-enable detail fetching once daily rate limit allows
+            # if not has_detail:
+            #     print(f"  [{i+1}/{len(needs_work)}] Fetching detail for activity {activity_id}...")
+            #     detail = strava_endpoint.get_activity_detail(activity_id)
+            #     if detail:
+            #         for field in DETAIL_FIELDS:
+            #             val = detail.get(field)
+            #             if val is not None:
+            #                 if isinstance(val, (dict, list)):
+            #                     activity[field] = json.dumps(val)
+            #                 else:
+            #                     activity[field] = val
+            #         needs_update = True
+
+            if needs_photos:
+                print(f"  [{i+1}/{len(needs_work)}] Fetching photos for activity {activity_id} ({photo_count} photos)...")
+                photos = strava_endpoint.get_activity_photos(activity_id)
+                if photos:
+                    activity['photos'] = json.dumps(photos)
+                    needs_update = True
+
             if needs_update:
                 updated_activities.append(activity.to_dict())
                 synced_count += 1
-            else:
-                skipped_count += 1
-        
-        # Save the updated activities if any were modified
+
+            # Save in batches to avoid losing progress on rate limit / crash
+            if len(updated_activities) >= BATCH_SIZE:
+                print(f"  💾 Saving batch of {len(updated_activities)} activities...")
+                self.save_activities(updated_activities)
+                updated_activities = []
+
+        # Save remaining
+        if updated_activities:
+            print(f"  💾 Saving final batch of {len(updated_activities)} activities...")
+            self.save_activities(updated_activities)
+
         if synced_count > 0:
             print(f"✓ Synced {synced_count} activities, skipped {skipped_count} (already had data)")
-            # Save only the updated activities
-            self.save_activities(updated_activities)
         else:
             print(f"✓ All {skipped_count} activities already have the requested data")

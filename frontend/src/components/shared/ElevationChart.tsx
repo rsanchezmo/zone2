@@ -21,8 +21,8 @@ export default function ElevationChart({ data }: ElevationChartProps) {
       <AreaChart data={chartData} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
         <defs>
           <linearGradient id="elevGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="#fc0101" stopOpacity={0.3} />
-            <stop offset="95%" stopColor="#fc0101" stopOpacity={0} />
+            <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3} />
+            <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
           </linearGradient>
         </defs>
         <XAxis
@@ -48,7 +48,7 @@ export default function ElevationChart({ data }: ElevationChartProps) {
         <Area
           type="monotone"
           dataKey="altitude"
-          stroke="#fc0101"
+          stroke="#ef4444"
           fill="url(#elevGrad)"
           strokeWidth={1.5}
         />

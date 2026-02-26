@@ -11,12 +11,33 @@ export function usePolylines(sportType?: string, year?: number) {
   });
 }
 
-export function useActivities(page: number, perPage = 20, sportType?: string, year?: number) {
+export function useActivities(
+  page: number,
+  perPage = 20,
+  sportType?: string,
+  year?: number,
+  search?: string,
+  dateFrom?: string,
+  dateTo?: string,
+  sortBy?: string,
+  sortDir?: string,
+) {
   return useQuery({
-    queryKey: ['activities', page, perPage, sportType, year],
+    queryKey: ['activities', page, perPage, sportType, year, search, dateFrom, dateTo, sortBy, sortDir],
     queryFn: () =>
-      api.get('/activities', { params: { page, per_page: perPage, sport_type: sportType, year } })
-        .then(r => r.data),
+      api.get('/activities', {
+        params: {
+          page,
+          per_page: perPage,
+          sport_type: sportType,
+          year,
+          search: search || undefined,
+          date_from: dateFrom || undefined,
+          date_to: dateTo || undefined,
+          sort_by: sortBy || undefined,
+          sort_dir: sortDir || undefined,
+        },
+      }).then(r => r.data),
   });
 }
 
@@ -146,6 +167,14 @@ export function useAthleteZones() {
     queryKey: ['athlete-zones'],
     queryFn: () => api.get('/athlete/zones').then(r => r.data),
     staleTime: 1000 * 60 * 60,
+  });
+}
+
+export function useRateLimits() {
+  return useQuery({
+    queryKey: ['rate-limits'],
+    queryFn: () => api.get('/athlete/rate-limits').then(r => r.data),
+    staleTime: 1000 * 60 * 2,
   });
 }
 

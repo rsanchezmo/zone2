@@ -9,6 +9,7 @@ import {
   AreaChart, Area,
 } from 'recharts'
 import { useTheme } from '../hooks/useTheme'
+import clsx from 'clsx'
 
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -112,40 +113,57 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
-      <div className="flex items-center gap-3 flex-wrap">
-        <h2 className="text-2xl font-bold">Year in Sport</h2>
-        <ExportButton
-          url={`/api/exports/year-in-sport?year=${year}&main_sport=${mainSport}`}
-          label="Export Sport PNG"
-          filename={`year_in_sport_${year}_${mainSport}.png`}
-        />
-        <ExportButton
-          url={`/api/exports/year-in-sport?year=${year}&main_sport=${mainSport}&variant=totals`}
-          label="Export Totals PNG"
-          filename={`year_in_sport_${year}_totals.png`}
-        />
-        <select
-          value={year}
-          onChange={e => setYear(Number(e.target.value))}
-          className="bg-surface-700 border border-surface-600 rounded px-2 py-1 text-sm"
-        >
-          {(years ?? []).map((y: number) => (
-            <option key={y} value={y}>{y}</option>
-          ))}
-        </select>
-        <select
-          value={mainSport}
-          onChange={e => setMainSport(e.target.value)}
-          className="bg-surface-700 border border-surface-600 rounded px-2 py-1 text-sm"
-        >
-          {(sportTypes ?? []).map((s: string) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-3">
+          <h2 className={clsx('text-2xl font-bold', isLight ? 'text-gray-900' : 'text-white')}>Year in Sport</h2>
+          <select
+            value={year}
+            onChange={e => setYear(Number(e.target.value))}
+            className={clsx(
+              'border rounded px-2 py-1 text-sm appearance-none cursor-pointer',
+              isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600 text-gray-200',
+            )}
+          >
+            {(years ?? []).map((y: number) => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+          <select
+            value={mainSport}
+            onChange={e => setMainSport(e.target.value)}
+            className={clsx(
+              'border rounded px-2 py-1 text-sm appearance-none cursor-pointer',
+              isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600 text-gray-200',
+            )}
+          >
+            {(sportTypes ?? []).map((s: string) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <ExportButton
+            url={`/api/exports/year-in-sport?year=${year}&main_sport=${mainSport}`}
+            label="Export Sport PNG"
+            filename={`year_in_sport_${year}_${mainSport}.png`}
+          />
+          <ExportButton
+            url={`/api/exports/year-in-sport?year=${year}&main_sport=${mainSport}&variant=totals`}
+            label="Export Totals PNG"
+            filename={`year_in_sport_${year}_totals.png`}
+          />
+        </div>
       </div>
 
       {yearLoading ? (
-        <div className="text-gray-500">Loading...</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
+          {Array.from({ length: 10 }).map((_, i) => (
+            <div key={i} className={clsx('rounded-xl p-4 border animate-pulse', isLight ? 'bg-gray-100 border-gray-200' : 'bg-surface-800 border-surface-600')}>
+              <div className={clsx('h-3 w-16 rounded mb-3', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
+              <div className={clsx('h-7 w-20 rounded', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
+            </div>
+          ))}
+        </div>
       ) : yearData ? (
         <>
           {/* Main sport stat cards */}
@@ -160,27 +178,27 @@ export default function DashboardPage() {
             <StatCard
               label="All Sports"
               value={yearData.all_sports.total_activities}
-              color="text-neon-cyan"
+              color="text-blue-400"
               delta={yearDelta('all_sports', 'total_activities')}
             />
             <StatCard
               label="Total Distance"
               value={yearData.all_sports.total_distance_km?.toFixed(1)}
               unit="km"
-              color="text-neon-cyan"
+              color="text-blue-400"
               delta={yearDelta('all_sports', 'total_distance_km')}
             />
             <StatCard
               label="Total Time"
               value={yearData.all_sports.total_time_hours?.toFixed(1)}
               unit="hrs"
-              color="text-neon-cyan"
+              color="text-blue-400"
               delta={yearDelta('all_sports', 'total_time_hours')}
             />
           </div>
 
           {/* Monthly Distance Chart */}
-          <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
+          <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
             <div className="flex items-center justify-between mb-3">
               <div className="text-xs text-gray-500 uppercase">Monthly Distance — {mainSport}</div>
               {comp && (
@@ -220,7 +238,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Monthly Activities Chart */}
-          <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
+          <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
             <div className="flex items-center justify-between mb-3">
               <div className="text-xs text-gray-500 uppercase">Monthly Activities — {mainSport}</div>
               {comp && (
@@ -261,7 +279,7 @@ export default function DashboardPage() {
 
           {/* Cumulative Distance */}
           {cumulativeChartData.length > 0 && (
-            <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
+            <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
               <div className="flex items-center justify-between mb-3">
                 <div className="text-xs text-gray-500 uppercase">Cumulative Distance — {mainSport}</div>
                 <div className="flex items-center gap-4">
@@ -356,7 +374,7 @@ export default function DashboardPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Activities per sport bar chart */}
             {sportPieData.length > 0 && (
-              <div className="bg-surface-800 border border-surface-600 rounded-xl p-4 flex flex-col">
+              <div className={clsx('rounded-xl p-4 border flex flex-col', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
                 <div className="text-xs text-gray-500 uppercase mb-3">Activities per Sport</div>
                 <div className="space-y-2 flex-1 flex flex-col justify-center">
                   {sportPieData.map(d => {
@@ -365,7 +383,7 @@ export default function DashboardPage() {
                     return (
                       <div key={d.name} className="flex items-center gap-3">
                         <span className="text-xs text-gray-400 w-24 shrink-0 text-right truncate">{d.name}</span>
-                        <div className="flex-1 h-5 bg-surface-700 rounded overflow-hidden">
+                        <div className={clsx('flex-1 h-5 rounded overflow-hidden', isLight ? 'bg-gray-100' : 'bg-surface-700')}>
                           <div
                             className="h-full rounded flex items-center px-2"
                             style={{ width: `${Math.max(pct, 8)}%`, backgroundColor: d.color, opacity: 0.7 }}
@@ -381,7 +399,7 @@ export default function DashboardPage() {
             )}
 
             {/* Records */}
-            <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
+            <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
               <div className="text-xs text-gray-500 uppercase mb-3">Records — {mainSport}</div>
               <div className="space-y-3">
                 {yearData.main_sport.longest_activity_km > 0 && (

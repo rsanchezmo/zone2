@@ -19,22 +19,22 @@ interface ThemeContextValue {
 }
 
 const DARK_COLORS: ThemeColors = {
-  tooltipBg: '#1a1a2e',
-  tooltipBorder: '#333',
+  tooltipBg: '#0a0a0a',
+  tooltipBorder: '#1a1a1a',
   tickFill: '#9ca3af',
   tickFillSecondary: '#6b7280',
-  gridStroke: 'rgba(255,255,255,0.05)',
-  mapBg: '#0a0a0f',
+  gridStroke: 'rgba(255,255,255,0.04)',
+  mapBg: '#000',
   labelColor: '#9ca3af',
 }
 
 const LIGHT_COLORS: ThemeColors = {
-  tooltipBg: '#ffffff',
-  tooltipBorder: '#d1d5db',
+  tooltipBg: '#fff',
+  tooltipBorder: '#e5e5e5',
   tickFill: '#6b7280',
   tickFillSecondary: '#374151',
-  gridStroke: 'rgba(0,0,0,0.08)',
-  mapBg: '#f5f5f7',
+  gridStroke: 'rgba(0,0,0,0.06)',
+  mapBg: '#fafafa',
   labelColor: '#6b7280',
 }
 

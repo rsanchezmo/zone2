@@ -487,10 +487,6 @@ def _slice_intervals_by_velocity(
 
     # --- Post-work segments (cooldown etc.) ---
     pos = matched_fast[-1]["i_end"] + 1
-    # Skip the last recovery gap before cooldown segments
-    # Find the next non-slow phase after last interval
-    while pos < len(streams) and streams[pos].get("velocity_smooth", 0) < slow_thresh:
-        pos += 1
 
     for seg_idx in range(work_idx + 1, len(segments)):
         seg = segments[seg_idx]
@@ -732,9 +728,13 @@ def _compute_segmented_score(
 
         # Compute actual distance/duration from stream points
         if len(pts) >= 2:
-            actual_dist_m = pts[-1].get("distance", 0) - pts[0].get("distance", 0)
+            start_m = pts[0].get("distance", 0)
+            end_m = pts[-1].get("distance", 0)
+            actual_dist_m = end_m - start_m
             actual_time_s = pts[-1].get("time", 0) - pts[0].get("time", 0)
         else:
+            start_m = 0
+            end_m = 0
             actual_dist_m = 0
             actual_time_s = 0
 
@@ -746,6 +746,8 @@ def _compute_segmented_score(
             "label": seg.get("label"),
             "distance_km": seg.get("distance_km"),
             "duration_mins": seg.get("duration_mins"),
+            "start_km": round(start_m / 1000, 3),
+            "end_km": round(end_m / 1000, 3),
             "actual_distance_km": round(actual_dist_m / 1000, 3),
             "actual_duration_mins": round(actual_time_s / 60, 2),
             **score_data,

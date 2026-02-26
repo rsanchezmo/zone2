@@ -288,7 +288,20 @@ class StravaEndpoint:
             return {}
 
         return response.json()
-    
+
+    def get_rate_limits(self) -> dict:
+        """Check Strava API rate limit status via a lightweight /athlete call."""
+        headers = self.__get_headers()
+        response = requests.get(StravaEndpoint.__ATHLETE_URL, headers=headers)
+        limit = response.headers.get('X-RateLimit-Limit', '200,2000')
+        usage = response.headers.get('X-RateLimit-Usage', '0,0')
+        limit_parts = limit.split(',')
+        usage_parts = usage.split(',')
+        return {
+            'fifteen_min': {'limit': int(limit_parts[0]), 'usage': int(usage_parts[0])},
+            'daily': {'limit': int(limit_parts[1]), 'usage': int(usage_parts[1])},
+        }
+
     def get_user_gender(self) -> str | None:
         athlete = self.get_athlete()
         return athlete.get('sex')
@@ -332,6 +345,36 @@ class StravaEndpoint:
             logger.error("Failed to fetch athlete zones: %s", response.text)
             return {}
         
+        return response.json()
+
+    def get_activity_detail(self, activity_id: int | str) -> dict | None:
+        """
+        Fetch detailed info for a single activity (includes description, gear, etc.).
+        """
+        headers = self.__get_headers()
+        response = requests.get(
+            f"{StravaEndpoint.__ACTIVITY_URL}/{activity_id}",
+            headers=headers,
+        )
+        if response.status_code != 200:
+            print(f"Failed to fetch detail for activity {activity_id}: {response.text}")
+            return None
+        return response.json()
+
+    def get_activity_photos(self, activity_id: int | str, size: int = 600) -> list[dict]:
+        """
+        Fetch photos for a single activity.
+        Returns a list of photo objects with URLs.
+        """
+        headers = self.__get_headers()
+        response = requests.get(
+            f"{StravaEndpoint.__ACTIVITY_URL}/{activity_id}/photos",
+            headers=headers,
+            params={'photo_sources': 'true', 'size': size},
+        )
+        if response.status_code != 200:
+            print(f"Failed to fetch photos for activity {activity_id}: {response.text}")
+            return []
         return response.json()
 
     def get_activity_streams(self, activity_id: int | str) -> list[dict]:

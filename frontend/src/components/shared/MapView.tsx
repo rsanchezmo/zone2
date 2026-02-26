@@ -100,7 +100,7 @@ interface MapViewProps {
   gradientSlowLabel?: string
 }
 
-export default function MapView({ positions, color = '#fc0101', showMarkers = true, kmMarkers, velocities, invertGradient = true, gradientFastLabel, gradientSlowLabel }: MapViewProps) {
+export default function MapView({ positions, color = '#ef4444', showMarkers = true, kmMarkers, velocities, invertGradient = true, gradientFastLabel, gradientSlowLabel }: MapViewProps) {
   const { theme, colors } = useTheme()
   const isLight = theme === 'light'
   const [expanded, setExpanded] = useState(false)
@@ -118,7 +118,7 @@ export default function MapView({ positions, color = '#fc0101', showMarkers = tr
     return () => window.removeEventListener('keydown', onKey)
   }, [expanded])
 
-  // Pre-compute gradient segments
+  // Pre-compute gradient segments with smoothed velocities
   const gradientSegments = useMemo(() => {
     if (!hasVelocities || !velocities) return []
     // Filter out zero/near-zero velocities for percentile calc
@@ -130,12 +130,30 @@ export default function MapView({ positions, color = '#fc0101', showMarkers = tr
     const range = p95 - p5
     if (range <= 0) return []
 
+    // Smooth velocities with a moving average window to reduce GPS noise
+    const windowSize = Math.max(5, Math.min(25, Math.floor(velocities.length / 80)))
+    const halfWin = Math.floor(windowSize / 2)
+    const smoothed = new Float64Array(velocities.length)
+    for (let i = 0; i < velocities.length; i++) {
+      let sum = 0
+      let count = 0
+      const lo = Math.max(0, i - halfWin)
+      const hi = Math.min(velocities.length - 1, i + halfWin)
+      for (let j = lo; j <= hi; j++) {
+        if (velocities[j] > 0.3) {
+          sum += velocities[j]
+          count++
+        }
+      }
+      smoothed[i] = count > 0 ? sum / count : velocities[i]
+    }
+
     const segments: { positions: [number, number][]; color: string }[] = []
     // Sample every N points based on total count to keep segment count reasonable
     const step = Math.max(1, Math.floor(positions.length / 800))
     for (let i = 0; i < positions.length - step; i += step) {
       const end = Math.min(i + step, positions.length - 1)
-      const vel = velocities[i]
+      const vel = smoothed[i]
       // Normalize: 0 = slowest, 1 = fastest
       let normalized = vel > 0.3 ? (vel - p5) / range : 0
       normalized = Math.max(0, Math.min(1, normalized))

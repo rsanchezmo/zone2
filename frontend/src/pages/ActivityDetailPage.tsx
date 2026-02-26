@@ -1,14 +1,17 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useCallback, useEffect, Component, type ReactNode } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useActivity, useAthleteZones, useSimilarActivities, useActivityScore } from '../api/hooks'
 import StatCard from '../components/shared/StatCard'
 import MapView from '../components/shared/MapView'
 import type { KmMarker } from '../components/shared/MapView'
 import StreamChart from '../components/shared/StreamChart'
+import type { ChartZone } from '../components/shared/StreamChart'
 import polyline from '@mapbox/polyline'
 import ExportButton from '../components/shared/ExportButton'
 import { getSportColor } from '../constants/sportColors'
 import { SegmentSummary, getSegmentColor, type Segment } from '../components/shared/SegmentListBuilder'
+import { useTheme } from '../hooks/useTheme'
+import clsx from 'clsx'
 
 interface StreamPoint {
   time?: number
@@ -38,6 +41,114 @@ const SPEED_SPORTS = new Set([
   'nordicski', 'snowboard', 'iceskate', 'inlineskate', 'skateboard',
   'soccer', 'basketball', 'volleyball', 'cricket', 'golf',
 ])
+
+interface StravaPhoto {
+  unique_id: string
+  urls: Record<string, string>
+  caption?: string
+  location?: [number, number]
+}
+
+function PhotoGallery({ photos }: { photos: StravaPhoto[] }) {
+  const { theme } = useTheme()
+  const isLight = theme === 'light'
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
+
+  const getUrl = (photo: StravaPhoto) => {
+    // Prefer largest available size
+    const urls = photo.urls || {}
+    return urls['600'] || urls['400'] || urls['200'] || urls['100'] || Object.values(urls)[0]
+  }
+
+  const close = useCallback(() => setLightboxIdx(null), [])
+  const prev = useCallback(() => setLightboxIdx(i => i !== null ? (i - 1 + photos.length) % photos.length : null), [photos.length])
+  const next = useCallback(() => setLightboxIdx(i => i !== null ? (i + 1) % photos.length : null), [photos.length])
+
+  // Keyboard navigation
+  useEffect(() => {
+    if (lightboxIdx === null) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close()
+      if (e.key === 'ArrowLeft') prev()
+      if (e.key === 'ArrowRight') next()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [lightboxIdx, close, prev, next])
+
+  return (
+    <>
+      <div className={clsx(
+        'grid gap-2 rounded-xl overflow-hidden',
+        photos.length === 1 ? 'grid-cols-1' : photos.length === 2 ? 'grid-cols-2' : 'grid-cols-2 md:grid-cols-3',
+      )}>
+        {photos.map((photo, idx) => (
+          <button
+            key={photo.unique_id}
+            onClick={() => setLightboxIdx(idx)}
+            className={clsx(
+              'relative overflow-hidden rounded-xl group cursor-pointer',
+              photos.length === 1 ? 'aspect-video' : 'aspect-square',
+            )}
+          >
+            <img
+              src={getUrl(photo)}
+              alt={photo.caption || `Photo ${idx + 1}`}
+              className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+              loading="lazy"
+            />
+            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
+          </button>
+        ))}
+      </div>
+
+      {/* Lightbox */}
+      {lightboxIdx !== null && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm"
+          onClick={close}
+        >
+          <button
+            onClick={(e) => { e.stopPropagation(); close() }}
+            className="absolute top-4 right-4 w-10 h-10 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white text-xl transition-colors"
+          >
+            &times;
+          </button>
+          {photos.length > 1 && (
+            <>
+              <button
+                onClick={(e) => { e.stopPropagation(); prev() }}
+                className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white text-lg transition-colors"
+              >
+                &#8249;
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); next() }}
+                className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white text-lg transition-colors"
+              >
+                &#8250;
+              </button>
+            </>
+          )}
+          <img
+            src={getUrl(photos[lightboxIdx])}
+            alt={photos[lightboxIdx].caption || ''}
+            className="max-h-[90vh] max-w-[90vw] object-contain rounded-lg shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+          {photos[lightboxIdx].caption && (
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 text-white/80 text-sm bg-black/50 px-4 py-2 rounded-lg">
+              {photos[lightboxIdx].caption}
+            </div>
+          )}
+          <div className="absolute bottom-4 right-4 text-white/50 text-xs">
+            {lightboxIdx + 1} / {photos.length}
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
 
 function getSportCategory(sportType: string | undefined): 'cycling' | 'swimming' | 'water' | 'running' | 'speed' {
   const key = (sportType ?? '').toLowerCase().replace(/\s/g, '')
@@ -248,9 +359,12 @@ function ExecutionScoreCollapsible({
   hasBreakdown: boolean
 }) {
   const [expanded, setExpanded] = useState(!isSegmented)
+  const { theme } = useTheme()
+  const isLight = theme === 'light'
+  const cardClass = clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')
 
   return (
-    <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
+    <div className={cardClass}>
       {/* Header — always visible */}
       <div
         className="flex items-center justify-between cursor-pointer select-none"
@@ -260,7 +374,7 @@ function ExecutionScoreCollapsible({
           <span className="text-xs text-gray-500 uppercase">Execution Score</span>
           <span className="text-2xl font-bold font-mono" style={{ color: sc(overall) }}>{overall}</span>
           {isSegmented && (
-            <span className="text-[10px] text-gray-500 border border-surface-600 rounded-full px-2 py-0.5">structured</span>
+            <span className={clsx('text-[10px] text-gray-500 border rounded-full px-2 py-0.5', isLight ? 'border-gray-300' : 'border-surface-600')}>structured</span>
           )}
         </div>
         <div className="flex items-center gap-3">
@@ -299,6 +413,11 @@ function ExecutionScoreCollapsible({
                 const repLabel = (ss.rep as number) > 0 ? ` #${ss.rep}` : ''
                 const headerLabel = `${isRecovery ? 'Recovery' : typeLabel}${distLabel ? ` ${distLabel}` : ''}${durLabel ? ` ${durLabel}` : ''}${repLabel}`
                 const detected = formatDetected(ss.actual_distance_km as number | null, ss.actual_duration_mins as number | null, ss.actual_pace as number | null, ss.pace_unit as string | undefined)
+                const startKm = ss.start_km as number | undefined
+                const endKm = ss.end_km as number | undefined
+                const kmRange = startKm != null && endKm != null
+                  ? `${startKm.toFixed(2)} – ${endKm.toFixed(2)} km`
+                  : null
                 const hasScore = segScore != null
 
                 return (
@@ -310,6 +429,9 @@ function ExecutionScoreCollapsible({
                           <span className="text-xs font-medium" style={{ color: segColor }}>
                             {headerLabel}
                           </span>
+                          {kmRange && (
+                            <span className="text-[10px] text-gray-500 font-mono">{kmRange}</span>
+                          )}
                           {detected && (
                             <span className="text-[10px] text-gray-500 font-mono">
                               ({detected})
@@ -335,7 +457,7 @@ function ExecutionScoreCollapsible({
                                 <span style={{ color: cfg.color }}>{cfg.icon}</span>
                                 <span className="text-gray-500">{formatGoal(key, m)}</span>
                                 <span className="text-gray-600">{'\u2192'}</span>
-                                <span className="font-mono text-gray-300">{formatActual(key, m)}</span>
+                                <span className={clsx('font-mono', isLight ? 'text-gray-700' : 'text-gray-300')}>{formatActual(key, m)}</span>
                                 <span className="font-bold font-mono" style={{ color: sc(metricScore) }}>{metricScore}</span>
                               </div>
                             )
@@ -368,12 +490,12 @@ function ExecutionScoreCollapsible({
                       <div className="flex items-center gap-3 text-xs">
                         <div className="flex-1">
                           <div className="text-[10px] text-gray-500 uppercase mb-0.5">Goal</div>
-                          <div className="font-mono text-gray-400">{formatGoal(key, m)}</div>
+                          <div className={clsx('font-mono', isLight ? 'text-gray-600' : 'text-gray-400')}>{formatGoal(key, m)}</div>
                         </div>
                         <div className="text-gray-600 text-lg">{'\u2192'}</div>
                         <div className="flex-1">
                           <div className="text-[10px] text-gray-500 uppercase mb-0.5">Actual</div>
-                          <div className="font-mono text-white">{formatActual(key, m)}</div>
+                          <div className={clsx('font-mono', isLight ? 'text-gray-900' : 'text-white')}>{formatActual(key, m)}</div>
                         </div>
                       </div>
                     </div>
@@ -388,12 +510,58 @@ function ExecutionScoreCollapsible({
   )
 }
 
+class PageErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props)
+    this.state = { error: null }
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error('ActivityDetailPage crash:', error, info.componentStack)
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="max-w-6xl mx-auto p-8">
+          <h2 className="text-xl font-bold text-red-400 mb-2">Page crashed</h2>
+          <pre className="text-sm text-gray-400 bg-surface-800 p-4 rounded-xl overflow-auto whitespace-pre-wrap">
+            {this.state.error.message}
+            {'\n'}
+            {this.state.error.stack}
+          </pre>
+          <button
+            className="mt-4 px-4 py-2 bg-surface-700 border border-surface-600 rounded-lg text-sm hover:bg-surface-600 transition-colors"
+            onClick={() => this.setState({ error: null })}
+          >
+            Try again
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 export default function ActivityDetailPage() {
+  return (
+    <PageErrorBoundary>
+      <ActivityDetailPageInner />
+    </PageErrorBoundary>
+  )
+}
+
+function ActivityDetailPageInner() {
   const { id } = useParams<{ id: string }>()
   const { data: activity, isLoading } = useActivity(Number(id))
   const { data: athleteZones } = useAthleteZones()
   const { data: similarActivities } = useSimilarActivities(Number(id))
   const { data: activityScore } = useActivityScore(Number(id))
+  const { theme } = useTheme()
+  const isLight = theme === 'light'
+
+  const cardClass = clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')
 
   const sportCategory = getSportCategory(activity?.sport_type)
   const useSpeedUnit = sportCategory === 'cycling' || sportCategory === 'speed' || sportCategory === 'water'
@@ -574,6 +742,31 @@ export default function ActivityDetailPage() {
     return counts.map(c => Math.round((c / total) * 1000) / 10)
   }, [hrZoneBounds, streamSeries.heartrate])
 
+  // Build segment zones for charts from execution score data
+  // NOTE: must be before early returns to avoid hooks-order violation
+  const segmentZones = useMemo<ChartZone[]>(() => {
+    if (!activityScore?.score) return []
+    const segScores = activityScore.score.segment_scores as { type: string; start_km?: number; end_km?: number; actual_distance_km: number; is_recovery: boolean }[] | undefined
+    if (!segScores || segScores.length === 0) return []
+
+    const typeLabels: Record<string, string> = {
+      warmup: 'Warmup', work: 'Work', recovery: 'Recovery', cooldown: 'Cooldown', rest: 'Rest',
+    }
+
+    return segScores
+      .filter(seg => seg.start_km != null && seg.end_km != null && seg.end_km > seg.start_km)
+      .map(seg => {
+        const segType = seg.is_recovery ? 'recovery' : (seg.type || 'work')
+        return {
+          x1: seg.start_km!,
+          x2: seg.end_km!,
+          color: getSegmentColor(segType),
+          label: typeLabels[segType] || segType,
+          opacity: segType === 'work' ? 0.15 : 0.08,
+        }
+      })
+  }, [activityScore])
+
   if (isLoading) return <div className="text-gray-500">Loading...</div>
   if (!activity) return <div className="text-gray-500">Activity not found</div>
 
@@ -593,7 +786,7 @@ export default function ActivityDetailPage() {
             <span className="w-2 h-2 rounded-full" style={{ backgroundColor: getSportColor(activity.sport_type) }} />
             <span style={{ color: getSportColor(activity.sport_type) }}>{activity.sport_type}</span>
           </span>
-          <span className="text-sm text-gray-400">
+          <span className={clsx('text-sm', isLight ? 'text-gray-500' : 'text-gray-400')}>
             {activity.start_date_local ? new Date(activity.start_date_local).toLocaleDateString() : ''}
           </span>
           <ExportButton
@@ -602,11 +795,14 @@ export default function ActivityDetailPage() {
             filename={`activity_${id}.png`}
           />
         </div>
+        {activity.description && (
+          <p className={clsx('text-sm mt-2 whitespace-pre-line', isLight ? 'text-gray-600' : 'text-gray-400')}>{activity.description}</p>
+        )}
       </div>
 
       {/* Map */}
       {positions.length > 0 && (
-        <div className="h-[400px] rounded-xl overflow-hidden border border-surface-600">
+        <div className={clsx('h-[400px] rounded-xl overflow-hidden border', isLight ? 'border-gray-200' : 'border-surface-600')}>
           <MapView
             positions={positions}
             color={getSportColor(activity.sport_type)}
@@ -619,6 +815,11 @@ export default function ActivityDetailPage() {
         </div>
       )}
 
+      {/* Photos */}
+      {activity.photos && activity.photos.length > 0 && (
+        <PhotoGallery photos={activity.photos} />
+      )}
+
       {/* Stats Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard label="Distance" value={activity.distance_km?.toFixed(2)} unit="km" />
@@ -626,16 +827,19 @@ export default function ActivityDetailPage() {
         {activity.formatted_pace && <StatCard label="Pace" value={activity.formatted_pace} />}
         <StatCard label="Elevation" value={Math.round(activity.total_elevation_gain ?? 0)} unit="m" />
         {activity.average_heartrate && (
-          <StatCard label="Avg HR" value={Math.round(activity.average_heartrate)} unit="bpm" color="text-neon-magenta" />
+          <StatCard label="Avg HR" value={Math.round(activity.average_heartrate)} unit="bpm" color="text-pink-400" />
         )}
         {activity.max_heartrate && (
-          <StatCard label="Max HR" value={Math.round(activity.max_heartrate)} unit="bpm" color="text-neon-magenta" />
+          <StatCard label="Max HR" value={Math.round(activity.max_heartrate)} unit="bpm" color="text-pink-400" />
         )}
         {activity.average_cadence && (
-          <StatCard label="Cadence" value={Math.round(activity.average_cadence * 2)} unit="spm" color="text-neon-cyan" />
+          <StatCard label="Cadence" value={Math.round(activity.average_cadence * 2)} unit="spm" color="text-blue-400" />
         )}
         {activity.suffer_score && (
-          <StatCard label="Suffer Score" value={activity.suffer_score} color="text-neon-yellow" />
+          <StatCard label="Suffer Score" value={activity.suffer_score} color="text-amber-400" />
+        )}
+        {activity.calories && (
+          <StatCard label="Calories" value={Math.round(activity.calories)} unit="kcal" color="text-orange-400" />
         )}
         {hasGap && overallGap != null && (
           <StatCard label="GAP" value={formatPace(overallGap, false)} unit={paceUnit} color="text-orange-400" />
@@ -735,7 +939,7 @@ export default function ActivityDetailPage() {
 
       {/* HR Zone Distribution */}
       {hrZoneDistribution && hrZoneDistribution.some(v => v > 0) && (
-        <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
+        <div className={cardClass}>
           <div className="text-xs text-gray-500 uppercase mb-3">HR Zone Distribution</div>
           <div className="flex gap-0.5 h-8 rounded overflow-hidden">
             {[1, 2, 3, 4, 5].map(z => {
@@ -775,12 +979,12 @@ export default function ActivityDetailPage() {
           : null
 
         return (
-          <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
+          <div className={cardClass}>
             <div className="text-xs text-gray-500 uppercase mb-3">Splits</div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-gray-500 text-xs uppercase border-b border-surface-600">
+                  <tr className="text-gray-500 text-xs uppercase border-b border-surface-600/50">
                     <th className="text-left py-2 pr-3 font-medium">KM</th>
                     <th className="text-right py-2 px-3 font-medium">{useSpeedUnit ? 'Speed' : 'Pace'}</th>
                     {hasGap && (
@@ -813,7 +1017,7 @@ export default function ActivityDetailPage() {
                     return (
                       <tr
                         key={split.km}
-                        className="border-b border-surface-700 last:border-b-0"
+                        className="border-b border-surface-600/30 last:border-b-0"
                       >
                         <td className="py-2 pr-3 text-gray-400 font-medium">
                           {split.isPartial
@@ -822,13 +1026,13 @@ export default function ActivityDetailPage() {
                         </td>
                         <td className="py-2 px-3 text-right font-mono">
                           <div className="flex items-center justify-end gap-2">
-                            <div className="w-16 h-1.5 rounded-full bg-surface-600 overflow-hidden hidden sm:block">
+                            <div className={clsx('w-16 h-1.5 rounded-full overflow-hidden hidden sm:block', isLight ? 'bg-gray-200' : 'bg-surface-600')}>
                               <div
                                 className="h-full rounded-full"
                                 style={{
                                   width: `${Math.max(5, barWidth)}%`,
                                   backgroundColor: isBest
-                                    ? '#39ff14'
+                                    ? '#22c55e'
                                     : isWorst
                                       ? '#ff4444'
                                       : getSportColor(activity.sport_type),
@@ -838,7 +1042,7 @@ export default function ActivityDetailPage() {
                             <span className={
                               isBest ? 'text-green-400 font-bold' :
                               isWorst ? 'text-red-400' :
-                              'text-gray-200'
+                              ''
                             }>
                               {formatPace(split.avgPace, useSpeedUnit)}
                               <span className="text-gray-500 text-xs ml-1">{paceUnit}</span>
@@ -851,16 +1055,16 @@ export default function ActivityDetailPage() {
                             <span className="text-gray-500 text-xs ml-1">{paceUnit}</span>
                           </td>
                         )}
-                        <td className="py-2 px-3 text-right text-gray-300 font-mono">
+                        <td className={clsx('py-2 px-3 text-right font-mono', isLight ? 'text-gray-600' : 'text-gray-300')}>
                           {formatTime(split.time)}
                         </td>
                         {splits.some(s => s.avgHR !== null) && (
-                          <td className="py-2 px-3 text-right text-neon-magenta font-mono">
+                          <td className="py-2 px-3 text-right text-pink-400 font-mono">
                             {split.avgHR ?? '–'}
                           </td>
                         )}
                         {splits.some(s => s.avgCadence !== null) && (
-                          <td className="py-2 px-3 text-right text-neon-cyan font-mono">
+                          <td className="py-2 px-3 text-right text-blue-400 font-mono">
                             {split.avgCadence ?? '–'}
                           </td>
                         )}
@@ -889,6 +1093,7 @@ export default function ActivityDetailPage() {
           gradientId="elevGrad"
           unit="m"
           yDomain={['dataMin - 10', 'dataMax + 10']}
+          zones={segmentZones.length > 0 ? segmentZones : undefined}
         />
       )}
 
@@ -908,6 +1113,7 @@ export default function ActivityDetailPage() {
           secondaryData={hasGap ? streamSeries.gap : undefined}
           secondaryColor="#f97316"
           secondaryLabel="GAP"
+          zones={segmentZones.length > 0 ? segmentZones : undefined}
         />
       )}
 
@@ -915,9 +1121,10 @@ export default function ActivityDetailPage() {
         <StreamChart
           title="Heart Rate"
           data={streamSeries.heartrate}
-          color="#ff00ff"
+          color="#ec4899"
           gradientId="hrGrad"
           unit="bpm"
+          zones={segmentZones.length > 0 ? segmentZones : undefined}
         />
       )}
 
@@ -925,29 +1132,30 @@ export default function ActivityDetailPage() {
         <StreamChart
           title="Cadence"
           data={streamSeries.cadence}
-          color="#39ff14"
+          color="#34d399"
           gradientId="cadGrad"
           unit="spm"
+          zones={segmentZones.length > 0 ? segmentZones : undefined}
         />
       )}
 
       {/* Similar Activities */}
       {similarActivities && similarActivities.length > 0 && (
-        <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
+        <div className={cardClass}>
           <div className="text-xs text-gray-500 uppercase mb-3">Similar Activities</div>
-          <div className="divide-y divide-surface-700">
+          <div className={clsx('divide-y', isLight ? 'divide-gray-100' : 'divide-surface-700')}>
             {similarActivities.map((sa: Record<string, unknown>) => (
               <Link
                 key={sa.id as number}
                 to={`/activities/${sa.id}`}
-                className="flex items-center gap-3 py-2.5 px-1 -mx-1 rounded-lg hover:bg-surface-700 transition-colors group"
+                className={clsx('flex items-center gap-3 py-2.5 px-1 -mx-1 rounded-lg transition-colors group', isLight ? 'hover:bg-gray-50' : 'hover:bg-surface-700')}
               >
                 <span
                   className="w-2 h-2 rounded-full flex-shrink-0"
                   style={{ backgroundColor: getSportColor(sa.sport_type as string) }}
                 />
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm text-gray-200 truncate group-hover:text-white transition-colors">
+                  <div className={clsx('text-sm truncate transition-colors', isLight ? 'text-gray-800 group-hover:text-gray-900' : 'text-gray-200 group-hover:text-white')}>
                     {sa.name as string}
                   </div>
                   <div className="text-xs text-gray-500">

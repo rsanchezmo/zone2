@@ -31,11 +31,12 @@ _EXCLUDE_FROM_LIST = {"streams", "map"}
 
 # Columns to serialize for JSON
 _ACTIVITY_FIELDS = [
-    "id", "name", "sport_type", "distance", "moving_time", "elapsed_time",
+    "id", "name", "description", "sport_type", "distance", "moving_time", "elapsed_time",
     "total_elevation_gain", "start_date", "start_date_local", "timezone",
     "average_speed", "max_speed", "average_heartrate", "max_heartrate",
     "average_cadence", "elev_high", "elev_low", "start_latlng", "end_latlng",
-    "kudos_count", "achievement_count", "suffer_score",
+    "kudos_count", "achievement_count", "suffer_score", "calories",
+    "perceived_exertion", "total_photo_count",
 ]
 
 
@@ -78,7 +79,19 @@ def _activity_to_dict(row: pd.Series, include_streams: bool = False) -> dict:
         except (json.JSONDecodeError, TypeError):
             d["streams"] = None
 
+        # Include detail-only fields when showing full activity
+        for field in ("photos", "splits_metric", "best_efforts", "laps"):
+            if field in row.index and row[field] is not None:
+                try:
+                    val = row[field] if isinstance(row[field], (list, dict)) else json.loads(row[field])
+                    d[field] = val
+                except (json.JSONDecodeError, TypeError):
+                    d[field] = None
+
     return d
+
+
+_SORT_FIELDS = {"date", "distance", "moving_time", "total_elevation_gain", "average_speed"}
 
 
 @router.get("")
@@ -89,6 +102,9 @@ def list_activities(
     year: int | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    search: str | None = Query(None),
+    sort_by: str = Query("date"),
+    sort_dir: str = Query("desc"),
     si: StravaIntelligence = Depends(get_si),
 ):
     activities = si.strava_activities_cache.activities_raw
@@ -98,6 +114,9 @@ def list_activities(
     activities = activities.copy()
     activities["start_date_local"] = pd.to_datetime(activities["start_date_local"])
 
+    if search:
+        mask = activities["name"].str.contains(search, case=False, na=False)
+        activities = activities[mask]
     if sport_type:
         activities = activities[activities["sport_type"] == sport_type]
     if year:
@@ -113,8 +132,10 @@ def list_activities(
             dt_to = dt_to.tz_localize(activities["start_date_local"].dt.tz)
         activities = activities[activities["start_date_local"] < dt_to]
 
-    # Sort newest first
-    activities = activities.sort_values("start_date_local", ascending=False)
+    # Sort
+    sort_col = "start_date_local" if sort_by not in _SORT_FIELDS or sort_by == "date" else sort_by
+    ascending = sort_dir == "asc"
+    activities = activities.sort_values(sort_col, ascending=ascending, na_position="last")
     total = len(activities)
 
     start = (page - 1) * per_page

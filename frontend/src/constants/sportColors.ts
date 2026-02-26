@@ -4,11 +4,11 @@
  */
 export const SPORT_COLORS_HEX: Record<string, string> = {
   // Foot Sports
-  Run: '#fc0101',
-  Hike: '#faff00',
-  TrailRun: '#ff6b35',
+  Run: '#ef4444',
+  Hike: '#eab308',
+  TrailRun: '#f97316',
   Wheelchair: '#b8860b',
-  Walk: '#39ff14',
+  Walk: '#22c55e',
 
   // Cycle Sports
   Ride: '#00aaff',
@@ -33,13 +33,13 @@ export const SPORT_COLORS_HEX: Record<string, string> = {
   // Winter Sports
   IceSkate: '#b0e0e6',
   NordicSki: '#a0d2db',
-  AlpineSki: '#00ffff',
+  AlpineSki: '#67e8f9',
   Snowboard: '#7fdbff',
   BackcountrySki: '#90caf9',
   Snowshoe: '#b3e5fc',
 
   // Racquet Sports
-  Squash: '#ff00ff',
+  Squash: '#d946ef',
   Tennis: '#ff0088',
   Pickleball: '#ff8800',
   Racquetball: '#e879f9',
@@ -50,7 +50,7 @@ export const SPORT_COLORS_HEX: Record<string, string> = {
   // Fitness & Training
   WeightTraining: '#8800ff',
   Workout: '#a855f7',
-  Yoga: '#00ff88',
+  Yoga: '#34d399',
   Pilates: '#34d399',
   Crossfit: '#c084fc',
   HighIntensityIntervalTraining: '#d946ef',
