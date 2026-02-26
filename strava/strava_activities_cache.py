@@ -3,6 +3,8 @@ import pandas as pd
 import json
 from datetime import datetime, timedelta
 
+from strava.strava_endpoint import StravaRateLimitError
+
 
 class StravaActivitiesCache:
     def __init__(self, cache_dir: Path = Path("./.strava")):
@@ -254,6 +256,48 @@ class StravaActivitiesCache:
         activities = df.to_dict(orient='records')
         self.save_activities(activities)
     
+    def get_cache_completeness(self) -> dict:
+        """Return completeness stats for streams and photos across all cached activities."""
+        df = self._load_to_memory()
+        if df.empty:
+            return {
+                'total': 0,
+                'streams': {'complete': 0, 'missing': 0, 'total_expected': 0},
+                'photos': {'complete': 0, 'missing': 0, 'total_expected': 0},
+                'missing_streams_ids': [],
+                'missing_photos_ids': [],
+            }
+
+        total = len(df)
+
+        # Streams: only device-recorded activities (upload_id present) can have streams.
+        # Manual entries have no upload_id and will never return stream data.
+        has_streams = df['streams'].notna() if 'streams' in df.columns else pd.Series([False] * total, index=df.index)
+        expects_streams = df['upload_id'].notna() if 'upload_id' in df.columns else pd.Series([True] * total, index=df.index)
+        streams_expected = int(expects_streams.sum())
+        streams_complete = int((expects_streams & has_streams).sum())
+        streams_missing = streams_expected - streams_complete
+
+        # Photos: only activities with total_photo_count > 0 are expected to have photos
+        photo_count_col = df['total_photo_count'].fillna(0).astype(int) if 'total_photo_count' in df.columns else pd.Series([0] * total)
+        expects_photos = photo_count_col > 0
+        has_photos = df['photos'].notna() if 'photos' in df.columns else pd.Series([False] * total)
+        photos_complete = int((expects_photos & has_photos).sum())
+        photos_expected = int(expects_photos.sum())
+        photos_missing = photos_expected - photos_complete
+
+        # IDs of activities missing data (most recent first)
+        missing_streams_ids = df.loc[expects_streams & ~has_streams, 'id'].tolist() if streams_missing > 0 else []
+        missing_photos_ids = df.loc[expects_photos & ~has_photos, 'id'].tolist() if photos_missing > 0 else []
+
+        return {
+            'total': total,
+            'streams': {'complete': streams_complete, 'missing': streams_missing, 'total_expected': streams_expected},
+            'photos': {'complete': photos_complete, 'missing': photos_missing, 'total_expected': photos_expected},
+            'missing_streams_ids': missing_streams_ids,
+            'missing_photos_ids': missing_photos_ids,
+        }
+
     def sync_streams(self, strava_endpoint, activity_ids: list[int] | None = None):
         """Sync streams, detail fields (description, calories, splits, best_efforts), and photos.
 
@@ -281,16 +325,19 @@ class StravaActivitiesCache:
         DETAIL_FIELDS = ['description', 'calories', 'splits_metric', 'best_efforts', 'laps', 'gear', 'perceived_exertion', 'suffer_score']
 
         # Pre-filter: only iterate activities that actually need work (recent first)
+        # Skip manual activities (no upload_id) — they have no device data and will never have streams.
         needs_work = []
         for idx, activity in df.sort_values('start_date', ascending=False).iterrows():
+            is_manual = pd.isna(activity.get('upload_id'))
             has_streams = 'streams' in activity and activity['streams'] is not None
             has_detail = 'calories' in activity and activity['calories'] is not None and not (isinstance(activity['calories'], float) and pd.isna(activity['calories']))
             has_photos = 'photos' in activity and activity['photos'] is not None
             photo_count = int(activity.get('total_photo_count', 0) or 0)
             needs_photos = not has_photos and photo_count > 0
+            needs_streams = not has_streams and not is_manual
 
-            if not has_streams or not has_detail or needs_photos:
-                needs_work.append((idx, activity, has_streams, has_detail, needs_photos, photo_count))
+            if needs_streams or not has_detail or needs_photos:
+                needs_work.append((idx, activity, needs_streams, has_detail, needs_photos, photo_count))
 
         total = len(df)
         skipped_count = total - len(needs_work)
@@ -300,56 +347,64 @@ class StravaActivitiesCache:
         updated_activities = []
         BATCH_SIZE = 50  # Save every 50 to avoid losing progress
 
-        for i, (idx, activity, has_streams, has_detail, needs_photos, photo_count) in enumerate(needs_work):
-            activity_id = activity['id']
-            needs_update = False
+        rate_limited = False
+        try:
+            for i, (idx, activity, needs_streams, has_detail, needs_photos, photo_count) in enumerate(needs_work):
+                activity_id = activity['id']
+                needs_update = False
 
-            if not has_streams:
-                print(f"  [{i+1}/{len(needs_work)}] Fetching streams for activity {activity_id}...")
-                streams = strava_endpoint.get_activity_streams(activity_id)
-                if streams:
+                if needs_streams:
+                    print(f"  [{i+1}/{len(needs_work)}] Fetching streams for activity {activity_id}...")
+                    streams = strava_endpoint.get_activity_streams(activity_id)
+                    # Save even empty results as '[]' so we don't retry next time
                     activity['streams'] = json.dumps(streams)
                     needs_update = True
-                else:
-                    print(f"    No streams found for activity {activity_id}")
+                    if not streams:
+                        print(f"    No streams returned for activity {activity_id}")
 
-            # TODO: re-enable detail fetching once daily rate limit allows
-            # if not has_detail:
-            #     print(f"  [{i+1}/{len(needs_work)}] Fetching detail for activity {activity_id}...")
-            #     detail = strava_endpoint.get_activity_detail(activity_id)
-            #     if detail:
-            #         for field in DETAIL_FIELDS:
-            #             val = detail.get(field)
-            #             if val is not None:
-            #                 if isinstance(val, (dict, list)):
-            #                     activity[field] = json.dumps(val)
-            #                 else:
-            #                     activity[field] = val
-            #         needs_update = True
+                # TODO: re-enable detail fetching once daily rate limit allows
+                # if not has_detail:
+                #     print(f"  [{i+1}/{len(needs_work)}] Fetching detail for activity {activity_id}...")
+                #     detail = strava_endpoint.get_activity_detail(activity_id)
+                #     if detail:
+                #         for field in DETAIL_FIELDS:
+                #             val = detail.get(field)
+                #             if val is not None:
+                #                 if isinstance(val, (dict, list)):
+                #                     activity[field] = json.dumps(val)
+                #                 else:
+                #                     activity[field] = val
+                #         needs_update = True
 
-            if needs_photos:
-                print(f"  [{i+1}/{len(needs_work)}] Fetching photos for activity {activity_id} ({photo_count} photos)...")
-                photos = strava_endpoint.get_activity_photos(activity_id)
-                if photos:
-                    activity['photos'] = json.dumps(photos)
-                    needs_update = True
+                if needs_photos:
+                    print(f"  [{i+1}/{len(needs_work)}] Fetching photos for activity {activity_id} ({photo_count} photos)...")
+                    photos = strava_endpoint.get_activity_photos(activity_id)
+                    if photos:
+                        activity['photos'] = json.dumps(photos)
+                        needs_update = True
 
-            if needs_update:
-                updated_activities.append(activity.to_dict())
-                synced_count += 1
+                if needs_update:
+                    updated_activities.append(activity.to_dict())
+                    synced_count += 1
 
-            # Save in batches to avoid losing progress on rate limit / crash
-            if len(updated_activities) >= BATCH_SIZE:
-                print(f"  💾 Saving batch of {len(updated_activities)} activities...")
-                self.save_activities(updated_activities)
-                updated_activities = []
+                # Save in batches to avoid losing progress on rate limit / crash
+                if len(updated_activities) >= BATCH_SIZE:
+                    print(f"  💾 Saving batch of {len(updated_activities)} activities...")
+                    self.save_activities(updated_activities)
+                    updated_activities = []
 
-        # Save remaining
+        except StravaRateLimitError as e:
+            rate_limited = True
+            print(f"⚠️ Rate limit reached — stopping sync. {e}")
+
+        # Save remaining (including partial progress on rate limit)
         if updated_activities:
-            print(f"  💾 Saving final batch of {len(updated_activities)} activities...")
+            print(f"  💾 Saving {'partial' if rate_limited else 'final'} batch of {len(updated_activities)} activities...")
             self.save_activities(updated_activities)
 
-        if synced_count > 0:
+        if rate_limited:
+            print(f"⚠️ Synced {synced_count} activities before rate limit. Re-run later to continue.")
+        elif synced_count > 0:
             print(f"✓ Synced {synced_count} activities, skipped {skipped_count} (already had data)")
         else:
             print(f"✓ All {skipped_count} activities already have the requested data")

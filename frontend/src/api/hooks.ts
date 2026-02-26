@@ -204,7 +204,16 @@ export function useBackfillStreams() {
     mutationFn: () => api.post('/sync/backfill-streams').then(r => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sync-status'] });
+      qc.invalidateQueries({ queryKey: ['cache-completeness'] });
     },
+  });
+}
+
+export function useCacheCompleteness() {
+  return useQuery({
+    queryKey: ['cache-completeness'],
+    queryFn: () => api.get('/sync/cache-completeness').then(r => r.data),
+    staleTime: 1000 * 60 * 5,
   });
 }
 

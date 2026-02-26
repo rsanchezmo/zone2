@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useAthleteProfile, useAthleteZones, useSyncStatus, useSportTypes, useGoals, useCreateGoal, useUpdateGoal, useDeleteGoal, useRateLimits } from '../api/hooks'
+import { useAthleteProfile, useAthleteZones, useSyncStatus, useSportTypes, useGoals, useCreateGoal, useUpdateGoal, useDeleteGoal, useRateLimits, useCacheCompleteness, useBackfillStreams } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
 import { useTheme } from '../hooks/useTheme'
 import clsx from 'clsx'
@@ -37,10 +37,13 @@ export default function ProfilePage() {
   const { data: sportTypes } = useSportTypes()
   const { data: goals } = useGoals()
   const { data: rateLimits } = useRateLimits()
+  const { data: cacheCompleteness } = useCacheCompleteness()
+  const backfillStreams = useBackfillStreams()
   const createGoal = useCreateGoal()
   const updateGoal = useUpdateGoal()
   const deleteGoal = useDeleteGoal()
 
+  const [showCacheDetails, setShowCacheDetails] = useState(false)
   const [showGoalForm, setShowGoalForm] = useState(false)
   const [editingGoalId, setEditingGoalId] = useState<number | null>(null)
   const currentYear = new Date().getFullYear()
@@ -392,6 +395,101 @@ export default function ProfilePage() {
           <div className={clsx('text-sm', isLight ? 'text-gray-400' : 'text-gray-600')}>No goals set. Add a goal to track your progress.</div>
         ) : null}
       </div>
+
+      {/* Cache Completeness */}
+      {cacheCompleteness && cacheCompleteness.total > 0 && (() => {
+        const { streams, photos, total } = cacheCompleteness
+        const streamsPct = streams.total_expected > 0 ? (streams.complete / streams.total_expected) * 100 : 100
+        const photosPct = photos.total_expected > 0 ? (photos.complete / photos.total_expected) * 100 : 100
+        const allComplete = streams.missing === 0 && photos.missing === 0
+        return (
+          <div className={cardClass}>
+            <div className="flex items-center justify-between mb-4">
+              <div className="text-xs text-gray-500 uppercase tracking-wider">Cache Completeness</div>
+              {!allComplete && (
+                <button
+                  onClick={() => backfillStreams.mutate()}
+                  disabled={backfillStreams.isPending || syncStatus?.syncing}
+                  className={clsx(
+                    'text-xs px-3 py-1.5 rounded-lg transition-colors disabled:opacity-30',
+                    isLight ? 'bg-gray-100 hover:bg-gray-200 text-gray-600' : 'bg-surface-700 hover:bg-surface-600 text-gray-300',
+                  )}
+                >
+                  {backfillStreams.isPending || syncStatus?.syncing ? 'Backfilling...' : 'Backfill Missing'}
+                </button>
+              )}
+            </div>
+            <div className="space-y-3">
+              {/* Streams */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className={clsx('text-sm', isLight ? 'text-gray-600' : 'text-gray-400')}>Streams</span>
+                  <span className="text-sm font-mono" style={{ color: streams.missing === 0 ? '#22c55e' : '#eab308' }}>
+                    {streams.complete.toLocaleString()} <span className="text-gray-500">/</span> {streams.total_expected.toLocaleString()}
+                  </span>
+                </div>
+                <div className={clsx('h-2 rounded-full overflow-hidden', isLight ? 'bg-gray-100' : 'bg-surface-700')}>
+                  <div
+                    className="h-full rounded-full transition-all"
+                    style={{ width: `${Math.min(streamsPct, 100)}%`, backgroundColor: streams.missing === 0 ? '#22c55e' : '#eab308' }}
+                  />
+                </div>
+              </div>
+              {/* Photos */}
+              {photos.total_expected > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className={clsx('text-sm', isLight ? 'text-gray-600' : 'text-gray-400')}>Photos</span>
+                    <span className="text-sm font-mono" style={{ color: photos.missing === 0 ? '#22c55e' : '#eab308' }}>
+                      {photos.complete.toLocaleString()} <span className="text-gray-500">/</span> {photos.total_expected.toLocaleString()}
+                    </span>
+                  </div>
+                  <div className={clsx('h-2 rounded-full overflow-hidden', isLight ? 'bg-gray-100' : 'bg-surface-700')}>
+                    <div
+                      className="h-full rounded-full transition-all"
+                      style={{ width: `${Math.min(photosPct, 100)}%`, backgroundColor: photos.missing === 0 ? '#22c55e' : '#eab308' }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+            {/* Summary line */}
+            <div className="flex items-center justify-between mt-3">
+              <div className="text-[11px] text-gray-500">
+                {allComplete
+                  ? 'All activity data is complete'
+                  : `${streams.missing + photos.missing} item${streams.missing + photos.missing !== 1 ? 's' : ''} missing`}
+              </div>
+              {!allComplete && (
+                <button
+                  onClick={() => setShowCacheDetails(d => !d)}
+                  className={clsx('text-[11px] transition-colors', isLight ? 'text-gray-400 hover:text-gray-600' : 'text-gray-500 hover:text-gray-300')}
+                >
+                  {showCacheDetails ? 'Hide details' : 'Show details'}
+                </button>
+              )}
+            </div>
+            {/* Expandable details */}
+            {showCacheDetails && !allComplete && (
+              <div className={clsx('mt-3 pt-3 border-t text-xs space-y-1', isLight ? 'border-gray-100' : 'border-surface-600')}>
+                {streams.missing > 0 && (
+                  <div className={clsx(isLight ? 'text-gray-500' : 'text-gray-400')}>
+                    {streams.missing} activit{streams.missing !== 1 ? 'ies' : 'y'} missing streams
+                  </div>
+                )}
+                {photos.missing > 0 && (
+                  <div className={clsx(isLight ? 'text-gray-500' : 'text-gray-400')}>
+                    {photos.missing} activit{photos.missing !== 1 ? 'ies' : 'y'} missing photos (of {photos.total_expected} with photos)
+                  </div>
+                )}
+                <div className={clsx(isLight ? 'text-gray-400' : 'text-gray-500')}>
+                  {total} total activities in cache
+                </div>
+              </div>
+            )}
+          </div>
+        )
+      })()}
 
       {/* Strava API Rate Limits */}
       {rateLimits && (

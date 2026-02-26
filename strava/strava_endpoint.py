@@ -12,6 +12,13 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
+
+class StravaRateLimitError(Exception):
+    """Raised when Strava API rate limit is reached (HTTP 429 or usage >= limit)."""
+    def __init__(self, message: str = "Strava API rate limit reached", usage: dict | None = None):
+        super().__init__(message)
+        self.usage = usage
+
 class StravaTokenData(BaseModel):
     """Pydantic model for Strava OAuth tokens"""
     access_token: str
@@ -155,6 +162,25 @@ class StravaEndpoint:
             'Authorization': f'Bearer {access_token}',
             'Content-Type': 'application/json'
         }
+
+    @staticmethod
+    def _check_rate_limit(response: requests.Response):
+        """Check response for rate limit status and raise if exceeded."""
+        if response.status_code == 429:
+            raise StravaRateLimitError("Strava API returned 429 Too Many Requests")
+        usage_header = response.headers.get('X-RateLimit-Usage', '')
+        limit_header = response.headers.get('X-RateLimit-Limit', '')
+        if usage_header and limit_header:
+            usage_parts = usage_header.split(',')
+            limit_parts = limit_header.split(',')
+            if len(usage_parts) >= 2 and len(limit_parts) >= 2:
+                fifteen_usage, daily_usage = int(usage_parts[0]), int(usage_parts[1])
+                fifteen_limit, daily_limit = int(limit_parts[0]), int(limit_parts[1])
+                if fifteen_usage >= fifteen_limit or daily_usage >= daily_limit:
+                    raise StravaRateLimitError(
+                        f"Rate limit reached (15min: {fifteen_usage}/{fifteen_limit}, daily: {daily_usage}/{daily_limit})",
+                        usage={'fifteen_min': fifteen_usage, 'daily': daily_usage},
+                    )
     
 
     def __fetch_activities(self, page: int, per_page: int, from_date: datetime | None = None, to_date: datetime | None = None) -> list[dict]:
@@ -372,6 +398,7 @@ class StravaEndpoint:
             headers=headers,
             params={'photo_sources': 'true', 'size': size},
         )
+        self._check_rate_limit(response)
         if response.status_code != 200:
             print(f"Failed to fetch photos for activity {activity_id}: {response.text}")
             return []
@@ -394,10 +421,11 @@ class StravaEndpoint:
             }
         )
         
+        self._check_rate_limit(response)
         if response.status_code != 200:
             print(f"Failed to fetch streams for activity {activity_id}: {response.json()}")
             return []
-        
+
         return self.__merge_streams_into_data_points(response.json())
     
     def get_activity_zones(self, activity_id: int | str) -> list[dict]:

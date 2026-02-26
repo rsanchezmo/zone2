@@ -61,6 +61,11 @@ def backfill_streams(
     return {"status": "started"}
 
 
+@router.get("/cache-completeness")
+def cache_completeness(si: StravaIntelligence = Depends(get_si)):
+    return si.strava_activities_cache.get_cache_completeness()
+
+
 @router.get("/status")
 def sync_status(si: StravaIntelligence = Depends(get_si)):
     cache = si.strava_activities_cache
