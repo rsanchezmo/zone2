@@ -1,6 +1,5 @@
 import { useCallback, useState, useEffect } from 'react'
 import clsx from 'clsx'
-import { useTheme } from '../../hooks/useTheme'
 
 /* Numeric input that keeps a local string buffer so users can type decimals freely */
 function NumericInput({ value, onChange, className, placeholder = '--' }: {
@@ -94,9 +93,6 @@ interface Props {
 }
 
 export default function SegmentListBuilder({ segments, onChange, paceUnit = 'min/km', compact = false }: Props) {
-  const { theme } = useTheme()
-  const isLight = theme === 'light'
-
   const update = useCallback((idx: number, patch: Partial<Segment>) => {
     const next = segments.map((s, i) => i === idx ? { ...s, ...patch } : s)
     onChange(next)

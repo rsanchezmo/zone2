@@ -18,7 +18,7 @@ import {
   PieChart, Pie, Cell,
 } from 'recharts'
 import { useTheme } from '../hooks/useTheme'
-import SegmentListBuilder, { SegmentSummary, getSegmentColor, type Segment } from '../components/shared/SegmentListBuilder'
+import SegmentListBuilder, { SegmentSummary, type Segment } from '../components/shared/SegmentListBuilder'
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
@@ -88,7 +88,7 @@ function SportPieChart({ title, data, formatValue, colorMap }: {
           <Tooltip
             contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
             itemStyle={{ color: colors.labelColor }}
-            formatter={(value: number, name: string) => [formatValue(value), name]}
+            formatter={((value: number, name: string) => [formatValue(value), name]) as any}
           />
         </PieChart>
       </ResponsiveContainer>
@@ -184,7 +184,7 @@ function AccumulatedChart({ data, titles, colorMap }: AccumulatedChartProps) {
             contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
             labelStyle={{ color: colors.labelColor }}
             itemStyle={{ color: colors.labelColor }}
-            formatter={(value: number, name: string) => [`${value} min`, name]}
+            formatter={((value: number, name: string) => [`${value} min`, name]) as any}
           />
           {sports.map(sport => (
             <Area
@@ -405,8 +405,6 @@ function SessionModal({
   }
 
   const paceUnit = getPaceUnit(sportType)
-  const isPastDate = date < new Date().toISOString().slice(0, 10)
-
   return (
     <div
       className={clsx('fixed inset-0 flex items-center justify-center z-50 animate-[fadeIn_150ms_ease-out]', isLight ? 'bg-black/30' : 'bg-black/60')}
@@ -438,9 +436,9 @@ function SessionModal({
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2 min-w-0 cursor-pointer" onClick={() => startEdit(s)}>
                         <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: sColor }} />
-                        <span className="text-sm" style={{ color: sColor }}>{s.sport_type as string}</span>
-                        {s.description && (
-                          <span className="text-xs text-gray-400 truncate">{s.description as string}</span>
+                        <span className="text-sm" style={{ color: sColor }}>{String(s.sport_type)}</span>
+                        {!!s.description && (
+                          <span className="text-xs text-gray-400 truncate">{String(s.description)}</span>
                         )}
                         {sessionScore && (
                           <span
@@ -468,7 +466,7 @@ function SessionModal({
                       </div>
                     </div>
                     {/* Segment summary */}
-                    {s.segments && Array.isArray(s.segments) && (s.segments as Segment[]).length > 0 && (
+                    {!!s.segments && Array.isArray(s.segments) && (s.segments as Segment[]).length > 0 && (
                       <div className="mt-1.5">
                         <SegmentSummary segments={s.segments as Segment[]} />
                       </div>
@@ -747,7 +745,7 @@ function SessionModal({
                       <div className="mt-2">
                         {!showSaveTemplate ? (
                           <button
-                            onClick={() => { setShowSaveTemplate(true); setSaveTemplateName(title || '') }}
+                            onClick={() => { setShowSaveTemplate(true); setSaveTemplateName(description || '') }}
                             className="text-[11px] rounded px-2 py-1 border transition-all"
                             style={{ borderColor: '#a855f740', color: '#a855f7', backgroundColor: '#a855f710' }}
                           >
@@ -914,9 +912,9 @@ function UpcomingPlan({ sessions, todayStr }: { sessions: Record<string, unknown
               >
                 <div className="flex items-center gap-3 px-3 py-2">
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                  <span className="text-sm font-medium shrink-0" style={{ color }}>{s.sport_type as string}</span>
-                  {!isExpanded && s.description && (
-                    <span className="text-sm text-gray-400 truncate flex-1">{s.description as string}</span>
+                  <span className="text-sm font-medium shrink-0" style={{ color }}>{String(s.sport_type)}</span>
+                  {!isExpanded && !!s.description && (
+                    <span className="text-sm text-gray-400 truncate flex-1">{String(s.description)}</span>
                   )}
                   {(!s.description || isExpanded) && <span className="flex-1" />}
                   <span className="text-xs text-gray-500 shrink-0">
@@ -947,13 +945,13 @@ function UpcomingPlan({ sessions, todayStr }: { sessions: Record<string, unknown
                   }
                   return (
                     <div className="px-3 pb-3 pt-1 border-t border-dashed" style={{ borderColor: `${color}20` }}>
-                      {s.description && (
+                      {!!s.description && (
                         <p className="text-sm text-gray-300 whitespace-pre-wrap">
-                          {s.description as string}
+                          {String(s.description)}
                         </p>
                       )}
                       {goals.length > 0 && (
-                        <div className={clsx('flex flex-wrap gap-1.5', s.description && 'mt-2')}>
+                        <div className={clsx('flex flex-wrap gap-1.5', !!s.description && 'mt-2')}>
                           {goals.map((g, i) => (
                             <span
                               key={i}
@@ -965,7 +963,7 @@ function UpcomingPlan({ sessions, todayStr }: { sessions: Record<string, unknown
                           ))}
                         </div>
                       )}
-                      {s.segments && Array.isArray(s.segments) && (s.segments as Segment[]).length > 0 && (
+                      {!!s.segments && Array.isArray(s.segments) && (s.segments as Segment[]).length > 0 && (
                         <div className={clsx('mt-2')}>
                           <SegmentSummary segments={s.segments as Segment[]} />
                         </div>

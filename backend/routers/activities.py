@@ -36,7 +36,9 @@ _ACTIVITY_FIELDS = [
     "average_speed", "max_speed", "average_heartrate", "max_heartrate",
     "average_cadence", "elev_high", "elev_low", "start_latlng", "end_latlng",
     "kudos_count", "achievement_count", "suffer_score", "calories",
-    "perceived_exertion", "total_photo_count",
+    "perceived_exertion", "total_photo_count", "device_name", "gear_id",
+    "average_watts", "max_watts", "weighted_average_watts", "average_temp",
+    "pr_count", "workout_type",
 ]
 
 
@@ -64,6 +66,17 @@ def _activity_to_dict(row: pd.Series, include_streams: bool = False) -> dict:
         m, s = divmod(remainder, 60)
         d["moving_time_formatted"] = f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
+    # Elapsed time formatted
+    if d.get("elapsed_time") is not None:
+        secs = int(d["elapsed_time"])
+        h, remainder = divmod(secs, 3600)
+        m, s = divmod(remainder, 60)
+        d["elapsed_time_formatted"] = f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+    # Max speed formatted
+    if row.get("max_speed") and not pd.isna(row.get("max_speed")):
+        d["formatted_max_speed"] = format_pace_or_speed(row["max_speed"], row.get("sport_type"))
+
     # Summary polyline for list view maps
     if "map" in row.index and row["map"] is not None:
         try:
@@ -80,7 +93,7 @@ def _activity_to_dict(row: pd.Series, include_streams: bool = False) -> dict:
             d["streams"] = None
 
         # Include detail-only fields when showing full activity
-        for field in ("photos", "splits_metric", "best_efforts", "laps"):
+        for field in ("photos", "splits_metric", "best_efforts", "laps", "gear", "segment_efforts", "similar_activities"):
             if field in row.index and row[field] is not None:
                 try:
                     val = row[field] if isinstance(row[field], (list, dict)) else json.loads(row[field])

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState } from 'react'
 import {
   useWorkoutTemplates, useCreateWorkoutTemplate,
   useUpdateWorkoutTemplate, useDeleteWorkoutTemplate,
@@ -71,7 +71,7 @@ export default function WorkoutsPage() {
       name: name.trim(),
       sport_type: sportType,
       description: description.trim() || undefined,
-      segments: segments as Record<string, unknown>[],
+      segments: segments as unknown as Record<string, unknown>[],
     }
     if (editingTemplate) {
       updateTemplate.mutate({ id: editingTemplate.id as number, ...payload }, { onSuccess: resetForm })
@@ -239,8 +239,8 @@ export default function WorkoutsPage() {
                         {t.sport_type as string}
                       </span>
                     </div>
-                    {t.description && (
-                      <div className="text-xs text-gray-500 mb-2">{t.description as string}</div>
+                    {!!t.description && (
+                      <div className="text-xs text-gray-500 mb-2">{String(t.description)}</div>
                     )}
                   </div>
                   <div className="flex gap-2 shrink-0 ml-3">

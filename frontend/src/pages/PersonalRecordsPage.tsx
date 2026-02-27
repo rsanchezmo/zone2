@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { usePersonalRecords } from '../api/hooks'
+import { usePersonalRecords, useSportTotals } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
 import { useTheme } from '../hooks/useTheme'
 import clsx from 'clsx'
@@ -22,6 +22,23 @@ function formatPrTime(seconds: number): string {
   const s = Math.round(seconds % 60)
   if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
   return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+function formatTotalTime(seconds: number): string {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  if (h >= 24) {
+    const days = Math.floor(h / 24)
+    const remH = h % 24
+    if (days > 0 && remH > 0) return `${days}d ${remH}h ${m}m`
+    if (days > 0) return `${days}d ${m}m`
+    return `${remH}h ${m}m`
+  }
+  return `${h}h ${m}m`
+}
+
+function formatDistance(km: number): string {
+  return `${km.toLocaleString(undefined, { maximumFractionDigits: 1 })} km`
 }
 
 function formatPrPace(seconds: number, distanceM: number, category: string): string {
@@ -54,6 +71,7 @@ export default function PersonalRecordsPage() {
   const { theme } = useTheme()
   const isLight = theme === 'light'
   const { data: personalRecords, isLoading } = usePersonalRecords()
+  const { data: sportTotals } = useSportTotals()
 
   const cardClass = clsx(
     'rounded-xl p-4 border',
@@ -89,13 +107,29 @@ export default function PersonalRecordsPage() {
         Object.entries(personalRecords).map(([category, records]) => {
           const sportType = SPORT_CATEGORY_SPORT_TYPE[category] ?? category
           const color = getSportColor(sportType)
+          const totals = sportTotals?.[category] as { distance_km: number; time_s: number; count: number } | undefined
           return (
             <div key={category} className={cardClass}>
-              <div className="flex items-center gap-2 mb-3">
-                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
-                <span className={clsx('text-xs uppercase tracking-wider', isLight ? 'text-gray-500' : 'text-gray-500')}>
-                  {SPORT_CATEGORY_LABELS[category] ?? category}
-                </span>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
+                  <span className={clsx('text-xs uppercase tracking-wider', isLight ? 'text-gray-500' : 'text-gray-500')}>
+                    {SPORT_CATEGORY_LABELS[category] ?? category}
+                  </span>
+                </div>
+                {totals && (
+                  <div className="flex items-center gap-4 text-xs">
+                    <span className={clsx('font-mono', isLight ? 'text-gray-500' : 'text-gray-400')}>
+                      {totals.count} activities
+                    </span>
+                    <span className="font-mono font-semibold" style={{ color }}>
+                      {formatDistance(totals.distance_km)}
+                    </span>
+                    <span className={clsx('font-mono', isLight ? 'text-gray-500' : 'text-gray-400')}>
+                      {formatTotalTime(totals.time_s)}
+                    </span>
+                  </div>
+                )}
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">

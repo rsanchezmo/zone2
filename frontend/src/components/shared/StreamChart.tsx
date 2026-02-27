@@ -254,10 +254,10 @@ export default function StreamChart({
               labelStyle={{ color: colors.labelColor }}
               itemStyle={{ color: colors.labelColor }}
               labelFormatter={v => `${Number(v).toFixed(2)} km`}
-              formatter={(v: number | undefined, name: string) => {
+              formatter={((v: number | undefined, name: string) => {
                 const label = name === 'secondary' ? (secondaryLabel ?? 'Secondary') : title
                 return [fmt(v ?? 0) + ` ${unit}`, label]
-              }}
+              }) as any}
             />
             {clippedZones.length > 0 && clippedZones.map((z, i) => (
               <ReferenceArea

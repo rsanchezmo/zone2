@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useActivities, useSportTypes, useYears } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
 import { useTheme } from '../hooks/useTheme'
@@ -285,15 +285,15 @@ function ActivityCard({ activity: a }: { activity: Record<string, unknown> }) {
               <span className="text-[11px] text-gray-500">km</span>
             </div>
           )}
-          {a.moving_time_formatted && (
+          {!!a.moving_time_formatted && (
             <div className="flex items-center gap-1.5">
               <svg className="w-3.5 h-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <circle cx="12" cy="12" r="10" /><path strokeLinecap="round" d="M12 6v6l4 2" />
               </svg>
-              <span className="text-sm font-mono font-medium">{a.moving_time_formatted as string}</span>
+              <span className="text-sm font-mono font-medium">{String(a.moving_time_formatted)}</span>
             </div>
           )}
-          {a.formatted_pace && (
+          {!!a.formatted_pace && (
             <div className="flex items-center gap-1.5">
               <svg className="w-3.5 h-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -329,15 +329,45 @@ function ActivityCard({ activity: a }: { activity: Record<string, unknown> }) {
 export default function ActivitiesPage() {
   const { theme } = useTheme()
   const isLight = theme === 'light'
-  const [page, setPage] = useState(1)
-  const [sportType, setSportType] = useState<string>('')
-  const [year, setYear] = useState<number | undefined>()
-  const [searchInput, setSearchInput] = useState('')
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo, setDateTo] = useState(() => format(new Date(), 'yyyy-MM-dd'))
-  const [sortBy, setSortBy] = useState('date')
-  const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
-  const [defaultsApplied, setDefaultsApplied] = useState(false)
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  // Initialize state from URL params (preserves state on back navigation)
+  const [page, setPage] = useState(() => Number(searchParams.get('page')) || 1)
+  const [sportType, setSportType] = useState<string>(() => searchParams.get('sport') || '')
+  const [year, setYear] = useState<number | undefined>(() => {
+    const y = searchParams.get('year')
+    return y ? Number(y) : undefined
+  })
+  const [searchInput, setSearchInput] = useState(() => searchParams.get('q') || '')
+  const [dateFrom, setDateFrom] = useState(() => searchParams.get('from') || '')
+  const [dateTo, setDateTo] = useState(() => searchParams.get('to') || format(new Date(), 'yyyy-MM-dd'))
+  const [sortBy, setSortBy] = useState(() => searchParams.get('sort') || 'date')
+  const [sortDir, setSortDir] = useState<'desc' | 'asc'>(() => (searchParams.get('dir') === 'asc' ? 'asc' : 'desc'))
+  const [defaultsApplied, setDefaultsApplied] = useState(() => !!searchParams.get('from'))
+
+  // Sync state to URL params (replaces history entry so back button works)
+  useEffect(() => {
+    const params = new URLSearchParams()
+    if (page > 1) params.set('page', String(page))
+    if (sportType) params.set('sport', sportType)
+    if (year) params.set('year', String(year))
+    if (searchInput) params.set('q', searchInput)
+    if (dateFrom) params.set('from', dateFrom)
+    if (dateTo && dateTo !== format(new Date(), 'yyyy-MM-dd')) params.set('to', dateTo)
+    if (sortBy !== 'date') params.set('sort', sortBy)
+    if (sortDir !== 'desc') params.set('dir', sortDir)
+    setSearchParams(params, { replace: true })
+  }, [page, sportType, year, searchInput, dateFrom, dateTo, sortBy, sortDir, setSearchParams])
+
+  // Save scroll position before navigating away, restore on mount
+  useEffect(() => {
+    const saveScroll = () => sessionStorage.setItem('activities-scroll', String(window.scrollY))
+    window.addEventListener('beforeunload', saveScroll)
+    return () => {
+      saveScroll()
+      window.removeEventListener('beforeunload', saveScroll)
+    }
+  }, [])
 
   const debouncedSearch = useDebounce(searchInput, 300)
 
@@ -363,6 +393,13 @@ export default function ActivitiesPage() {
     sortBy,
     sortDir,
   )
+
+  useLayoutEffect(() => {
+    const saved = sessionStorage.getItem('activities-scroll')
+    if (saved) {
+      requestAnimationFrame(() => window.scrollTo(0, Number(saved)))
+    }
+  }, [data])
 
   const totalPages = data ? Math.ceil(data.total / data.per_page) : 0
 

@@ -11,6 +11,7 @@ import ExportButton from '../components/shared/ExportButton'
 import { getSportColor } from '../constants/sportColors'
 import { SegmentSummary, getSegmentColor, type Segment } from '../components/shared/SegmentListBuilder'
 import { useTheme } from '../hooks/useTheme'
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import clsx from 'clsx'
 
 interface StreamPoint {
@@ -50,12 +51,14 @@ interface StravaPhoto {
 }
 
 function PhotoGallery({ photos }: { photos: StravaPhoto[] }) {
-  const { theme } = useTheme()
-  const isLight = theme === 'light'
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
 
-  const getUrl = (photo: StravaPhoto) => {
-    // Prefer largest available size
+  const getThumbUrl = (photo: StravaPhoto) => {
+    const urls = photo.urls || {}
+    return urls['200'] || urls['100'] || urls['400'] || urls['600'] || Object.values(urls)[0]
+  }
+
+  const getFullUrl = (photo: StravaPhoto) => {
     const urls = photo.urls || {}
     return urls['600'] || urls['400'] || urls['200'] || urls['100'] || Object.values(urls)[0]
   }
@@ -64,7 +67,6 @@ function PhotoGallery({ photos }: { photos: StravaPhoto[] }) {
   const prev = useCallback(() => setLightboxIdx(i => i !== null ? (i - 1 + photos.length) % photos.length : null), [photos.length])
   const next = useCallback(() => setLightboxIdx(i => i !== null ? (i + 1) % photos.length : null), [photos.length])
 
-  // Keyboard navigation
   useEffect(() => {
     if (lightboxIdx === null) return
     const onKey = (e: KeyboardEvent) => {
@@ -78,26 +80,20 @@ function PhotoGallery({ photos }: { photos: StravaPhoto[] }) {
 
   return (
     <>
-      <div className={clsx(
-        'grid gap-2 rounded-xl overflow-hidden',
-        photos.length === 1 ? 'grid-cols-1' : photos.length === 2 ? 'grid-cols-2' : 'grid-cols-2 md:grid-cols-3',
-      )}>
+      {/* Compact horizontal thumbnail strip */}
+      <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin">
         {photos.map((photo, idx) => (
           <button
             key={photo.unique_id}
             onClick={() => setLightboxIdx(idx)}
-            className={clsx(
-              'relative overflow-hidden rounded-xl group cursor-pointer',
-              photos.length === 1 ? 'aspect-video' : 'aspect-square',
-            )}
+            className="relative flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden group cursor-pointer ring-1 ring-inset ring-white/10 hover:ring-white/30 transition-all"
           >
             <img
-              src={getUrl(photo)}
+              src={getThumbUrl(photo)}
               alt={photo.caption || `Photo ${idx + 1}`}
-              className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+              className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-110"
               loading="lazy"
             />
-            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
           </button>
         ))}
       </div>
@@ -131,7 +127,7 @@ function PhotoGallery({ photos }: { photos: StravaPhoto[] }) {
             </>
           )}
           <img
-            src={getUrl(photos[lightboxIdx])}
+            src={getFullUrl(photos[lightboxIdx])}
             alt={photos[lightboxIdx].caption || ''}
             className="max-h-[90vh] max-w-[90vw] object-contain rounded-lg shadow-2xl"
             onClick={(e) => e.stopPropagation()}
@@ -141,8 +137,20 @@ function PhotoGallery({ photos }: { photos: StravaPhoto[] }) {
               {photos[lightboxIdx].caption}
             </div>
           )}
-          <div className="absolute bottom-4 right-4 text-white/50 text-xs">
-            {lightboxIdx + 1} / {photos.length}
+          {/* Thumbnail strip in lightbox */}
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5">
+            {photos.map((photo, idx) => (
+              <button
+                key={photo.unique_id}
+                onClick={(e) => { e.stopPropagation(); setLightboxIdx(idx) }}
+                className={clsx(
+                  'w-10 h-10 rounded overflow-hidden transition-all flex-shrink-0',
+                  idx === lightboxIdx ? 'ring-2 ring-white opacity-100' : 'opacity-50 hover:opacity-80',
+                )}
+              >
+                <img src={getThumbUrl(photo)} alt="" className="w-full h-full object-cover" />
+              </button>
+            ))}
           </div>
         </div>
       )}
@@ -246,7 +254,6 @@ function computeSplits(streams: StreamPoint[], sportType: string | undefined, ga
   if (!streams || streams.length < 2) return []
 
   const cat = getSportCategory(sportType)
-  const useSpeed = cat === 'cycling' || cat === 'speed' || cat === 'water'
   const isRunning = cat === 'running'
   const splits: Split[] = []
   let currentKm = 0
@@ -355,7 +362,7 @@ function ExecutionScoreCollapsible({
   formatActual: (key: string, m: Record<string, unknown>) => string
   segTypeLabels: Record<string, string>
   formatSegDist: (km: number | null | undefined) => string
-  formatDetected: (km: number | null | undefined, mins: number | null | undefined) => string | null
+  formatDetected: (km: number | null | undefined, mins: number | null | undefined, pace?: number | null, paceUnit?: string) => string | null
   hasBreakdown: boolean
 }) {
   const [expanded, setExpanded] = useState(!isSegmented)
@@ -378,8 +385,8 @@ function ExecutionScoreCollapsible({
           )}
         </div>
         <div className="flex items-center gap-3">
-          {session?.description && (
-            <span className="text-xs text-gray-400 italic truncate">{session.description as string}</span>
+          {!!session?.description && (
+            <span className="text-xs text-gray-400 italic truncate">{String(session.description)}</span>
           )}
           {hasBreakdown && (
             <span className="text-gray-500 text-xs transition-transform" style={{ transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
@@ -558,7 +565,7 @@ function ActivityDetailPageInner() {
   const { data: athleteZones } = useAthleteZones()
   const { data: similarActivities } = useSimilarActivities(Number(id))
   const { data: activityScore } = useActivityScore(Number(id))
-  const { theme } = useTheme()
+  const { theme, colors } = useTheme()
   const isLight = theme === 'light'
 
   const cardClass = clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')
@@ -660,6 +667,34 @@ function ActivityDetailPageInner() {
   }, [activity])
 
   const splits = useMemo(() => {
+    // Prefer splits_metric from detail endpoint when available
+    if (activity?.splits_metric && Array.isArray(activity.splits_metric) && activity.splits_metric.length > 0) {
+      const cat = getSportCategory(activity.sport_type)
+      const isRunning = cat === 'running'
+      return activity.splits_metric.map((sm: Record<string, unknown>, i: number) => {
+        const avgSpeedMs = sm.average_speed as number || 0
+        const { value: avgPace } = convertSpeed(avgSpeedMs, activity.sport_type)
+        const gapSpeedMs = sm.average_grade_adjusted_speed as number | null
+        let gapPace: number | null = null
+        if (isRunning && gapSpeedMs && gapSpeedMs > 0) {
+          const { value } = convertSpeed(gapSpeedMs, activity.sport_type)
+          gapPace = value
+        }
+        return {
+          km: i + 1,
+          isPartial: i === activity.splits_metric.length - 1 && (sm.distance as number || 0) < 900,
+          splitDistance: sm.distance as number || 1000,
+          time: sm.moving_time as number || sm.elapsed_time as number || 0,
+          avgPace,
+          gapPace,
+          avgHR: sm.average_heartrate ? Math.round(sm.average_heartrate as number) : null,
+          avgCadence: null,
+          elevGain: Math.round(sm.elevation_difference as number || 0),
+          elevLoss: 0,
+        } as Split
+      })
+    }
+    // Fallback to stream-computed splits
     if (!activity?.streams || !Array.isArray(activity.streams)) return []
     return computeSplits(activity.streams as StreamPoint[], activity.sport_type, gapSpeeds.length > 0 ? gapSpeeds : undefined)
   }, [activity, gapSpeeds])
@@ -798,6 +833,59 @@ function ActivityDetailPageInner() {
         {activity.description && (
           <p className={clsx('text-sm mt-2 whitespace-pre-line', isLight ? 'text-gray-600' : 'text-gray-400')}>{activity.description}</p>
         )}
+        {activity.photos && activity.photos.length > 0 && (
+          <div className="mt-3">
+            <PhotoGallery photos={activity.photos} />
+          </div>
+        )}
+        {/* Metadata pills */}
+        <div className="flex flex-wrap gap-2 mt-3">
+          {activity.device_name && (
+            <span className={clsx('inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full', isLight ? 'bg-gray-100 text-gray-600' : 'bg-surface-700 text-gray-400')}>
+              <span className="opacity-60">📱</span>
+              {activity.device_name}
+            </span>
+          )}
+          {activity.gear && (
+            <span className={clsx('inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full', isLight ? 'bg-gray-100 text-gray-600' : 'bg-surface-700 text-gray-400')}>
+              <span className="opacity-60">👟</span>
+              {activity.gear.nickname || activity.gear.name}
+              {activity.gear.converted_distance != null && (
+                <span className="opacity-50">· {Math.round(activity.gear.converted_distance)} km</span>
+              )}
+            </span>
+          )}
+          {activity.average_temp != null && (
+            <span className={clsx('inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full', isLight ? 'bg-gray-100 text-gray-600' : 'bg-surface-700 text-gray-400')}>
+              <span className="opacity-60">🌡️</span>
+              {Math.round(activity.average_temp)}°C
+            </span>
+          )}
+          {activity.timezone && (
+            <span className={clsx('inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full', isLight ? 'bg-gray-100 text-gray-600' : 'bg-surface-700 text-gray-400')}>
+              <span className="opacity-60">🕐</span>
+              {activity.timezone.replace(/^\(.*?\)\s*/, '')}
+            </span>
+          )}
+          {activity.workout_type != null && (
+            <span className={clsx('inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full', isLight ? 'bg-gray-100 text-gray-600' : 'bg-surface-700 text-gray-400')}>
+              <span className="opacity-60">🏋️</span>
+              {activity.workout_type}
+            </span>
+          )}
+          {activity.pr_count > 0 && (
+            <span className={clsx('inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium', isLight ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-amber-500/10 text-amber-400 border border-amber-500/30')}>
+              <span>🏅</span>
+              {activity.pr_count} PR{activity.pr_count > 1 ? 's' : ''}
+            </span>
+          )}
+          {activity.achievement_count > 0 && (
+            <span className={clsx('inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium', isLight ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-green-500/10 text-green-400 border border-green-500/30')}>
+              <span>🏆</span>
+              {activity.achievement_count} achievement{activity.achievement_count > 1 ? 's' : ''}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Map */}
@@ -815,16 +903,15 @@ function ActivityDetailPageInner() {
         </div>
       )}
 
-      {/* Photos */}
-      {activity.photos && activity.photos.length > 0 && (
-        <PhotoGallery photos={activity.photos} />
-      )}
-
       {/* Stats Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard label="Distance" value={activity.distance_km?.toFixed(2)} unit="km" />
-        <StatCard label="Time" value={activity.moving_time_formatted} />
+        <StatCard label="Moving Time" value={activity.moving_time_formatted} />
+        {activity.elapsed_time_formatted && activity.elapsed_time !== activity.moving_time && (
+          <StatCard label="Elapsed Time" value={activity.elapsed_time_formatted} />
+        )}
         {activity.formatted_pace && <StatCard label="Pace" value={activity.formatted_pace} />}
+        {activity.formatted_max_speed && <StatCard label="Max Speed" value={activity.formatted_max_speed} />}
         <StatCard label="Elevation" value={Math.round(activity.total_elevation_gain ?? 0)} unit="m" />
         {activity.average_heartrate && (
           <StatCard label="Avg HR" value={Math.round(activity.average_heartrate)} unit="bpm" color="text-pink-400" />
@@ -838,13 +925,61 @@ function ActivityDetailPageInner() {
         {activity.suffer_score && (
           <StatCard label="Suffer Score" value={activity.suffer_score} color="text-amber-400" />
         )}
-        {activity.calories && (
-          <StatCard label="Calories" value={Math.round(activity.calories)} unit="kcal" color="text-orange-400" />
-        )}
         {hasGap && overallGap != null && (
           <StatCard label="GAP" value={formatPace(overallGap, false)} unit={paceUnit} color="text-orange-400" />
         )}
+        {activity.calories && (
+          <StatCard label="Calories" value={Math.round(activity.calories)} unit="kcal" color="text-orange-400" />
+        )}
+        {activity.average_watts && (
+          <StatCard label="Avg Power" value={Math.round(activity.average_watts)} unit="W" color="text-purple-400" />
+        )}
+        {activity.weighted_average_watts && (
+          <StatCard label="NP" value={Math.round(activity.weighted_average_watts)} unit="W" color="text-purple-400" />
+        )}
+        {activity.max_watts && (
+          <StatCard label="Max Power" value={Math.round(activity.max_watts)} unit="W" color="text-purple-400" />
+        )}
       </div>
+
+      {/* Best Efforts */}
+      {activity.best_efforts && activity.best_efforts.length > 0 && (
+        <div className={cardClass}>
+          <div className="text-xs text-gray-500 uppercase mb-3">Best Efforts</div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+            {activity.best_efforts.map((effort: Record<string, unknown>, i: number) => {
+              const prRank = effort.pr_rank as number | null
+              return (
+                <div
+                  key={i}
+                  className={clsx(
+                    'flex items-center justify-between px-3 py-2 rounded-lg border text-sm font-mono',
+                    prRank === 1
+                      ? (isLight ? 'border-amber-300 bg-amber-50' : 'border-amber-500/40 bg-amber-500/10')
+                      : prRank === 2
+                        ? (isLight ? 'border-gray-300 bg-gray-50' : 'border-gray-400/30 bg-gray-400/10')
+                        : prRank === 3
+                          ? (isLight ? 'border-orange-300 bg-orange-50' : 'border-orange-500/30 bg-orange-500/10')
+                          : (isLight ? 'border-gray-200' : 'border-surface-600'),
+                  )}
+                >
+                  <span className={clsx('text-xs', isLight ? 'text-gray-600' : 'text-gray-400')}>
+                    {effort.name as string}
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className={isLight ? 'text-gray-800' : 'text-gray-200'}>
+                      {formatTime(effort.elapsed_time as number)}
+                    </span>
+                    {prRank === 1 && <span className="text-amber-400 text-xs font-bold">PR</span>}
+                    {prRank === 2 && <span className="text-gray-400 text-[10px]">2nd</span>}
+                    {prRank === 3 && <span className="text-orange-400 text-[10px]">3rd</span>}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Execution Score */}
       {activityScore?.score && (() => {
@@ -964,18 +1099,96 @@ function ActivityDetailPageInner() {
         </div>
       )}
 
+      {/* Garmin Laps */}
+      {activity.laps && activity.laps.length > 1 && (() => {
+        const laps = activity.laps as Record<string, unknown>[]
+        return (
+          <div className={cardClass}>
+            <div className="text-xs text-gray-500 uppercase mb-3">Laps</div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-gray-500 text-xs uppercase border-b border-surface-600/50">
+                    <th className="text-left py-2 pr-3 font-medium">#</th>
+                    <th className="text-right py-2 px-3 font-medium">Distance</th>
+                    <th className="text-right py-2 px-3 font-medium">Time</th>
+                    <th className="text-right py-2 px-3 font-medium">{useSpeedUnit ? 'Speed' : 'Pace'}</th>
+                    {laps.some(l => l.average_heartrate) && (
+                      <th className="text-right py-2 px-3 font-medium">Avg HR</th>
+                    )}
+                    {laps.some(l => l.max_heartrate) && (
+                      <th className="text-right py-2 px-3 font-medium">Max HR</th>
+                    )}
+                    {laps.some(l => l.average_cadence) && (
+                      <th className="text-right py-2 px-3 font-medium">Cadence</th>
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {laps.map((lap, i) => {
+                    const lapSpeed = lap.average_speed as number || 0
+                    const { value: paceVal } = convertSpeed(lapSpeed, activity.sport_type)
+                    const lapDist = (lap.distance as number || 0) / 1000
+
+                    return (
+                      <tr
+                        key={i}
+                        className="border-b border-surface-600/30 last:border-b-0"
+                      >
+                        <td className="py-2 pr-3 text-gray-400 font-medium">
+                          {i + 1}
+                        </td>
+                        <td className={clsx('py-2 px-3 text-right font-mono', isLight ? 'text-gray-600' : 'text-gray-300')}>
+                          {lapDist.toFixed(2)} km
+                        </td>
+                        <td className={clsx('py-2 px-3 text-right font-mono', isLight ? 'text-gray-600' : 'text-gray-300')}>
+                          {formatTime(lap.moving_time as number || lap.elapsed_time as number || 0)}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono">
+                          {lapSpeed > 0 ? (
+                            <>
+                              {formatPace(paceVal, useSpeedUnit)}
+                              <span className="text-gray-500 text-xs ml-1">{paceUnit}</span>
+                            </>
+                          ) : '–'}
+                        </td>
+                        {laps.some(l => l.average_heartrate) && (
+                          <td className="py-2 px-3 text-right text-pink-400 font-mono">
+                            {lap.average_heartrate ? Math.round(lap.average_heartrate as number) : '–'}
+                          </td>
+                        )}
+                        {laps.some(l => l.max_heartrate) && (
+                          <td className="py-2 px-3 text-right text-pink-400/70 font-mono">
+                            {lap.max_heartrate ? Math.round(lap.max_heartrate as number) : '–'}
+                          </td>
+                        )}
+                        {laps.some(l => l.average_cadence) && (
+                          <td className="py-2 px-3 text-right text-blue-400 font-mono">
+                            {lap.average_cadence ? Math.round((lap.average_cadence as number) * (sportCategory === 'running' ? 2 : 1)) : '–'}
+                          </td>
+                        )}
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      })()}
+
       {/* Per-km Splits */}
       {splits.length > 1 && (() => {
-        const fullSplits = splits.filter(s => !s.isPartial)
+        const fullSplits = splits.filter((s: Split) => !s.isPartial)
         const bestPace = fullSplits.length > 0
           ? (useSpeedUnit
-              ? Math.max(...fullSplits.map(s => s.avgPace))
-              : Math.min(...fullSplits.map(s => s.avgPace)))
+              ? Math.max(...fullSplits.map((s: Split) => s.avgPace))
+              : Math.min(...fullSplits.map((s: Split) => s.avgPace)))
           : null
         const worstPace = fullSplits.length > 0
           ? (useSpeedUnit
-              ? Math.min(...fullSplits.map(s => s.avgPace))
-              : Math.max(...fullSplits.map(s => s.avgPace)))
+              ? Math.min(...fullSplits.map((s: Split) => s.avgPace))
+              : Math.max(...fullSplits.map((s: Split) => s.avgPace)))
           : null
 
         return (
@@ -991,10 +1204,10 @@ function ActivityDetailPageInner() {
                       <th className="text-right py-2 px-3 font-medium">GAP</th>
                     )}
                     <th className="text-right py-2 px-3 font-medium">Time</th>
-                    {splits.some(s => s.avgHR !== null) && (
+                    {splits.some((s: Split) => s.avgHR !== null) && (
                       <th className="text-right py-2 px-3 font-medium">HR</th>
                     )}
-                    {splits.some(s => s.avgCadence !== null) && (
+                    {splits.some((s: Split) => s.avgCadence !== null) && (
                       <th className="text-right py-2 px-3 font-medium">Cadence</th>
                     )}
                     <th className="text-right py-2 px-3 font-medium">Elev +</th>
@@ -1002,7 +1215,7 @@ function ActivityDetailPageInner() {
                   </tr>
                 </thead>
                 <tbody>
-                  {splits.map(split => {
+                  {splits.map((split: Split) => {
                     const isBest = !split.isPartial && bestPace !== null && split.avgPace === bestPace
                     const isWorst = !split.isPartial && worstPace !== null && split.avgPace === worstPace
 
@@ -1058,12 +1271,12 @@ function ActivityDetailPageInner() {
                         <td className={clsx('py-2 px-3 text-right font-mono', isLight ? 'text-gray-600' : 'text-gray-300')}>
                           {formatTime(split.time)}
                         </td>
-                        {splits.some(s => s.avgHR !== null) && (
+                        {splits.some((s: Split) => s.avgHR !== null) && (
                           <td className="py-2 px-3 text-right text-pink-400 font-mono">
                             {split.avgHR ?? '–'}
                           </td>
                         )}
-                        {splits.some(s => s.avgCadence !== null) && (
+                        {splits.some((s: Split) => s.avgCadence !== null) && (
                           <td className="py-2 px-3 text-right text-blue-400 font-mono">
                             {split.avgCadence ?? '–'}
                           </td>
@@ -1139,6 +1352,161 @@ function ActivityDetailPageInner() {
         />
       )}
 
+      {/* Route Performance (Strava similar_activities) */}
+      {activity.similar_activities && activity.similar_activities.effort_count > 1 && (() => {
+        const sa = activity.similar_activities as {
+          effort_count: number
+          average_speed: number
+          min_average_speed: number
+          mid_average_speed: number
+          max_average_speed: number
+          pr_rank: number | null
+          trend: {
+            speeds: number[]
+            current_activity_index: number
+            min_speed: number
+            mid_speed: number
+            max_speed: number
+            direction: number
+          } | null
+        }
+        const trend = sa.trend
+        const currentSpeed = activity.average_speed as number
+        const sportColor = getSportColor(activity.sport_type)
+        const isPaceSport = !useSpeedUnit
+
+        const fmtPaceValue = (v: number) => formatPace(v, useSpeedUnit)
+
+        const trendDir = trend?.direction ?? 0
+        const trendLabel = trendDir > 0 ? 'Faster' : trendDir < 0 ? 'Slower' : 'Stable'
+        const trendArrow = trendDir > 0 ? '↗' : trendDir < 0 ? '↘' : '→'
+        const trendPillClass = trendDir > 0
+          ? (isLight ? 'bg-green-50 text-green-700 border-green-200' : 'bg-green-500/10 text-green-400 border-green-500/30')
+          : trendDir < 0
+            ? (isLight ? 'bg-red-50 text-red-700 border-red-200' : 'bg-red-500/10 text-red-400 border-red-500/30')
+            : (isLight ? 'bg-gray-100 text-gray-600 border-gray-200' : 'bg-surface-700 text-gray-400 border-surface-600')
+
+        // Chart data: convert speed (m/s) → pace/speed display values, with labels
+        const chartData = trend && trend.speeds.length > 1
+          ? trend.speeds.map((s, i) => {
+              const speed = i === trend.current_activity_index ? currentSpeed : s
+              const { value } = convertSpeed(speed, activity.sport_type)
+              return {
+                effort: i + 1,
+                value: Math.round(value * 100) / 100,
+                label: fmtPaceValue(Math.round(value * 100) / 100),
+                isCurrent: i === trend.current_activity_index,
+              }
+            })
+          : []
+        return (
+          <div className={cardClass}>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-xs text-gray-500 uppercase">Route Performance</span>
+              {sa.pr_rank === 1 && (
+                <span className={clsx('text-[10px] font-bold px-2 py-0.5 rounded-full border', isLight ? 'bg-amber-50 text-amber-600 border-amber-200' : 'bg-amber-500/15 text-amber-400 border-amber-500/30')}>
+                  PR
+                </span>
+              )}
+              {sa.pr_rank != null && sa.pr_rank > 1 && (
+                <span className={clsx('text-[10px] px-2 py-0.5 rounded-full', isLight ? 'bg-gray-100 text-gray-500' : 'bg-surface-700 text-gray-500')}>
+                  #{sa.pr_rank}/{sa.effort_count}
+                </span>
+              )}
+              {trend && (
+                <span className={clsx('text-[10px] font-medium px-2 py-0.5 rounded-full border', trendPillClass)}>
+                  {trendArrow} {trendLabel}
+                </span>
+              )}
+              <span className={clsx('text-[10px] ml-auto', isLight ? 'text-gray-400' : 'text-gray-500')}>
+                {sa.effort_count} efforts
+              </span>
+            </div>
+            {chartData.length > 0 && (
+              <div className="h-[150px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData} margin={{ top: 16, right: 4, bottom: 0, left: 0 }}>
+                    <defs>
+                      <linearGradient id="routePerfGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={sportColor} stopOpacity={0.3} />
+                        <stop offset="95%" stopColor={sportColor} stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis
+                      dataKey="effort"
+                      type="number"
+                      domain={[0.5, chartData.length + 0.5]}
+                      hide
+                    />
+                    <YAxis
+                      hide
+                      domain={(() => {
+                        const vals = chartData.map(d => d.value)
+                        const min = Math.min(...vals)
+                        const max = Math.max(...vals)
+                        const range = max - min || 0.2
+                        return isPaceSport
+                          ? [max + range, min - range]
+                          : [min - range, max + range]
+                      })()}
+                      allowDataOverflow
+                    />
+                    <Tooltip
+                      contentStyle={{ background: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8 }}
+                      labelStyle={{ color: colors.labelColor }}
+                      labelFormatter={v => `Effort #${v}`}
+                      formatter={(v: number | undefined) => [fmtPaceValue(v ?? 0) + ` ${paceUnit}`, isPaceSport ? 'Pace' : 'Speed']}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="value"
+                      stroke={sportColor}
+                      fill="url(#routePerfGrad)"
+                      strokeWidth={1.5}
+                      baseValue={isPaceSport ? 'dataMax' : 'dataMin'}
+                      dot={({ cx, cy, index, payload }: { cx?: number; cy?: number; index?: number; payload?: { isCurrent: boolean }; [key: string]: unknown }) => {
+                        const isCurrent = payload?.isCurrent
+                        return (
+                          <circle
+                            key={index}
+                            cx={cx} cy={cy}
+                            r={isCurrent ? 5 : 3}
+                            fill={isCurrent ? (sa.pr_rank === 1 ? '#f59e0b' : sportColor) : (isLight ? '#d1d5db' : '#4b5563')}
+                            stroke={isCurrent ? (isLight ? '#fff' : '#111') : 'none'}
+                            strokeWidth={isCurrent ? 2 : 0}
+                          />
+                        )
+                      }}
+                      label={((props: unknown) => {
+                        const { x, y, index, value } = props as { x: number; y: number; index: number; value: number }
+                        const isCurrent = index != null ? chartData[index]?.isCurrent : false
+                        return (
+                          <text
+                            key={index}
+                            x={x}
+                            y={y - 8}
+                            textAnchor="middle"
+                            fontSize={9}
+                            fontFamily="ui-monospace, monospace"
+                            fontWeight={isCurrent ? 'bold' : 'normal'}
+                            fill={isCurrent
+                              ? (sa.pr_rank === 1 ? '#f59e0b' : sportColor)
+                              : colors.tickFill}
+                          >
+                            {fmtPaceValue(value)}
+                          </text>
+                        )
+                      }) as any}
+                      activeDot={false}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+        )
+      })()}
+
       {/* Similar Activities */}
       {similarActivities && similarActivities.length > 0 && (
         <div className={cardClass}>
@@ -1156,25 +1524,125 @@ function ActivityDetailPageInner() {
                 />
                 <div className="flex-1 min-w-0">
                   <div className={clsx('text-sm truncate transition-colors', isLight ? 'text-gray-800 group-hover:text-gray-900' : 'text-gray-200 group-hover:text-white')}>
-                    {sa.name as string}
+                    {String(sa.name)}
                   </div>
                   <div className="text-xs text-gray-500">
-                    {sa.start_date_local ? new Date(sa.start_date_local as string).toLocaleDateString() : ''}
+                    {sa.start_date_local ? new Date(String(sa.start_date_local)).toLocaleDateString() : ''}
                   </div>
                 </div>
                 <div className="flex items-center gap-4 text-xs text-gray-400 font-mono flex-shrink-0">
                   <span>{(sa.distance_km as number)?.toFixed(1)} km</span>
-                  {sa.formatted_pace && <span>{sa.formatted_pace as string}</span>}
+                  {!!sa.formatted_pace && <span>{String(sa.formatted_pace)}</span>}
                   {(sa.total_elevation_gain as number) > 0 && (
                     <span className="text-green-400/70">+{Math.round(sa.total_elevation_gain as number)}m</span>
                   )}
-                  <span>{sa.moving_time_formatted as string}</span>
+                  <span>{String(sa.moving_time_formatted)}</span>
                 </div>
               </Link>
             ))}
           </div>
         </div>
       )}
+
+      {/* Strava Segments */}
+      {activity.segment_efforts && activity.segment_efforts.length > 0 && (() => {
+        const efforts = activity.segment_efforts as Record<string, unknown>[]
+        return (
+          <details className={cardClass} open>
+            <summary className="text-xs text-gray-500 uppercase cursor-pointer select-none list-none flex items-center justify-between">
+              <span>Strava Segments ({efforts.length})</span>
+              <span className={clsx('text-[10px] transition-transform', isLight ? 'text-gray-400' : 'text-gray-600')}>▼</span>
+            </summary>
+            <div className="space-y-3 mt-3">
+              {efforts.map((effort, i) => {
+                const segment = effort.segment as Record<string, unknown> | undefined
+                const name = (effort.name as string) || (segment?.name as string) || `Segment ${i + 1}`
+                const elapsed = effort.elapsed_time as number || 0
+                const distance = (effort.distance as number || 0)
+                const distKm = distance / 1000
+                const prRank = effort.pr_rank as number | null
+                const avgHR = effort.average_heartrate as number | null
+                const maxHR = effort.max_heartrate as number | null
+                const avgCadence = effort.average_cadence as number | null
+                const avgWatts = effort.average_watts as number | null
+                const avgGrade = segment?.average_grade as number | null
+                const city = segment?.city as string | null
+
+                // Compute pace
+                const speedMs = elapsed > 0 ? distance / elapsed : 0
+                const { value: paceVal } = convertSpeed(speedMs, activity.sport_type)
+                const paceStr = formatPace(paceVal, useSpeedUnit)
+
+                return (
+                  <div
+                    key={i}
+                    className={clsx(
+                      'rounded-lg border p-3',
+                      prRank === 1
+                        ? (isLight ? 'border-amber-300 bg-amber-50/50' : 'border-amber-500/40 bg-amber-500/5')
+                        : (isLight ? 'border-gray-200' : 'border-surface-600/60'),
+                    )}
+                  >
+                    {/* Top row: name + badges + time */}
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={clsx('text-sm font-medium truncate', isLight ? 'text-gray-800' : 'text-gray-200')}>{name}</span>
+                        {prRank === 1 && (
+                          <span className={clsx('text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0', isLight ? 'bg-amber-100 text-amber-700' : 'bg-amber-500/15 text-amber-400')}>
+                            PR
+                          </span>
+                        )}
+                        {prRank != null && prRank > 1 && prRank <= 3 && (
+                          <span className={clsx('text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0', isLight ? 'bg-gray-100 text-gray-500' : 'bg-surface-700 text-gray-400')}>
+                            {prRank === 2 ? '2nd' : '3rd'}
+                          </span>
+                        )}
+                      </div>
+                      <span className={clsx('text-sm font-mono font-medium flex-shrink-0', isLight ? 'text-gray-800' : 'text-gray-200')}>
+                        {formatTime(elapsed)}
+                      </span>
+                    </div>
+
+                    {/* Stats row */}
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+                      <span className={clsx('font-mono', isLight ? 'text-gray-600' : 'text-gray-400')}>
+                        {distKm >= 1 ? `${distKm.toFixed(2)} km` : `${Math.round(distance)} m`}
+                      </span>
+                      <span className={clsx('font-mono', isLight ? 'text-gray-600' : 'text-gray-400')}>
+                        {paceStr} <span className="text-gray-500">{paceUnit}</span>
+                      </span>
+                      {avgGrade != null && avgGrade !== 0 && (
+                        <span className={clsx('font-mono', avgGrade > 0 ? 'text-green-400/80' : 'text-blue-400/80')}>
+                          {avgGrade > 0 ? '+' : ''}{avgGrade.toFixed(1)}%
+                        </span>
+                      )}
+                      {avgHR != null && (
+                        <span className="font-mono text-pink-400/80">
+                          {Math.round(avgHR)} bpm
+                          {maxHR != null && <span className="text-gray-500"> / {Math.round(maxHR)}</span>}
+                        </span>
+                      )}
+                      {avgCadence != null && (
+                        <span className="font-mono text-blue-400/80">
+                          {Math.round(avgCadence * 2)} spm
+                        </span>
+                      )}
+                      {avgWatts != null && (
+                        <span className="font-mono text-purple-400/80">
+                          {Math.round(avgWatts)} W
+                        </span>
+                      )}
+                      {city && (
+                        <span className="text-gray-500">{city}</span>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </details>
+        )
+      })()}
     </div>
   )
 }

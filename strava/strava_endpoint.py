@@ -163,22 +163,19 @@ class StravaEndpoint:
             'Content-Type': 'application/json'
         }
 
-    @staticmethod
-    def _check_rate_limit(response: requests.Response):
+    @classmethod
+    def _check_rate_limit(cls, response: requests.Response):
         """Check response for rate limit status and raise if exceeded."""
         if response.status_code == 429:
             raise StravaRateLimitError("Strava API returned 429 Too Many Requests")
         usage_header = response.headers.get('X-RateLimit-Usage', '')
-        limit_header = response.headers.get('X-RateLimit-Limit', '')
-        if usage_header and limit_header:
+        if usage_header:
             usage_parts = usage_header.split(',')
-            limit_parts = limit_header.split(',')
-            if len(usage_parts) >= 2 and len(limit_parts) >= 2:
+            if len(usage_parts) >= 2:
                 fifteen_usage, daily_usage = int(usage_parts[0]), int(usage_parts[1])
-                fifteen_limit, daily_limit = int(limit_parts[0]), int(limit_parts[1])
-                if fifteen_usage >= fifteen_limit or daily_usage >= daily_limit:
+                if fifteen_usage >= cls.FIFTEEN_MIN_LIMIT or daily_usage >= cls.DAILY_LIMIT:
                     raise StravaRateLimitError(
-                        f"Rate limit reached (15min: {fifteen_usage}/{fifteen_limit}, daily: {daily_usage}/{daily_limit})",
+                        f"Rate limit reached (15min: {fifteen_usage}/{cls.FIFTEEN_MIN_LIMIT}, daily: {daily_usage}/{cls.DAILY_LIMIT})",
                         usage={'fifteen_min': fifteen_usage, 'daily': daily_usage},
                     )
     
@@ -315,17 +312,19 @@ class StravaEndpoint:
 
         return response.json()
 
+    # Strava headers report 200/2000 but actually enforce 100/1000 for non-partner apps
+    FIFTEEN_MIN_LIMIT = 100
+    DAILY_LIMIT = 1000
+
     def get_rate_limits(self) -> dict:
         """Check Strava API rate limit status via a lightweight /athlete call."""
         headers = self.__get_headers()
         response = requests.get(StravaEndpoint.__ATHLETE_URL, headers=headers)
-        limit = response.headers.get('X-RateLimit-Limit', '200,2000')
         usage = response.headers.get('X-RateLimit-Usage', '0,0')
-        limit_parts = limit.split(',')
         usage_parts = usage.split(',')
         return {
-            'fifteen_min': {'limit': int(limit_parts[0]), 'usage': int(usage_parts[0])},
-            'daily': {'limit': int(limit_parts[1]), 'usage': int(usage_parts[1])},
+            'fifteen_min': {'limit': self.FIFTEEN_MIN_LIMIT, 'usage': int(usage_parts[0])},
+            'daily': {'limit': self.DAILY_LIMIT, 'usage': int(usage_parts[1])},
         }
 
     def get_user_gender(self) -> str | None:
@@ -382,6 +381,7 @@ class StravaEndpoint:
             f"{StravaEndpoint.__ACTIVITY_URL}/{activity_id}",
             headers=headers,
         )
+        self._check_rate_limit(response)
         if response.status_code != 200:
             print(f"Failed to fetch detail for activity {activity_id}: {response.text}")
             return None

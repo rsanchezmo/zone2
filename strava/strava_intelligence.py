@@ -56,10 +56,8 @@ class StravaIntelligence:
     def ensure_activities_with_streams(self):
         """Ensure all cached activities have streams and zones data."""
         print("🔄 Ensuring all activities have streams and zones data...")
-        activities = self.strava_activities_cache.activities
         self.strava_activities_cache.sync_streams(
             strava_endpoint=self.strava_endpoint,
-            activity_ids=activities['id'].tolist() if not activities.empty else None
         )
 
 

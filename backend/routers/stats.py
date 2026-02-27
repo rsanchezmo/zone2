@@ -404,6 +404,42 @@ def streaks(
 _personal_records_cache: dict | None = None
 
 
+def _compute_sport_totals(si: StravaIntelligence) -> dict:
+    """Compute total distance (km) and time (seconds) per sport category."""
+    activities = si.strava_activities_cache.activities
+    if activities.empty:
+        return {}
+    RUNNING_TYPES = {"run", "trailrun", "virtualrun"}
+    CYCLING_TYPES = {"ride", "virtualride", "ebikeride", "gravelride", "mountainbikeride", "emountainbikeride", "handcycle", "velomobile"}
+    SWIMMING_TYPES = {"swim"}
+
+    def _category(sport_type: str | None) -> str | None:
+        st = (sport_type or "").lower().replace(" ", "")
+        if st in RUNNING_TYPES:
+            return "running"
+        if st in CYCLING_TYPES:
+            return "cycling"
+        if st in SWIMMING_TYPES:
+            return "swimming"
+        return None
+
+    totals: dict[str, dict] = {}
+    for _, row in activities.iterrows():
+        cat = _category(row.get("sport_type"))
+        if cat is None:
+            continue
+        if cat not in totals:
+            totals[cat] = {"distance_km": 0.0, "time_s": 0.0, "count": 0}
+        totals[cat]["distance_km"] += (row.get("distance") or 0) / 1000.0
+        totals[cat]["time_s"] += row.get("moving_time") or 0
+        totals[cat]["count"] += 1
+    # Round values
+    for cat in totals:
+        totals[cat]["distance_km"] = round(totals[cat]["distance_km"], 1)
+        totals[cat]["time_s"] = round(totals[cat]["time_s"])
+    return totals
+
+
 @router.get("/personal-records")
 def personal_records(
     si: StravaIntelligence = Depends(get_si),
@@ -416,3 +452,9 @@ def personal_records(
     result = si.strava_analytics.get_personal_records()
     _personal_records_cache = result
     return result
+
+
+@router.get("/sport-totals")
+def sport_totals(si: StravaIntelligence = Depends(get_si)):
+    """Overall totals (distance, time, count) per sport category."""
+    return _compute_sport_totals(si)

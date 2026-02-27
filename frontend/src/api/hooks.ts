@@ -152,6 +152,14 @@ export function usePersonalRecords() {
   });
 }
 
+export function useSportTotals() {
+  return useQuery({
+    queryKey: ['sport-totals'],
+    queryFn: () => api.get('/stats/sport-totals').then(r => r.data),
+    staleTime: 1000 * 60 * 30,
+  });
+}
+
 // Athlete
 export function useAthleteProfile() {
   return useQuery({
@@ -171,10 +179,12 @@ export function useAthleteZones() {
 }
 
 export function useRateLimits() {
+  const { data: syncStatus } = useSyncStatus();
   return useQuery({
     queryKey: ['rate-limits'],
     queryFn: () => api.get('/athlete/rate-limits').then(r => r.data),
-    staleTime: 1000 * 60 * 2,
+    staleTime: syncStatus?.syncing ? 0 : 1000 * 60 * 2,
+    refetchInterval: syncStatus?.syncing ? 5000 : false,
   });
 }
 
@@ -210,10 +220,12 @@ export function useBackfillStreams() {
 }
 
 export function useCacheCompleteness() {
+  const { data: syncStatus } = useSyncStatus();
   return useQuery({
     queryKey: ['cache-completeness'],
     queryFn: () => api.get('/sync/cache-completeness').then(r => r.data),
-    staleTime: 1000 * 60 * 5,
+    staleTime: syncStatus?.syncing ? 0 : 1000 * 60 * 5,
+    refetchInterval: syncStatus?.syncing ? 3000 : false,
   });
 }
 

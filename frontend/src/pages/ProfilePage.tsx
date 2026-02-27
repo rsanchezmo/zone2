@@ -398,10 +398,11 @@ export default function ProfilePage() {
 
       {/* Cache Completeness */}
       {cacheCompleteness && cacheCompleteness.total > 0 && (() => {
-        const { streams, photos, total } = cacheCompleteness
+        const { streams, photos, detail, total } = cacheCompleteness
         const streamsPct = streams.total_expected > 0 ? (streams.complete / streams.total_expected) * 100 : 100
         const photosPct = photos.total_expected > 0 ? (photos.complete / photos.total_expected) * 100 : 100
-        const allComplete = streams.missing === 0 && photos.missing === 0
+        const detailPct = detail?.total_expected > 0 ? (detail.complete / detail.total_expected) * 100 : 100
+        const allComplete = streams.missing === 0 && photos.missing === 0 && (detail?.missing ?? 0) === 0
         return (
           <div className={cardClass}>
             <div className="flex items-center justify-between mb-4">
@@ -452,13 +453,30 @@ export default function ProfilePage() {
                   </div>
                 </div>
               )}
+              {/* Detail */}
+              {detail && detail.total_expected > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className={clsx('text-sm', isLight ? 'text-gray-600' : 'text-gray-400')}>Detail</span>
+                    <span className="text-sm font-mono" style={{ color: detail.missing === 0 ? '#22c55e' : '#eab308' }}>
+                      {detail.complete.toLocaleString()} <span className="text-gray-500">/</span> {detail.total_expected.toLocaleString()}
+                    </span>
+                  </div>
+                  <div className={clsx('h-2 rounded-full overflow-hidden', isLight ? 'bg-gray-100' : 'bg-surface-700')}>
+                    <div
+                      className="h-full rounded-full transition-all"
+                      style={{ width: `${Math.min(detailPct, 100)}%`, backgroundColor: detail.missing === 0 ? '#22c55e' : '#eab308' }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
             {/* Summary line */}
             <div className="flex items-center justify-between mt-3">
               <div className="text-[11px] text-gray-500">
                 {allComplete
                   ? 'All activity data is complete'
-                  : `${streams.missing + photos.missing} item${streams.missing + photos.missing !== 1 ? 's' : ''} missing`}
+                  : `${streams.missing + photos.missing + (detail?.missing ?? 0)} item${streams.missing + photos.missing + (detail?.missing ?? 0) !== 1 ? 's' : ''} missing`}
               </div>
               {!allComplete && (
                 <button
@@ -480,6 +498,11 @@ export default function ProfilePage() {
                 {photos.missing > 0 && (
                   <div className={clsx(isLight ? 'text-gray-500' : 'text-gray-400')}>
                     {photos.missing} activit{photos.missing !== 1 ? 'ies' : 'y'} missing photos (of {photos.total_expected} with photos)
+                  </div>
+                )}
+                {detail && detail.missing > 0 && (
+                  <div className={clsx(isLight ? 'text-gray-500' : 'text-gray-400')}>
+                    {detail.missing} activit{detail.missing !== 1 ? 'ies' : 'y'} missing detail (description, laps, gear, etc.)
                   </div>
                 )}
                 <div className={clsx(isLight ? 'text-gray-400' : 'text-gray-500')}>
