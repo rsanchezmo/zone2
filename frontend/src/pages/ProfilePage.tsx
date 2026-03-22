@@ -1,6 +1,8 @@
 import { useState } from 'react'
-import { useAthleteProfile, useAthleteZones, useSyncStatus, useSportTypes, useGoals, useCreateGoal, useUpdateGoal, useDeleteGoal, useRateLimits, useCacheCompleteness, useBackfillStreams } from '../api/hooks'
+import { useMemo } from 'react'
+import { useAthleteProfile, useAthleteZones, useSyncStatus, useSportTypes, useGoals, useGoalProgress, useCreateGoal, useUpdateGoal, useDeleteGoal, useRateLimits, useCacheCompleteness, useBackfillStreams } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
+import { getSportCategory } from '../utils/formatSpeed'
 import { useTheme } from '../hooks/useTheme'
 import { useToast } from '../hooks/useToast'
 import clsx from 'clsx'
@@ -8,12 +10,15 @@ import clsx from 'clsx'
 const HR_ZONE_COLORS = ['#6b7280', '#3b82f6', '#22c55e', '#eab308', '#ef4444']
 const HR_ZONE_NAMES = ['Recovery', 'Aerobic', 'Tempo', 'Threshold', 'VO2max']
 
-const METRIC_OPTIONS = [
-  { value: 'distance_km', label: 'Distance (km)' },
-  { value: 'time_hours', label: 'Time (hours)' },
-  { value: 'activities', label: 'Activities' },
-  { value: 'elevation_m', label: 'Elevation (m)' },
-]
+function getMetricOptions(sportType: string) {
+  const isSwimming = getSportCategory(sportType) === 'swimming'
+  return [
+    { value: 'distance_km', label: isSwimming ? 'Distance (m)' : 'Distance (km)' },
+    { value: 'time_hours', label: 'Time (hours)' },
+    { value: 'activities', label: 'Activities' },
+    { value: 'elevation_m', label: 'Elevation (m)' },
+  ]
+}
 
 const PERIOD_OPTIONS = [
   { value: 'weekly', label: 'Weekly' },
@@ -21,8 +26,8 @@ const PERIOD_OPTIONS = [
   { value: 'yearly', label: 'Yearly' },
 ]
 
-function metricLabel(metric: string): string {
-  return METRIC_OPTIONS.find(m => m.value === metric)?.label ?? metric
+function metricLabel(metric: string, sportType?: string): string {
+  return getMetricOptions(sportType ?? 'Run').find(m => m.value === metric)?.label ?? metric
 }
 
 function periodLabel(period: string): string {
@@ -38,6 +43,8 @@ export default function ProfilePage() {
   const { data: syncStatus } = useSyncStatus()
   const { data: sportTypes } = useSportTypes()
   const { data: goals } = useGoals()
+  const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), [])
+  const { data: goalProgressData } = useGoalProgress(todayStr)
   const { data: rateLimits } = useRateLimits()
   const { data: cacheCompleteness } = useCacheCompleteness()
   const backfillStreams = useBackfillStreams()
@@ -58,6 +65,17 @@ export default function ProfilePage() {
 
   const inputClass = 'input'
   const selectClass = 'select'
+
+  // Build a lookup: goal id → progress data
+  const progressMap = useMemo(() => {
+    const map = new Map<number, { current_value: number; percentage: number; period_start: string; period_end: string }>()
+    if (goalProgressData?.goals) {
+      for (const g of goalProgressData.goals) {
+        map.set(g.id, g)
+      }
+    }
+    return map
+  }, [goalProgressData])
 
   if (profileLoading) {
     return (
@@ -102,9 +120,13 @@ export default function ProfilePage() {
   const maxHr = zones?.heart_rate?.max_hr as number | undefined
 
   const handleGoalSubmit = () => {
-    const target = parseFloat(goalForm.target_value)
+    let target = parseFloat(goalForm.target_value)
     const yearNum = parseInt(goalForm.year)
     if (!target || target <= 0 || !yearNum) return
+    // Convert meters to km for swimming distance goals (backend stores km)
+    if (goalForm.metric === 'distance_km' && getSportCategory(goalForm.sport_type) === 'swimming') {
+      target = target / 1000
+    }
     const payload = { year: yearNum, sport_type: goalForm.sport_type, metric: goalForm.metric, period: goalForm.period, target_value: target }
     if (editingGoalId != null) {
       updateGoal.mutate({ id: editingGoalId, ...payload }, {
@@ -121,12 +143,17 @@ export default function ProfilePage() {
 
   const startEdit = (goal: Record<string, unknown>) => {
     setEditingGoalId(goal.id as number)
+    // Convert km back to meters for swimming distance goals
+    let displayValue = goal.target_value as number
+    if (goal.metric === 'distance_km' && getSportCategory(goal.sport_type as string) === 'swimming') {
+      displayValue = displayValue * 1000
+    }
     setGoalForm({
       year: String(goal.year),
       sport_type: goal.sport_type as string,
       metric: goal.metric as string,
       period: goal.period as string,
-      target_value: String(goal.target_value),
+      target_value: String(displayValue),
     })
     setShowGoalForm(true)
   }
@@ -312,7 +339,7 @@ export default function ProfilePage() {
                 onChange={e => setGoalForm(f => ({ ...f, metric: e.target.value }))}
                 className={selectClass}
               >
-                {METRIC_OPTIONS.map(m => (
+                {getMetricOptions(goalForm.sport_type).map(m => (
                   <option key={m.value} value={m.value}>{m.label}</option>
                 ))}
               </select>
@@ -350,40 +377,115 @@ export default function ProfilePage() {
           </div>
         )}
 
-        {/* Goals list */}
+        {/* Goals list with progress */}
         {goals && goals.length > 0 ? (
-          <div className="space-y-2">
+          <div className="space-y-3">
             {goals.map((goal: Record<string, unknown>) => {
               const sport = goal.sport_type as string
               const color = sport === '__all__' ? '#9ca3af' : getSportColor(sport)
+              const metric = goal.metric as string
+              const isSwimmingDist = metric === 'distance_km' && getSportCategory(sport) === 'swimming'
+              const targetRaw = goal.target_value as number
+              const targetDisplay = isSwimmingDist ? Math.round(targetRaw * 1000) : targetRaw
+              const targetUnit = isSwimmingDist ? 'm' : metric === 'distance_km' ? 'km' : metric === 'time_hours' ? 'hrs' : metric === 'elevation_m' ? 'm' : ''
+
+              const progress = progressMap.get(goal.id as number)
+              const currentRaw = progress?.current_value ?? null
+              const currentDisplay = currentRaw !== null ? (isSwimmingDist ? Math.round(currentRaw * 1000) : Math.round(currentRaw * 10) / 10) : null
+              const pct = progress?.percentage ?? null
+              const clampedPct = pct !== null ? Math.min(pct, 100) : 0
+
+              // Color logic: green if >=100%, sport color otherwise
+              const barColor = pct !== null && pct >= 100 ? '#22c55e' : color
+
               return (
                 <div
                   key={goal.id as number}
                   className={clsx(
-                    'flex items-center gap-3 py-2 px-2 rounded-lg transition-colors group',
-                    isLight ? 'hover:bg-gray-50' : 'hover:bg-surface-700/50',
+                    'rounded-xl border p-3 group transition-all duration-200',
+                    isLight ? 'bg-white border-gray-200 hover:border-gray-300' : 'bg-surface-800 border-surface-600 hover:border-surface-500',
                   )}
+                  style={{ borderLeftWidth: 3, borderLeftColor: barColor }}
                 >
-                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                  <span className="text-xs font-mono text-gray-500 min-w-[36px]">{goal.year as number}</span>
-                  <span className={clsx('text-sm min-w-[80px]', isLight ? 'text-gray-700' : 'text-gray-300')}>{sport === '__all__' ? 'All Sports' : sport}</span>
-                  <span className="text-xs text-gray-500">{metricLabel(goal.metric as string)}</span>
-                  <span className="text-xs font-mono text-gray-400 ml-auto">{goal.target_value as number} / {periodLabel(goal.period as string).toLowerCase()}</span>
-                  <button
-                    onClick={() => startEdit(goal)}
-                    className={clsx('text-xs opacity-0 group-hover:opacity-100 transition-opacity', isLight ? 'text-gray-400 hover:text-gray-600' : 'text-gray-500 hover:text-gray-300')}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => deleteGoal.mutate(goal.id as number, {
-                      onSuccess: () => toast('Goal deleted', 'success'),
-                      onError: () => toast('Failed to delete goal', 'error'),
-                    })}
-                    className="text-xs text-red-400 hover:text-red-300 opacity-0 group-hover:opacity-100 transition-opacity"
-                  >
-                    Delete
-                  </button>
+                  {/* Top row: sport, metric, period, actions */}
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className={clsx('text-sm font-medium', isLight ? 'text-gray-800' : 'text-gray-200')}>
+                      {sport === '__all__' ? 'All Sports' : sport}
+                    </span>
+                    <span className={clsx('text-[11px] px-1.5 py-0.5 rounded-md', isLight ? 'bg-gray-100 text-gray-500' : 'bg-surface-700 text-gray-400')}>
+                      {metricLabel(metric, sport)}
+                    </span>
+                    <span className={clsx('text-[11px] px-1.5 py-0.5 rounded-md', isLight ? 'bg-gray-100 text-gray-500' : 'bg-surface-700 text-gray-400')}>
+                      {periodLabel(goal.period as string).toLowerCase()}
+                    </span>
+                    <span className="text-[11px] text-gray-500 font-mono">{goal.year as number}</span>
+                    <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => startEdit(goal)}
+                        className={clsx('text-[11px] px-1.5 py-0.5 rounded', isLight ? 'text-gray-400 hover:text-gray-600 hover:bg-gray-100' : 'text-gray-500 hover:text-gray-300 hover:bg-surface-700')}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => deleteGoal.mutate(goal.id as number, {
+                          onSuccess: () => toast('Goal deleted', 'success'),
+                          onError: () => toast('Failed to delete goal', 'error'),
+                        })}
+                        className="text-[11px] px-1.5 py-0.5 rounded text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Progress bar */}
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1">
+                      <div className={clsx('h-2 rounded-full overflow-hidden', isLight ? 'bg-gray-100' : 'bg-surface-700')}>
+                        <div
+                          className="h-full rounded-full transition-all duration-700 ease-out"
+                          style={{ width: `${clampedPct}%`, backgroundColor: barColor }}
+                        />
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0 min-w-[100px]">
+                      {currentDisplay !== null ? (
+                        <span className="text-sm font-mono font-medium" style={{ color: barColor }}>
+                          {currentDisplay}
+                          <span className="text-gray-500 mx-0.5">/</span>
+                          {targetDisplay}
+                          {targetUnit && <span className="text-[11px] text-gray-500 ml-0.5">{targetUnit}</span>}
+                        </span>
+                      ) : (
+                        <span className="text-sm font-mono text-gray-500">
+                          — / {targetDisplay}{targetUnit && <span className="text-[11px] ml-0.5">{targetUnit}</span>}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Percentage badge */}
+                  {pct !== null && (
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <span className={clsx(
+                        'text-[11px] font-semibold px-1.5 py-0.5 rounded-md',
+                        pct >= 100
+                          ? (isLight ? 'bg-green-100 text-green-700' : 'bg-green-500/15 text-green-400')
+                          : pct >= 70
+                            ? (isLight ? 'bg-blue-100 text-blue-700' : 'bg-blue-500/15 text-blue-400')
+                            : (isLight ? 'bg-gray-100 text-gray-600' : 'bg-surface-700 text-gray-400'),
+                      )}>
+                        {pct >= 100 ? 'Done!' : `${Math.round(pct)}%`}
+                      </span>
+                      {progress?.period_start && progress?.period_end && (
+                        <span className="text-[10px] text-gray-500">
+                          {new Date(progress.period_start).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                          {' — '}
+                          {new Date(progress.period_end).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
               )
             })}

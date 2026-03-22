@@ -140,27 +140,40 @@ function getScale(hoveredIdx: number | null, itemIdx: number): number {
   return 1
 }
 
-function DockNav({ navRef, items, location, isLight, indicatorStyle }: {
+type DockPosition = 'left' | 'bottom'
+
+function DockNav({ navRef, items, location, isLight, indicatorStyle, position }: {
   navRef: React.RefObject<HTMLDivElement | null>
   items: typeof NAV_ITEMS
   location: { pathname: string }
   isLight: boolean
-  indicatorStyle: { top: number; height: number; color: string; opacity: number }
+  indicatorStyle: { top: number; left: number; width: number; height: number; color: string; opacity: number }
+  position: DockPosition
 }) {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+  const isBottom = position === 'bottom'
 
   return (
     <div
       ref={navRef}
-      className="flex flex-col items-center gap-1 relative"
+      className={clsx('relative', isBottom ? 'flex flex-row items-center gap-1' : 'flex flex-col items-center gap-1')}
       onMouseLeave={() => setHoveredIdx(null)}
     >
       {/* Sliding background indicator */}
       <div
-        className="absolute left-0 rounded-xl transition-all duration-300 ease-out pointer-events-none"
-        style={{
+        className="absolute rounded-xl transition-all duration-300 ease-out pointer-events-none"
+        style={isBottom ? {
+          left: indicatorStyle.left,
+          width: indicatorStyle.width,
+          top: 0,
+          height: '100%',
+          backgroundColor: indicatorStyle.color,
+          opacity: indicatorStyle.opacity ? (isLight ? 0.12 : 0.15) : 0,
+          boxShadow: indicatorStyle.opacity ? `0 0 20px ${indicatorStyle.color}25` : 'none',
+        } : {
           top: indicatorStyle.top,
           height: indicatorStyle.height,
+          left: 0,
           width: '100%',
           backgroundColor: indicatorStyle.color,
           opacity: indicatorStyle.opacity ? (isLight ? 0.12 : 0.15) : 0,
@@ -201,31 +214,45 @@ function DockNav({ navRef, items, location, isLight, indicatorStyle }: {
               {item.icon}
             </span>
 
-            {/* Tooltip on hover — appears to the right */}
+            {/* Tooltip — above for bottom dock, right for left dock */}
             <span
               className={clsx(
-                'absolute left-full ml-3 px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap',
+                'absolute px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap',
                 'pointer-events-none transition-all duration-150',
-                isHovered ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-1',
-                isLight
-                  ? 'bg-gray-900 text-white shadow-lg'
-                  : 'bg-white text-gray-900 shadow-lg',
+                isBottom
+                  ? clsx('bottom-full mb-3', isHovered ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-1')
+                  : clsx('left-full ml-3', isHovered ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-1'),
+                isLight ? 'bg-gray-900 text-white shadow-lg' : 'bg-white text-gray-900 shadow-lg',
               )}
             >
               {item.label}
-              <span
-                className={clsx(
+              {/* Arrow */}
+              {isBottom ? (
+                <span className={clsx(
+                  'absolute top-full left-1/2 -translate-x-1/2 w-0 h-0',
+                  'border-l-4 border-r-4 border-t-4 border-transparent',
+                  isLight ? 'border-t-gray-900' : 'border-t-white',
+                )} />
+              ) : (
+                <span className={clsx(
                   'absolute right-full top-1/2 -translate-y-1/2 w-0 h-0',
                   'border-t-4 border-b-4 border-r-4 border-transparent',
                   isLight ? 'border-r-gray-900' : 'border-r-white',
-                )}
-              />
+                )} />
+              )}
             </span>
           </NavLink>
         )
       })}
     </div>
   )
+}
+
+function getInitialDockPosition(): DockPosition {
+  if (typeof window === 'undefined') return 'left'
+  const stored = localStorage.getItem('dock-position')
+  if (stored === 'left' || stored === 'bottom') return stored
+  return 'left'
 }
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
@@ -240,10 +267,21 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const isFetching = useIsFetching()
   const wasSyncing = useRef(false)
 
+  const [dockPosition, setDockPosition] = useState<DockPosition>(getInitialDockPosition)
+  const isBottom = dockPosition === 'bottom'
+
+  const toggleDockPosition = useCallback(() => {
+    setDockPosition(p => {
+      const next = p === 'left' ? 'bottom' : 'left'
+      localStorage.setItem('dock-position', next)
+      return next
+    })
+  }, [])
+
   // Sliding indicator
   const navRef = useRef<HTMLDivElement>(null)
-  const [indicatorStyle, setIndicatorStyle] = useState<{ top: number; height: number; color: string; opacity: number }>({
-    top: 0, height: 0, color: '#fff', opacity: 0,
+  const [indicatorStyle, setIndicatorStyle] = useState<{ top: number; left: number; width: number; height: number; color: string; opacity: number }>({
+    top: 0, left: 0, width: 0, height: 0, color: '#fff', opacity: 0,
   })
 
   const updateIndicator = useCallback(() => {
@@ -254,6 +292,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       const elRect = activeEl.getBoundingClientRect()
       setIndicatorStyle({
         top: elRect.top - navRect.top,
+        left: elRect.left - navRect.left,
+        width: elRect.width,
         height: elRect.height,
         color: activeEl.dataset.color || '#fff',
         opacity: 1,
@@ -265,7 +305,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   useLayoutEffect(() => {
     updateIndicator()
-  }, [location.pathname, updateIndicator])
+  }, [location.pathname, dockPosition, updateIndicator])
 
   // Auto-sync on session start when data is stale
   useEffect(() => {
@@ -299,20 +339,26 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
-      {/* Main content — full width with left padding for dock */}
-      <main className="min-h-screen p-6">
+      {/* Main content */}
+      <main className={clsx('min-h-screen p-6', isBottom ? 'pb-24' : 'pl-20')}>
         {children}
       </main>
 
-      {/* Floating vertical dock — left side, vertically centered */}
-      <div className="fixed left-3 top-1/2 -translate-y-1/2 z-50">
+      {/* Floating dock */}
+      <div className={clsx(
+        'fixed z-[10000]',
+        isBottom
+          ? 'bottom-3 left-1/2 -translate-x-1/2'
+          : 'left-3 top-1/2 -translate-y-1/2',
+      )}>
         <div
           className={clsx(
-            'flex flex-col items-center py-3 px-2 rounded-2xl border shadow-2xl',
+            'flex items-center rounded-2xl border shadow-2xl',
+            isBottom ? 'flex-row py-2 px-3 gap-1' : 'flex-col py-3 px-2',
             isLight
-              ? 'bg-white/80 border-gray-200/80 shadow-black/8'
-              : 'bg-surface-900/70 border-white/[0.08] shadow-black/40',
-            'backdrop-blur-xl backdrop-saturate-150',
+              ? 'bg-white/40 border-gray-200/40 shadow-black/5'
+              : 'bg-black/30 border-white/[0.04] shadow-black/30',
+            'backdrop-blur-sm',
           )}
         >
           {/* Nav items */}
@@ -322,35 +368,65 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             location={location}
             isLight={isLight}
             indicatorStyle={indicatorStyle}
+            position={dockPosition}
           />
 
           {/* Divider */}
-          <div className={clsx('h-px w-8 my-2', isLight ? 'bg-gray-200' : 'bg-white/10')} />
+          <div className={clsx(
+            isBottom ? 'w-px h-8 mx-1' : 'h-px w-8 my-2',
+            isLight ? 'bg-gray-200' : 'bg-white/10',
+          )} />
 
           {/* Utility buttons */}
-          <SyncPopover isLight={isLight} />
+          <div className={clsx('flex items-center', isBottom ? 'flex-row gap-0' : 'flex-col')}>
+            <SyncPopover isLight={isLight} />
 
-          <button
-            onClick={toggleTheme}
-            className={clsx(
-              'w-12 h-12 flex items-center justify-center rounded-xl transition-all duration-200',
-              isLight
-                ? 'text-gray-400 hover:text-gray-600 hover:bg-black/5'
-                : 'text-gray-500 hover:text-gray-300 hover:bg-white/5',
-            )}
-            title={isLight ? 'Dark mode' : 'Light mode'}
-          >
-            {isLight ? (
-              <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                <circle cx="8" cy="8" r="3" />
-                <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" />
-              </svg>
-            ) : (
-              <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                <path d="M13.5 8.5a5.5 5.5 0 01-7-7 5.5 5.5 0 107 7z" />
-              </svg>
-            )}
-          </button>
+            <button
+              onClick={toggleTheme}
+              className={clsx(
+                'w-12 h-12 flex items-center justify-center rounded-xl transition-all duration-200',
+                isLight
+                  ? 'text-gray-400 hover:text-gray-600 hover:bg-black/5'
+                  : 'text-gray-500 hover:text-gray-300 hover:bg-white/5',
+              )}
+              title={isLight ? 'Dark mode' : 'Light mode'}
+            >
+              {isLight ? (
+                <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                  <circle cx="8" cy="8" r="3" />
+                  <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" />
+                </svg>
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                  <path d="M13.5 8.5a5.5 5.5 0 01-7-7 5.5 5.5 0 107 7z" />
+                </svg>
+              )}
+            </button>
+
+            {/* Dock position toggle */}
+            <button
+              onClick={toggleDockPosition}
+              className={clsx(
+                'w-12 h-12 flex items-center justify-center rounded-xl transition-all duration-200',
+                isLight
+                  ? 'text-gray-400 hover:text-gray-600 hover:bg-black/5'
+                  : 'text-gray-500 hover:text-gray-300 hover:bg-white/5',
+              )}
+              title={isBottom ? 'Move dock to left' : 'Move dock to bottom'}
+            >
+              {isBottom ? (
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="1" y="2" width="4" height="12" rx="1" />
+                  <path d="M7 8h7" />
+                </svg>
+              ) : (
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="2" y="11" width="12" height="4" rx="1" />
+                  <path d="M8 1v8" />
+                </svg>
+              )}
+            </button>
+          </div>
         </div>
       </div>
     </div>

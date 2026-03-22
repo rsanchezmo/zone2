@@ -7,7 +7,7 @@ import StatCard from '../components/shared/StatCard'
 import ExportButton from '../components/shared/ExportButton'
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
-  AreaChart, Area, LineChart,
+  AreaChart, Area, LineChart, ReferenceLine, ReferenceDot, ReferenceArea,
 } from 'recharts'
 import { useTheme } from '../hooks/useTheme'
 import clsx from 'clsx'
@@ -84,16 +84,18 @@ export default function DashboardPage() {
     const currentPoints = cumulativeData.data as { day: number; date: string; km: number; target?: number }[]
     const compPoints = (cumulativeData.comparison?.data ?? []) as { day: number; date: string; km: number }[]
     const compMap = new Map(compPoints.map((p: { day: number; km: number }) => [p.day, p.km]))
+    const today = new Date().toISOString().slice(0, 10)
 
-    // Sample ~52 points (weekly) to keep chart clean
+    // Sample ~52 points (weekly) to keep chart clean, but always include today
     const step = Math.max(1, Math.floor(currentPoints.length / 52))
     return currentPoints
-      .filter((_: unknown, i: number) => i % step === 0 || i === currentPoints.length - 1)
+      .filter((_: unknown, i: number, arr: unknown[]) => i % step === 0 || i === arr.length - 1 || (currentPoints[i] as { date: string }).date === today)
       .map((p: { day: number; date: string; km: number; target?: number }) => {
         const d = new Date(p.date)
         const label = `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
         return {
           day: p.day,
+          date: p.date,
           label,
           current: p.km,
           prev: compMap.get(p.day) ?? null,
@@ -101,6 +103,13 @@ export default function DashboardPage() {
         }
       })
   }, [cumulativeData])
+
+  // Find the "today" label in chart data for the reference line
+  const todayLabel = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10)
+    const point = cumulativeChartData.find(p => p.date === today)
+    return point?.label ?? null
+  }, [cumulativeChartData])
 
   // Goal progress status compared to today's expected target
   const goalStatus = useMemo(() => {
@@ -439,6 +448,19 @@ export default function DashboardPage() {
                       dot={false}
                       connectNulls
                     />
+                  )}
+                  {todayLabel && year === new Date().getFullYear() && (
+                    <>
+                      <ReferenceArea x1={todayLabel} x2={cumulativeChartData[cumulativeChartData.length - 1]?.label} fill={isLight ? '#000' : '#fff'} fillOpacity={0.03} />
+                      <ReferenceLine
+                        x={todayLabel}
+                        stroke={sportColor}
+                        strokeWidth={1.5}
+                        strokeDasharray="4 3"
+                        strokeOpacity={0.6}
+                        label={{ value: 'Today', position: 'insideTopRight', fill: sportColor, fontSize: 11, fontWeight: 600, dy: 10 }}
+                      />
+                    </>
                   )}
                 </AreaChart>
               </ResponsiveContainer>
