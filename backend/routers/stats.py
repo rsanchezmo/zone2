@@ -16,12 +16,22 @@ _weekly_report_cache: dict[str, dict] = {}
 _year_in_sport_cache: dict[str, dict] = {}
 
 
+_race_predictions_cache: dict[str, dict] = {}
+_training_load_cache: dict | None = None
+_fitness_chart_cache: dict[str, dict] = {}
+_fitness_trend_cache: dict[str, dict] = {}
+
+
 def clear_stats_cache():
     """Call after sync to invalidate cached reports."""
-    global _personal_records_cache
+    global _personal_records_cache, _training_load_cache
     _weekly_report_cache.clear()
     _year_in_sport_cache.clear()
     _personal_records_cache = None
+    _race_predictions_cache.clear()
+    _training_load_cache = None
+    _fitness_chart_cache.clear()
+    _fitness_trend_cache.clear()
 
 
 def _serialize_enum_dict(d: dict) -> dict:
@@ -458,3 +468,105 @@ def personal_records(
 def sport_totals(si: StravaIntelligence = Depends(get_si)):
     """Overall totals (distance, time, count) per sport category."""
     return _compute_sport_totals(si)
+
+
+@router.get("/weekly-totals")
+def weekly_totals(
+    weeks: int = Query(default=12, ge=1, le=52),
+    sport_type: str | None = None,
+    si: StravaIntelligence = Depends(get_si),
+):
+    """Total distance (km) and activity count per week for the last N weeks."""
+    activities = si.strava_activities_cache.activities_raw.copy()
+    if activities.empty:
+        return {"data": [], "weeks": weeks, "sport_type": sport_type}
+
+    activities["start_date_local"] = pd.to_datetime(activities["start_date_local"])
+
+    if sport_type:
+        activities = activities[activities["sport_type"] == sport_type]
+        if activities.empty:
+            return {"data": [], "weeks": weeks, "sport_type": sport_type}
+
+    today = date.today()
+    # Find Monday of the current week
+    current_monday = today - timedelta(days=today.weekday())
+    # Go back N-1 weeks (current week counts as week 1)
+    start_monday = current_monday - timedelta(weeks=weeks - 1)
+
+    result = []
+    monday = start_monday
+    for _ in range(weeks):
+        sunday = monday + timedelta(days=6)
+        mask = (activities["start_date_local"].dt.date >= monday) & (
+            activities["start_date_local"].dt.date <= sunday
+        )
+        week_acts = activities[mask]
+        result.append({
+            "week_start": monday.isoformat(),
+            "week_end": sunday.isoformat(),
+            "week_label": monday.strftime("%b %d"),
+            "total_distance_km": round(float(week_acts["distance"].sum() / 1000.0), 2),
+            "total_activities": int(len(week_acts)),
+        })
+        monday += timedelta(weeks=1)
+
+    return {"data": result, "weeks": weeks, "sport_type": sport_type}
+
+
+@router.get("/race-predictions")
+def race_predictions(
+    sport_category: str = Query(default="running"),
+    si: StravaIntelligence = Depends(get_si),
+):
+    if sport_category in _race_predictions_cache:
+        return _race_predictions_cache[sport_category]
+    result = si.strava_analytics.get_race_predictions(sport_category)
+    _race_predictions_cache[sport_category] = result
+    return result
+
+
+@router.get("/training-load")
+def training_load(
+    start_date: str | None = None,
+    end_date: str | None = None,
+    si: StravaIntelligence = Depends(get_si),
+):
+    data = si.strava_analytics.get_daily_training_load()
+    if start_date or end_date:
+        filtered = data
+        if start_date:
+            filtered = [d for d in filtered if d["date"] >= start_date]
+        if end_date:
+            filtered = [d for d in filtered if d["date"] <= end_date]
+        return {"data": filtered}
+    return {"data": data}
+
+
+@router.get("/fitness-chart")
+def fitness_chart(
+    start_date: str | None = None,
+    end_date: str | None = None,
+    si: StravaIntelligence = Depends(get_si),
+):
+    cache_key = f"{start_date}|{end_date}"
+    if cache_key in _fitness_chart_cache:
+        return _fitness_chart_cache[cache_key]
+    result = si.strava_analytics.get_pmc_chart(start_date, end_date)
+    _fitness_chart_cache[cache_key] = result
+    return result
+
+
+@router.get("/fitness-trend")
+def fitness_trend(
+    sport_type: str = Query(default="Run"),
+    start_date: str | None = None,
+    end_date: str | None = None,
+    si: StravaIntelligence = Depends(get_si),
+):
+    cache_key = f"{sport_type}|{start_date}|{end_date}"
+    if cache_key in _fitness_trend_cache:
+        return _fitness_trend_cache[cache_key]
+    result = si.strava_analytics.get_fitness_trend(sport_type, start_date, end_date)
+    _fitness_trend_cache[cache_key] = result
+    return result

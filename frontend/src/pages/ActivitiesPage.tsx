@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect } fr
 import { Link, useSearchParams } from 'react-router-dom'
 import { useActivities, useSportTypes, useYears } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
+import { getSportCategory } from '../utils/formatSpeed'
 import { useTheme } from '../hooks/useTheme'
 import clsx from 'clsx'
 import {
@@ -132,12 +133,12 @@ function DatePicker({ value, onChange, label }: {
           onBlur={handleTextBlur}
           onKeyDown={handleKeyDown}
           onFocus={() => setOpen(true)}
-          className="bg-surface-700 border border-surface-600 rounded px-2 py-1.5 text-sm w-[110px] placeholder-gray-500 focus:outline-none focus:border-surface-500 font-mono"
+          className="input w-[110px] font-mono"
           maxLength={10}
         />
         <button
           onClick={() => setOpen(o => !o)}
-          className="bg-surface-700 border border-surface-600 rounded p-1.5 hover:bg-surface-600 transition-colors"
+          className="btn !p-1.5"
           type="button"
         >
           <svg className="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -232,12 +233,16 @@ function ActivityCard({ activity: a }: { activity: Record<string, unknown> }) {
     <Link
       to={`/activities/${a.id}`}
       className={clsx(
-        'group block rounded-xl border transition-all duration-200',
+        'group block rounded-xl border card-glow transition-all duration-200',
         isLight
-          ? 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm'
+          ? 'bg-white border-gray-200 hover:border-gray-300'
           : 'bg-surface-800 border-surface-600 hover:border-surface-500',
       )}
-      style={{ borderLeftWidth: 3, borderLeftColor: sportColor }}
+      style={{
+        borderLeftWidth: 3,
+        borderLeftColor: sportColor,
+        '--card-accent': sportColor,
+      } as React.CSSProperties}
     >
       <div className="p-4">
         {/* Top row: name + date */}
@@ -281,8 +286,8 @@ function ActivityCard({ activity: a }: { activity: Record<string, unknown> }) {
               <svg className="w-3.5 h-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
               </svg>
-              <span className="text-sm font-mono font-medium">{distanceKm}</span>
-              <span className="text-[11px] text-gray-500">km</span>
+              <span className="text-sm font-mono font-medium">{getSportCategory(a.sport_type as string) === 'swimming' ? Math.round((distanceKm ?? 0) * 1000) : distanceKm}</span>
+              <span className="text-[11px] text-gray-500">{getSportCategory(a.sport_type as string) === 'swimming' ? 'm' : 'km'}</span>
             </div>
           )}
           {!!a.moving_time_formatted && (
@@ -383,7 +388,7 @@ export default function ActivitiesPage() {
     }
   }, [years, defaultsApplied])
 
-  const { data, isLoading } = useActivities(
+  const { data, isLoading, isFetching } = useActivities(
     page, 20,
     sportType || undefined,
     year,
@@ -445,19 +450,14 @@ export default function ActivitiesPage() {
     return range
   }, [page, totalPages])
 
-  const selectClass = clsx(
-    'border rounded px-2 py-1.5 text-sm appearance-none cursor-pointer transition-colors',
-    isLight
-      ? 'bg-white border-gray-200 hover:border-gray-300'
-      : 'bg-surface-700 border-surface-600 hover:border-surface-500',
-  )
+  const selectClass = 'select'
 
   return (
     <div className="max-w-6xl mx-auto space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Activities</h2>
+          <h2 className="page-title">Activities</h2>
           {!isLoading && data && (
             <p className="text-sm text-gray-500 mt-0.5">
               {data.total.toLocaleString()} activit{data.total === 1 ? 'y' : 'ies'}
@@ -495,12 +495,7 @@ export default function ActivitiesPage() {
             placeholder="Search by activity name..."
             value={searchInput}
             onChange={e => setSearchInput(e.target.value)}
-            className={clsx(
-              'w-full border rounded-lg pl-9 pr-3 py-2 text-sm placeholder-gray-500 focus:outline-none transition-colors',
-              isLight
-                ? 'bg-gray-50 border-gray-200 focus:border-gray-300 focus:bg-white'
-                : 'bg-surface-700 border-surface-600 focus:border-surface-500',
-            )}
+            className="input w-full !pl-9 !pr-3"
           />
           {searchInput && (
             <button
@@ -559,12 +554,7 @@ export default function ActivitiesPage() {
             </select>
             <button
               onClick={() => setSortDir(d => d === 'desc' ? 'asc' : 'desc')}
-              className={clsx(
-                'border rounded px-2 py-1.5 text-sm transition-all duration-200',
-                isLight
-                  ? 'bg-white border-gray-200 hover:border-gray-300 text-gray-500'
-                  : 'bg-surface-700 border-surface-600 hover:border-surface-500 text-gray-400',
-              )}
+              className="btn flex items-center justify-center !px-2"
               title={sortDir === 'desc' ? 'Descending — click for ascending' : 'Ascending — click for descending'}
             >
               <svg className={clsx('w-4 h-4 transition-transform duration-200', sortDir === 'asc' && 'rotate-180')} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -604,7 +594,7 @@ export default function ActivitiesPage() {
         </div>
       ) : (
         <>
-          <div className="space-y-2">
+          <div className={clsx('space-y-2 transition-opacity duration-200 stagger-children', isFetching && !isLoading && 'opacity-60')}>
             {data?.items?.map((a: Record<string, unknown>) => (
               <ActivityCard key={a.id as string} activity={a} />
             ))}

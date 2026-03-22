@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import clsx from 'clsx'
+import { useToast } from '../../hooks/useToast'
 
 interface ExportButtonProps {
   url: string
@@ -9,6 +10,7 @@ interface ExportButtonProps {
 
 export default function ExportButton({ url, label = 'Export to PNG', filename = 'export.png' }: ExportButtonProps) {
   const [loading, setLoading] = useState(false)
+  const { toast } = useToast()
 
   async function handleExport() {
     setLoading(true)
@@ -21,8 +23,9 @@ export default function ExportButton({ url, label = 'Export to PNG', filename = 
       link.download = filename
       link.click()
       URL.revokeObjectURL(link.href)
-    } catch (err) {
-      console.error('Export error:', err)
+      toast('Export downloaded', 'success')
+    } catch {
+      toast('Export failed', 'error')
     } finally {
       setLoading(false)
     }
@@ -32,12 +35,7 @@ export default function ExportButton({ url, label = 'Export to PNG', filename = 
     <button
       onClick={handleExport}
       disabled={loading}
-      className={clsx(
-        'px-3 py-1.5 rounded text-xs font-medium transition-colors',
-        loading
-          ? 'bg-surface-600 text-gray-500'
-          : 'bg-white/10 text-gray-300 hover:bg-white/15'
-      )}
+      className={clsx('btn', loading && 'opacity-50')}
     >
       {loading ? 'Exporting...' : label}
     </button>

@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import api from './client';
 
 // Activities
@@ -8,6 +8,7 @@ export function usePolylines(sportType?: string, year?: number) {
     queryFn: () =>
       api.get('/activities/polylines', { params: { sport_type: sportType, year: year } })
         .then(r => r.data),
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -38,6 +39,7 @@ export function useActivities(
           sort_dir: sortDir || undefined,
         },
       }).then(r => r.data),
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -97,6 +99,7 @@ export function useYearInSport(year: number, mainSport: string, comparisonYear?:
       api.get('/stats/year-in-sport', {
         params: { year, main_sport: mainSport, comparison_year: comparisonYear },
       }).then(r => r.data),
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -106,6 +109,7 @@ export function useEfficiencyFactor(sportType: string, window = 14) {
     queryFn: () =>
       api.get('/stats/efficiency-factor', { params: { sport_type: sportType, window } })
         .then(r => r.data),
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -134,6 +138,18 @@ export function useCumulativeDistance(year: number, mainSport: string, compariso
       api.get('/stats/cumulative-distance', {
         params: { year, main_sport: mainSport, comparison_year: comparisonYear, yearly_target_km: yearlyTargetKm },
       }).then(r => r.data),
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useWeeklyTotals(weeks = 12, sportType?: string) {
+  return useQuery({
+    queryKey: ['weekly-totals', weeks, sportType],
+    queryFn: () =>
+      api.get('/stats/weekly-totals', {
+        params: { weeks, sport_type: sportType },
+      }).then(r => r.data),
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -157,6 +173,46 @@ export function useSportTotals() {
     queryKey: ['sport-totals'],
     queryFn: () => api.get('/stats/sport-totals').then(r => r.data),
     staleTime: 1000 * 60 * 30,
+  });
+}
+
+export function useRacePredictions(sportCategory: string) {
+  return useQuery({
+    queryKey: ['race-predictions', sportCategory],
+    queryFn: () =>
+      api.get('/stats/race-predictions', { params: { sport_category: sportCategory } }).then(r => r.data),
+    staleTime: 1000 * 60 * 30,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useTrainingLoad(startDate?: string, endDate?: string) {
+  return useQuery({
+    queryKey: ['training-load', startDate, endDate],
+    queryFn: () =>
+      api.get('/stats/training-load', { params: { start_date: startDate, end_date: endDate } }).then(r => r.data),
+    staleTime: 1000 * 60 * 15,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useFitnessChart(startDate?: string, endDate?: string) {
+  return useQuery({
+    queryKey: ['fitness-chart', startDate, endDate],
+    queryFn: () =>
+      api.get('/stats/fitness-chart', { params: { start_date: startDate, end_date: endDate } }).then(r => r.data),
+    staleTime: 1000 * 60 * 15,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useFitnessTrend(sportType: string, startDate?: string, endDate?: string) {
+  return useQuery({
+    queryKey: ['fitness-trend', sportType, startDate, endDate],
+    queryFn: () =>
+      api.get('/stats/fitness-trend', { params: { sport_type: sportType, start_date: startDate, end_date: endDate } }).then(r => r.data),
+    staleTime: 1000 * 60 * 15,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -235,6 +291,7 @@ export function useCalendarSessions(month?: number, year?: number) {
     queryKey: ['calendar-sessions', month, year],
     queryFn: () =>
       api.get('/calendar/sessions', { params: { month, year } }).then(r => r.data),
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -313,6 +370,7 @@ export function useGoals(year?: number) {
   return useQuery({
     queryKey: ['goals', year],
     queryFn: () => api.get('/goals/', { params: year ? { year } : {} }).then(r => r.data),
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -366,6 +424,7 @@ export function useWorkoutTemplates(sportType?: string) {
     queryKey: ['workout-templates', sportType],
     queryFn: () =>
       api.get('/workouts', { params: sportType ? { sport_type: sportType } : {} }).then(r => r.data),
+    placeholderData: keepPreviousData,
   });
 }
 

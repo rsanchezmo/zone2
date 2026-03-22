@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { usePersonalRecords, useSportTotals } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
+import { formatPrPace, formatDist } from '../utils/formatSpeed'
 import { useTheme } from '../hooks/useTheme'
 import clsx from 'clsx'
 
@@ -37,26 +38,14 @@ function formatTotalTime(seconds: number): string {
   return `${h}h ${m}m`
 }
 
-function formatDistance(km: number): string {
+function formatDistance(km: number, category?: string): string {
+  if (category === 'swimming') {
+    const m = Math.round(km * 1000)
+    return `${m.toLocaleString()} m`
+  }
   return `${km.toLocaleString(undefined, { maximumFractionDigits: 1 })} km`
 }
 
-function formatPrPace(seconds: number, distanceM: number, category: string): string {
-  if (category === 'cycling') {
-    const kmh = (distanceM / seconds) * 3.6
-    return `${kmh.toFixed(1)} km/h`
-  }
-  if (category === 'swimming') {
-    const per100 = (seconds / distanceM) * 100
-    const m = Math.floor(per100 / 60)
-    const s = Math.round(per100 % 60)
-    return `${m}:${s.toString().padStart(2, '0')} /100m`
-  }
-  const perKm = (seconds / distanceM) * 1000
-  const m = Math.floor(perKm / 60)
-  const s = Math.round(perKm % 60)
-  return `${m}:${s.toString().padStart(2, '0')} /km`
-}
 
 interface PRRecord {
   distance_m: number
@@ -81,7 +70,7 @@ export default function PersonalRecordsPage() {
   if (isLoading) {
     return (
       <div className="max-w-4xl mx-auto space-y-6">
-        <h2 className={clsx('text-2xl font-bold', isLight ? 'text-gray-900' : 'text-white')}>Personal Records</h2>
+        <h2 className="page-title">Personal Records</h2>
         {Array.from({ length: 3 }).map((_, i) => (
           <div key={i} className={clsx(cardClass, 'animate-pulse')}>
             <div className="flex items-center gap-2 mb-4">
@@ -101,7 +90,7 @@ export default function PersonalRecordsPage() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      <h2 className={clsx('text-2xl font-bold', isLight ? 'text-gray-900' : 'text-white')}>Personal Records</h2>
+      <h2 className="page-title">Personal Records</h2>
 
       {personalRecords && Object.keys(personalRecords).length > 0 ? (
         Object.entries(personalRecords).map(([category, records]) => {
@@ -123,7 +112,7 @@ export default function PersonalRecordsPage() {
                       {totals.count} activities
                     </span>
                     <span className="font-mono font-semibold" style={{ color }}>
-                      {formatDistance(totals.distance_km)}
+                      {formatDistance(totals.distance_km, category)}
                     </span>
                     <span className={clsx('font-mono', isLight ? 'text-gray-500' : 'text-gray-400')}>
                       {formatTotalTime(totals.time_s)}

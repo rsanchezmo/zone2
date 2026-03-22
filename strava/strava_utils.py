@@ -15,17 +15,24 @@ CYCLING_SPORTS = {
 SWIMMING_SPORTS = {'swim'}
 RUNNING_SPORTS = {'run', 'trailrun', 'virtualrun', 'walk', 'hike', 'snowshoe'}
 WATER_SPORTS = {'canoeing', 'standuppaddling', 'kayaking', 'surfing', 'kitesurf', 'rowing', 'windsurf', 'sail'}
+SPEED_SPORTS = {
+    'squash', 'tennis', 'pickleball', 'racquetball', 'badminton', 'tabletennis', 'padel',
+    'weighttraining', 'workout', 'yoga', 'pilates', 'crossfit', 'highintensityintervaltraining',
+    'elliptical', 'stairstepper', 'dance', 'rockclimbing', 'alpineski', 'backcountryski',
+    'nordicski', 'snowboard', 'iceskate', 'inlineskate', 'skateboard',
+    'soccer', 'basketball', 'volleyball', 'cricket', 'golf',
+}
 
 
 def get_sport_category(sport_type: str | None) -> str:
     """
     Determine the sport category from sport type.
-    
+
     Args:
         sport_type: Strava sport type (e.g., 'Run', 'Ride', 'Swim')
-    
+
     Returns:
-        Category string: 'cycling', 'swimming', or 'running' (default)
+        Category string: 'cycling', 'swimming', 'water', 'speed', or 'running' (default)
     """
     sport_type = sport_type or ""
     sport_lower = sport_type.lower().replace(' ', '')
@@ -36,6 +43,8 @@ def get_sport_category(sport_type: str | None) -> str:
         return 'swimming'
     elif sport_lower in WATER_SPORTS:
         return 'water'
+    elif sport_lower in SPEED_SPORTS:
+        return 'speed'
     else:
         return 'running'
 
@@ -64,8 +73,8 @@ def convert_speed(speed_ms: float, sport_type: str | None = None) -> tuple[float
         pace_min_per_100m = (100 / speed_ms) / 60
         return (pace_min_per_100m, "min/100m")
 
-    elif category in ('cycling', 'water'):
-        # Cycling & water sports: speed in km/h
+    elif category in ('cycling', 'water', 'speed'):
+        # Cycling, water & speed sports: speed in km/h
         speed_kmh = speed_ms * 3.6
         return (speed_kmh, "km/h")
 
@@ -105,8 +114,8 @@ def format_pace_or_speed(avg_speed: float, sport_type: str | None = None) -> str
             pace_secs = 0
         return f"{pace_mins}:{pace_secs:02d} /100m"
     
-    elif category in ('cycling', 'water'):
-        # Cycling & water sports: speed in km/h
+    elif category in ('cycling', 'water', 'speed'):
+        # Cycling, water & speed sports: speed in km/h
         speed_kmh = avg_speed * 3.6  # m/s to km/h
         return f"{speed_kmh:.1f} km/h"
     
@@ -201,6 +210,125 @@ def vo2_max(hr_max: float, hr_rest: float) -> float:
         VO2 Max = 15.3 x (HR_max / HR_rest)
     """
     return 15.3 * (hr_max / hr_rest)
+
+
+# ── Advanced analytics helpers ─────────────────────────────────────
+
+import math
+import numpy as np
+
+
+def vdot_from_time_distance(time_s: float, distance_m: float) -> float | None:
+    """Compute Jack Daniels VDOT from race time and distance.
+
+    Uses the closed-form approximation from Daniels' Running Formula.
+    Returns None for invalid inputs or efforts shorter than 3 minutes.
+    """
+    if time_s <= 0 or distance_m <= 0 or time_s < 180:
+        return None
+    t = time_s / 60.0  # minutes
+    v = distance_m / t  # m/min
+    # Oxygen cost
+    vo2 = -4.60 + 0.182258 * v + 0.000104 * v * v
+    # Fraction of VO2max sustained
+    pct_vo2max = 0.8 + 0.1894393 * math.exp(-0.012778 * t) + 0.2989558 * math.exp(-0.1932605 * t)
+    if pct_vo2max <= 0:
+        return None
+    vdot = vo2 / pct_vo2max
+    if vdot <= 0:
+        return None
+    return round(vdot, 2)
+
+
+def predicted_time_from_vdot(vdot: float, distance_m: float) -> float | None:
+    """Predict race time (seconds) for a distance given a VDOT value.
+
+    Uses bisection search to invert vdot_from_time_distance.
+    VDOT decreases as time increases (slower effort = lower VDOT).
+    Returns None if no convergence.
+    """
+    if vdot <= 0 or distance_m <= 0:
+        return None
+    # Estimate a reasonable search range based on speed
+    # VDOT 30 ~ 3.5 m/s running, VDOT 85 ~ 6.5 m/s
+    lo = max(180.0, distance_m / 7.0)    # fastest plausible
+    hi = min(86400.0, distance_m / 0.5)  # slowest plausible
+    if lo >= hi:
+        lo, hi = 180.0, 86400.0
+
+    for _ in range(100):
+        mid = (lo + hi) / 2.0
+        est = vdot_from_time_distance(mid, distance_m)
+        if est is None:
+            # Formula invalid here — narrow from both sides toward the valid region
+            est_lo = vdot_from_time_distance(lo, distance_m)
+            if est_lo is None:
+                lo = lo + (hi - lo) * 0.1
+            else:
+                hi = mid
+            continue
+        if est > vdot:
+            lo = mid  # too fast, need more time
+        else:
+            hi = mid  # too slow, need less time
+        if hi - lo < 0.5:
+            break
+    result = (lo + hi) / 2.0
+    check = vdot_from_time_distance(result, distance_m)
+    if check is None or abs(check - vdot) > 1.0:
+        return None
+    return round(result, 1)
+
+
+def riegel_predict(t1_s: float, d1_m: float, d2_m: float, exponent: float = 1.06) -> float:
+    """Predict race time using Riegel's formula: t2 = t1 * (d2/d1)^exponent."""
+    return t1_s * (d2_m / d1_m) ** exponent
+
+
+def fit_riegel_exponent(prs: list[dict]) -> float | None:
+    """Fit a personalized Riegel exponent from personal records.
+
+    Each PR dict must have 'distance_m' and 'time_s' keys.
+    Returns None if fewer than 3 PRs.
+    """
+    if len(prs) < 3:
+        return None
+    distances = np.array([pr['distance_m'] for pr in prs])
+    times = np.array([pr['time_s'] for pr in prs])
+    # log(t) = exponent * log(d) + c
+    coeffs = np.polyfit(np.log(distances), np.log(times), 1)
+    exponent = float(coeffs[0])
+    # Sanity check: exponent should be roughly 1.0-1.2
+    if exponent < 0.8 or exponent > 1.5:
+        return None
+    return round(exponent, 4)
+
+
+def compute_trimp_banister(duration_min: float, avg_hr: float, hr_rest: float, hr_max: float, gender: str = 'male') -> float:
+    """Compute Banister TRIMP from average HR and duration.
+
+    Uses gender-specific exponential weighting.
+    """
+    if hr_max <= hr_rest or avg_hr < hr_rest:
+        return 0.0
+    delta = (avg_hr - hr_rest) / (hr_max - hr_rest)
+    delta = max(0.0, min(delta, 1.0))
+    if gender == 'female':
+        return duration_min * delta * 0.86 * math.exp(1.67 * delta)
+    return duration_min * delta * 0.64 * math.exp(1.92 * delta)
+
+
+def compute_trimp_zone_weighted(time_in_zones_min: list[float], zone_weights: list[float] | None = None) -> float:
+    """Compute zone-weighted TRIMP using Lucia's weights.
+
+    Args:
+        time_in_zones_min: Time spent in each zone (5 zones expected).
+        zone_weights: Optional custom weights per zone.
+    """
+    if zone_weights is None:
+        zone_weights = [1.0, 1.1, 1.5, 2.2, 4.5]
+    return sum(t * w for t, w in zip(time_in_zones_min, zone_weights))
+
 
 def get_region_coordinates(region_name: str) -> dict | None:
     """

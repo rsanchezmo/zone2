@@ -9,7 +9,9 @@ import {
   useCreateSession, useUpdateSession, useDeleteSession, useWeeklyReport, useAthleteZones,
   useStreaks, useGoalProgress, useGoals, useSessionScores, useWorkoutTemplates, useCreateWorkoutTemplate,
 } from '../api/hooks'
-import { SPORT_COLORS_HEX, getSportColor } from '../constants/sportColors'
+import { getSportColor } from '../constants/sportColors'
+import { getPaceUnit, getSportCategory, formatDist, distValue, getDistUnit } from '../utils/formatSpeed'
+import SportTypeCombobox from '../components/shared/SportTypeCombobox'
 import StatCard from '../components/shared/StatCard'
 import ExportButton from '../components/shared/ExportButton'
 import clsx from 'clsx'
@@ -18,6 +20,7 @@ import {
   PieChart, Pie, Cell,
 } from 'recharts'
 import { useTheme } from '../hooks/useTheme'
+import { useToast } from '../hooks/useToast'
 import SegmentListBuilder, { SegmentSummary, type Segment } from '../components/shared/SegmentListBuilder'
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -26,7 +29,7 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 function SportPieChart({ title, data, formatValue, colorMap }: {
   title: string
   data: Record<string, number>
-  formatValue: (v: number) => string
+  formatValue: (v: number, sport?: string) => string
   colorMap: Record<string, string>
 }) {
   const { theme, colors } = useTheme()
@@ -88,7 +91,7 @@ function SportPieChart({ title, data, formatValue, colorMap }: {
           <Tooltip
             contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
             itemStyle={{ color: colors.labelColor }}
-            formatter={((value: number, name: string) => [formatValue(value), name]) as any}
+            formatter={((value: number, name: string) => [formatValue(value, name), name]) as any}
           />
         </PieChart>
       </ResponsiveContainer>
@@ -215,13 +218,6 @@ function scoreColor(score: number): string {
 
 
 
-/* ── Pace unit helper ─────────────────────────────── */
-function getPaceUnit(sportType: string): string {
-  const st = sportType.toLowerCase().replace(/\s/g, '')
-  const cycling = new Set(['ride', 'virtualride', 'ebikeride', 'gravelride', 'mountainbikeride'])
-  if (cycling.has(st)) return 'km/h'
-  return 'min/km'
-}
 
 /* ── Session Modal ──────────────────────────────────── */
 function SessionModal({
@@ -526,17 +522,12 @@ function SessionModal({
           </div>
           <div>
             <label className="text-xs text-gray-500 mb-1 block">Session Type</label>
-            <select
+            <SportTypeCombobox
               value={sportType}
-              onChange={e => setSportType(e.target.value)}
-              className={clsx('w-full border rounded-lg px-4 py-3.5 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
-              style={{ color: getSportColor(sportType) }}
-            >
-              {Object.keys(SPORT_COLORS_HEX).map(s => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-              <option value="Other">Other</option>
-            </select>
+              onChange={setSportType}
+              className={clsx('w-full border rounded-lg px-4 py-3.5', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
+              isLight={isLight}
+            />
           </div>
           <div>
             <label className="text-xs text-gray-500 mb-1 block">Description</label>
@@ -568,7 +559,7 @@ function SessionModal({
                         value={plannedDistanceKm} onChange={e => setPlannedDistanceKm(e.target.value)}
                         className={clsx('w-24 border rounded px-2 py-1.5 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
                       />
-                      <span className="text-xs text-gray-500">km</span>
+                      <span className="text-xs text-gray-500">{getDistUnit(sportType)}</span>
                     </div>
                   </div>
                 </div>
@@ -925,7 +916,7 @@ function UpcomingPlan({ sessions, todayStr }: { sessions: Record<string, unknown
                 {isExpanded && (() => {
                   const goals: { icon: string; color: string; label: string }[] = []
                   const cardHasSegments = s.segments && Array.isArray(s.segments) && (s.segments as Segment[]).length > 0
-                  if (s.planned_distance_km != null && !cardHasSegments) goals.push({ icon: '↔', color: '#3b82f6', label: `${s.planned_distance_km} km` })
+                  if (s.planned_distance_km != null && !cardHasSegments) goals.push({ icon: '↔', color: '#3b82f6', label: formatDist(s.planned_distance_km as number, s.sport_type as string) })
                   if (s.planned_duration_mins != null) goals.push({ icon: '⏱', color: '#22c55e', label: `${s.planned_duration_mins} min` })
                   if (s.target_avg_pace != null) {
                     const pu = getPaceUnit(s.sport_type as string)
@@ -1148,6 +1139,7 @@ function MonthPicker({ current, onSelect, onClose }: {
 export default function CalendarPage() {
   const { theme } = useTheme()
   const isLight = theme === 'light'
+  const { toast } = useToast()
   const [currentMonth, setCurrentMonth] = useState(new Date())
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [showModal, setShowModal] = useState(false)
@@ -1155,12 +1147,10 @@ export default function CalendarPage() {
   const [draggingSessionId, setDraggingSessionId] = useState<number | null>(null)
   const [draggingSession, setDraggingSession] = useState<Record<string, unknown> | null>(null)
   const [dragOverDate, setDragOverDate] = useState<string | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
 
   const showToast = useCallback((msg: string) => {
-    setToast(msg)
-    setTimeout(() => setToast(null), 2000)
-  }, [])
+    toast(msg, 'success')
+  }, [toast])
 
   const { data: streakData } = useStreaks()
   const { data: calGoals } = useGoals(currentMonth.getFullYear())
@@ -1279,16 +1269,16 @@ export default function CalendarPage() {
       {/* Calendar header */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <h2 className="text-2xl font-bold tracking-tight">Calendar</h2>
+          <h2 className="page-title">Calendar</h2>
           <div className="flex items-center gap-3 relative">
-            <button onClick={() => setCurrentMonth(m => subMonths(m, 1))} className={clsx('px-3 py-1 rounded text-sm transition-colors', isLight ? 'bg-white border border-gray-300 hover:bg-gray-50 text-gray-600' : 'bg-surface-700 hover:bg-surface-600')}>&larr;</button>
+            <button onClick={() => setCurrentMonth(m => subMonths(m, 1))} className="btn !px-3">&larr;</button>
             <button
               onClick={() => setShowMonthPicker(v => !v)}
-              className={clsx('min-w-[140px] text-center px-2 py-1 rounded text-sm transition-colors', isLight ? 'text-gray-700 hover:text-gray-900 bg-white border border-gray-300 hover:bg-gray-50' : 'text-gray-300 hover:text-gray-100 bg-surface-700 hover:bg-surface-600')}
+              className="btn min-w-[140px] text-center !text-sm"
             >
               {format(currentMonth, 'MMMM yyyy')}
             </button>
-            <button onClick={() => setCurrentMonth(m => addMonths(m, 1))} className={clsx('px-3 py-1 rounded text-sm transition-colors', isLight ? 'bg-white border border-gray-300 hover:bg-gray-50 text-gray-600' : 'bg-surface-700 hover:bg-surface-600')}>&rarr;</button>
+            <button onClick={() => setCurrentMonth(m => addMonths(m, 1))} className="btn !px-3">&rarr;</button>
             {showMonthPicker && (
               <MonthPicker
                 current={currentMonth}
@@ -1626,7 +1616,7 @@ export default function CalendarPage() {
                           <span className={clsx('text-sm truncate flex-1', isLight ? 'text-gray-600 group-hover:text-gray-900' : 'text-gray-300 group-hover:text-gray-100')}>{a.name as string}</span>
                           <span className="text-xs text-gray-500 shrink-0">{a.sport_type as string}</span>
                           {a.distance_km != null && (
-                            <span className="text-xs font-mono shrink-0" style={{ color }}>{(a.distance_km as number).toFixed(1)} km</span>
+                            <span className="text-xs font-mono shrink-0" style={{ color }}>{formatDist(a.distance_km as number, a.sport_type as string)}</span>
                           )}
                           {a.moving_time != null && (
                             <span className="text-xs font-mono text-gray-500 shrink-0">{Math.round((a.moving_time as number) / 60)} min</span>
@@ -1733,9 +1723,9 @@ export default function CalendarPage() {
             {current.distance_per_sport_km && Object.keys(current.distance_per_sport_km).length > 0 && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <SportPieChart
-                  title="Distance (km)"
+                  title="Distance"
                   data={current.distance_per_sport_km}
-                  formatValue={(v: number) => `${v.toFixed(1)} km`}
+                  formatValue={(v: number, sport?: string) => formatDist(v, sport)}
                   colorMap={weekSportColors}
                 />
                 <SportPieChart
@@ -1766,12 +1756,6 @@ export default function CalendarPage() {
         />
       )}
 
-      {/* Toast */}
-      {toast && (
-        <div className={clsx('fixed bottom-6 left-1/2 -translate-x-1/2 z-50 text-sm px-4 py-2 rounded-lg shadow-xl border animate-[scaleIn_150ms_ease-out]', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600 text-gray-200')}>
-          {toast}
-        </div>
-      )}
     </div>
   )
 }

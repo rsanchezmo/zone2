@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useLayoutEffect, useCallback } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQueryClient, useIsFetching } from '@tanstack/react-query'
 import { useSyncStatus, useTriggerSync, useBackfillStreams } from '../../api/hooks'
 import { useTheme } from '../../hooks/useTheme'
+import { useToast } from '../../hooks/useToast'
 import clsx from 'clsx'
 
 const NAV_ITEMS: { to: string; label: string; color: string; icon: React.ReactNode }[] = [
@@ -31,6 +32,11 @@ const NAV_ITEMS: { to: string; label: string; color: string; icon: React.ReactNo
       <path d="M4 14V9M8 14V6M12 14V3" />
     </svg>
   )},
+  // { to: '/training', label: 'Training', color: '#fb923c', icon: (
+  //   <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+  //     <path d="M2 12l3-4 3 2 4-6" /><circle cx="13" cy="3.5" r="1" />
+  //   </svg>
+  // )},
   { to: '/workouts', label: 'Workouts', color: '#22d3ee', icon: (
     <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <rect x="1" y="6" width="3" height="4" rx="0.5" /><rect x="12" y="6" width="3" height="4" rx="0.5" /><rect x="4" y="4" width="3" height="8" rx="0.5" /><rect x="9" y="4" width="3" height="8" rx="0.5" /><line x1="7" y1="8" x2="9" y2="8" />
@@ -228,8 +234,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const { theme, toggleTheme } = useTheme()
   const isLight = theme === 'light'
   const location = useLocation()
+  const { toast } = useToast()
 
   const qc = useQueryClient()
+  const isFetching = useIsFetching()
   const wasSyncing = useRef(false)
 
   // Sliding indicator
@@ -266,23 +274,31 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
   }, [syncStatus?.needs_sync])
 
-  // Invalidate all data queries when sync completes
+  // Invalidate ALL queries when sync completes so every page gets fresh data
   useEffect(() => {
     if (wasSyncing.current && syncStatus?.syncing === false) {
-      qc.invalidateQueries({ queryKey: ['activities'] })
-      qc.invalidateQueries({ queryKey: ['activities-range'] })
-      qc.invalidateQueries({ queryKey: ['calendar-sessions'] })
-      qc.invalidateQueries({ queryKey: ['calendar-sessions-range'] })
-      qc.invalidateQueries({ queryKey: ['session-scores'] })
-      qc.invalidateQueries({ queryKey: ['stats'] })
-      qc.invalidateQueries({ queryKey: ['records'] })
-      qc.invalidateQueries({ queryKey: ['goals'] })
+      qc.invalidateQueries()
+      toast(`Synced ${syncStatus.total_activities ?? ''} activities`, 'success')
     }
     wasSyncing.current = syncStatus?.syncing ?? false
   }, [syncStatus?.syncing])
 
+  // Derive active color for ambient effects
+  const activeItem = NAV_ITEMS.find(item => location.pathname.startsWith(item.to))
+  const activeColor = activeItem?.color ?? '#60a5fa'
+
   return (
     <div className="min-h-screen">
+      {/* Global loading bar */}
+      {isFetching > 0 && (
+        <div className="fixed top-0 left-0 right-0 z-[60] h-[2px]">
+          <div
+            className="h-full animate-loading-bar"
+            style={{ background: `linear-gradient(90deg, transparent, ${activeColor}, transparent)` }}
+          />
+        </div>
+      )}
+
       {/* Main content — full width with left padding for dock */}
       <main className="min-h-screen p-6">
         {children}

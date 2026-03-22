@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useAthleteProfile, useAthleteZones, useSyncStatus, useSportTypes, useGoals, useCreateGoal, useUpdateGoal, useDeleteGoal, useRateLimits, useCacheCompleteness, useBackfillStreams } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
 import { useTheme } from '../hooks/useTheme'
+import { useToast } from '../hooks/useToast'
 import clsx from 'clsx'
 
 const HR_ZONE_COLORS = ['#6b7280', '#3b82f6', '#22c55e', '#eab308', '#ef4444']
@@ -31,6 +32,7 @@ function periodLabel(period: string): string {
 export default function ProfilePage() {
   const { theme } = useTheme()
   const isLight = theme === 'light'
+  const { toast } = useToast()
   const { data: profile, isLoading: profileLoading } = useAthleteProfile()
   const { data: zones } = useAthleteZones()
   const { data: syncStatus } = useSyncStatus()
@@ -54,10 +56,8 @@ export default function ProfilePage() {
     isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
   )
 
-  const inputClass = clsx(
-    'border rounded px-2 py-1.5 text-sm',
-    isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-800 border-surface-600 text-gray-200',
-  )
+  const inputClass = 'input'
+  const selectClass = 'select'
 
   if (profileLoading) {
     return (
@@ -108,11 +108,13 @@ export default function ProfilePage() {
     const payload = { year: yearNum, sport_type: goalForm.sport_type, metric: goalForm.metric, period: goalForm.period, target_value: target }
     if (editingGoalId != null) {
       updateGoal.mutate({ id: editingGoalId, ...payload }, {
-        onSuccess: () => { setEditingGoalId(null); setShowGoalForm(false) },
+        onSuccess: () => { setEditingGoalId(null); setShowGoalForm(false); toast('Goal updated', 'success') },
+        onError: () => toast('Failed to update goal', 'error'),
       })
     } else {
       createGoal.mutate(payload, {
-        onSuccess: () => { setShowGoalForm(false); setGoalForm({ year: String(currentYear), sport_type: 'Run', metric: 'distance_km', period: 'weekly', target_value: '' }) },
+        onSuccess: () => { setShowGoalForm(false); setGoalForm({ year: String(currentYear), sport_type: 'Run', metric: 'distance_km', period: 'weekly', target_value: '' }); toast('Goal created', 'success') },
+        onError: () => toast('Failed to create goal', 'error'),
       })
     }
   }
@@ -298,7 +300,7 @@ export default function ProfilePage() {
               <select
                 value={goalForm.sport_type}
                 onChange={e => setGoalForm(f => ({ ...f, sport_type: e.target.value }))}
-                className={inputClass}
+                className={selectClass}
               >
                 <option value="__all__">All Sports</option>
                 {(sportTypes ?? []).map((s: string) => (
@@ -308,7 +310,7 @@ export default function ProfilePage() {
               <select
                 value={goalForm.metric}
                 onChange={e => setGoalForm(f => ({ ...f, metric: e.target.value }))}
-                className={inputClass}
+                className={selectClass}
               >
                 {METRIC_OPTIONS.map(m => (
                   <option key={m.value} value={m.value}>{m.label}</option>
@@ -317,7 +319,7 @@ export default function ProfilePage() {
               <select
                 value={goalForm.period}
                 onChange={e => setGoalForm(f => ({ ...f, period: e.target.value }))}
-                className={inputClass}
+                className={selectClass}
               >
                 {PERIOD_OPTIONS.map(p => (
                   <option key={p.value} value={p.value}>{p.label}</option>
@@ -334,21 +336,13 @@ export default function ProfilePage() {
               <button
                 onClick={handleGoalSubmit}
                 disabled={!goalForm.target_value || parseFloat(goalForm.target_value) <= 0}
-                className={clsx(
-                  'text-xs px-3 py-1.5 rounded-lg transition-colors disabled:opacity-30',
-                  isLight
-                    ? 'bg-gray-900 text-white hover:bg-gray-800'
-                    : 'bg-white/10 text-gray-300 hover:bg-white/15',
-                )}
+                className="btn"
               >
                 {editingGoalId != null ? 'Update' : 'Create'}
               </button>
               <button
                 onClick={cancelForm}
-                className={clsx(
-                  'text-xs px-3 py-1.5 rounded-lg transition-colors',
-                  isLight ? 'bg-gray-200 text-gray-600 hover:bg-gray-300' : 'bg-surface-600 hover:bg-surface-500 text-gray-300',
-                )}
+                className="btn"
               >
                 Cancel
               </button>
@@ -382,7 +376,10 @@ export default function ProfilePage() {
                     Edit
                   </button>
                   <button
-                    onClick={() => deleteGoal.mutate(goal.id as number)}
+                    onClick={() => deleteGoal.mutate(goal.id as number, {
+                      onSuccess: () => toast('Goal deleted', 'success'),
+                      onError: () => toast('Failed to delete goal', 'error'),
+                    })}
                     className="text-xs text-red-400 hover:text-red-300 opacity-0 group-hover:opacity-100 transition-opacity"
                   >
                     Delete

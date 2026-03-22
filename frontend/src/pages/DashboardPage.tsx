@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useYearInSport, useYears, useSportTypes, useCumulativeDistance, useGoals } from '../api/hooks'
+import { useYearInSport, useYears, useSportTypes, useCumulativeDistance, useGoals, useWeeklyTotals } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
+import { formatSpeed, getSportCategory, formatDist, formatDistAxis, distValue, getDistUnit } from '../utils/formatSpeed'
 import StatCard from '../components/shared/StatCard'
 import ExportButton from '../components/shared/ExportButton'
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
-  AreaChart, Area,
+  AreaChart, Area, LineChart,
 } from 'recharts'
 import { useTheme } from '../hooks/useTheme'
 import clsx from 'clsx'
@@ -21,6 +22,7 @@ export default function DashboardPage() {
   const { data: sportTypes } = useSportTypes()
   const [year, setYear] = useState(new Date().getFullYear())
   const [mainSport, setMainSport] = useState('Run')
+  const [weeklyTotalsWeeks, setWeeklyTotalsWeeks] = useState(12)
 
   const { data: goalsData } = useGoals(year)
   const yearlyDistanceGoal = useMemo(() => {
@@ -38,7 +40,8 @@ export default function DashboardPage() {
     return target // yearly
   }, [goalsData, mainSport])
 
-  const { data: yearData, isLoading: yearLoading } = useYearInSport(year, mainSport, year - 1)
+  const { data: yearData, isLoading: yearLoading, isFetching: yearFetching } = useYearInSport(year, mainSport, year - 1)
+  const { data: weeklyTotalsData } = useWeeklyTotals(weeklyTotalsWeeks, mainSport)
   const { data: cumulativeData } = useCumulativeDistance(year, mainSport, year - 1, yearlyDistanceGoal)
 
   const comp = yearData?.comparison
@@ -99,6 +102,26 @@ export default function DashboardPage() {
       })
   }, [cumulativeData])
 
+  // Goal progress status compared to today's expected target
+  const goalStatus = useMemo(() => {
+    if (!yearlyDistanceGoal || !cumulativeData?.data) return null
+    const rawPoints = cumulativeData.data as { day: number; date: string; km: number; target?: number }[]
+    if (rawPoints.length === 0) return null
+    const today = new Date().toISOString().slice(0, 10)
+    // Find the point closest to today (last point with date <= today)
+    let todayPoint = null
+    for (let i = rawPoints.length - 1; i >= 0; i--) {
+      if (rawPoints[i].date <= today) { todayPoint = rawPoints[i]; break }
+    }
+    if (!todayPoint || !todayPoint.target) return null
+    const diff = todayPoint.km - todayPoint.target
+    const pct = (diff / todayPoint.target) * 100
+    // Within ±2% is "on track"
+    if (Math.abs(pct) <= 2) return { label: 'On track', color: 'blue', pct: 0 } as const
+    if (pct > 0) return { label: 'Above target', color: 'green', pct } as const
+    return { label: 'Below target', color: 'red', pct } as const
+  }, [cumulativeData, yearlyDistanceGoal])
+
   // Sport breakdown pie data
   const sportPieData = useMemo(() => {
     const perSport = yearData?.all_sports?.activities_per_sport ?? {}
@@ -112,30 +135,16 @@ export default function DashboardPage() {
   }, [yearData])
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto">
+    <div className={clsx('space-y-6 max-w-6xl mx-auto transition-opacity duration-200', yearFetching && !yearLoading && 'opacity-60')}>
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
-          <h2 className={clsx('text-2xl font-bold', isLight ? 'text-gray-900' : 'text-white')}>Year in Sport</h2>
-          <select
-            value={year}
-            onChange={e => setYear(Number(e.target.value))}
-            className={clsx(
-              'border rounded px-2 py-1 text-sm appearance-none cursor-pointer',
-              isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600 text-gray-200',
-            )}
-          >
+          <h2 className="page-title">Year in Sport</h2>
+          <select value={year} onChange={e => setYear(Number(e.target.value))} className="select">
             {(years ?? []).map((y: number) => (
               <option key={y} value={y}>{y}</option>
             ))}
           </select>
-          <select
-            value={mainSport}
-            onChange={e => setMainSport(e.target.value)}
-            className={clsx(
-              'border rounded px-2 py-1 text-sm appearance-none cursor-pointer',
-              isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600 text-gray-200',
-            )}
-          >
+          <select value={mainSport} onChange={e => setMainSport(e.target.value)} className="select">
             {(sportTypes ?? []).map((s: string) => (
               <option key={s} value={s}>{s}</option>
             ))}
@@ -156,25 +165,22 @@ export default function DashboardPage() {
       </div>
 
       {yearLoading ? (
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 stagger-children">
           {Array.from({ length: 10 }).map((_, i) => (
-            <div key={i} className={clsx('rounded-xl p-4 border animate-pulse', isLight ? 'bg-gray-100 border-gray-200' : 'bg-surface-800 border-surface-600')}>
-              <div className={clsx('h-3 w-16 rounded mb-3', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
-              <div className={clsx('h-7 w-20 rounded', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
-            </div>
+            <StatCard key={i} label="" value="" loading />
           ))}
         </div>
       ) : yearData ? (
         <>
           {/* Main sport stat cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
-            <StatCard label="Activities" value={yearData.main_sport.total_activities} delta={yearDelta('main_sport', 'total_activities')} />
-            <StatCard label="Distance" value={yearData.main_sport.total_distance_km?.toFixed(1)} unit="km" delta={yearDelta('main_sport', 'total_distance_km')} />
-            <StatCard label="Time" value={yearData.main_sport.total_time_hours?.toFixed(1)} unit="hrs" delta={yearDelta('main_sport', 'total_time_hours')} />
-            <StatCard label="Elevation" value={Math.round(yearData.main_sport.total_elevation_m ?? 0)} unit="m" delta={yearDelta('main_sport', 'total_elevation_m')} />
-            <StatCard label="Active Days" value={yearData.main_sport.active_days} delta={yearDelta('main_sport', 'active_days')} />
-            <StatCard label="Avg Distance" value={yearData.main_sport.average_distance_km?.toFixed(1)} unit="km" delta={yearDelta('main_sport', 'average_distance_km')} />
-            <StatCard label="Per Week" value={yearData.main_sport.activities_per_week?.toFixed(1)} delta={yearDelta('main_sport', 'activities_per_week')} />
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 stagger-children">
+            <StatCard label="Activities" value={yearData.main_sport.total_activities} delta={yearDelta('main_sport', 'total_activities')} accent={sportColor} />
+            <StatCard label="Distance" value={distValue(yearData.main_sport.total_distance_km ?? 0, mainSport)} unit={getDistUnit(mainSport)} delta={yearDelta('main_sport', 'total_distance_km')} accent={sportColor} />
+            <StatCard label="Time" value={yearData.main_sport.total_time_hours?.toFixed(1)} unit="hrs" delta={yearDelta('main_sport', 'total_time_hours')} accent={sportColor} />
+            <StatCard label="Elevation" value={Math.round(yearData.main_sport.total_elevation_m ?? 0)} unit="m" delta={yearDelta('main_sport', 'total_elevation_m')} accent={sportColor} />
+            <StatCard label="Active Days" value={yearData.main_sport.active_days} delta={yearDelta('main_sport', 'active_days')} accent={sportColor} />
+            <StatCard label="Avg Distance" value={distValue(yearData.main_sport.average_distance_km ?? 0, mainSport)} unit={getDistUnit(mainSport)} delta={yearDelta('main_sport', 'average_distance_km')} accent={sportColor} />
+            <StatCard label="Per Week" value={yearData.main_sport.activities_per_week?.toFixed(1)} delta={yearDelta('main_sport', 'activities_per_week')} accent={sportColor} />
             <StatCard
               label="All Sports"
               value={yearData.all_sports.total_activities}
@@ -198,9 +204,9 @@ export default function DashboardPage() {
           </div>
 
           {/* Monthly Distance Chart */}
-          <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
+          <div className={clsx('rounded-xl p-4 border chart-card', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')} style={{ '--card-accent': sportColor } as React.CSSProperties}>
             <div className="flex items-center justify-between mb-3">
-              <div className="text-xs text-gray-500 uppercase">Monthly Distance — {mainSport}</div>
+              <div className="text-xs text-gray-500 uppercase">Monthly Distance ({getDistUnit(mainSport)}) — {mainSport}</div>
               {comp && (
                 <div className="flex items-center gap-4">
                   <div className="flex items-center gap-1.5">
@@ -218,12 +224,12 @@ export default function DashboardPage() {
               <ComposedChart data={monthlyDistanceData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={colors.gridStroke} />
                 <XAxis dataKey="month" tick={{ fill: colors.tickFill, fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: colors.tickFillSecondary, fontSize: 10 }} axisLine={false} tickLine={false} width={40} tickFormatter={(v: number) => `${v}`} />
+                <YAxis tick={{ fill: colors.tickFillSecondary, fontSize: 10 }} axisLine={false} tickLine={false} width={50} tickFormatter={(v: number) => formatDistAxis(v, mainSport)} />
                 <Tooltip
                   contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
                   labelStyle={{ color: colors.labelColor }}
                   itemStyle={{ color: colors.labelColor }}
-                  formatter={(value: any, name: any) => [`${Number(value).toFixed(1)} km`, name === 'prev' ? `${year - 1}` : name === 'distance' ? `${year}` : '']}
+                  formatter={(value: any, name: any) => [formatDist(Number(value), mainSport), name === 'prev' ? `${year - 1}` : name === 'distance' ? `${year}` : '']}
                 />
                 {comp && (
                   <Bar dataKey="prev" fill={sportColor} fillOpacity={0.15} stroke={sportColor} strokeOpacity={0.3} strokeWidth={1} radius={[3, 3, 0, 0]} />
@@ -238,7 +244,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Monthly Activities Chart */}
-          <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
+          <div className={clsx('rounded-xl p-4 border chart-card', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')} style={{ '--card-accent': sportColor } as React.CSSProperties}>
             <div className="flex items-center justify-between mb-3">
               <div className="text-xs text-gray-500 uppercase">Monthly Activities — {mainSport}</div>
               {comp && (
@@ -277,11 +283,80 @@ export default function DashboardPage() {
             </ResponsiveContainer>
           </div>
 
+          {/* Weekly Totals */}
+          {weeklyTotalsData?.data?.length > 0 && (
+            <div className={clsx('rounded-xl p-4 border chart-card', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')} style={{ '--card-accent': sportColor } as React.CSSProperties}>
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-xs text-gray-500 uppercase">
+                  Weekly {weeklyTotalsData.data.some((w: any) => w.total_distance_km > 0) ? 'Distance' : 'Activities'} — {mainSport}
+                </div>
+                <div className="flex items-center gap-0.5">
+                  {[12, 16, 24, 52].map(w => (
+                    <button
+                      key={w}
+                      onClick={() => setWeeklyTotalsWeeks(w)}
+                      className="chip font-mono"
+                      data-active={weeklyTotalsWeeks === w}
+                    >
+                      {w}w
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {(() => {
+                const hasDistance = weeklyTotalsData.data.some((w: any) => w.total_distance_km > 0)
+                const dataKey = hasDistance ? 'total_distance_km' : 'total_activities'
+                const yLabel = hasDistance ? getDistUnit(mainSport) : ''
+                const tooltipFmt = hasDistance
+                  ? (v: any) => [formatDist(Number(v), mainSport), 'Distance']
+                  : (v: any) => [`${v}`, 'Activities']
+                return (
+                  <ResponsiveContainer width="100%" height={250}>
+                    <LineChart data={weeklyTotalsData.data} margin={{ top: 5, right: 30, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={colors.gridStroke} />
+                      <XAxis
+                        dataKey="week_label"
+                        tick={{ fill: colors.tickFill, fontSize: 10 }}
+                        axisLine={false}
+                        tickLine={false}
+                        interval={weeklyTotalsWeeks <= 16 ? 0 : Math.floor(weeklyTotalsWeeks / 12)}
+                        angle={-45}
+                        textAnchor="end"
+                        height={55}
+                        dy={12}
+                      />
+                      <YAxis tick={{ fill: colors.tickFillSecondary, fontSize: 10 }} axisLine={false} tickLine={false} width={50} allowDecimals={hasDistance} tickFormatter={(v: number) => hasDistance ? formatDistAxis(v, mainSport) : `${v}`} />
+                      <Tooltip
+                        contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
+                        labelStyle={{ color: colors.labelColor }}
+                        itemStyle={{ color: colors.labelColor }}
+                        formatter={tooltipFmt}
+                      />
+                      <Line dataKey={dataKey} stroke={sportColor} strokeWidth={2} dot={{ fill: sportColor, r: 3 }} type="monotone" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                )
+              })()}
+            </div>
+          )}
+
           {/* Cumulative Distance */}
           {cumulativeChartData.length > 0 && (
-            <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
+            <div className={clsx('rounded-xl p-4 border chart-card', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')} style={{ '--card-accent': sportColor } as React.CSSProperties}>
               <div className="flex items-center justify-between mb-3">
-                <div className="text-xs text-gray-500 uppercase">Cumulative Distance — {mainSport}</div>
+                <div className="flex items-center gap-2">
+                  <div className="text-xs text-gray-500 uppercase">Cumulative Distance ({getDistUnit(mainSport)}) — {mainSport}</div>
+                  {goalStatus && (
+                    <span className={clsx(
+                      'text-xs font-semibold px-2 py-0.5 rounded-md',
+                      goalStatus.color === 'green' && (isLight ? 'bg-green-100 text-green-700' : 'bg-green-500/15 text-green-400'),
+                      goalStatus.color === 'red' && (isLight ? 'bg-red-100 text-red-700' : 'bg-red-500/15 text-red-400'),
+                      goalStatus.color === 'blue' && (isLight ? 'bg-blue-100 text-blue-700' : 'bg-blue-500/15 text-blue-400'),
+                    )}>
+                      {goalStatus.label}{goalStatus.pct !== 0 && ` (${goalStatus.pct > 0 ? '+' : ''}${goalStatus.pct.toFixed(1)}%)`}
+                    </span>
+                  )}
+                </div>
                 <div className="flex items-center gap-4">
                   <div className="flex items-center gap-1.5">
                     <span className="w-3 h-0.5 rounded-sm" style={{ backgroundColor: sportColor }} />
@@ -296,7 +371,7 @@ export default function DashboardPage() {
                   {yearlyDistanceGoal && (
                     <div className="flex items-center gap-1.5">
                       <span className="w-3 h-0.5 rounded-sm border-b border-dashed" style={{ borderColor: '#9ca3af' }} />
-                      <span className="text-[11px] text-gray-500">Target ({yearlyDistanceGoal} km)</span>
+                      <span className="text-[11px] text-gray-500">Target ({formatDist(yearlyDistanceGoal, mainSport)})</span>
                     </div>
                   )}
                 </div>
@@ -321,15 +396,15 @@ export default function DashboardPage() {
                     tick={{ fill: colors.tickFillSecondary, fontSize: 10 }}
                     axisLine={false}
                     tickLine={false}
-                    width={50}
-                    tickFormatter={(v: number) => `${v} km`}
+                    width={55}
+                    tickFormatter={(v: number) => formatDistAxis(v, mainSport)}
                   />
                   <Tooltip
                     contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
                     labelStyle={{ color: colors.labelColor }}
                     itemStyle={{ color: colors.labelColor }}
                     formatter={(value: any, name: any) => [
-                      `${Number(value ?? 0).toFixed(1)} km`,
+                      formatDist(Number(value ?? 0), mainSport),
                       name === 'prev' ? `${year - 1}` : name === 'target' ? 'Target' : `${year}`,
                     ]}
                   />
@@ -405,7 +480,7 @@ export default function DashboardPage() {
                 {yearData.main_sport.longest_activity_km > 0 && (
                   <RecordRow
                     label="Longest Distance"
-                    value={`${yearData.main_sport.longest_activity_km.toFixed(1)} km`}
+                    value={formatDist(yearData.main_sport.longest_activity_km, mainSport)}
                     activityId={yearData.main_sport.longest_activity_km_id}
                     color={sportColor}
                   />
@@ -444,7 +519,7 @@ export default function DashboardPage() {
                 )}
                 {yearData.main_sport.month_most_km != null && (
                   <div className="flex items-center justify-between py-2 border-b border-surface-600/50">
-                    <span className="text-sm text-gray-400">Best Month (km)</span>
+                    <span className="text-sm text-gray-400">Best Month ({getDistUnit(mainSport)})</span>
                     <span className="text-sm font-mono" style={{ color: sportColor }}>
                       {MONTH_LABELS[yearData.main_sport.month_most_km - 1]}
                     </span>
@@ -473,29 +548,3 @@ function RecordRow({ label, value, activityId, color }: { label: string; value: 
   return content
 }
 
-const CYCLING_SET = new Set([
-  'ride', 'virtualride', 'ebikeride', 'handcycle', 'velomobile',
-  'gravelride', 'mountainbikeride', 'emountainbikeride', 'rollerski',
-])
-const SWIMMING_SET = new Set(['swim'])
-const WATER_SET = new Set([
-  'canoeing', 'standuppaddling', 'kayaking', 'surfing', 'kitesurf',
-  'rowing', 'windsurf', 'sail',
-])
-
-function formatSpeed(speedMs: number, sportType: string): string {
-  const key = sportType.toLowerCase().replace(/\s/g, '')
-  if (CYCLING_SET.has(key) || WATER_SET.has(key)) {
-    return `${(speedMs * 3.6).toFixed(1)} km/h`
-  }
-  if (SWIMMING_SET.has(key)) {
-    const pace = (100 / speedMs) / 60
-    const m = Math.floor(pace)
-    const s = Math.round((pace - m) * 60)
-    return `${m}:${s.toString().padStart(2, '0')} /100m`
-  }
-  const pace = (1000 / speedMs) / 60
-  const m = Math.floor(pace)
-  const s = Math.round((pace - m) * 60)
-  return `${m}:${s.toString().padStart(2, '0')} /km`
-}

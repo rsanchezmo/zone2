@@ -21,6 +21,21 @@ function FitAll({ bounds }: { bounds: [number, number][] }) {
   return null
 }
 
+function FlyToCity({ target }: { target: { lat: number; lon: number; bbox: [number, number, number, number] } | null }) {
+  const map = useMap()
+  useEffect(() => {
+    if (target) {
+      const { bbox } = target
+      // Nominatim bbox: [south, north, west, east]
+      map.flyToBounds(
+        [[parseFloat(String(bbox[0])), parseFloat(String(bbox[2]))], [parseFloat(String(bbox[1])), parseFloat(String(bbox[3]))]],
+        { padding: [30, 30], duration: 1.5 }
+      )
+    }
+  }, [map, target])
+  return null
+}
+
 function InvalidateSize({ expanded }: { expanded: boolean }) {
   const map = useMap()
   useEffect(() => {
@@ -44,6 +59,8 @@ export default function AggregationsPage() {
   const [sport, setSport] = useState<string>('')
   const [year, setYear] = useState<string>('')
   const [heatmapCity, setHeatmapCity] = useState('')
+  const [flyTarget, setFlyTarget] = useState<{ lat: number; lon: number; bbox: [number, number, number, number] } | null>(null)
+  const [isGeocoding, setIsGeocoding] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const navigate = useNavigate()
 
@@ -93,6 +110,25 @@ export default function AggregationsPage() {
     return `/api/exports/thunderstorm-heatmap?${params.toString()}`
   }, [heatmapCity, sport, year])
 
+  const handleGoToCity = async () => {
+    if (!heatmapCity.trim()) return
+    setIsGeocoding(true)
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(heatmapCity)}&format=json&limit=1`
+      )
+      const data = await res.json()
+      if (data.length > 0) {
+        const { lat, lon, boundingbox } = data[0]
+        setFlyTarget({ lat: parseFloat(lat), lon: parseFloat(lon), bbox: boundingbox })
+      }
+    } catch {
+      // silently fail
+    } finally {
+      setIsGeocoding(false)
+    }
+  }
+
   const overlayClass = clsx(
     'rounded-lg border backdrop-blur-md',
     isLight
@@ -100,12 +136,7 @@ export default function AggregationsPage() {
       : 'bg-surface-800/85 border-surface-600/80',
   )
 
-  const selectClass = clsx(
-    'border rounded px-1.5 py-1 text-xs transition-colors appearance-none cursor-pointer',
-    isLight
-      ? 'bg-white/90 border-gray-200 text-gray-700'
-      : 'bg-surface-700/90 border-surface-600 text-gray-300',
-  )
+  const selectClass = 'select !text-xs !py-1 !px-1.5'
 
   return (
     <div className={expanded ? '' : 'max-w-6xl mx-auto'}>
@@ -165,6 +196,7 @@ export default function AggregationsPage() {
               )
             })}
             <FitAll bounds={allBounds} />
+            <FlyToCity target={flyTarget} />
             <InvalidateSize expanded={expanded} />
           </MapContainer>
         )}
@@ -198,6 +230,7 @@ export default function AggregationsPage() {
             placeholder="City (e.g. Paris)"
             value={heatmapCity}
             onChange={e => setHeatmapCity(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleGoToCity() }}
             className={clsx(
               'border rounded px-2 py-1 text-sm w-36 placeholder-gray-500 focus:outline-none',
               isLight
@@ -205,6 +238,19 @@ export default function AggregationsPage() {
                 : 'bg-surface-700/90 border-surface-600 focus:border-surface-500',
             )}
           />
+          <button
+            onClick={handleGoToCity}
+            disabled={!heatmapCity.trim() || isGeocoding}
+            className={clsx(
+              'px-2 py-1 text-xs font-medium rounded border transition-colors disabled:opacity-40',
+              isLight
+                ? 'bg-gray-100 border-gray-200 text-gray-700 hover:bg-gray-200'
+                : 'bg-surface-600 border-surface-500 text-gray-300 hover:bg-surface-500',
+            )}
+            title="Zoom map to this city"
+          >
+            {isGeocoding ? '...' : 'Go'}
+          </button>
           <ExportButton
             url={heatmapUrl}
             label="Export Heatmap"

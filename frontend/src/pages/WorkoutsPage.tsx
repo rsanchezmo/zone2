@@ -3,23 +3,20 @@ import {
   useWorkoutTemplates, useCreateWorkoutTemplate,
   useUpdateWorkoutTemplate, useDeleteWorkoutTemplate,
 } from '../api/hooks'
-import { SPORT_COLORS_HEX, getSportColor } from '../constants/sportColors'
+import { getSportColor } from '../constants/sportColors'
+import { getPaceUnit } from '../utils/formatSpeed'
+import SportTypeCombobox from '../components/shared/SportTypeCombobox'
 import SegmentListBuilder, { SegmentSummary, type Segment } from '../components/shared/SegmentListBuilder'
 import clsx from 'clsx'
 import { useTheme } from '../hooks/useTheme'
+import { useToast } from '../hooks/useToast'
 
 const SPORT_FILTERS = ['All', 'Run', 'Ride', 'Swim', 'Walk', 'Hike'] as const
-
-function getPaceUnit(sportType: string): string {
-  const st = sportType.toLowerCase().replace(/\s/g, '')
-  const cycling = new Set(['ride', 'virtualride', 'ebikeride', 'gravelride', 'mountainbikeride'])
-  if (cycling.has(st)) return 'km/h'
-  return 'min/km'
-}
 
 export default function WorkoutsPage() {
   const { theme } = useTheme()
   const isLight = theme === 'light'
+  const { toast } = useToast()
   const [sportFilter, setSportFilter] = useState<string>('All')
   const [editingTemplate, setEditingTemplate] = useState<Record<string, unknown> | null>(null)
   const [showBuilder, setShowBuilder] = useState(false)
@@ -42,10 +39,7 @@ export default function WorkoutsPage() {
     isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
   )
 
-  const inputClass = clsx(
-    'w-full border rounded-lg px-3 py-2.5 text-sm',
-    isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600 text-gray-200',
-  )
+  const inputClass = 'input w-full'
 
   function resetForm() {
     setName('')
@@ -74,25 +68,26 @@ export default function WorkoutsPage() {
       segments: segments as unknown as Record<string, unknown>[],
     }
     if (editingTemplate) {
-      updateTemplate.mutate({ id: editingTemplate.id as number, ...payload }, { onSuccess: resetForm })
+      updateTemplate.mutate({ id: editingTemplate.id as number, ...payload }, {
+        onSuccess: () => { resetForm(); toast('Workout updated', 'success') },
+        onError: () => toast('Failed to update workout', 'error'),
+      })
     } else {
-      createTemplate.mutate(payload, { onSuccess: resetForm })
+      createTemplate.mutate(payload, {
+        onSuccess: () => { resetForm(); toast('Workout created', 'success') },
+        onError: () => toast('Failed to create workout', 'error'),
+      })
     }
   }
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className={clsx('text-2xl font-bold', isLight ? 'text-gray-900' : 'text-white')}>Workout Templates</h1>
+        <h1 className="page-title">Workout Templates</h1>
         {!showBuilder && (
           <button
             onClick={() => { resetForm(); setShowBuilder(true) }}
-            className={clsx(
-              'border rounded-lg px-4 py-2 text-sm transition-colors',
-              isLight
-                ? 'bg-gray-900 text-white border-gray-900 hover:bg-gray-800'
-                : 'bg-white/10 text-gray-300 border-white/20 hover:bg-white/15',
-            )}
+            className="btn !py-2 !px-4 !text-sm"
           >
             + New Workout
           </button>
@@ -139,16 +134,12 @@ export default function WorkoutsPage() {
             </div>
             <div>
               <label className="text-xs text-gray-500 mb-1 block">Sport Type</label>
-              <select
-                value={sportType} onChange={e => setSportType(e.target.value)}
+              <SportTypeCombobox
+                value={sportType}
+                onChange={setSportType}
                 className={inputClass}
-                style={{ color: getSportColor(sportType) }}
-              >
-                {Object.keys(SPORT_COLORS_HEX).map(s => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-                <option value="Other">Other</option>
-              </select>
+                isLight={isLight}
+              />
             </div>
           </div>
 
@@ -248,7 +239,13 @@ export default function WorkoutsPage() {
                       <>
                         <span className="text-xs text-red-400">Delete?</span>
                         <button
-                          onClick={() => { deleteTemplate.mutate(t.id as number); setConfirmDeleteId(null) }}
+                          onClick={() => {
+                            deleteTemplate.mutate(t.id as number, {
+                              onSuccess: () => toast('Workout deleted', 'success'),
+                              onError: () => toast('Failed to delete workout', 'error'),
+                            })
+                            setConfirmDeleteId(null)
+                          }}
                           className="text-red-400 hover:text-red-300 text-xs font-bold"
                         >Yes</button>
                         <button

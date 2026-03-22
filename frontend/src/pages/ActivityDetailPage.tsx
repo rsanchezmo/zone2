@@ -9,6 +9,7 @@ import type { ChartZone } from '../components/shared/StreamChart'
 import polyline from '@mapbox/polyline'
 import ExportButton from '../components/shared/ExportButton'
 import { getSportColor } from '../constants/sportColors'
+import { getSportCategory, convertSpeed, formatPace } from '../utils/formatSpeed'
 import { SegmentSummary, getSegmentColor, type Segment } from '../components/shared/SegmentListBuilder'
 import { useTheme } from '../hooks/useTheme'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
@@ -26,22 +27,6 @@ interface StreamPoint {
   latlng?: [number, number]
 }
 
-const CYCLING_SPORTS = new Set([
-  'ride', 'virtualride', 'ebikeride', 'handcycle', 'velomobile',
-  'gravelride', 'mountainbikeride', 'emountainbikeride', 'rollerski',
-])
-const SWIMMING_SPORTS = new Set(['swim'])
-const WATER_SPORTS = new Set([
-  'canoeing', 'standuppaddling', 'kayaking', 'surfing', 'kitesurf',
-  'rowing', 'windsurf', 'sail',
-])
-const SPEED_SPORTS = new Set([
-  'squash', 'tennis', 'pickleball', 'racquetball', 'badminton', 'tabletennis', 'padel',
-  'weighttraining', 'workout', 'yoga', 'pilates', 'crossfit', 'highintensityintervaltraining',
-  'elliptical', 'stairstepper', 'dance', 'rockclimbing', 'alpineski', 'backcountryski',
-  'nordicski', 'snowboard', 'iceskate', 'inlineskate', 'skateboard',
-  'soccer', 'basketball', 'volleyball', 'cricket', 'golf',
-])
 
 interface StravaPhoto {
   unique_id: string
@@ -158,25 +143,6 @@ function PhotoGallery({ photos }: { photos: StravaPhoto[] }) {
   )
 }
 
-function getSportCategory(sportType: string | undefined): 'cycling' | 'swimming' | 'water' | 'running' | 'speed' {
-  const key = (sportType ?? '').toLowerCase().replace(/\s/g, '')
-  if (CYCLING_SPORTS.has(key)) return 'cycling'
-  if (SWIMMING_SPORTS.has(key)) return 'swimming'
-  if (WATER_SPORTS.has(key)) return 'water'
-  if (SPEED_SPORTS.has(key)) return 'speed'
-  return 'running'
-}
-
-function convertSpeed(speedMs: number, sportType: string | undefined): { value: number; unit: string } {
-  if (speedMs <= 0) return { value: 0, unit: 'N/A' }
-  const cat = getSportCategory(sportType)
-  if (cat === 'swimming') {
-    return { value: (100 / speedMs) / 60, unit: 'min/100m' }
-  } else if (cat === 'cycling' || cat === 'speed' || cat === 'water') {
-    return { value: speedMs * 3.6, unit: 'km/h' }
-  }
-  return { value: (1000 / speedMs) / 60, unit: 'min/km' }
-}
 
 interface Split {
   km: number
@@ -243,12 +209,7 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
-function formatPace(value: number, useSpeed: boolean): string {
-  if (useSpeed) return value.toFixed(1)
-  const m = Math.floor(value)
-  const s = Math.round((value - m) * 60)
-  return `${m}:${s.toString().padStart(2, '0')}`
-}
+
 
 function computeSplits(streams: StreamPoint[], sportType: string | undefined, gapSpeeds?: number[]): Split[] {
   if (!streams || streams.length < 2) return []
@@ -748,7 +709,7 @@ function ActivityDetailPageInner() {
       const paceSec = Math.round((split.avgPace - paceMin) * 60)
       const paceStr = pu.includes('min') ? `${paceMin}:${paceSec.toString().padStart(2, '0')} ${pu}` : `${split.avgPace.toFixed(1)} ${pu}`
 
-      let tooltip = `<b>Km ${split.km}</b><br/>`
+      let tooltip = sportCategory === 'swimming' ? `<b>${Math.round(split.splitDistance)} m</b><br/>` : `<b>Km ${split.km}</b><br/>`
       tooltip += `Pace: ${paceStr}<br/>`
       tooltip += `Time: ${timeStr}`
       if (split.avgHR != null) tooltip += `<br/>HR: ${split.avgHR} bpm`
@@ -905,7 +866,7 @@ function ActivityDetailPageInner() {
 
       {/* Stats Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="Distance" value={activity.distance_km?.toFixed(2)} unit="km" />
+        <StatCard label="Distance" value={sportCategory === 'swimming' ? Math.round((activity.distance_km ?? 0) * 1000) : activity.distance_km?.toFixed(2)} unit={sportCategory === 'swimming' ? 'm' : 'km'} />
         <StatCard label="Moving Time" value={activity.moving_time_formatted} />
         {activity.elapsed_time_formatted && activity.elapsed_time !== activity.moving_time && (
           <StatCard label="Elapsed Time" value={activity.elapsed_time_formatted} />
@@ -1128,7 +1089,9 @@ function ActivityDetailPageInner() {
                   {laps.map((lap, i) => {
                     const lapSpeed = lap.average_speed as number || 0
                     const { value: paceVal } = convertSpeed(lapSpeed, activity.sport_type)
-                    const lapDist = (lap.distance as number || 0) / 1000
+                    const lapDistRaw = lap.distance as number || 0
+                    const isSwim = sportCategory === 'swimming'
+                    const lapDist = isSwim ? lapDistRaw : lapDistRaw / 1000
 
                     return (
                       <tr
@@ -1139,7 +1102,7 @@ function ActivityDetailPageInner() {
                           {i + 1}
                         </td>
                         <td className={clsx('py-2 px-3 text-right font-mono', isLight ? 'text-gray-600' : 'text-gray-300')}>
-                          {lapDist.toFixed(2)} km
+                          {isSwim ? `${Math.round(lapDist)} m` : `${lapDist.toFixed(2)} km`}
                         </td>
                         <td className={clsx('py-2 px-3 text-right font-mono', isLight ? 'text-gray-600' : 'text-gray-300')}>
                           {formatTime(lap.moving_time as number || lap.elapsed_time as number || 0)}
@@ -1198,7 +1161,7 @@ function ActivityDetailPageInner() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-gray-500 text-xs uppercase border-b border-surface-600/50">
-                    <th className="text-left py-2 pr-3 font-medium">KM</th>
+                    <th className="text-left py-2 pr-3 font-medium">{sportCategory === 'swimming' ? '#' : 'KM'}</th>
                     <th className="text-right py-2 px-3 font-medium">{useSpeedUnit ? 'Speed' : 'Pace'}</th>
                     {hasGap && (
                       <th className="text-right py-2 px-3 font-medium">GAP</th>
@@ -1234,8 +1197,8 @@ function ActivityDetailPageInner() {
                       >
                         <td className="py-2 pr-3 text-gray-400 font-medium">
                           {split.isPartial
-                            ? `${(split.splitDistance / 1000).toFixed(2)}`
-                            : split.km}
+                            ? (sportCategory === 'swimming' ? `${Math.round(split.splitDistance)} m` : `${(split.splitDistance / 1000).toFixed(2)}`)
+                            : (sportCategory === 'swimming' ? `${Math.round(split.splitDistance)} m` : split.km)}
                         </td>
                         <td className="py-2 px-3 text-right font-mono">
                           <div className="flex items-center justify-end gap-2">
@@ -1531,7 +1494,7 @@ function ActivityDetailPageInner() {
                   </div>
                 </div>
                 <div className="flex items-center gap-4 text-xs text-gray-400 font-mono flex-shrink-0">
-                  <span>{(sa.distance_km as number)?.toFixed(1)} km</span>
+                  <span>{sportCategory === 'swimming' ? `${Math.round(((sa.distance_km as number) ?? 0) * 1000)} m` : `${(sa.distance_km as number)?.toFixed(1)} km`}</span>
                   {!!sa.formatted_pace && <span>{String(sa.formatted_pace)}</span>}
                   {(sa.total_elevation_gain as number) > 0 && (
                     <span className="text-green-400/70">+{Math.round(sa.total_elevation_gain as number)}m</span>
@@ -1559,6 +1522,7 @@ function ActivityDetailPageInner() {
                 const name = (effort.name as string) || (segment?.name as string) || `Segment ${i + 1}`
                 const elapsed = effort.elapsed_time as number || 0
                 const distance = (effort.distance as number || 0)
+                const isSwimSeg = sportCategory === 'swimming'
                 const distKm = distance / 1000
                 const prRank = effort.pr_rank as number | null
                 const avgHR = effort.average_heartrate as number | null
@@ -1606,7 +1570,7 @@ function ActivityDetailPageInner() {
                     {/* Stats row */}
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
                       <span className={clsx('font-mono', isLight ? 'text-gray-600' : 'text-gray-400')}>
-                        {distKm >= 1 ? `${distKm.toFixed(2)} km` : `${Math.round(distance)} m`}
+                        {isSwimSeg ? `${Math.round(distance)} m` : (distKm >= 1 ? `${distKm.toFixed(2)} km` : `${Math.round(distance)} m`)}
                       </span>
                       <span className={clsx('font-mono', isLight ? 'text-gray-600' : 'text-gray-400')}>
                         {paceStr} <span className="text-gray-500">{paceUnit}</span>
