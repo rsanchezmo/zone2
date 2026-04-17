@@ -217,6 +217,37 @@ function scoreColor(score: number): string {
   return '#ef4444'
 }
 
+/* ── Streak badge — current or best, with uppercase label ──────── */
+function StreakBadge({ value, label, kind, title }: { value: number; label: string; kind: 'current' | 'best'; title?: string }) {
+  const { theme } = useTheme()
+  const isLight = theme === 'light'
+  const accent = kind === 'best'
+    ? (isLight ? '#b45309' : '#fbbf24') // amber
+    : (isLight ? '#111827' : '#f3f4f6') // neutral strong
+  return (
+    <div
+      className={clsx(
+        'panel flex items-center gap-1.5 px-2.5 py-1',
+        isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
+      )}
+      title={title}
+    >
+      {kind === 'best' ? (
+        <svg width="11" height="11" viewBox="0 0 16 16" fill="none" className="shrink-0" aria-hidden="true">
+          <path d="M9 1.5L4 9h4l-1 5.5L12 7H8z" fill={accent} />
+        </svg>
+      ) : (
+        <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke={accent} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
+          <circle cx="10" cy="3" r="1.5" fill={accent} stroke="none" />
+          <path d="M5 7l3-1.5 2 2.5 2-1M4 10l3 1 1.5-2M6 12.5l1 2.5M9.5 10l1 5" />
+        </svg>
+      )}
+      <span className="text-xs font-mono tabular-nums font-semibold" style={{ color: accent }}>{value}</span>
+      <span className="eyebrow text-[9px]">{label}</span>
+    </div>
+  )
+}
+
 
 
 
@@ -1482,20 +1513,24 @@ export default function CalendarPage() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      {/* Calendar header */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h2 className="page-title">Calendar</h2>
-          <div className="flex items-center gap-3 relative">
-            <button onClick={() => setCurrentMonth(m => subMonths(m, 1))} className="btn !px-3">&larr;</button>
+    <div className="max-w-6xl mx-auto space-y-6 pb-12">
+      {/* ── Breadcrumb header ─────────────────────────── */}
+      <header className="space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-baseline gap-2">
+            <span className="eyebrow">Calendar</span>
+            <span className={clsx('text-[11px]', isLight ? 'text-gray-300' : 'text-gray-700')}>·</span>
+            <span className="text-[11px] text-gray-500 normal-case tracking-normal">sessions, activities, and plans</span>
+          </div>
+          <div className="flex items-center gap-1.5 relative">
+            <button onClick={() => setCurrentMonth(m => subMonths(m, 1))} className="btn !px-3" aria-label="Previous month">&larr;</button>
             <button
               onClick={() => setShowMonthPicker(v => !v)}
-              className="btn min-w-[140px] text-center !text-sm"
+              className="btn min-w-[150px] text-center !text-sm tabular-nums"
             >
               {format(currentMonth, 'MMMM yyyy')}
             </button>
-            <button onClick={() => setCurrentMonth(m => addMonths(m, 1))} className="btn !px-3">&rarr;</button>
+            <button onClick={() => setCurrentMonth(m => addMonths(m, 1))} className="btn !px-3" aria-label="Next month">&rarr;</button>
             {showMonthPicker && (
               <MonthPicker
                 current={currentMonth}
@@ -1507,34 +1542,38 @@ export default function CalendarPage() {
         </div>
         {/* Streak badges */}
         {streakData && (streakData.current_streak > 0 || streakData.longest_streak > 0 || streakData.current_week_streak > 0 || streakData.longest_week_streak > 0) && (
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 flex-wrap">
             {streakData.current_streak > 0 && (
-              <div className={clsx('flex items-center gap-1 border rounded-lg px-2.5 py-1', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')} title="Current streak — consecutive days with activities">
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={clsx('shrink-0', isLight ? 'text-gray-700' : 'text-gray-300')}><circle cx="10" cy="3" r="1.5" fill="currentColor" stroke="none" /><path d="M5 7l3-1.5 2 2.5 2-1M4 10l3 1 1.5-2M6 12.5l1 2.5M9.5 10l1 5" /></svg>
-                <span className={clsx('text-xs font-bold', isLight ? 'text-gray-800' : 'text-gray-200')}>{streakData.current_streak}</span>
-                <span className="text-[10px] text-gray-500">day{streakData.current_streak !== 1 ? 's' : ''}</span>
-              </div>
+              <StreakBadge
+                value={streakData.current_streak}
+                label={`day${streakData.current_streak !== 1 ? 's' : ''}`}
+                kind="current"
+                title="Current streak — consecutive days with activities"
+              />
             )}
             {streakData.longest_streak > 0 && (
-              <div className={clsx('flex items-center gap-1 border rounded-lg px-2.5 py-1', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')} title={`Longest day streak: ${streakData.longest_streak_start} to ${streakData.longest_streak_end}`}>
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className={clsx('shrink-0', isLight ? 'text-amber-600' : 'text-amber-400')}><path d="M9 1.5L4 9h4l-1 5.5L12 7H8z" fill="currentColor" /></svg>
-                <span className={clsx('text-xs font-bold', isLight ? 'text-amber-600' : 'text-amber-400')}>{streakData.longest_streak}</span>
-                <span className="text-[10px] text-gray-500">best days</span>
-              </div>
+              <StreakBadge
+                value={streakData.longest_streak}
+                label="best days"
+                kind="best"
+                title={`Longest day streak: ${streakData.longest_streak_start} to ${streakData.longest_streak_end}`}
+              />
             )}
             {streakData.current_week_streak > 0 && (
-              <div className={clsx('flex items-center gap-1 border rounded-lg px-2.5 py-1', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')} title="Current streak — consecutive weeks with activities">
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={clsx('shrink-0', isLight ? 'text-gray-700' : 'text-gray-300')}><circle cx="10" cy="3" r="1.5" fill="currentColor" stroke="none" /><path d="M5 7l3-1.5 2 2.5 2-1M4 10l3 1 1.5-2M6 12.5l1 2.5M9.5 10l1 5" /></svg>
-                <span className={clsx('text-xs font-bold', isLight ? 'text-gray-800' : 'text-gray-200')}>{streakData.current_week_streak}</span>
-                <span className="text-[10px] text-gray-500">wk{streakData.current_week_streak !== 1 ? 's' : ''}</span>
-              </div>
+              <StreakBadge
+                value={streakData.current_week_streak}
+                label={`wk${streakData.current_week_streak !== 1 ? 's' : ''}`}
+                kind="current"
+                title="Current streak — consecutive weeks with activities"
+              />
             )}
             {streakData.longest_week_streak > 0 && (
-              <div className={clsx('flex items-center gap-1 border rounded-lg px-2.5 py-1', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')} title={`Longest week streak: ${streakData.longest_week_streak_start} to ${streakData.longest_week_streak_end}`}>
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className={clsx('shrink-0', isLight ? 'text-amber-600' : 'text-amber-400')}><path d="M9 1.5L4 9h4l-1 5.5L12 7H8z" fill="currentColor" /></svg>
-                <span className={clsx('text-xs font-bold', isLight ? 'text-amber-600' : 'text-amber-400')}>{streakData.longest_week_streak}</span>
-                <span className="text-[10px] text-gray-500">best wks</span>
-              </div>
+              <StreakBadge
+                value={streakData.longest_week_streak}
+                label="best wks"
+                kind="best"
+                title={`Longest week streak: ${streakData.longest_week_streak_start} to ${streakData.longest_week_streak_end}`}
+              />
             )}
           </div>
         )}
@@ -1544,39 +1583,57 @@ export default function CalendarPage() {
           const nextRace = upcomingRaces[0]
           const daysUntil = differenceInDays(parseISO(nextRace.date), new Date()) + 1
           return (
-            <Link to="/races" className={clsx(
-              'flex items-center gap-4 rounded-xl px-4 py-3 border transition-colors',
-              isLight ? 'bg-amber-50 border-amber-200 hover:border-amber-300' : 'bg-amber-500/5 border-amber-500/20 hover:border-amber-500/40',
-            )}>
-              <div className="flex items-center gap-2 shrink-0">
-                <span className="text-amber-500 text-lg">&#9873;</span>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-amber-500 leading-none">{daysUntil}</div>
-                  <div className="text-[10px] text-amber-500/70 uppercase">day{daysUntil !== 1 ? 's' : ''}</div>
+            <Link
+              to="/races"
+              className={clsx(
+                'panel flex items-center gap-4 px-4 py-3 transition-colors group',
+                isLight ? 'bg-amber-50 border-amber-200 hover:border-amber-300' : 'bg-amber-500/5 border-amber-500/20 hover:border-amber-500/40',
+              )}
+              style={{ ['--card-accent' as string]: '#eab308' }}
+            >
+              <div
+                className="flex flex-col items-center justify-center rounded-lg px-3 py-1.5 shrink-0 min-w-[58px] border"
+                style={{ backgroundColor: '#eab30810', borderColor: '#eab30830' }}
+              >
+                <div
+                  className="text-xl font-mono tabular-nums font-bold leading-none"
+                  style={{ color: '#eab308', letterSpacing: '-0.02em' }}
+                >
+                  {daysUntil}
+                </div>
+                <div className="eyebrow mt-0.5 text-[9px]" style={{ color: '#eab308cc' }}>
+                  day{daysUntil !== 1 ? 's' : ''}
                 </div>
               </div>
               <div className="flex-1 min-w-0">
-                <div className={clsx('text-sm font-semibold truncate', isLight ? 'text-gray-800' : 'text-gray-200')}>
-                  {nextRace.name}
+                <div className="flex items-center gap-2 mb-0.5">
+                  <span className="eyebrow" style={{ color: '#eab308' }} aria-hidden="true">⚑</span>
+                  <span className={clsx('text-sm font-semibold tracking-tight truncate', isLight ? 'text-gray-900' : 'text-gray-100')}>
+                    {nextRace.name}
+                  </span>
                 </div>
-                <div className="flex items-center gap-2 text-xs text-gray-500">
+                <div className="flex items-center gap-3 text-[11px] text-gray-500 flex-wrap font-mono tabular-nums">
                   <span>{nextRace.sport_type}</span>
                   {nextRace.distance_km && <span>{nextRace.distance_km} km</span>}
-                  {nextRace.location && <span>{nextRace.location}</span>}
+                  {nextRace.location && <span className="normal-case">{nextRace.location}</span>}
                   <span>{format(parseISO(nextRace.date), 'MMM d, yyyy')}</span>
                 </div>
               </div>
               {upcomingRaces.length > 1 && (
-                <div className="flex items-center gap-1.5 shrink-0">
+                <div className="hidden md:flex items-center gap-1 shrink-0">
                   {upcomingRaces.slice(1, 4).map((r: Record<string, unknown>) => {
                     const d = differenceInDays(parseISO(r.date as string), new Date()) + 1
                     return (
-                      <div key={r.id as number} className={clsx(
-                        'flex items-center gap-1 border rounded-lg px-2 py-1',
-                        isLight ? 'bg-white border-amber-200' : 'bg-surface-800 border-amber-500/20',
-                      )} title={`${r.name}: ${format(parseISO(r.date as string), 'MMM d, yyyy')}`}>
-                        <span className="text-xs font-bold text-amber-500">{d}d</span>
-                        <span className="text-[10px] text-gray-500 truncate max-w-[80px]">{r.name as string}</span>
+                      <div
+                        key={r.id as number}
+                        className={clsx(
+                          'flex items-center gap-1 border rounded-lg px-2 py-0.5',
+                          isLight ? 'bg-white border-amber-200' : 'bg-surface-800 border-amber-500/20',
+                        )}
+                        title={`${r.name}: ${format(parseISO(r.date as string), 'MMM d, yyyy')}`}
+                      >
+                        <span className="text-[11px] font-mono tabular-nums font-semibold text-amber-500">{d}d</span>
+                        <span className="text-[10px] text-gray-500 truncate max-w-[72px]">{r.name as string}</span>
                       </div>
                     )
                   })}
@@ -1585,12 +1642,12 @@ export default function CalendarPage() {
             </Link>
           )
         })()}
-      </div>
+      </header>
 
       {/* Calendar grid */}
       <div className="grid grid-cols-7 gap-1" key={format(currentMonth, 'yyyy-MM')} style={{ animation: 'fadeIn 200ms ease-out' }}>
         {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(d => (
-          <div key={d} className={clsx('text-center text-xs py-1 font-medium', isLight ? 'text-gray-400' : 'text-gray-500')}>{d}</div>
+          <div key={d} className="eyebrow text-center py-1.5">{d}</div>
         ))}
 
         {activitiesLoading ? (
