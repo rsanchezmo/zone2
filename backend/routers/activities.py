@@ -120,30 +120,33 @@ def list_activities(
     sort_dir: str = Query("desc"),
     si: StravaIntelligence = Depends(get_si),
 ):
-    activities = si.strava_activities_cache.activities_raw
+    activities = si.strava_activities_cache.get_prepared_view()
     if activities.empty:
         return {"items": [], "total": 0, "page": page, "per_page": per_page}
 
-    activities = activities.copy()
-    activities["start_date_local"] = pd.to_datetime(activities["start_date_local"])
-
+    # Build the filter mask without materializing intermediates. This keeps
+    # the prepared view immutable (it's the live cache) and avoids a df.copy()
+    # per request.
+    sdl = activities["start_date_local"]
+    mask = pd.Series(True, index=activities.index)
     if search:
-        mask = activities["name"].str.contains(search, case=False, na=False)
-        activities = activities[mask]
+        mask &= activities["name"].str.contains(search, case=False, na=False)
     if sport_type:
-        activities = activities[activities["sport_type"] == sport_type]
+        mask &= activities["sport_type"] == sport_type
     if year:
-        activities = activities[activities["start_date_local"].dt.year == year]
+        mask &= sdl.dt.year == year
+    tz = sdl.dt.tz
     if date_from:
         dt_from = pd.to_datetime(date_from)
-        if activities["start_date_local"].dt.tz is not None:
-            dt_from = dt_from.tz_localize(activities["start_date_local"].dt.tz)
-        activities = activities[activities["start_date_local"] >= dt_from]
+        if tz is not None:
+            dt_from = dt_from.tz_localize(tz)
+        mask &= sdl >= dt_from
     if date_to:
-        dt_to = pd.to_datetime(date_to) + pd.Timedelta(days=1)  # inclusive
-        if activities["start_date_local"].dt.tz is not None:
-            dt_to = dt_to.tz_localize(activities["start_date_local"].dt.tz)
-        activities = activities[activities["start_date_local"] < dt_to]
+        dt_to = pd.to_datetime(date_to) + pd.Timedelta(days=1)
+        if tz is not None:
+            dt_to = dt_to.tz_localize(tz)
+        mask &= sdl < dt_to
+    activities = activities[mask]
 
     # Sort
     sort_col = "start_date_local" if sort_by not in _SORT_FIELDS or sort_by == "date" else sort_by
@@ -169,11 +172,10 @@ def get_sport_types(si: StravaIntelligence = Depends(get_si)):
 
 @router.get("/years")
 def get_years(si: StravaIntelligence = Depends(get_si)):
-    activities = si.strava_activities_cache.activities_raw
+    activities = si.strava_activities_cache.get_prepared_view()
     if activities.empty:
         return []
-    dates = pd.to_datetime(activities["start_date_local"])
-    return sorted(dates.dt.year.unique().tolist(), reverse=True)
+    return sorted(activities["start_date_local"].dt.year.unique().tolist(), reverse=True)
 
 
 @router.get("/polylines")
@@ -183,34 +185,28 @@ def get_polylines(
     si: StravaIntelligence = Depends(get_si),
 ):
     """Return lightweight polyline data for all activities (for world map view)."""
-    activities = si.strava_activities_cache.activities_raw.copy()
+    activities = si.strava_analytics._get_prepared_activities()
     if activities.empty:
         return []
-
-    activities["start_date_local"] = pd.to_datetime(activities["start_date_local"])
 
     if sport_type:
         activities = activities[activities["sport_type"] == sport_type]
     if year:
         activities = activities[activities["start_date_local"].dt.year == year]
 
-    results = []
-    for _, row in activities.iterrows():
-        polyline_str = None
-        if "map" in row.index and row["map"] is not None:
-            try:
-                map_data = row["map"] if isinstance(row["map"], dict) else json.loads(row["map"])
-                polyline_str = map_data.get("summary_polyline")
-            except (json.JSONDecodeError, TypeError):
-                pass
-        if polyline_str:
-            results.append({
-                "id": _sanitize(row["id"]),
-                "sport_type": row.get("sport_type", ""),
-                "polyline": polyline_str,
-                "name": row.get("name", ""),
-            })
-    return results
+    # Use pre-parsed map dicts — no json.loads needed
+    has_map = activities["map"].apply(lambda m: isinstance(m, dict) and bool(m.get("summary_polyline")))
+    filtered = activities[has_map]
+
+    return [
+        {
+            "id": _sanitize(row["id"]),
+            "sport_type": row.get("sport_type", ""),
+            "polyline": row["map"]["summary_polyline"],
+            "name": row.get("name", ""),
+        }
+        for _, row in filtered.iterrows()
+    ]
 
 
 @router.get("/{activity_id}")

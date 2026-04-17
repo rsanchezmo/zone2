@@ -26,9 +26,29 @@ class StravaActivitiesCache:
         # so stale entries self-invalidate without needing an explicit clear.
         self._cache_version: int = 0
 
+        # Prepared view for list/filter hot paths (start_date_local parsed once).
+        self._prepared_view: pd.DataFrame | None = None
+        self._prepared_view_version: int = -1
+
     @property
     def cache_version(self) -> int:
         return self._cache_version
+
+    def get_prepared_view(self) -> pd.DataFrame:
+        """Return a DataFrame with `start_date_local` parsed once. Rebuilt
+        only when the underlying cache changes. Callers MUST NOT mutate it
+        (it's the live cache)."""
+        if self._prepared_view is not None and self._prepared_view_version == self._cache_version:
+            return self._prepared_view
+        raw = self._load_to_memory()
+        if raw.empty:
+            self._prepared_view = raw
+        else:
+            view = raw.copy()
+            view["start_date_local"] = pd.to_datetime(view["start_date_local"])
+            self._prepared_view = view
+        self._prepared_view_version = self._cache_version
+        return self._prepared_view
 
     def __load_metadata(self):
         """Load cache metadata or initialize if missing."""
