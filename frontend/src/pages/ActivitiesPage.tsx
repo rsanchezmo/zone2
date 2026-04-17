@@ -123,8 +123,8 @@ function DatePicker({ value, onChange, label }: {
 
   return (
     <div ref={ref} className="relative">
-      <div className="flex items-center gap-1">
-        <span className="text-[11px] text-gray-500 shrink-0">{label}</span>
+      <div className="flex items-center gap-1.5">
+        <span className="eyebrow text-[9px] shrink-0">{label}</span>
         <input
           type="text"
           placeholder="dd/mm/yyyy"
@@ -133,7 +133,7 @@ function DatePicker({ value, onChange, label }: {
           onBlur={handleTextBlur}
           onKeyDown={handleKeyDown}
           onFocus={() => setOpen(true)}
-          className="input w-[110px] font-mono"
+          className="input w-[110px] font-mono tabular-nums"
           maxLength={10}
         />
         <button
@@ -245,26 +245,28 @@ function ActivityCard({ activity: a }: { activity: Record<string, unknown> }) {
       } as React.CSSProperties}
     >
       <div className="p-4">
-        {/* Top row: name + date */}
+        {/* Top row: name + sport pill + date */}
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className={clsx(
-              'font-medium truncate group-hover:text-white transition-colors',
-              isLight && 'group-hover:text-gray-900',
+              'font-semibold tracking-tight truncate transition-colors',
+              isLight ? 'text-gray-900 group-hover:text-gray-950' : 'text-gray-100 group-hover:text-white',
             )}>
               {a.name as string}
             </div>
-            <div className="flex items-center gap-1.5 mt-1">
+            <div className="flex items-center gap-2 mt-1.5 flex-wrap">
               <span
-                className="text-[11px] font-medium px-1.5 py-0.5 rounded-full"
+                className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.15em] px-2 py-0.5 rounded-full border font-semibold"
                 style={{
-                  backgroundColor: sportColor + '18',
+                  backgroundColor: sportColor + '15',
                   color: sportColor,
+                  borderColor: `${sportColor}40`,
                 }}
               >
+                <span className="w-1 h-1 rounded-full" style={{ backgroundColor: sportColor }} aria-hidden="true" />
                 {a.sport_type as string}
               </span>
-              <span className="text-[11px] text-gray-500">{dateStr}</span>
+              <span className={clsx('text-[11px] font-mono tabular-nums', isLight ? 'text-gray-500' : 'text-gray-500')}>{dateStr}</span>
             </div>
           </div>
           {/* Arrow indicator */}
@@ -274,54 +276,57 @@ function ActivityCard({ activity: a }: { activity: Record<string, unknown> }) {
               isLight ? 'text-gray-300' : 'text-gray-600',
             )}
             fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+            aria-hidden="true"
           >
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
           </svg>
         </div>
 
         {/* Stats row */}
-        <div className="flex items-center gap-4 mt-3">
+        <div className="flex items-center gap-4 mt-3 flex-wrap tabular-nums">
           {distanceKm != null && (
             <div className="flex items-center gap-1.5">
-              <svg className="w-3.5 h-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-3.5 h-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
               </svg>
-              <span className="text-sm font-mono font-medium">{getSportCategory(a.sport_type as string) === 'swimming' ? Math.round((distanceKm ?? 0) * 1000) : distanceKm}</span>
-              <span className="text-[11px] text-gray-500">{getSportCategory(a.sport_type as string) === 'swimming' ? 'm' : 'km'}</span>
+              <span className={clsx('text-sm font-mono font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>
+                {getSportCategory(a.sport_type as string) === 'swimming' ? Math.round((distanceKm ?? 0) * 1000) : distanceKm}
+              </span>
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider">{getSportCategory(a.sport_type as string) === 'swimming' ? 'm' : 'km'}</span>
             </div>
           )}
           {!!a.moving_time_formatted && (
             <div className="flex items-center gap-1.5">
-              <svg className="w-3.5 h-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-3.5 h-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                 <circle cx="12" cy="12" r="10" /><path strokeLinecap="round" d="M12 6v6l4 2" />
               </svg>
-              <span className="text-sm font-mono font-medium">{String(a.moving_time_formatted)}</span>
+              <span className={clsx('text-sm font-mono font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>{String(a.moving_time_formatted)}</span>
             </div>
           )}
           {!!a.formatted_pace && (
             <div className="flex items-center gap-1.5">
-              <svg className="w-3.5 h-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-3.5 h-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
-              <span className="text-sm font-mono font-medium">{String(a.formatted_pace)}</span>
+              <span className={clsx('text-sm font-mono font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>{String(a.formatted_pace)}</span>
             </div>
           )}
           {elevGain != null && elevGain > 0 && (
             <div className="flex items-center gap-1.5">
-              <svg className="w-3.5 h-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-3.5 h-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 17l6-6 4 4 8-8" />
               </svg>
-              <span className="text-sm font-mono font-medium">{Math.round(elevGain)}</span>
-              <span className="text-[11px] text-gray-500">m</span>
+              <span className={clsx('text-sm font-mono font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>{Math.round(elevGain)}</span>
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider">m</span>
             </div>
           )}
           {avgHR != null && (
             <div className="flex items-center gap-1.5">
-              <svg className="w-3.5 h-3.5 text-red-400/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-3.5 h-3.5 text-red-400/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
               </svg>
-              <span className="text-sm font-mono font-medium">{Math.round(avgHR)}</span>
-              <span className="text-[11px] text-gray-500">bpm</span>
+              <span className={clsx('text-sm font-mono font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>{Math.round(avgHR)}</span>
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider">bpm</span>
             </div>
           )}
         </div>
@@ -453,36 +458,34 @@ export default function ActivitiesPage() {
   const selectClass = 'select'
 
   return (
-    <div className="max-w-6xl mx-auto space-y-5">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="page-title">Activities</h2>
-          {!isLoading && data && (
-            <p className="text-sm text-gray-500 mt-0.5">
+    <div className="max-w-6xl mx-auto space-y-6 pb-12">
+      {/* ── Breadcrumb header ─────────────────────────── */}
+      <header className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-baseline gap-2 flex-wrap">
+          <span className="eyebrow">Activities</span>
+          <span className={clsx('text-[11px]', isLight ? 'text-gray-300' : 'text-gray-700')}>·</span>
+          {!isLoading && data ? (
+            <span className={clsx('text-[11px] font-mono tabular-nums', isLight ? 'text-gray-500' : 'text-gray-500')}>
               {data.total.toLocaleString()} activit{data.total === 1 ? 'y' : 'ies'}
-              {debouncedSearch && <> matching &ldquo;<span className="text-gray-400">{debouncedSearch}</span>&rdquo;</>}
-            </p>
+              {debouncedSearch && <> matching &ldquo;<span className={isLight ? 'text-gray-700' : 'text-gray-300'}>{debouncedSearch}</span>&rdquo;</>}
+            </span>
+          ) : (
+            <span className="text-[11px] text-gray-500 normal-case tracking-normal">every workout you've logged</span>
           )}
         </div>
         {activeFilterCount > 0 && (
           <button
             onClick={clearAll}
-            className={clsx(
-              'text-xs px-2.5 py-1 rounded-full border transition-colors',
-              isLight
-                ? 'text-gray-500 border-gray-200 hover:bg-gray-50 hover:text-gray-700'
-                : 'text-gray-400 border-surface-600 hover:bg-surface-700 hover:text-gray-200',
-            )}
+            className="btn"
           >
             Clear {activeFilterCount} filter{activeFilterCount > 1 ? 's' : ''}
           </button>
         )}
-      </div>
+      </header>
 
-      {/* Filter toolbar */}
-      <div className={clsx(
-        'border rounded-xl p-3 space-y-2',
+      {/* ── Filter toolbar ─────────────────────────── */}
+      <section className={clsx(
+        'panel p-3 space-y-2.5',
         isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
       )}>
         {/* Row 1: Search */}
@@ -541,8 +544,8 @@ export default function ActivitiesPage() {
           <div className="w-px h-6 bg-surface-600 mx-1 hidden sm:block" />
 
           {/* Sort controls */}
-          <div className="flex items-center gap-1">
-            <span className="text-[11px] text-gray-500 shrink-0">Sort</span>
+          <div className="flex items-center gap-1.5">
+            <span className="eyebrow text-[9px] shrink-0">Sort</span>
             <select
               value={sortBy}
               onChange={e => setSortBy(e.target.value)}
@@ -556,23 +559,23 @@ export default function ActivitiesPage() {
               onClick={() => setSortDir(d => d === 'desc' ? 'asc' : 'desc')}
               className="btn flex items-center justify-center !px-2"
               title={sortDir === 'desc' ? 'Descending — click for ascending' : 'Ascending — click for descending'}
+              aria-label={sortDir === 'desc' ? 'Sort ascending' : 'Sort descending'}
             >
-              <svg className={clsx('w-4 h-4 transition-transform duration-200', sortDir === 'asc' && 'rotate-180')} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className={clsx('w-4 h-4 transition-transform duration-200', sortDir === 'asc' && 'rotate-180')} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
               </svg>
             </button>
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* Activity list */}
       {isLoading ? (
         <div className="space-y-3">
           {[...Array(5)].map((_, i) => (
             <div
               key={i}
               className={clsx(
-                'rounded-xl border p-4 animate-pulse',
+                'panel p-4 animate-pulse',
                 isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
               )}
             >
@@ -583,14 +586,14 @@ export default function ActivitiesPage() {
         </div>
       ) : data?.items?.length === 0 ? (
         <div className={clsx(
-          'text-center py-16 rounded-xl border',
+          'panel p-10 flex flex-col items-center justify-center gap-3 text-center',
           isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
         )}>
-          <svg className="w-12 h-12 text-gray-600 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <svg className={clsx('w-9 h-9', isLight ? 'text-gray-300' : 'text-gray-600')} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
           </svg>
-          <p className="text-gray-500 text-sm">No activities found</p>
-          <p className="text-gray-600 text-xs mt-1">Try adjusting your filters</p>
+          <p className={clsx('text-sm', isLight ? 'text-gray-500' : 'text-gray-500')}>No activities found</p>
+          <p className={clsx('text-[11px]', isLight ? 'text-gray-400' : 'text-gray-600')}>Try adjusting your filters</p>
         </div>
       ) : (
         <>
@@ -635,15 +638,17 @@ export default function ActivitiesPage() {
                   key={p}
                   onClick={() => setPage(p)}
                   className={clsx(
-                    'w-8 h-8 rounded text-sm font-mono transition-colors',
+                    'w-8 h-8 rounded text-sm font-mono tabular-nums transition-colors',
                     p === page
                       ? isLight
-                        ? 'bg-gray-900 text-white'
-                        : 'bg-white/10 text-white font-bold'
+                        ? 'bg-gray-900 text-white font-semibold'
+                        : 'bg-white/10 text-white font-semibold'
                       : isLight
                         ? 'text-gray-500 hover:bg-gray-100'
                         : 'text-gray-500 hover:bg-surface-700',
                   )}
+                  aria-label={`Page ${p}`}
+                  aria-current={p === page ? 'page' : undefined}
                 >
                   {p}
                 </button>
