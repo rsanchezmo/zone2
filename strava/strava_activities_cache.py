@@ -77,14 +77,17 @@ class StravaActivitiesCache:
         if self.metadata_file.exists():
             with open(self.metadata_file, 'r') as f:
                 self.metadata = json.load(f)
-                if 'last_sync' in self.metadata:
+                if 'last_sync' in self.metadata and self.metadata['last_sync']:
                     self.metadata['last_sync'] = datetime.fromisoformat(self.metadata['last_sync'])
+            # Back-compat: older metadata files don't have monthly_counts
+            self.metadata.setdefault('monthly_counts', {})
         else:
             self.metadata = {
                 'last_sync': None,
                 'total_activities': 0,
                 'earliest_activity': None,
                 'latest_activity': None,
+                'monthly_counts': {},
             }
 
     def _invalidate_memory_cache(self):
@@ -164,11 +167,14 @@ class StravaActivitiesCache:
         # Convert incompatible types for Parquet and apply to all columns
         df = df.map(__convert_for_parquet)
         
+        monthly_counts = self.metadata.setdefault('monthly_counts', {})
+
         for period, group in df.groupby('year_month'):
             year = period.year
             month_file = self.activities_dir / str(year) / f"{period}.parquet"
             month_file.parent.mkdir(parents=True, exist_ok=True)
-            
+            period_key = str(period)
+
             # Merge with existing data if file exists
             if month_file.exists():
                 existing_df = pd.read_parquet(month_file)
@@ -181,16 +187,19 @@ class StravaActivitiesCache:
                 # deduplicate by activity ID
                 combined = combined.drop_duplicates(subset=['id'], keep='last')
                 combined.to_parquet(month_file, index=False)
+                monthly_counts[period_key] = len(combined)
                 print(f"✓ Updated {month_file.name} ({len(combined)} activities)")
             else:
                 # drop year_month column before saving
                 group = group.drop(columns=['year_month'])
                 group.to_parquet(month_file, index=False)
+                monthly_counts[period_key] = len(group)
                 print(f"✓ Created {month_file.name} ({len(group)} activities)")
-        
-        # Update metadata
+
+        # Update metadata — sum from the monthly_counts dict we just maintained,
+        # avoiding a full parquet re-scan on every save.
         self.metadata['last_sync'] = datetime.now()
-        self.metadata['total_activities'] = self.count_cached_activities()
+        self.metadata['total_activities'] = sum(monthly_counts.values())
 
         if not df.empty:
             batch_earliest = df['start_date'].min()
@@ -261,17 +270,30 @@ class StravaActivitiesCache:
         return None
     
     def count_cached_activities(self) -> int:
-        """Count total cached activities."""
+        """Count total cached activities.
+
+        Reads from the `monthly_counts` metadata dict (maintained incrementally
+        by save_activities). Falls back to a one-off parquet scan and persists
+        the result for legacy caches that predate monthly_counts.
+        """
+        monthly_counts = self.metadata.get('monthly_counts')
+        if monthly_counts:
+            return sum(monthly_counts.values())
+
+        # Legacy path: rebuild monthly_counts from disk once, then persist.
         parquet_files = list(self.activities_dir.rglob("*.parquet"))
         if not parquet_files:
             return 0
-        total = 0
+        rebuilt: dict[str, int] = {}
         for f in parquet_files:
             try:
-                total += len(pd.read_parquet(f))
+                rebuilt[f.stem] = len(pd.read_parquet(f))
             except Exception as e:
                 print(f"⚠️ Corrupt parquet file {f}: {e}")
-        return total
+        self.metadata['monthly_counts'] = rebuilt
+        self.metadata['total_activities'] = sum(rebuilt.values())
+        self.__save_metadata()
+        return self.metadata['total_activities']
     
     def clear_cache(self):
         """Clear all cached activities and metadata."""
@@ -286,6 +308,7 @@ class StravaActivitiesCache:
             'total_activities': 0,
             'earliest_activity': None,
             'latest_activity': None,
+            'monthly_counts': {},
         }
 
         self.__save_metadata()
