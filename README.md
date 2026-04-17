@@ -3,6 +3,7 @@
 A Python toolkit for analyzing and visualizing your Strava activities without paying for Strava Premium. Sync your activities, generate cool visualizations, and track your performance metrics over time. This repository is conceived as a starting point for building more advanced Strava data analysis tools. I will keep adding features and visualizations over time.
 
 ![Python](https://img.shields.io/badge/python-3.12+-blue.svg)
+![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
 
 > ⚠️ **Disclaimer**: This project stores Strava data locally on your machine. It is the responsibility of each user to comply with [Strava's API Agreement](https://www.strava.com/legal/api) and their terms regarding data storage and usage. Please review Strava's policies before using this tool.
 
@@ -431,3 +432,8 @@ GitHub:
 
 Hooks live in `scripts/hooks/` (version-controlled) and are symlinked into
 your local `.git/hooks/` — edit once, they update everywhere.
+
+## 📄 License
+
+[MIT](./LICENSE) — free to use, modify, and distribute. If you build something
+neat on top of this, I'd love to hear about it.
