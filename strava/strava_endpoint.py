@@ -2,6 +2,7 @@ from datetime import datetime
 import logging
 import os
 import threading
+import time
 from dotenv import load_dotenv
 from pydantic import BaseModel
 import requests
@@ -69,6 +70,13 @@ class StravaEndpoint:
         # Guards against two threads refreshing with the same refresh_token
         # (Strava rotates refresh_tokens, so the second request would 400).
         self.__token_lock = threading.Lock()
+
+        # Rate-limit usage cache, updated from X-RateLimit-Usage response
+        # headers. Used as a pre-flight guard so we don't fire a request that
+        # we already know will 429.
+        self._last_usage_fifteen: int = 0
+        self._last_usage_daily: int = 0
+        self._last_usage_at: float = 0.0  # time.monotonic(); 0 = unknown
 
         self.__cache_dir = cache_dir
         self.__cache_dir.mkdir(parents=True, exist_ok=True)
@@ -175,19 +183,54 @@ class StravaEndpoint:
             'Content-Type': 'application/json'
         }
 
-    @classmethod
-    def _check_rate_limit(cls, response: requests.Response):
-        """Check response for rate limit status and raise if exceeded."""
-        if response.status_code == 429:
-            raise StravaRateLimitError("Strava API returned 429 Too Many Requests")
+    # Rate-limit cache is considered fresh for 15 minutes (Strava's 15min
+    # window length). Older cached values are treated as unknown — we let
+    # the request through and refresh the cache from its response.
+    _RATE_LIMIT_CACHE_TTL_SECONDS = 900
+
+    def _ensure_rate_limit_budget(self) -> None:
+        """Raise StravaRateLimitError if cached usage says we're already at
+        or over a limit and the cache is fresh enough to trust. No-op when
+        usage is unknown or stale."""
+        if self._last_usage_at == 0.0:
+            return
+        if (time.monotonic() - self._last_usage_at) > self._RATE_LIMIT_CACHE_TTL_SECONDS:
+            return
+        if self._last_usage_fifteen >= self.FIFTEEN_MIN_LIMIT:
+            raise StravaRateLimitError(
+                f"Pre-flight: 15min rate limit already reached "
+                f"({self._last_usage_fifteen}/{self.FIFTEEN_MIN_LIMIT})",
+                usage={'fifteen_min': self._last_usage_fifteen, 'daily': self._last_usage_daily},
+            )
+        if self._last_usage_daily >= self.DAILY_LIMIT:
+            raise StravaRateLimitError(
+                f"Pre-flight: daily rate limit already reached "
+                f"({self._last_usage_daily}/{self.DAILY_LIMIT})",
+                usage={'fifteen_min': self._last_usage_fifteen, 'daily': self._last_usage_daily},
+            )
+
+    def _check_rate_limit(self, response: requests.Response):
+        """Update cached usage from the response headers, then raise if the
+        response indicates the limit was reached."""
         usage_header = response.headers.get('X-RateLimit-Usage', '')
         if usage_header:
             usage_parts = usage_header.split(',')
             if len(usage_parts) >= 2:
+                try:
+                    self._last_usage_fifteen = int(usage_parts[0])
+                    self._last_usage_daily = int(usage_parts[1])
+                    self._last_usage_at = time.monotonic()
+                except ValueError:
+                    pass
+        if response.status_code == 429:
+            raise StravaRateLimitError("Strava API returned 429 Too Many Requests")
+        if usage_header:
+            usage_parts = usage_header.split(',')
+            if len(usage_parts) >= 2:
                 fifteen_usage, daily_usage = int(usage_parts[0]), int(usage_parts[1])
-                if fifteen_usage >= cls.FIFTEEN_MIN_LIMIT or daily_usage >= cls.DAILY_LIMIT:
+                if fifteen_usage >= self.FIFTEEN_MIN_LIMIT or daily_usage >= self.DAILY_LIMIT:
                     raise StravaRateLimitError(
-                        f"Rate limit reached (15min: {fifteen_usage}/{cls.FIFTEEN_MIN_LIMIT}, daily: {daily_usage}/{cls.DAILY_LIMIT})",
+                        f"Rate limit reached (15min: {fifteen_usage}/{self.FIFTEEN_MIN_LIMIT}, daily: {daily_usage}/{self.DAILY_LIMIT})",
                         usage={'fifteen_min': fifteen_usage, 'daily': daily_usage},
                     )
     
@@ -197,19 +240,20 @@ class StravaEndpoint:
 
         activities = []
         while True:
-        
+            self._ensure_rate_limit_budget()
+
             params = {
                 "page": page,
                 'per_page': per_page
             }
 
             print(f"Fetching #{per_page} activities from page {page}...")
-            
+
             if from_date:
                 params['after'] = int(from_date.timestamp())
             if to_date:
                 params['before'] = int(to_date.timestamp())
-            
+
             response = requests.get(StravaEndpoint.__ACTIVITIES_URL, headers=headers, params=params)
             
             if response.status_code != 200:
@@ -388,6 +432,7 @@ class StravaEndpoint:
         """
         Fetch detailed info for a single activity (includes description, gear, etc.).
         """
+        self._ensure_rate_limit_budget()
         headers = self.__get_headers()
         response = requests.get(
             f"{StravaEndpoint.__ACTIVITY_URL}/{activity_id}",
@@ -404,6 +449,7 @@ class StravaEndpoint:
         Fetch photos for a single activity.
         Returns a list of photo objects with URLs.
         """
+        self._ensure_rate_limit_budget()
         headers = self.__get_headers()
         response = requests.get(
             f"{StravaEndpoint.__ACTIVITY_URL}/{activity_id}/photos",
@@ -421,8 +467,9 @@ class StravaEndpoint:
         Fetch streams for a single activity.
         Returns a list of data points with time, latlng, altitude, velocity, heartrate, etc.
         """
+        self._ensure_rate_limit_budget()
         headers = self.__get_headers()
-        
+
         response = requests.get(
             f"{StravaEndpoint.__ACTIVITY_URL}/{activity_id}/streams",
             headers=headers,
