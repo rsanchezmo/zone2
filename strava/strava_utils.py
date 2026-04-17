@@ -132,25 +132,31 @@ def format_pace_or_speed(avg_speed: float, sport_type: str | None = None) -> str
 
 def get_activities_as_gdf(activities: pd.DataFrame) -> gpd.GeoDataFrame:
     """Convert a pd.Dataframes with strava activities to a GeoDataFrame with LineString geometries."""
-    
+
     # Drop activities without map data
     activities = activities.dropna(subset=['map'])
 
-    # Parse polylines into LineString geometries
+    # Parse polylines into LineString geometries. The `map` column may arrive
+    # as either a dict (already-decoded view from analytics) or a JSON string
+    # (raw from parquet via cache.load_activities). Handle both.
     def _parse_map(map_activity):
-        if isinstance(map_activity, dict) and 'summary_polyline' in map_activity and map_activity['summary_polyline'] != "":
-            encoded_polyline = map_activity['summary_polyline']
-            decoded_points = polyline.decode(encoded_polyline, geojson=True)
+        if isinstance(map_activity, str):
+            try:
+                map_activity = json.loads(map_activity)
+            except (json.JSONDecodeError, TypeError):
+                return None
+        if isinstance(map_activity, dict) and map_activity.get('summary_polyline'):
+            decoded_points = polyline.decode(map_activity['summary_polyline'], geojson=True)
             return LineString(decoded_points)
         return None
-    
+
     activities['geometry'] = activities['map'].apply(_parse_map)
     activities = activities.dropna(subset=['geometry'])
 
     if activities.empty:
         return gpd.GeoDataFrame(geometry=[], crs=BASE_CRS)
-    
-    return gpd.GeoDataFrame(activities, geometry='geometry', crs=BASE_CRS)  
+
+    return gpd.GeoDataFrame(activities, geometry='geometry', crs=BASE_CRS)
 
 
 def get_activities_as_gdf_from_streams(activities: pd.DataFrame) -> gpd.GeoDataFrame:
