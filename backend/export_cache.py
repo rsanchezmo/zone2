@@ -27,7 +27,12 @@ class ExportCache:
                 del self._cache[key]
         return None
 
-    def put(self, endpoint: str, params: dict, buf: BytesIO) -> None:
+    def put(self, endpoint: str, params: dict, buf: BytesIO | None) -> None:
+        # Defensive no-op: if the visualizer returned None (e.g. empty filter
+        # result), don't try to materialize bytes from it. Callers still get
+        # a cache miss on the next request, which is the intended behavior.
+        if buf is None:
+            return
         key = self._make_key(endpoint, params)
         data = buf.getvalue()
         with self._lock:

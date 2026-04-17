@@ -69,7 +69,7 @@ export default function ExportDialog({
   const [radiusKm, setRadiusKm] = useState('20')
   const [downloading, setDownloading] = useState(false)
   const [previewLoading, setPreviewLoading] = useState(false)
-  const [previewError, setPreviewError] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
   const [previewSrc, setPreviewSrc] = useState<string | null>(null)
   const imgRef = useRef<HTMLImageElement>(null)
   const previewCounter = useRef(0)
@@ -83,7 +83,7 @@ export default function ExportDialog({
     setTitle('')
     setShowTitle(true)
     setRadiusKm('20')
-    setPreviewError(false)
+    setPreviewError(null)
     setPreviewSrc(null)
     setPreviewLoading(false)
     // Auto-generate initial preview. Cancel the rAF if the dialog closes
@@ -113,20 +113,39 @@ export default function ExportDialog({
     const id = ++previewCounter.current
     const url = buildUrl(72)
     setPreviewLoading(true)
-    setPreviewError(false)
+    setPreviewError(null)
 
-    const img = new Image()
-    img.onload = () => {
-      if (id !== previewCounter.current) return // stale
-      setPreviewSrc(url)
-      setPreviewLoading(false)
-    }
-    img.onerror = () => {
+    // Fetch instead of <img src> so we can read the server's error body
+    // (FastAPI returns JSON with a `detail` field) and surface it to the user.
+    let objectUrl: string | null = null
+    fetch(url).then(async r => {
       if (id !== previewCounter.current) return
-      setPreviewError(true)
+      if (!r.ok) {
+        let msg = `Preview unavailable (${r.status})`
+        try {
+          const body = await r.json()
+          if (body?.detail) msg = String(body.detail)
+        } catch { /* not JSON */ }
+        setPreviewError(msg)
+        setPreviewLoading(false)
+        return
+      }
+      const blob = await r.blob()
+      if (id !== previewCounter.current) {
+        URL.revokeObjectURL(URL.createObjectURL(blob))
+        return
+      }
+      objectUrl = URL.createObjectURL(blob)
+      setPreviewSrc(prev => {
+        if (prev) URL.revokeObjectURL(prev)
+        return objectUrl
+      })
       setPreviewLoading(false)
-    }
-    img.src = url
+    }).catch(() => {
+      if (id !== previewCounter.current) return
+      setPreviewError('Preview unavailable')
+      setPreviewLoading(false)
+    })
   }, [buildUrl])
 
   // Keep a ref so the reset effect can call the latest version
@@ -148,7 +167,15 @@ export default function ExportDialog({
     try {
       const url = buildUrl(quality)
       const response = await fetch(url)
-      if (!response.ok) throw new Error('Export failed')
+      if (!response.ok) {
+        let msg = 'Export failed'
+        try {
+          const body = await response.json()
+          if (body?.detail) msg = String(body.detail)
+        } catch { /* not JSON */ }
+        toast(msg, 'error')
+        return
+      }
       const blob = await response.blob()
       const link = document.createElement('a')
       link.href = URL.createObjectURL(blob)
@@ -245,7 +272,7 @@ export default function ExportDialog({
               )}
               {previewError && !previewLoading && (
                 <div className={clsx(
-                  'flex flex-col items-center gap-2 py-8',
+                  'flex flex-col items-center gap-2 py-8 px-4 text-center',
                   isLight ? 'text-gray-400' : 'text-gray-500'
                 )}>
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -253,7 +280,7 @@ export default function ExportDialog({
                     <circle cx="8.5" cy="8.5" r="1.5" />
                     <path d="m21 15-5-5L5 21" />
                   </svg>
-                  <span className="text-xs">Preview unavailable</span>
+                  <span className="text-xs max-w-[28ch]">{previewError}</span>
                 </div>
               )}
               {previewSrc && (

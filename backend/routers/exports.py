@@ -19,7 +19,14 @@ def _clamp_dpi(dpi: int) -> int:
 
 def _png_response(buf):
     if buf is None:
-        raise HTTPException(status_code=500, detail="Failed to generate image")
+        # Visualizers return None when the filter produces no activities
+        # (e.g. a location/sport/year combination with zero matches). Surface
+        # that as a 422 so the UI can render a useful message rather than a
+        # generic 500.
+        raise HTTPException(
+            status_code=422,
+            detail="No activities matched the selected filters — try a broader location, sport, or year.",
+        )
     return StreamingResponse(buf, media_type="image/png",
                              headers={"Content-Disposition": "inline; filename=export.png"})
 
