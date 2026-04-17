@@ -339,13 +339,13 @@ class StravaVisualizer:
         try:
             ctx.add_basemap(
                 ax,
-                source=ctx.providers.CartoDB.DarkMatter, 
+                source=ctx.providers.CartoDB.DarkMatter,
                 alpha=0.6,
                 zoom_adjust=0, # Auto-zoom usually works well with set_xlim
                 zorder=1
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Basemap tile fetch failed: %s", e)
 
         ax.set_axis_off()
         ax.axis('equal')

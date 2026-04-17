@@ -221,7 +221,7 @@ class StravaEndpoint:
                     self._last_usage_daily = int(usage_parts[1])
                     self._last_usage_at = time.monotonic()
                 except ValueError:
-                    pass
+                    logger.debug("Unparseable X-RateLimit-Usage header: %s", usage_header)
         if response.status_code == 429:
             raise StravaRateLimitError("Strava API returned 429 Too Many Requests")
         if usage_header:

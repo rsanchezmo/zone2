@@ -1,4 +1,5 @@
 from datetime import datetime
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 import aiosqlite
@@ -10,6 +11,8 @@ from backend.db import get_db
 from backend.dependencies import get_si
 from backend.scoring import match_activity, compute_execution_score, has_targets
 from strava.strava_intelligence import StravaIntelligence
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -161,8 +164,8 @@ async def get_session_scores(
     hr_zones = None
     try:
         hr_zones = si.strava_analytics.get_hr_zones()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Could not load HR zones for scoring: %s", e)
 
     result: dict[int, dict | None] = {}
     for session in sessions_with_targets:
@@ -218,8 +221,8 @@ async def get_score_by_activity(
     hr_zones = None
     try:
         hr_zones = si.strava_analytics.get_hr_zones()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Could not load HR zones for scoring: %s", e)
 
     # Find the session that matches this activity
     for session in sessions_with_targets:

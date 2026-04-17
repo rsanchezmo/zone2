@@ -455,8 +455,8 @@ class StravaActivitiesCache:
             if remaining <= 1:
                 logger.warning("No rate limit budget available. Try again later.")
                 return
-        except Exception:
-            pass  # Non-critical, continue anyway
+        except Exception as e:
+            logger.debug("Rate-limit pre-check skipped: %s", e)  # Non-critical
 
         # Load raw activities (without parsing streams JSON — we only need metadata here)
         self._invalidate_memory_cache()

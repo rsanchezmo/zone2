@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from enum import StrEnum
 import json
+import logging
 import pandas as pd
 import numpy as np
 from strava.strava_activities_cache import StravaActivitiesCache
@@ -10,6 +11,8 @@ from strava.strava_utils import (
     predicted_time_from_vdot, riegel_predict, fit_riegel_exponent,
     compute_trimp_banister, compute_trimp_zone_weighted,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _utc_now_naive() -> datetime:
@@ -491,8 +494,8 @@ class StravaAnalytics:
                             p['heartrate'] for p in streams_data
                             if p.get('heartrate') is not None
                         )
-                except (json.JSONDecodeError, TypeError, KeyError):
-                    pass
+                except (json.JSONDecodeError, TypeError, KeyError) as e:
+                    logger.debug("Skipping unparseable stream row for HR distribution: %s", e)
 
             if all_hr:
                 hr_arr = np.array(all_hr, dtype=np.float64)
