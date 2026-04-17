@@ -24,11 +24,13 @@ class StravaAnalytics:
         self._fitness_trend_cache: dict = {}
 
     def _get_prepared_activities(self) -> pd.DataFrame:
-        """Return activities DF with parsed dates, cached to avoid repeated copy+parse.
+        """Return activities DF with parsed dates and pre-parsed streams,
+        cached to avoid repeated copy+parse.
 
         Reads directly from the cache's memory store to avoid the extra .copy()
         that load_activities() does on every call. We do a single copy here and
-        cache it with parsed dates.
+        cache it with parsed dates. Streams JSON strings are parsed once into
+        Python objects so downstream consumers don't re-parse on every call.
         """
         # Access the internal memory cache directly (triggers lazy load if needed)
         raw = self.strava_activities_cache._load_to_memory()
@@ -36,9 +38,25 @@ class StravaAnalytics:
         if self._prepared_activities is None or current_len != self._prepared_activities_len:
             df = raw.copy()
             df['start_date_local'] = pd.to_datetime(df['start_date_local'], utc=True)
+            if 'streams' in df.columns:
+                df['streams'] = df['streams'].apply(self._parse_json_cell)
+            if 'map' in df.columns:
+                df['map'] = df['map'].apply(self._parse_json_cell)
             self._prepared_activities = df
             self._prepared_activities_len = current_len
         return self._prepared_activities
+
+    @staticmethod
+    def _parse_json_cell(val):
+        """Parse a JSON cell from string to Python object, once."""
+        if val is None or (isinstance(val, float) and np.isnan(val)):
+            return None
+        if isinstance(val, str):
+            try:
+                return json.loads(val)
+            except (json.JSONDecodeError, TypeError):
+                return None
+        return val
 
     def invalidate_caches(self):
         """Clear all analytics-level caches. Call after sync."""
@@ -461,7 +479,7 @@ class StravaAnalytics:
             all_hr = []
             for streams_raw in activities_week['streams'].dropna():
                 try:
-                    streams_data = json.loads(streams_raw) if isinstance(streams_raw, str) else streams_raw
+                    streams_data = streams_raw
                     if isinstance(streams_data, list):
                         all_hr.extend(
                             p['heartrate'] for p in streams_data
@@ -566,7 +584,8 @@ class StravaAnalytics:
         """Compute best efforts at standard distances for running, cycling, and swimming.
 
         Uses a sliding window over each activity's distance/time streams to find
-        the fastest elapsed time for each standard distance.
+        the fastest elapsed time for each standard distance. Numpy searchsorted
+        replaces the inner Python loop for speed.
         """
         from strava.strava_utils import get_sport_category
 
@@ -588,28 +607,25 @@ class StravaAnalytics:
                 continue
 
             streams = row.get("streams")
-            if streams is None:
-                continue
-            if isinstance(streams, str):
-                try:
-                    streams = json.loads(streams)
-                except (json.JSONDecodeError, TypeError):
-                    continue
             if not isinstance(streams, list) or len(streams) < 2:
                 continue
 
-            # Extract distance and time arrays
-            distances = []
-            times = []
+            # Extract distance and time as numpy arrays
+            dist_list = []
+            time_list = []
             for pt in streams:
                 d = pt.get("distance")
                 t = pt.get("time")
                 if d is not None and t is not None:
-                    distances.append(float(d))
-                    times.append(float(t))
+                    dist_list.append(d)
+                    time_list.append(t)
 
-            if len(distances) < 2:
+            if len(dist_list) < 2:
                 continue
+
+            distances = np.asarray(dist_list, dtype=np.float64)
+            times = np.asarray(time_list, dtype=np.float64)
+            n = len(distances)
 
             activity_id = row.get("id")
             activity_name = row.get("name", "")
@@ -623,21 +639,31 @@ class StravaAnalytics:
                 if total_distance < target_m:
                     continue
 
-                # Sliding window: find min time to cover target_m meters
-                left = 0
-                best_time = None
-                for right in range(len(distances)):
-                    while distances[right] - distances[left] >= target_m:
-                        elapsed = times[right] - times[left]
-                        if elapsed > 0:
-                            avg_speed = target_m / elapsed
-                            # Reject physically impossible speeds (GPS drift)
-                            if avg_speed <= max_speed:
-                                if best_time is None or elapsed < best_time:
-                                    best_time = elapsed
-                        left += 1
+                # For each left index, use searchsorted to find the first right
+                # index where distance >= distances[left] + target_m. This moves
+                # the inner scan from Python to C (numpy).
+                thresholds = distances + target_m
+                right_indices = np.searchsorted(distances, thresholds, side='left')
 
-                if best_time is not None and best_time > 0:
+                # Mask valid pairs (right index within bounds)
+                valid = right_indices < n
+                left_idx = np.where(valid)[0]
+                right_idx = right_indices[valid]
+
+                if len(left_idx) == 0:
+                    continue
+
+                elapsed = times[right_idx] - times[left_idx]
+                speeds = target_m / np.maximum(elapsed, 1e-9)
+
+                # Filter: elapsed > 0 and speed plausible
+                mask = (elapsed > 0) & (speeds <= max_speed)
+                if not np.any(mask):
+                    continue
+
+                best_time = float(elapsed[mask].min())
+
+                if best_time > 0:
                     current_best = best[category].get(target_m)
                     if current_best is None or best_time < current_best["time_s"]:
                         best[category][target_m] = {
@@ -837,52 +863,74 @@ class StravaAnalytics:
         hr_zones = self._get_hr_zones_cached()
 
         activities = self._get_prepared_activities()
+        if activities.empty:
+            self._training_load_cache = []
+            return self._training_load_cache
+
+        # Drop rows that can't contribute a TRIMP value up-front so we only do
+        # work on rows with valid avg_hr and positive moving_time.
+        mt = activities['moving_time'] if 'moving_time' in activities.columns else pd.Series(dtype=float)
+        hr = activities['average_heartrate'] if 'average_heartrate' in activities.columns else pd.Series(dtype=float)
+        mask = hr.notna() & (hr > 0) & mt.notna() & (mt > 0)
+        valid = activities[mask]
+        if valid.empty:
+            self._training_load_cache = []
+            return self._training_load_cache
+
+        # Vectorized Banister TRIMP across all valid rows — replaces the
+        # scalar compute_trimp_banister call that ran inside the old iterrows
+        # loop. Matches the male default in the scalar helper.
+        duration_min_arr = valid['moving_time'].to_numpy(dtype=np.float64) / 60.0
+        avg_hr_arr = valid['average_heartrate'].to_numpy(dtype=np.float64)
+        hr_range = hr_max - hr_rest
+        if hr_range > 0:
+            delta = np.clip((avg_hr_arr - hr_rest) / hr_range, 0.0, 1.0)
+            banister = duration_min_arr * delta * 0.64 * np.exp(1.92 * delta)
+        else:
+            banister = np.zeros(len(valid), dtype=np.float64)
+
+        trimps = banister.copy()
+        methods = np.full(len(valid), 'banister', dtype=object)
+
+        # Zone-weighted override for rows that have usable stream data. This
+        # stays per-row because stream length varies per activity, but it
+        # only runs for activities that actually have streams — a huge win
+        # when most of the cache is stream-less.
+        if hr_zones and 'streams' in valid.columns:
+            boundaries = [z['max'] for z in hr_zones[:4]]
+            streams_col = valid['streams'].to_list()
+            for idx, streams in enumerate(streams_col):
+                if not isinstance(streams, list) or len(streams) < 2:
+                    continue
+                hr_vals = [p.get('heartrate') for p in streams if p.get('heartrate') is not None]
+                if len(hr_vals) <= 10:
+                    continue
+                hr_arr = np.asarray(hr_vals, dtype=np.float64)
+                bins = np.digitize(hr_arr, boundaries, right=False)
+                time_per_pt = duration_min_arr[idx] / len(hr_arr)
+                time_in_zones = [float(np.sum(bins == i)) * time_per_pt for i in range(5)]
+                zw = compute_trimp_zone_weighted(time_in_zones)
+                if zw > 0:
+                    trimps[idx] = zw
+                    methods[idx] = 'zone_weighted'
+
+        trimps_rounded = np.round(trimps, 1)
+        date_strs = valid['start_date_local'].dt.strftime('%Y-%m-%d').to_numpy()
+        names = valid.get('name', pd.Series([''] * len(valid), index=valid.index)).fillna('').to_numpy()
+        sports = valid.get('sport_type', pd.Series([''] * len(valid), index=valid.index)).fillna('').to_numpy()
+
         daily: dict[str, dict] = {}
-
-        for _, row in activities.iterrows():
-            avg_hr = row.get("average_heartrate")
-            moving_time = row.get("moving_time", 0)
-            if pd.isna(avg_hr) or not avg_hr or moving_time <= 0:
-                continue
-
-            duration_min = moving_time / 60.0
-            trimp = 0.0
-            trimp_method = "banister"
-
-            # Try zone-weighted TRIMP from streams
-            streams = row.get("streams")
-            if streams is not None and hr_zones:
-                if isinstance(streams, str):
-                    try:
-                        streams = json.loads(streams)
-                    except (json.JSONDecodeError, TypeError):
-                        streams = None
-                if isinstance(streams, list) and len(streams) >= 2:
-                    hr_vals = [p.get('heartrate') for p in streams if p.get('heartrate') is not None]
-                    if len(hr_vals) > 10:
-                        hr_arr = np.array(hr_vals, dtype=np.float64)
-                        boundaries = [z['max'] for z in hr_zones[:4]]
-                        bins = np.digitize(hr_arr, boundaries, right=False)
-                        # Estimate time per data point (assume uniform sampling)
-                        time_per_pt = duration_min / len(hr_arr)
-                        time_in_zones = [float(np.sum(bins == i)) * time_per_pt for i in range(5)]
-                        trimp = compute_trimp_zone_weighted(time_in_zones)
-                        trimp_method = "zone_weighted"
-
-            # Fallback to Banister
-            if trimp == 0.0:
-                trimp = compute_trimp_banister(duration_min, float(avg_hr), hr_rest, hr_max)
-                trimp_method = "banister"
-
-            date_str = row['start_date_local'].strftime('%Y-%m-%d')
-            if date_str not in daily:
-                daily[date_str] = {"date": date_str, "trimp": 0.0, "activities": [], "trimp_method": trimp_method}
-            daily[date_str]["trimp"] += round(trimp, 1)
-            daily[date_str]["activities"].append({
-                "name": row.get("name", ""),
-                "sport_type": row.get("sport_type", ""),
-                "trimp": round(trimp, 1),
-                "trimp_method": trimp_method,
+        for date_str, trimp, method, name, sport in zip(date_strs, trimps_rounded, methods, names, sports):
+            entry = daily.get(date_str)
+            if entry is None:
+                entry = {"date": date_str, "trimp": 0.0, "activities": [], "trimp_method": str(method)}
+                daily[date_str] = entry
+            entry["trimp"] += float(trimp)
+            entry["activities"].append({
+                "name": str(name),
+                "sport_type": str(sport),
+                "trimp": float(trimp),
+                "trimp_method": str(method),
             })
 
         result = sorted(daily.values(), key=lambda d: d["date"])
@@ -984,23 +1032,39 @@ class StravaAnalytics:
             (activities['sport_type'] == sport_type) &
             (activities['moving_time'] >= 180) &
             (activities['distance'] > 0)
-        ].sort_values('start_date_local').copy()
+        ].sort_values('start_date_local')
 
         if start_date:
             filtered = filtered[filtered['start_date_local'] >= pd.to_datetime(start_date, utc=True)]
         if end_date:
             filtered = filtered[filtered['start_date_local'] <= pd.to_datetime(end_date, utc=True)]
 
-        points = []
-        for _, row in filtered.iterrows():
-            v = vdot_from_time_distance(float(row['moving_time']), float(row['distance']))
-            if v is not None and 15 < v < 85:  # reasonable VDOT range
-                points.append({
-                    "date": row['start_date_local'].strftime('%Y-%m-%d'),
-                    "vdot": v,
-                    "activity_name": row.get('name', ''),
-                    "distance_km": round(float(row['distance']) / 1000, 2),
-                })
+        # Vectorized VDOT: inline the closed-form Daniels approximation across
+        # the whole filtered frame in one pass rather than calling the scalar
+        # helper per row. Same math as vdot_from_time_distance, just numpy.
+        times_s = filtered['moving_time'].to_numpy(dtype=np.float64)
+        dists_m = filtered['distance'].to_numpy(dtype=np.float64)
+        t_min = times_s / 60.0
+        with np.errstate(divide='ignore', invalid='ignore'):
+            v_mpm = np.where(t_min > 0, dists_m / t_min, 0.0)
+            vo2 = -4.60 + 0.182258 * v_mpm + 0.000104 * v_mpm * v_mpm
+            pct = 0.8 + 0.1894393 * np.exp(-0.012778 * t_min) + 0.2989558 * np.exp(-0.1932605 * t_min)
+            vdot = np.where(pct > 0, vo2 / pct, np.nan)
+        vdot = np.round(vdot, 2)
+        keep = np.isfinite(vdot) & (vdot > 15) & (vdot < 85)
+
+        if keep.any():
+            kept = filtered.loc[keep]
+            date_strs = kept['start_date_local'].dt.strftime('%Y-%m-%d').to_numpy()
+            names = kept.get('name', pd.Series([''] * len(kept), index=kept.index)).fillna('').to_numpy()
+            dist_km = np.round(kept['distance'].to_numpy(dtype=np.float64) / 1000, 2)
+            vdot_kept = vdot[keep]
+            points = [
+                {"date": d, "vdot": float(v), "activity_name": str(n), "distance_km": float(dk)}
+                for d, v, n, dk in zip(date_strs, vdot_kept, names, dist_km)
+            ]
+        else:
+            points = []
 
         # Rolling average
         rolling_avg = []
