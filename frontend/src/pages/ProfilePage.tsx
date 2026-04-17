@@ -3,6 +3,7 @@ import { useMemo } from 'react'
 import { useAthleteProfile, useAthleteZones, useSyncStatus, useSportTypes, useGoals, useGoalProgress, useCreateGoal, useUpdateGoal, useDeleteGoal, useRateLimits, useCacheCompleteness, useBackfillStreams } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
 import { getSportCategory } from '../utils/formatSpeed'
+import ChartPanel from '../components/shared/ChartPanel'
 import { useTheme } from '../hooks/useTheme'
 import { useToast } from '../hooks/useToast'
 import clsx from 'clsx'
@@ -79,19 +80,17 @@ export default function ProfilePage() {
 
   if (profileLoading) {
     return (
-      <div className="max-w-4xl mx-auto space-y-6">
-        {/* Skeleton header */}
-        <div className={clsx(cardClass, 'p-6 flex items-center gap-6 animate-pulse')}>
+      <div className="max-w-4xl mx-auto space-y-10 pb-12">
+        <div className={clsx('panel p-6 flex items-center gap-6 animate-pulse', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
           <div className={clsx('w-20 h-20 rounded-full', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
           <div className="flex-1 space-y-3">
             <div className={clsx('h-6 w-40 rounded', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
             <div className={clsx('h-4 w-28 rounded', isLight ? 'bg-gray-100' : 'bg-surface-700')} />
           </div>
         </div>
-        {/* Skeleton info cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className={clsx(cardClass, 'animate-pulse')}>
+            <div key={i} className={clsx('panel p-4 animate-pulse', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
               <div className={clsx('h-3 w-16 rounded mb-3', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
               <div className={clsx('h-6 w-20 rounded', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
             </div>
@@ -165,96 +164,92 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      {/* Profile header */}
-      <div className={clsx(cardClass, 'p-6 flex items-center gap-6')}>
+    <div className="max-w-4xl mx-auto space-y-10 pb-12">
+      {/* ── Breadcrumb header ─────────────────────────── */}
+      <header className="flex items-baseline gap-2">
+        <span className="eyebrow">Profile</span>
+        <span className={clsx('text-[11px]', isLight ? 'text-gray-300' : 'text-gray-700')}>·</span>
+        <span className="text-[11px] text-gray-500 normal-case tracking-normal">athlete · goals · cache</span>
+      </header>
+
+      {/* ── Athlete card ──────────────────────────────── */}
+      <section
+        className={clsx(
+          'panel hero-brackets p-6 md:p-8 flex items-center gap-6',
+          isLight ? 'bg-white' : 'bg-surface-800',
+        )}
+        style={{ ['--card-accent' as string]: (profile.premium || profile.summit) ? '#eab308' : '#6b7280' }}
+      >
         {profile.profile_medium && profile.profile_medium !== 'avatar/athlete/large.png' ? (
           <img
             src={profile.profile_medium}
             alt={fullName}
-            className={clsx('w-20 h-20 rounded-full border-2 object-cover', isLight ? 'border-gray-200' : 'border-surface-600')}
+            className={clsx('w-24 h-24 rounded-full border object-cover shrink-0', isLight ? 'border-gray-200' : 'border-surface-600')}
           />
         ) : (
           <div className={clsx(
-            'w-20 h-20 rounded-full border-2 flex items-center justify-center text-3xl',
+            'w-24 h-24 rounded-full border flex items-center justify-center text-3xl font-semibold shrink-0',
             isLight ? 'border-gray-200 bg-gray-100 text-gray-400' : 'border-surface-600 bg-surface-700 text-gray-500',
           )}>
             {(profile.firstname?.[0] ?? '?').toUpperCase()}
           </div>
         )}
         <div className="flex-1 min-w-0">
-          <h1 className={clsx('text-2xl font-bold truncate', isLight ? 'text-gray-900' : 'text-white')}>{fullName || 'Athlete'}</h1>
-          {profile.username && (
-            <div className="text-sm text-gray-500">@{profile.username}</div>
-          )}
-          {location && (
-            <div className="text-sm text-gray-400 mt-1">{location}</div>
-          )}
-        </div>
-      </div>
-
-      {/* Info grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className={cardClass}>
-          <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Subscription</div>
-          <div className="text-lg font-bold" style={{ color: (profile.premium || profile.summit) ? '#eab308' : '#6b7280' }}>
-            {(profile.premium || profile.summit) ? 'Subscriber' : 'Free'}
+          <div className="eyebrow mb-1.5">Athlete</div>
+          <h1
+            className={clsx('text-2xl md:text-3xl font-semibold tracking-tight truncate', isLight ? 'text-gray-900' : 'text-gray-100')}
+            style={{ letterSpacing: '-0.02em' }}
+          >
+            {fullName || 'Athlete'}
+          </h1>
+          <div className="flex items-center gap-3 mt-1.5 flex-wrap text-[11px] font-mono tabular-nums">
+            {profile.username && (
+              <span className={isLight ? 'text-gray-500' : 'text-gray-500'}>@{profile.username}</span>
+            )}
+            {location && (
+              <>
+                {profile.username && <span className={isLight ? 'text-gray-300' : 'text-gray-700'}>·</span>}
+                <span className={isLight ? 'text-gray-500' : 'text-gray-500'}>{location}</span>
+              </>
+            )}
+            {(profile.premium || profile.summit) && (
+              <>
+                <span className={isLight ? 'text-gray-300' : 'text-gray-700'}>·</span>
+                <span className="uppercase tracking-[0.15em] text-amber-400 text-[10px] font-semibold">Subscriber</span>
+              </>
+            )}
           </div>
         </div>
-        {profile.sex && (
-          <div className={cardClass}>
-            <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Gender</div>
-            <div className={clsx('text-lg font-bold', isLight ? 'text-gray-900' : 'text-gray-100')}>{profile.sex === 'M' ? 'Male' : profile.sex === 'F' ? 'Female' : profile.sex}</div>
-          </div>
-        )}
-        {profile.weight != null && profile.weight > 0 && (
-          <div className={cardClass}>
-            <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Weight</div>
-            <div className={clsx('text-lg font-bold', isLight ? 'text-gray-900' : 'text-gray-100')}>{profile.weight} <span className="text-sm text-gray-400">kg</span></div>
-          </div>
-        )}
-        {syncStatus?.total_activities != null && (
-          <div className={cardClass}>
-            <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Activities</div>
-            <div className={clsx('text-lg font-bold', isLight ? 'text-gray-900' : 'text-gray-100')}>{syncStatus.total_activities}</div>
-          </div>
-        )}
-        {createdAt && (
-          <div className={cardClass}>
-            <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Member Since</div>
-            <div className={clsx('text-sm font-bold', isLight ? 'text-gray-900' : 'text-gray-100')}>{createdAt}</div>
-          </div>
-        )}
-        {profile.follower_count != null && (
-          <div className={cardClass}>
-            <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Followers</div>
-            <div className={clsx('text-lg font-bold', isLight ? 'text-gray-900' : 'text-gray-100')}>{profile.follower_count}</div>
-          </div>
-        )}
-        {profile.friend_count != null && (
-          <div className={cardClass}>
-            <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Following</div>
-            <div className={clsx('text-lg font-bold', isLight ? 'text-gray-900' : 'text-gray-100')}>{profile.friend_count}</div>
-          </div>
-        )}
-        {profile.ftp != null && profile.ftp > 0 && (
-          <div className={cardClass}>
-            <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">FTP</div>
-            <div className={clsx('text-lg font-bold', isLight ? 'text-gray-900' : 'text-gray-100')}>{profile.ftp} <span className="text-sm text-gray-400">W</span></div>
-          </div>
-        )}
-        {updatedAt && (
-          <div className={cardClass}>
-            <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Last Updated</div>
-            <div className={clsx('text-sm font-bold', isLight ? 'text-gray-900' : 'text-gray-100')}>{updatedAt}</div>
-          </div>
-        )}
-      </div>
+      </section>
 
-      {/* Heart Rate Zones */}
+      {/* ── Info strip ───────────────────────────────── */}
+      <section>
+        <div className="section-head mb-4"><span className="eyebrow">Details</span></div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {profile.sex && <InfoTile label="Gender" value={profile.sex === 'M' ? 'Male' : profile.sex === 'F' ? 'Female' : profile.sex} />}
+          {profile.weight != null && profile.weight > 0 && <InfoTile label="Weight" value={profile.weight} unit="kg" />}
+          {syncStatus?.total_activities != null && <InfoTile label="Activities" value={syncStatus.total_activities.toLocaleString()} />}
+          {profile.ftp != null && profile.ftp > 0 && <InfoTile label="FTP" value={profile.ftp} unit="W" />}
+          {profile.follower_count != null && <InfoTile label="Followers" value={profile.follower_count.toLocaleString()} />}
+          {profile.friend_count != null && <InfoTile label="Following" value={profile.friend_count.toLocaleString()} />}
+          {createdAt && <InfoTile label="Member since" value={createdAt} compact />}
+          {updatedAt && <InfoTile label="Last updated" value={updatedAt} compact />}
+        </div>
+      </section>
+
+      {/* ── Heart Rate Zones ─────────────────────────── */}
       {hrZones && hrZones.length > 0 && (
-        <div className={cardClass}>
-          <div className="text-xs text-gray-500 uppercase tracking-wider mb-4">Heart Rate Zones</div>
+        <ChartPanel
+          title="Heart rate zones"
+          glow={false}
+          footer={
+            <span className={clsx('text-[11px]', isLight ? 'text-gray-500' : 'text-gray-500')}>
+              {zones?.heart_rate?.custom_zones
+                ? 'Custom zones from Strava'
+                : `Estimated from activity data (max HR: ${maxHr ?? '?'} bpm)`}
+            </span>
+          }
+        >
           <div className="space-y-2.5">
             {hrZones.map((zone, i) => {
               const color = HR_ZONE_COLORS[i] ?? '#6b7280'
@@ -289,30 +284,24 @@ export default function ProfilePage() {
               )
             })}
           </div>
-          <div className="text-[11px] text-gray-500 mt-3">
-            {zones?.heart_rate?.custom_zones
-              ? 'Custom zones from Strava'
-              : `Estimated from activity data (max HR: ${maxHr ?? '?'} bpm)`}
-          </div>
-        </div>
+        </ChartPanel>
       )}
 
-      {/* Goals */}
-      <div className={cardClass}>
-        <div className="flex items-center justify-between mb-4">
-          <div className="text-xs text-gray-500 uppercase tracking-wider">Goals</div>
-          {!showGoalForm && (
+      {/* ── Goals ───────────────────────────────────── */}
+      <ChartPanel
+        title="Goals"
+        glow={false}
+        toolbar={
+          !showGoalForm ? (
             <button
               onClick={() => { setEditingGoalId(null); setGoalForm({ year: String(currentYear), sport_type: 'Run', metric: 'distance_km', period: 'weekly', target_value: '' }); setShowGoalForm(true) }}
-              className={clsx(
-                'text-xs px-3 py-1.5 rounded-lg transition-colors',
-                isLight ? 'bg-gray-100 hover:bg-gray-200 text-gray-600' : 'bg-surface-700 hover:bg-surface-600 text-gray-300',
-              )}
+              className="btn"
             >
-              + Add Goal
+              + Add goal
             </button>
-          )}
-        </div>
+          ) : undefined
+        }
+      >
 
         {/* Goal form */}
         {showGoalForm && (
@@ -493,32 +482,51 @@ export default function ProfilePage() {
         ) : !showGoalForm ? (
           <div className={clsx('text-sm', isLight ? 'text-gray-400' : 'text-gray-600')}>No goals set. Add a goal to track your progress.</div>
         ) : null}
-      </div>
+      </ChartPanel>
 
-      {/* Cache Completeness */}
+      {/* ── Cache Completeness ──────────────────────── */}
       {cacheCompleteness && cacheCompleteness.total > 0 && (() => {
         const { streams, photos, detail, total } = cacheCompleteness
         const streamsPct = streams.total_expected > 0 ? (streams.complete / streams.total_expected) * 100 : 100
         const photosPct = photos.total_expected > 0 ? (photos.complete / photos.total_expected) * 100 : 100
         const detailPct = detail?.total_expected > 0 ? (detail.complete / detail.total_expected) * 100 : 100
         const allComplete = streams.missing === 0 && photos.missing === 0 && (detail?.missing ?? 0) === 0
+        const missingCount = streams.missing + photos.missing + (detail?.missing ?? 0)
         return (
-          <div className={cardClass}>
-            <div className="flex items-center justify-between mb-4">
-              <div className="text-xs text-gray-500 uppercase tracking-wider">Cache Completeness</div>
-              {!allComplete && (
+          <ChartPanel
+            title="Cache completeness"
+            glow={false}
+            toolbar={
+              !allComplete ? (
                 <button
                   onClick={() => backfillStreams.mutate()}
                   disabled={backfillStreams.isPending || syncStatus?.syncing}
-                  className={clsx(
-                    'text-xs px-3 py-1.5 rounded-lg transition-colors disabled:opacity-30',
-                    isLight ? 'bg-gray-100 hover:bg-gray-200 text-gray-600' : 'bg-surface-700 hover:bg-surface-600 text-gray-300',
-                  )}
+                  className="btn"
                 >
-                  {backfillStreams.isPending || syncStatus?.syncing ? 'Backfilling...' : 'Backfill Missing'}
+                  {backfillStreams.isPending || syncStatus?.syncing ? 'Backfilling…' : 'Backfill missing'}
                 </button>
-              )}
-            </div>
+              ) : (
+                <span className="text-[10px] uppercase tracking-[0.15em] font-semibold text-green-400">Complete</span>
+              )
+            }
+            footer={
+              <div className="flex items-center justify-between">
+                <span className={clsx('text-[11px]', isLight ? 'text-gray-500' : 'text-gray-500')}>
+                  {allComplete
+                    ? `All ${total.toLocaleString()} activities fully cached`
+                    : `${missingCount.toLocaleString()} item${missingCount !== 1 ? 's' : ''} missing · ${total.toLocaleString()} total`}
+                </span>
+                {!allComplete && (
+                  <button
+                    onClick={() => setShowCacheDetails(d => !d)}
+                    className={clsx('text-[11px] transition-colors', isLight ? 'text-gray-400 hover:text-gray-600' : 'text-gray-500 hover:text-gray-300')}
+                  >
+                    {showCacheDetails ? 'Hide details' : 'Show details'}
+                  </button>
+                )}
+              </div>
+            }
+          >
             <div className="space-y-3">
               {/* Streams */}
               <div>
@@ -570,53 +578,41 @@ export default function ProfilePage() {
                 </div>
               )}
             </div>
-            {/* Summary line */}
-            <div className="flex items-center justify-between mt-3">
-              <div className="text-[11px] text-gray-500">
-                {allComplete
-                  ? 'All activity data is complete'
-                  : `${streams.missing + photos.missing + (detail?.missing ?? 0)} item${streams.missing + photos.missing + (detail?.missing ?? 0) !== 1 ? 's' : ''} missing`}
-              </div>
-              {!allComplete && (
-                <button
-                  onClick={() => setShowCacheDetails(d => !d)}
-                  className={clsx('text-[11px] transition-colors', isLight ? 'text-gray-400 hover:text-gray-600' : 'text-gray-500 hover:text-gray-300')}
-                >
-                  {showCacheDetails ? 'Hide details' : 'Show details'}
-                </button>
-              )}
-            </div>
             {/* Expandable details */}
             {showCacheDetails && !allComplete && (
-              <div className={clsx('mt-3 pt-3 border-t text-xs space-y-1', isLight ? 'border-gray-100' : 'border-surface-600')}>
+              <div className={clsx('mt-4 pt-4 border-t text-xs space-y-1', isLight ? 'border-gray-100' : 'border-surface-600/50')}>
                 {streams.missing > 0 && (
                   <div className={clsx(isLight ? 'text-gray-500' : 'text-gray-400')}>
-                    {streams.missing} activit{streams.missing !== 1 ? 'ies' : 'y'} missing streams
+                    <span className="font-mono tabular-nums">{streams.missing}</span> activit{streams.missing !== 1 ? 'ies' : 'y'} missing streams
                   </div>
                 )}
                 {photos.missing > 0 && (
                   <div className={clsx(isLight ? 'text-gray-500' : 'text-gray-400')}>
-                    {photos.missing} activit{photos.missing !== 1 ? 'ies' : 'y'} missing photos (of {photos.total_expected} with photos)
+                    <span className="font-mono tabular-nums">{photos.missing}</span> activit{photos.missing !== 1 ? 'ies' : 'y'} missing photos (of {photos.total_expected} with photos)
                   </div>
                 )}
                 {detail && detail.missing > 0 && (
                   <div className={clsx(isLight ? 'text-gray-500' : 'text-gray-400')}>
-                    {detail.missing} activit{detail.missing !== 1 ? 'ies' : 'y'} missing detail (description, laps, gear, etc.)
+                    <span className="font-mono tabular-nums">{detail.missing}</span> activit{detail.missing !== 1 ? 'ies' : 'y'} missing detail (description, laps, gear, etc.)
                   </div>
                 )}
-                <div className={clsx(isLight ? 'text-gray-400' : 'text-gray-500')}>
-                  {total} total activities in cache
-                </div>
               </div>
             )}
-          </div>
+          </ChartPanel>
         )
       })()}
 
-      {/* Strava API Rate Limits */}
+      {/* ── Strava API Rate Limits ──────────────────── */}
       {rateLimits && (
-        <div className={cardClass}>
-          <div className="text-xs text-gray-500 uppercase tracking-wider mb-4">Strava API Rate Limits</div>
+        <ChartPanel
+          title="Strava API rate limits"
+          glow={false}
+          footer={
+            <span className={clsx('text-[11px]', isLight ? 'text-gray-500' : 'text-gray-500')}>
+              Daily limit resets at midnight UTC
+            </span>
+          }
+        >
           <div className="space-y-3">
             {[
               { label: '15-minute', data: rateLimits.fifteen_min },
@@ -628,10 +624,10 @@ export default function ProfilePage() {
               const barColor = isOver ? '#ef4444' : isWarning ? '#eab308' : '#22c55e'
               return (
                 <div key={label}>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className={clsx('text-sm', isLight ? 'text-gray-600' : 'text-gray-400')}>{label}</span>
-                    <span className="text-sm font-mono" style={{ color: barColor }}>
-                      {data.usage.toLocaleString()} <span className="text-gray-500">/</span> {data.limit.toLocaleString()}
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className={clsx('eyebrow', isLight ? 'text-gray-500' : 'text-gray-500')}>{label}</span>
+                    <span className="text-sm font-mono tabular-nums font-semibold" style={{ color: barColor }}>
+                      {data.usage.toLocaleString()} <span className={isLight ? 'text-gray-400' : 'text-gray-500'}>/</span> {data.limit.toLocaleString()}
                     </span>
                   </div>
                   <div className={clsx('h-2 rounded-full overflow-hidden', isLight ? 'bg-gray-100' : 'bg-surface-700')}>
@@ -644,12 +640,34 @@ export default function ProfilePage() {
               )
             })}
           </div>
-          <div className="text-[11px] text-gray-500 mt-3">
-            Daily limit resets at midnight UTC
-          </div>
-        </div>
+        </ChartPanel>
       )}
 
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────
+// InfoTile — a clean detail tile for the athlete info strip
+// ────────────────────────────────────────────────────────
+
+function InfoTile({ label, value, unit, compact }: { label: string; value: string | number; unit?: string; compact?: boolean }) {
+  const { theme } = useTheme()
+  const isLight = theme === 'light'
+  return (
+    <div className={clsx(
+      'panel p-4',
+      isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
+    )}>
+      <div className="eyebrow mb-1.5">{label}</div>
+      <div className={clsx(
+        'font-mono tabular-nums font-semibold tracking-tight',
+        compact ? 'text-sm' : 'text-xl',
+        isLight ? 'text-gray-900' : 'text-gray-100',
+      )}>
+        {value}
+        {unit && <span className={clsx('ml-1 font-medium tracking-normal', compact ? 'text-[11px]' : 'text-xs', isLight ? 'text-gray-400' : 'text-gray-500')}>{unit}</span>}
+      </div>
     </div>
   )
 }
