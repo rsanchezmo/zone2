@@ -42,6 +42,11 @@ const NAV_ITEMS: { to: string; label: string; color: string; icon: React.ReactNo
       <rect x="1" y="6" width="3" height="4" rx="0.5" /><rect x="12" y="6" width="3" height="4" rx="0.5" /><rect x="4" y="4" width="3" height="8" rx="0.5" /><rect x="9" y="4" width="3" height="8" rx="0.5" /><line x1="7" y1="8" x2="9" y2="8" />
     </svg>
   )},
+  { to: '/races', label: 'Races', color: '#f59e0b', icon: (
+    <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 2v12M3 2l7 3-7 3" />
+    </svg>
+  )},
   { to: '/profile', label: 'Profile', color: '#94a3b8', icon: (
     <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="8" cy="5" r="2.5" /><path d="M3 14c0-2.8 2.2-5 5-5s5 2.2 5 5" />
@@ -314,10 +319,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
   }, [syncStatus?.needs_sync])
 
-  // Invalidate ALL queries when sync completes so every page gets fresh data
+  // Invalidate only activity-dependent queries on sync completion. Hitting
+  // qc.invalidateQueries() with no filter refetches everything (theme,
+  // static config, etc.) and causes a visible refetch storm.
   useEffect(() => {
     if (wasSyncing.current && syncStatus?.syncing === false) {
-      qc.invalidateQueries()
+      const activityDependentKeys = [
+        'activities', 'activities-range', 'activity', 'similar-activities',
+        'polylines', 'sport-types', 'years',
+        'weekly-report', 'year-in-sport', 'efficiency-factor',
+        'performance-frontier', 'activity-clock', 'cumulative-distance',
+        'streaks', 'personal-records', 'sport-totals', 'weekly-totals',
+        'race-predictions', 'training-load', 'fitness-chart', 'fitness-trend',
+        'session-scores', 'activity-score', 'goal-progress',
+        'cache-completeness',
+      ]
+      for (const key of activityDependentKeys) {
+        qc.invalidateQueries({ queryKey: [key] })
+      }
       toast(`Synced ${syncStatus.total_activities ?? ''} activities`, 'success')
     }
     wasSyncing.current = syncStatus?.syncing ?? false
