@@ -36,7 +36,15 @@ export default function ExportButton({ url, label = 'Export to PNG', filename = 
     setLoading(true)
     try {
       const response = await fetch(url)
-      if (!response.ok) throw new Error('Export failed')
+      if (!response.ok) {
+        let msg = 'Export failed'
+        try {
+          const body = await response.json()
+          if (body?.detail) msg = String(body.detail)
+        } catch { /* not JSON */ }
+        toast(msg, 'error')
+        return
+      }
       const blob = await response.blob()
       const link = document.createElement('a')
       link.href = URL.createObjectURL(blob)
