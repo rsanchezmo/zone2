@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from enum import StrEnum
 import json
 import pandas as pd
@@ -9,6 +10,13 @@ from strava.strava_utils import (
     predicted_time_from_vdot, riegel_predict, fit_riegel_exponent,
     compute_trimp_banister, compute_trimp_zone_weighted,
 )
+
+
+def _utc_now_naive() -> datetime:
+    """UTC wallclock as a naive datetime. Matches the codebase's UTC-as-base
+    convention while staying comparable with other naive datetimes used for
+    year-boundary math."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class StravaAnalytics:
@@ -250,12 +258,11 @@ class StravaAnalytics:
 
         # activities per week (based on weeks elapsed in the year)
         if not activities_year.empty:
-            from datetime import datetime, date
             year_start = datetime(year, 1, 1)
             if cutoff_month_day:
                 year_end_or_today = datetime(year, cutoff_month_day[0], cutoff_month_day[1])
             else:
-                year_end_or_today = min(datetime.now(), datetime(year, 12, 31))
+                year_end_or_today = min(_utc_now_naive(), datetime(year, 12, 31))
             weeks_in_year = max(1, (year_end_or_today - year_start).days / 7)
             activities_per_week = total_activities / weeks_in_year
         else:
@@ -322,12 +329,11 @@ class StravaAnalytics:
 
         # activities per week (based on weeks elapsed in the year)
         if not activities_year.empty:
-            from datetime import datetime
             year_start = datetime(year, 1, 1)
             if cutoff_month_day:
                 year_end_or_today = datetime(year, cutoff_month_day[0], cutoff_month_day[1])
             else:
-                year_end_or_today = min(datetime.now(), datetime(year, 12, 31))
+                year_end_or_today = min(_utc_now_naive(), datetime(year, 12, 31))
             weeks_in_year = max(1, (year_end_or_today - year_start).days / 7)
             activities_per_week = total_activities / weeks_in_year
         else:
@@ -953,7 +959,7 @@ class StravaAnalytics:
 
         # Build date-indexed series from first activity to today
         first_date = pd.to_datetime(daily_load[0]["date"])
-        today = pd.Timestamp(datetime.now().strftime('%Y-%m-%d'))
+        today = pd.Timestamp(_utc_now_naive().strftime('%Y-%m-%d'))
         date_range = pd.date_range(first_date, today, freq='D')
 
         trimp_map = {d["date"]: d["trimp"] for d in daily_load}
