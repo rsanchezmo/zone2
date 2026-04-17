@@ -1,13 +1,14 @@
 import { Fragment, useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import {
   startOfMonth, endOfMonth, eachDayOfInterval, format, addMonths, subMonths, addDays, subDays,
-  isSameMonth, isToday, startOfWeek, endOfWeek, isSameWeek, parseISO,
+  isSameMonth, isToday, startOfWeek, endOfWeek, isSameWeek, parseISO, differenceInDays,
 } from 'date-fns'
 import { Link } from 'react-router-dom'
 import {
   useActivitiesByDateRange, useCalendarSessions, useCalendarSessionsByRange,
   useCreateSession, useUpdateSession, useDeleteSession, useWeeklyReport, useAthleteZones,
   useStreaks, useGoalProgress, useGoals, useSessionScores, useWorkoutTemplates, useCreateWorkoutTemplate,
+  useRaceEventsByRange, useUpcomingRaces, useCreateRaceEvent, useUpdateRaceEvent, useDeleteRaceEvent,
 } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
 import { getPaceUnit, getSportCategory, formatDist, distValue, getDistUnit } from '../utils/formatSpeed'
@@ -221,15 +222,20 @@ function scoreColor(score: number): string {
 
 /* ── Session Modal ──────────────────────────────────── */
 function SessionModal({
-  date, sessions, scores, onAdd, onCopy, onUpdate, onDelete, onClose,
+  date, sessions, scores, races, onAdd, onCopy, onUpdate, onDelete,
+  onAddRace, onUpdateRace, onDeleteRace, onClose,
 }: {
   date: string
   sessions: Record<string, unknown>[]
   scores: Record<string, Record<string, unknown>> | undefined
+  races: Record<string, unknown>[]
   onAdd: (data: Record<string, unknown>) => void
   onCopy: (session: Record<string, unknown>, targetDate: string) => void
   onUpdate: (id: number, data: Record<string, unknown>) => void
   onDelete: (id: number) => void
+  onAddRace: (data: Record<string, unknown>) => void
+  onUpdateRace: (id: number, data: Record<string, unknown>) => void
+  onDeleteRace: (id: number) => void
   onClose: () => void
 }) {
   const { theme } = useTheme()
@@ -254,6 +260,18 @@ function SessionModal({
   const [showTemplatePicker, setShowTemplatePicker] = useState(false)
   const [saveTemplateName, setSaveTemplateName] = useState('')
   const [showSaveTemplate, setShowSaveTemplate] = useState(false)
+  // Race event state
+  const [showRaceForm, setShowRaceForm] = useState(false)
+  const [editingRaceId, setEditingRaceId] = useState<number | null>(null)
+  const [raceName, setRaceName] = useState('')
+  const [raceSportType, setRaceSportType] = useState('Run')
+  const [raceDistanceKm, setRaceDistanceKm] = useState('')
+  const [raceTargetPace, setRaceTargetPace] = useState('')
+  const [raceDescription, setRaceDescription] = useState('')
+  const [raceLocation, setRaceLocation] = useState('')
+  const [raceUrl, setRaceUrl] = useState('')
+  const [confirmDeleteRaceId, setConfirmDeleteRaceId] = useState<number | null>(null)
+
   const { data: templates } = useWorkoutTemplates(sportType)
   const createTemplate = useCreateWorkoutTemplate()
 
@@ -270,7 +288,14 @@ function SessionModal({
     const goals = new Set<string>()
     const hasSegments = s.segments && Array.isArray(s.segments) && (s.segments as Segment[]).length > 0
     // Don't show distance as a separate goal if it was auto-computed from segments
-    if (s.planned_distance_km != null && !hasSegments) { goals.add('distance'); setPlannedDistanceKm(String(s.planned_distance_km)) } else { setPlannedDistanceKm('') }
+    if (s.planned_distance_km != null && !hasSegments) {
+      goals.add('distance')
+      // Convert km back to meters for swimming display
+      const displayDist = getSportCategory(s.sport_type as string) === 'swimming'
+        ? (s.planned_distance_km as number) * 1000
+        : (s.planned_distance_km as number)
+      setPlannedDistanceKm(String(displayDist))
+    } else { setPlannedDistanceKm('') }
     if (s.planned_duration_mins != null) { goals.add('duration'); setPlannedDurationMins(String(s.planned_duration_mins)) } else { setPlannedDurationMins('') }
     if (s.target_avg_pace != null) { goals.add('avg_pace'); setTargetAvgPace(String(s.target_avg_pace)) } else { setTargetAvgPace('') }
     if (s.target_pace_min != null || s.target_pace_max != null) { goals.add('pace_range') }
@@ -317,7 +342,9 @@ function SessionModal({
     }
     // Distance
     if (activeGoals.has('distance') && plannedDistanceKm) {
-      data.planned_distance_km = parseFloat(plannedDistanceKm)
+      const raw = parseFloat(plannedDistanceKm)
+      // User enters meters for swimming, km for others — always store as km
+      data.planned_distance_km = getSportCategory(sportType) === 'swimming' ? raw / 1000 : raw
     } else {
       data.planned_distance_km = null
     }
@@ -416,6 +443,180 @@ function SessionModal({
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
           </button>
         </div>
+
+        {/* Race Events section */}
+        {(races.length > 0 || showRaceForm) && (
+          <div className="mb-4 space-y-2">
+            <div className="text-xs text-gray-500 uppercase flex items-center gap-1.5">
+              <span className="text-amber-500">&#9873;</span> Race Events
+            </div>
+            {races.map(r => {
+              const isConfirmingRace = confirmDeleteRaceId === (r.id as number)
+              return (
+                <div key={r.id as number} className="rounded p-2 border transition-colors"
+                  style={{ borderColor: '#f59e0b60', backgroundColor: '#f59e0b08' }}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 min-w-0 cursor-pointer" onClick={() => {
+                      setEditingRaceId(r.id as number)
+                      setRaceName(r.name as string)
+                      setRaceSportType(r.sport_type as string)
+                      setRaceDistanceKm(r.distance_km != null ? String(r.distance_km) : '')
+                      setRaceTargetPace(r.target_pace != null ? String(r.target_pace) : '')
+                      setRaceDescription((r.description as string) || '')
+                      setRaceLocation((r.location as string) || '')
+                      setRaceUrl((r.url as string) || '')
+                      setShowRaceForm(true)
+                    }}>
+                      <span className="text-amber-500 text-xs">&#9873;</span>
+                      <span className="text-sm text-amber-500 font-medium">{String(r.name)}</span>
+                      {r.distance_km != null && (
+                        <span className="text-xs text-gray-400">{r.distance_km} km</span>
+                      )}
+                      {r.location && (
+                        <span className="text-xs text-gray-500 truncate">{String(r.location)}</span>
+                      )}
+                    </div>
+                    <div className="flex gap-2 shrink-0 ml-2">
+                      {isConfirmingRace ? (
+                        <>
+                          <span className="text-xs text-red-400">Delete?</span>
+                          <button onClick={() => { onDeleteRace(r.id as number); setConfirmDeleteRaceId(null) }} className="text-red-400 hover:text-red-300 text-xs font-bold">Yes</button>
+                          <button onClick={() => setConfirmDeleteRaceId(null)} className={clsx('text-xs text-gray-400', isLight ? 'hover:text-gray-700' : 'hover:text-gray-200')}>No</button>
+                        </>
+                      ) : (
+                        <>
+                          <button onClick={() => {
+                            setEditingRaceId(r.id as number)
+                            setRaceName(r.name as string)
+                            setRaceSportType(r.sport_type as string)
+                            setRaceDistanceKm(r.distance_km != null ? String(r.distance_km) : '')
+                            setRaceTargetPace(r.target_pace != null ? String(r.target_pace) : '')
+                            setRaceDescription((r.description as string) || '')
+                            setRaceLocation((r.location as string) || '')
+                            setRaceUrl((r.url as string) || '')
+                            setShowRaceForm(true)
+                          }} className={clsx('text-gray-400 text-xs', isLight ? 'hover:text-gray-700' : 'hover:text-gray-200')}>Edit</button>
+                          <button onClick={() => setConfirmDeleteRaceId(r.id as number)} className="text-red-400 hover:text-red-300 text-xs">Delete</button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+            {showRaceForm && (
+              <div className="space-y-2 pt-1">
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Race Name</label>
+                  <input
+                    type="text" placeholder="e.g. Berlin Marathon"
+                    value={raceName} onChange={e => setRaceName(e.target.value)}
+                    className={clsx('w-full border rounded-lg px-3 py-2 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
+                    autoFocus
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Sport</label>
+                    <SportTypeCombobox
+                      value={raceSportType}
+                      onChange={setRaceSportType}
+                      className={clsx('w-full border rounded-lg px-3 py-2 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
+                      isLight={isLight}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Distance (km)</label>
+                    <input
+                      type="text" inputMode="decimal" placeholder="42.195"
+                      value={raceDistanceKm} onChange={e => setRaceDistanceKm(e.target.value)}
+                      className={clsx('w-full border rounded-lg px-3 py-2 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Target Pace ({getPaceUnit(raceSportType)})</label>
+                    <input
+                      type="text" inputMode="decimal" placeholder={getPaceUnit(raceSportType) === 'min/km' ? '5:00' : '30'}
+                      value={raceTargetPace} onChange={e => setRaceTargetPace(e.target.value)}
+                      className={clsx('w-full border rounded-lg px-3 py-2 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Location</label>
+                    <input
+                      type="text" placeholder="Berlin, Germany"
+                      value={raceLocation} onChange={e => setRaceLocation(e.target.value)}
+                      className={clsx('w-full border rounded-lg px-3 py-2 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">URL</label>
+                  <input
+                    type="text" placeholder="https://..."
+                    value={raceUrl} onChange={e => setRaceUrl(e.target.value)}
+                    className={clsx('w-full border rounded-lg px-3 py-2 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Notes</label>
+                  <textarea
+                    placeholder="Race notes..."
+                    value={raceDescription} onChange={e => setRaceDescription(e.target.value)}
+                    className={clsx('w-full border rounded-lg px-3 py-2 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
+                    rows={2}
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      if (!raceName.trim()) return
+                      const payload: Record<string, unknown> = {
+                        name: raceName.trim(),
+                        sport_type: raceSportType,
+                        distance_km: raceDistanceKm ? parseFloat(raceDistanceKm) : null,
+                        target_pace: raceTargetPace ? parseFloat(raceTargetPace) : null,
+                        description: raceDescription || null,
+                        location: raceLocation || null,
+                        url: raceUrl || null,
+                      }
+                      if (editingRaceId) {
+                        onUpdateRace(editingRaceId, payload)
+                      } else {
+                        onAddRace(payload)
+                      }
+                      setShowRaceForm(false)
+                      setEditingRaceId(null)
+                      setRaceName(''); setRaceDistanceKm(''); setRaceTargetPace('')
+                      setRaceDescription(''); setRaceLocation(''); setRaceUrl('')
+                    }}
+                    className={clsx('flex-1 rounded py-2 text-sm font-medium transition-colors', 'bg-amber-500/20 text-amber-500 border border-amber-500/30 hover:bg-amber-500/30')}
+                  >
+                    {editingRaceId ? 'Save Race' : 'Add Race'}
+                  </button>
+                  <button onClick={() => {
+                    setShowRaceForm(false); setEditingRaceId(null)
+                    setRaceName(''); setRaceDistanceKm(''); setRaceTargetPace('')
+                    setRaceDescription(''); setRaceLocation(''); setRaceUrl('')
+                  }} className={clsx('flex-1 rounded py-2 text-sm text-gray-400', isLight ? 'bg-gray-100 hover:text-gray-700' : 'bg-surface-700 hover:text-gray-200')}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        {!showRaceForm && (
+          <button
+            onClick={() => { setShowRaceForm(true); setEditingRaceId(null) }}
+            className="mb-3 text-xs flex items-center gap-1 text-amber-500/70 hover:text-amber-500 transition-colors"
+          >
+            <span>&#9873;</span> Add Race Event
+          </button>
+        )}
 
         {sessions.length > 0 && (
           <div className="mb-4 space-y-2">
@@ -1173,6 +1374,11 @@ export default function CalendarPage() {
   const createSession = useCreateSession()
   const updateSession = useUpdateSession()
   const deleteSession = useDeleteSession()
+  const { data: raceEventsRange } = useRaceEventsByRange(dateFrom, dateTo)
+  const { data: upcomingRaces } = useUpcomingRaces()
+  const createRace = useCreateRaceEvent()
+  const updateRace = useUpdateRaceEvent()
+  const deleteRace = useDeleteRaceEvent()
 
   // Weekly report
   const [weekStart, setWeekStart] = useState(() =>
@@ -1239,6 +1445,17 @@ export default function CalendarPage() {
     }
     return map
   }, [sessions])
+
+  const raceMap = useMemo(() => {
+    const map: Record<string, Array<Record<string, unknown>>> = {}
+    if (raceEventsRange) {
+      for (const r of raceEventsRange) {
+        if (!map[r.date]) map[r.date] = []
+        map[r.date].push(r)
+      }
+    }
+    return map
+  }, [raceEventsRange])
 
   function handleAddSession(data: Record<string, unknown>) {
     if (!selectedDate) return
@@ -1321,6 +1538,53 @@ export default function CalendarPage() {
             )}
           </div>
         )}
+
+        {/* Race countdown banner */}
+        {upcomingRaces && upcomingRaces.length > 0 && (() => {
+          const nextRace = upcomingRaces[0]
+          const daysUntil = differenceInDays(parseISO(nextRace.date), new Date()) + 1
+          return (
+            <Link to="/races" className={clsx(
+              'flex items-center gap-4 rounded-xl px-4 py-3 border transition-colors',
+              isLight ? 'bg-amber-50 border-amber-200 hover:border-amber-300' : 'bg-amber-500/5 border-amber-500/20 hover:border-amber-500/40',
+            )}>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-amber-500 text-lg">&#9873;</span>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-amber-500 leading-none">{daysUntil}</div>
+                  <div className="text-[10px] text-amber-500/70 uppercase">day{daysUntil !== 1 ? 's' : ''}</div>
+                </div>
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className={clsx('text-sm font-semibold truncate', isLight ? 'text-gray-800' : 'text-gray-200')}>
+                  {nextRace.name}
+                </div>
+                <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <span>{nextRace.sport_type}</span>
+                  {nextRace.distance_km && <span>{nextRace.distance_km} km</span>}
+                  {nextRace.location && <span>{nextRace.location}</span>}
+                  <span>{format(parseISO(nextRace.date), 'MMM d, yyyy')}</span>
+                </div>
+              </div>
+              {upcomingRaces.length > 1 && (
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {upcomingRaces.slice(1, 4).map((r: Record<string, unknown>) => {
+                    const d = differenceInDays(parseISO(r.date as string), new Date()) + 1
+                    return (
+                      <div key={r.id as number} className={clsx(
+                        'flex items-center gap-1 border rounded-lg px-2 py-1',
+                        isLight ? 'bg-white border-amber-200' : 'bg-surface-800 border-amber-500/20',
+                      )} title={`${r.name}: ${format(parseISO(r.date as string), 'MMM d, yyyy')}`}>
+                        <span className="text-xs font-bold text-amber-500">{d}d</span>
+                        <span className="text-[10px] text-gray-500 truncate max-w-[80px]">{r.name as string}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </Link>
+          )
+        })()}
       </div>
 
       {/* Calendar grid */}
@@ -1435,8 +1699,12 @@ export default function CalendarPage() {
                 onDragLeave={() => setDragOverDate(prev => prev === dateStr ? null : prev)}
                 onDrop={(e) => {
                   e.preventDefault()
+                  const raceId = e.dataTransfer.getData('application/race')
                   const sessionId = e.dataTransfer.getData('text/plain')
-                  if (sessionId) {
+                  if (raceId) {
+                    updateRace.mutate({ id: Number(raceId), date: dateStr })
+                    showToast(`Race moved to ${format(day, 'EEE, MMM d')}`)
+                  } else if (sessionId) {
                     if (e.altKey && draggingSession) {
                       handleCopySession(draggingSession, dateStr)
                     } else {
@@ -1533,6 +1801,35 @@ export default function CalendarPage() {
                     </div>
                   )
                 })}
+                {(raceMap[dateStr] || []).map((r) => {
+                  const matchedActivity = isPastOrToday
+                    ? dayActivities.find(a => a.sport_type === r.sport_type)
+                    : null
+                  return (
+                    <div
+                      key={`race-${r.id}`}
+                      draggable
+                      onDragStart={(e) => {
+                        e.stopPropagation()
+                        e.dataTransfer.setData('application/race', String(r.id))
+                        e.dataTransfer.effectAllowed = 'move'
+                      }}
+                      className={clsx(
+                        'mt-0.5 text-[10px] px-1.5 py-0.5 rounded border truncate',
+                        'cursor-grab active:cursor-grabbing transition-all duration-150 hover:scale-[1.02]',
+                        'border-amber-500/60 text-amber-500/90 bg-amber-500/5',
+                      )}
+                      title={`${r.name}${r.location ? ` — ${r.location}` : ''}${r.distance_km ? ` (${r.distance_km} km)` : ''}`}
+                    >
+                      &#9873; {r.name as string}
+                      {matchedActivity && (
+                        <Link to={`/activities/${matchedActivity.id}`} onClick={e => e.stopPropagation()} className="text-green-400 ml-1 inline">
+                          &#10003;
+                        </Link>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             </Fragment>
           )
@@ -1552,6 +1849,7 @@ export default function CalendarPage() {
               url={`/api/exports/weekly-report?week_start=${weekStart}`}
               label="Export"
               filename={`weekly_report_${weekStart}.png`}
+              exportType="weekly-report"
             />
           </div>
           <div className="flex items-center gap-2 relative">
@@ -1748,10 +2046,14 @@ export default function CalendarPage() {
           date={selectedDate}
           sessions={sessionMap[selectedDate] || []}
           scores={sessionScores}
+          races={raceMap[selectedDate] || []}
           onAdd={handleAddSession}
           onCopy={handleCopySession}
           onUpdate={handleUpdateSession}
           onDelete={(id: number) => deleteSession.mutate(id)}
+          onAddRace={(data) => createRace.mutate({ date: selectedDate, ...data })}
+          onUpdateRace={(id, data) => updateRace.mutate({ id, ...data })}
+          onDeleteRace={(id) => deleteRace.mutate(id)}
           onClose={() => setShowModal(false)}
         />
       )}

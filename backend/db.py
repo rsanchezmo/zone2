@@ -41,6 +41,19 @@ CREATE TABLE IF NOT EXISTS workout_templates (
     segments TEXT NOT NULL,
     created_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS race_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    date TEXT NOT NULL,
+    sport_type TEXT NOT NULL,
+    distance_km REAL,
+    target_pace REAL,
+    description TEXT,
+    location TEXT,
+    url TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
 """
 
 

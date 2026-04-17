@@ -164,11 +164,13 @@ export default function DashboardPage() {
             url={`/api/exports/year-in-sport?year=${year}&main_sport=${mainSport}`}
             label="Export Sport PNG"
             filename={`year_in_sport_${year}_${mainSport}.png`}
+            exportType="year-in-sport"
           />
           <ExportButton
             url={`/api/exports/year-in-sport?year=${year}&main_sport=${mainSport}&variant=totals`}
             label="Export Totals PNG"
             filename={`year_in_sport_${year}_totals.png`}
+            exportType="year-in-sport"
           />
         </div>
       </div>

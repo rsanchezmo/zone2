@@ -138,13 +138,6 @@ def get_activities_as_gdf(activities: pd.DataFrame) -> gpd.GeoDataFrame:
 
     # Parse polylines into LineString geometries
     def _parse_map(map_activity):
-        # Handle JSON string from Parquet deserialization
-        if isinstance(map_activity, str):
-            try:
-                map_activity = json.loads(map_activity)
-            except json.JSONDecodeError:
-                return None
-        
         if isinstance(map_activity, dict) and 'summary_polyline' in map_activity and map_activity['summary_polyline'] != "":
             encoded_polyline = map_activity['summary_polyline']
             decoded_points = polyline.decode(encoded_polyline, geojson=True)
@@ -169,30 +162,17 @@ def get_activities_as_gdf_from_streams(activities: pd.DataFrame) -> gpd.GeoDataF
 
     def _parse_streams(row):
         streams = row.get('streams')
-        if streams is not None:
-            if isinstance(streams, str):
-                try:
-                    streams = json.loads(streams)
-                except json.JSONDecodeError:
-                    streams = None
-
-            if isinstance(streams, list) and len(streams) >= 2:
-                coords = [(pt['lng'], pt['lat']) for pt in streams
-                          if 'lat' in pt and 'lng' in pt]
-                if len(coords) >= 2:
-                    return LineString(coords)
+        if isinstance(streams, list) and len(streams) >= 2:
+            coords = [(pt['lng'], pt['lat']) for pt in streams
+                      if 'lat' in pt and 'lng' in pt]
+            if len(coords) >= 2:
+                return LineString(coords)
 
         # Fallback to summary polyline
         map_data = row.get('map')
-        if map_data is not None:
-            if isinstance(map_data, str):
-                try:
-                    map_data = json.loads(map_data)
-                except json.JSONDecodeError:
-                    return None
-            if isinstance(map_data, dict) and map_data.get('summary_polyline'):
-                decoded = polyline.decode(map_data['summary_polyline'], geojson=True)
-                return LineString(decoded)
+        if isinstance(map_data, dict) and map_data.get('summary_polyline'):
+            decoded = polyline.decode(map_data['summary_polyline'], geojson=True)
+            return LineString(decoded)
         return None
 
     activities['geometry'] = activities.apply(_parse_streams, axis=1)

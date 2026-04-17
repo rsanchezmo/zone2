@@ -1,5 +1,5 @@
 import { useMemo, useState, useCallback, useEffect, Component, type ReactNode } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useActivity, useAthleteZones, useSimilarActivities, useActivityScore } from '../api/hooks'
 import StatCard from '../components/shared/StatCard'
 import MapView from '../components/shared/MapView'
@@ -522,6 +522,7 @@ export default function ActivityDetailPage() {
 
 function ActivityDetailPageInner() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const { data: activity, isLoading } = useActivity(Number(id))
   const { data: athleteZones } = useAthleteZones()
   const { data: similarActivities } = useSimilarActivities(Number(id))
@@ -776,6 +777,23 @@ function ActivityDetailPageInner() {
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       <div>
+        <button
+          onClick={() => navigate(-1)}
+          className={clsx(
+            'group flex items-center gap-1.5 text-sm mb-3 px-0 py-0.5 transition-colors duration-150',
+            isLight ? 'text-gray-500 hover:text-gray-900' : 'text-gray-400 hover:text-white'
+          )}
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 16 16"
+            fill="currentColor"
+            className="w-4 h-4 transition-transform duration-150 group-hover:-translate-x-0.5"
+          >
+            <path fillRule="evenodd" d="M9.78 4.22a.75.75 0 0 1 0 1.06L7.06 8l2.72 2.72a.75.75 0 1 1-1.06 1.06L5.47 8.53a.75.75 0 0 1 0-1.06l3.25-3.25a.75.75 0 0 1 1.06 0Z" clipRule="evenodd" />
+          </svg>
+          Back
+        </button>
         <h2 className="text-2xl font-bold">{activity.name}</h2>
         <div className="flex items-center gap-3 mt-1">
           <span className="text-sm flex items-center gap-1.5">
@@ -789,6 +807,7 @@ function ActivityDetailPageInner() {
             url={`/api/exports/activity/${id}`}
             label="Export to PNG"
             filename={`activity_${id}.png`}
+            exportType="activity"
           />
         </div>
         {activity.description && (

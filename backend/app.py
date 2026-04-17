@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.config import settings
 from backend.dependencies import set_strava_intelligence
-from backend.routers import activities, stats, exports, calendar, sync, athlete, goals, workouts
+from backend.routers import activities, stats, exports, calendar, sync, athlete, goals, workouts, races
 from backend.db import init_db
 from strava.strava_intelligence import StravaIntelligence
 
@@ -45,6 +45,7 @@ app.include_router(sync.router, prefix="/api/sync", tags=["sync"])
 app.include_router(athlete.router, prefix="/api/athlete", tags=["athlete"])
 app.include_router(goals.router, prefix="/api/goals", tags=["goals"])
 app.include_router(workouts.router, prefix="/api/workouts", tags=["workouts"])
+app.include_router(races.router, prefix="/api/races", tags=["races"])
 
 # Serve frontend build if it exists
 frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
