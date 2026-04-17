@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Pre-commit hook — reject commits that look like they contain secrets.
+#
+# Installed locally via: ./scripts/install-hooks.sh
+# Bypass when you really mean it:  git commit --no-verify
+#
+# Two classes of checks:
+#   1. Forbidden file paths (e.g. `.env`, `.strava/`, `token.json`).
+#   2. Value-shaped patterns in staged additions
+#      (Strava secrets, OAuth tokens, Cloudflare tunnel tokens).
+
+set -euo pipefail
+
+RED=$'\033[0;31m'
+YELLOW=$'\033[0;33m'
+BOLD=$'\033[1m'
+NC=$'\033[0m'
+
+fail() {
+  echo "${RED}${BOLD}✗ Pre-commit: blocking this commit${NC}" >&2
+  echo "${RED}$1${NC}" >&2
+  echo "" >&2
+  echo "${YELLOW}  Review with:  git diff --cached${NC}" >&2
+  echo "${YELLOW}  Bypass with:  git commit --no-verify${NC}" >&2
+  exit 1
+}
+
+# ── 1. Forbidden file paths ───────────────────────────────────────────
+FORBIDDEN_PATHS=(
+  '(^|/)\.env$'
+  '(^|/)\.env\.[^e][^.]*$'   # .env.local, .env.prod, etc — but NOT .env.example
+  '(^|/)\.strava/'
+  '(^|/)cache/.*\.json$'
+  '(^|/)token\.json$'
+  'strava_intelligence_workdir/'
+)
+
+staged_files=$(git diff --cached --name-only --diff-filter=AM)
+for f in $staged_files; do
+  for pattern in "${FORBIDDEN_PATHS[@]}"; do
+    if printf '%s\n' "$f" | grep -qE "$pattern"; then
+      fail "  Staged file matches forbidden pattern: ${BOLD}$f${NC}  (pattern: $pattern)"
+    fi
+  done
+done
+
+# ── 2. Value-shaped secrets in staged content ─────────────────────────
+# Only scan additions (lines starting with '+', excluding diff headers).
+staged_diff=$(git diff --cached --unified=0 -- . 2>/dev/null \
+  | grep -E '^\+' \
+  | grep -vE '^\+\+\+' || true)
+
+# Each entry: "pattern|human_name"
+SECRET_PATTERNS=(
+  'STRAVA_CLIENT_SECRET=[A-Za-z0-9]{20,}|STRAVA_CLIENT_SECRET with a real value'
+  'STRAVA_ACCESS_TOKEN=[A-Za-z0-9]{20,}|STRAVA_ACCESS_TOKEN with a real value'
+  'STRAVA_REFRESH_TOKEN=[A-Za-z0-9]{20,}|STRAVA_REFRESH_TOKEN with a real value'
+  '"refresh_token"\s*:\s*"[a-f0-9]{40}"|serialized Strava refresh_token'
+  '"access_token"\s*:\s*"[a-f0-9]{40}"|serialized Strava access_token'
+  'CLOUDFLARE_TUNNEL_TOKEN=[A-Za-z0-9+/=_\-]{80,}|Cloudflare Tunnel token'
+  'TELEGRAM_BOT_TOKEN=[0-9]+:[A-Za-z0-9_\-]{30,}|Telegram bot token'
+)
+
+if [ -n "$staged_diff" ]; then
+  violations=()
+  for entry in "${SECRET_PATTERNS[@]}"; do
+    pattern="${entry%%|*}"
+    name="${entry#*|}"
+    if printf '%s\n' "$staged_diff" | grep -qE "$pattern"; then
+      violations+=("$name")
+    fi
+  done
+
+  if [ ${#violations[@]} -gt 0 ]; then
+    msg="  Staged content looks like it contains:"
+    for v in "${violations[@]}"; do
+      msg="$msg
+    • $v"
+    done
+    fail "$msg"
+  fi
+fi
+
+exit 0

@@ -362,3 +362,14 @@ Provides analytics calculations.
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+After cloning, install the local git hooks once so the pre-commit check can
+catch accidentally-staged secrets (`.env`, tokens, etc.) before they reach
+GitHub:
+
+```bash
+./scripts/install-hooks.sh
+```
+
+Hooks live in `scripts/hooks/` (version-controlled) and are symlinked into
+your local `.git/hooks/` — edit once, they update everywhere.
