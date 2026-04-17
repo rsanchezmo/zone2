@@ -30,6 +30,11 @@ class StravaActivitiesCache:
         self._prepared_view: pd.DataFrame | None = None
         self._prepared_view_version: int = -1
 
+        # Prepared view with streams JSON parsed once — used by load_activities
+        # so downstream callers don't repeatedly re-parse the same JSON strings.
+        self._streams_view: pd.DataFrame | None = None
+        self._streams_view_version: int = -1
+
     @property
     def cache_version(self) -> int:
         return self._cache_version
@@ -49,6 +54,23 @@ class StravaActivitiesCache:
             self._prepared_view = view
         self._prepared_view_version = self._cache_version
         return self._prepared_view
+
+    def _get_streams_view(self) -> pd.DataFrame:
+        """Return the memory cache with the 'streams' column parsed from JSON
+        once, memoized by cache_version. Internal — use load_activities()."""
+        if self._streams_view is not None and self._streams_view_version == self._cache_version:
+            return self._streams_view
+        raw = self._load_to_memory()
+        if raw.empty or 'streams' not in raw.columns:
+            self._streams_view = raw
+        else:
+            view = raw.copy()
+            view['streams'] = view['streams'].apply(
+                lambda x: json.loads(x) if isinstance(x, str) else (None if pd.isna(x) else x)
+            )
+            self._streams_view = view
+        self._streams_view_version = self._cache_version
+        return self._streams_view
 
     def __load_metadata(self):
         """Load cache metadata or initialize if missing."""
@@ -203,25 +225,27 @@ class StravaActivitiesCache:
         # Force reload from disk if requested
         if force_reload:
             self._invalidate_memory_cache()
-        
-        # Lazy load: only read from disk on first access
-        df = self._load_to_memory().copy()  # Copy to avoid modifying cache
-        
-        if df.empty:
-            return df
-        
-        # Apply filters on in-memory data (fast)
+
+        # Use the streams-parsed view — streams JSON is decoded once and
+        # cached across calls (invalidated by cache_version). Filtering below
+        # produces a fresh DataFrame per call, so callers can freely mutate.
+        base = self._get_streams_view()
+
+        if base.empty:
+            return base.copy() if base is not None else base
+
+        df = base
         if from_date:
             df = df[df['start_date'] >= from_date]
         if to_date:
             df = df[df['start_date'] <= to_date]
         if sports:
             df = df[df["sport_type"].isin(sports)]
-
-        # parse streams JSON if present
-        if 'streams' in df.columns:
-            df['streams'] = df['streams'].apply(lambda x: json.loads(x) if pd.notna(x) else None)
-        
+        # Boolean-mask indexing returns a copy, so callers get a safe df
+        # when any filter was applied. Otherwise, copy to preserve the
+        # prior contract of returning a mutable df.
+        if df is base:
+            df = base.copy()
         return df
 
     def get_last_activity_date(self) -> datetime | None:
