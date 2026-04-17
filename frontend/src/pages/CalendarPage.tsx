@@ -62,7 +62,7 @@ function SportPieChart({ title, data, formatValue, colorMap }: {
 
   return (
     <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
-      <div className="text-xs text-gray-500 uppercase mb-2">{title}</div>
+      <div className="eyebrow mb-2">{title}</div>
       <div className="flex gap-3 mb-2 flex-wrap">
         {pieData.map(d => (
           <div key={d.name} className="flex items-center gap-1.5">
@@ -170,7 +170,7 @@ function AccumulatedChart({ data, titles, colorMap }: AccumulatedChartProps) {
 
   return (
     <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
-      <div className="text-xs text-gray-500 uppercase mb-1">Accumulated Training Time</div>
+      <div className="eyebrow mb-1">Accumulated Training Time</div>
       <div className="flex gap-3 mb-3 flex-wrap">
         {sports.map(s => (
           <div key={s} className="flex items-center gap-1.5">
@@ -468,17 +468,29 @@ function SessionModal({
         className={clsx('border rounded-xl p-6 w-full max-w-md max-h-[85vh] overflow-y-auto animate-[scaleIn_150ms_ease-out]', isLight ? 'bg-white border-gray-200 shadow-xl' : 'bg-surface-800 border-surface-600 shadow-xl')}
         onClick={e => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-bold">{format(parseISO(date), 'EEEE, MMM d, yyyy')}</h3>
-          <button onClick={onClose} className={clsx('p-1 rounded transition-colors', isLight ? 'text-gray-400 hover:text-gray-700 hover:bg-black/5' : 'text-gray-500 hover:text-gray-200 hover:bg-white/5')}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
+        <div className="flex items-center justify-between mb-5">
+          <div>
+            <div className="eyebrow mb-0.5">{format(parseISO(date), 'EEEE')}</div>
+            <h3
+              className={clsx('text-lg font-semibold tracking-tight tabular-nums', isLight ? 'text-gray-900' : 'text-gray-100')}
+              style={{ letterSpacing: '-0.02em' }}
+            >
+              {format(parseISO(date), 'MMM d, yyyy')}
+            </h3>
+          </div>
+          <button
+            onClick={onClose}
+            className={clsx('p-1 rounded transition-colors', isLight ? 'text-gray-400 hover:text-gray-700 hover:bg-black/5' : 'text-gray-500 hover:text-gray-200 hover:bg-white/5')}
+            aria-label="Close"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12" /></svg>
           </button>
         </div>
 
         {/* Race Events section */}
         {(races.length > 0 || showRaceForm) && (
           <div className="mb-4 space-y-2">
-            <div className="text-xs text-gray-500 uppercase flex items-center gap-1.5">
+            <div className="eyebrow flex items-center gap-1.5">
               <span className="text-amber-500">&#9873;</span> Race Events
             </div>
             {races.map(r => {
@@ -651,7 +663,7 @@ function SessionModal({
 
         {sessions.length > 0 && (
           <div className="mb-4 space-y-2">
-            <div className="text-xs text-gray-500 uppercase">Planned Sessions</div>
+            <div className="eyebrow">Planned Sessions</div>
             {sessions.map(s => {
               const sColor = getSportColor(s.sport_type as string)
               const isConfirming = confirmDeleteId === (s.id as number)
@@ -749,7 +761,7 @@ function SessionModal({
         )}
 
         <div className="space-y-3">
-          <div className="text-xs text-gray-500 uppercase">
+          <div className="eyebrow">
             {editingId ? 'Edit Session' : 'Add Session'}
           </div>
           <div>
@@ -853,7 +865,7 @@ function SessionModal({
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="text-[10px] text-gray-500 mb-0.5 block">
+                        <label className="eyebrow mb-1 block">
                           {paceUnit === 'min/km' ? 'Fastest' : 'Min speed'} ({paceUnit})
                         </label>
                         <input
@@ -863,7 +875,7 @@ function SessionModal({
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] text-gray-500 mb-0.5 block">
+                        <label className="eyebrow mb-1 block">
                           {paceUnit === 'min/km' ? 'Slowest' : 'Max speed'} ({paceUnit})
                         </label>
                         <input
@@ -889,7 +901,7 @@ function SessionModal({
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="text-[10px] text-gray-500 mb-0.5 block">Zone</label>
+                        <label className="eyebrow mb-1 block">Zone</label>
                         <select
                           value={targetHrZone} onChange={e => setTargetHrZone(e.target.value)}
                           className={clsx('w-full border rounded px-2 py-1.5 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
@@ -899,7 +911,7 @@ function SessionModal({
                         </select>
                       </div>
                       <div>
-                        <label className="text-[10px] text-gray-500 mb-0.5 block">Target %</label>
+                        <label className="eyebrow mb-1 block">Target %</label>
                         <input
                           type="text" inputMode="decimal" placeholder="80"
                           value={targetZonePct} onChange={e => setTargetZonePct(e.target.value)}
@@ -1118,7 +1130,7 @@ function UpcomingPlan({ sessions, todayStr }: { sessions: Record<string, unknown
 
   return (
     <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
-      <div className="text-xs text-gray-500 uppercase mb-3">Upcoming Plan (7 days)</div>
+      <div className="eyebrow mb-3">Upcoming Plan (7 days)</div>
       {sessions && sessions.length > 0 ? (
         <div className="space-y-2">
           {sessions.map((s: Record<string, unknown>) => {
@@ -1251,8 +1263,8 @@ function WeekPicker({ currentWeekStart, onSelect, onClose }: {
         <span className={clsx('text-xs font-medium', isLight ? 'text-gray-700' : 'text-gray-300')}>{format(viewMonth, 'MMMM yyyy')}</span>
         <button onClick={() => setViewMonth(m => addMonths(m, 1))} className={clsx('px-1', isLight ? 'text-gray-400 hover:text-gray-700' : 'text-gray-400 hover:text-gray-100')}>&rarr;</button>
       </div>
-      <div className="grid grid-cols-7 text-center text-[10px] text-gray-500 mb-1">
-        {['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map(d => <span key={d}>{d}</span>)}
+      <div className="grid grid-cols-7 text-center mb-1 gap-px">
+        {['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map(d => <span key={d} className="eyebrow text-[9px]">{d}</span>)}
       </div>
       <div className="grid grid-cols-7 gap-px">
         {days.map(day => {
@@ -1899,24 +1911,25 @@ export default function CalendarPage() {
         @keyframes scaleIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
       `}</style>
       <section>
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <h3 className={clsx('text-lg font-semibold', isLight ? 'text-gray-800' : 'text-gray-200')}>Weekly Report</h3>
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+          <div className="section-head flex-1">
+            <span className="eyebrow">Weekly report</span>
+          </div>
+          <div className="flex items-center gap-1.5 relative">
             <ExportButton
               url={`/api/exports/weekly-report?week_start=${weekStart}`}
-              label="Export"
+              label="PNG"
               filename={`weekly_report_${weekStart}.png`}
               exportType="weekly-report"
             />
-          </div>
-          <div className="flex items-center gap-2 relative">
             <button
               onClick={() => setWeekStart(w => format(subDays(parseISO(w), 7), 'yyyy-MM-dd'))}
-              className={clsx('px-2.5 py-1 rounded text-sm transition-colors', isLight ? 'bg-white border border-gray-300 hover:bg-gray-50 text-gray-600' : 'bg-surface-700 hover:bg-surface-600')}
+              className="btn !px-3"
+              aria-label="Previous week"
             >&larr;</button>
             <button
               onClick={() => setShowWeekPicker(v => !v)}
-              className={clsx('text-sm min-w-[140px] text-center px-2 py-1 rounded transition-colors', isLight ? 'text-gray-700 hover:text-gray-900 bg-white border border-gray-300 hover:bg-gray-50' : 'text-gray-300 hover:text-gray-100 bg-surface-700 hover:bg-surface-600')}
+              className="btn !text-sm min-w-[140px] text-center tabular-nums"
             >
               {current?.week_start ?? weekStart}
             </button>
@@ -1926,7 +1939,8 @@ export default function CalendarPage() {
                 return next > thisWeekStart ? thisWeekStart : next
               })}
               disabled={isCurrentWeek}
-              className={clsx('px-2.5 py-1 rounded text-sm transition-colors disabled:opacity-30', isLight ? 'bg-white border border-gray-300 hover:bg-gray-50 text-gray-600' : 'bg-surface-700 hover:bg-surface-600')}
+              className="btn !px-3"
+              aria-label="Next week"
             >&rarr;</button>
             {showWeekPicker && (
               <WeekPicker
@@ -1956,7 +1970,7 @@ export default function CalendarPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Activities this week */}
               <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
-                <div className="text-xs text-gray-500 uppercase mb-3">Activities This Week</div>
+                <div className="eyebrow mb-3">Activities This Week</div>
                 {weekActivities?.items && weekActivities.items.length > 0 ? (
                   <div className="space-y-2">
                     {weekActivities.items.map((a: Record<string, unknown>) => {
@@ -2013,7 +2027,7 @@ export default function CalendarPage() {
             {/* Goal Progress */}
             {goalProgressData?.goals && goalProgressData.goals.length > 0 && (
               <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
-                <div className="text-xs text-gray-500 uppercase mb-3">Goal Progress</div>
+                <div className="eyebrow mb-3">Goal Progress</div>
                 <div className="space-y-3.5">
                   {goalProgressData.goals.map((g: Record<string, unknown>) => {
                     const sport = g.sport_type as string
@@ -2050,7 +2064,7 @@ export default function CalendarPage() {
             {/* HR Zone Distribution */}
             {current.hr_zone_distribution && Object.values(current.hr_zone_distribution).some((v: unknown) => (v as number) > 0) && (
               <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
-                <div className="text-xs text-gray-500 uppercase mb-3">HR Zone Distribution</div>
+                <div className="eyebrow mb-3">HR Zone Distribution</div>
                 <div className="flex gap-0.5 h-8 rounded overflow-hidden">
                   {[1, 2, 3, 4, 5].map(z => {
                     const pct = current.hr_zone_distribution?.[z] ?? 0
