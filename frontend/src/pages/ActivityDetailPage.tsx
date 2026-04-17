@@ -8,6 +8,7 @@ import StreamChart from '../components/shared/StreamChart'
 import type { ChartZone } from '../components/shared/StreamChart'
 import polyline from '@mapbox/polyline'
 import ExportButton from '../components/shared/ExportButton'
+import ChartPanel from '../components/shared/ChartPanel'
 import { getSportColor } from '../constants/sportColors'
 import { getSportCategory, convertSpeed, formatPace } from '../utils/formatSpeed'
 import { SegmentSummary, getSegmentColor, type Segment } from '../components/shared/SegmentListBuilder'
@@ -530,8 +531,6 @@ function ActivityDetailPageInner() {
   const { theme, colors } = useTheme()
   const isLight = theme === 'light'
 
-  const cardClass = clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')
-
   const sportCategory = getSportCategory(activity?.sport_type)
   const useSpeedUnit = sportCategory === 'cycling' || sportCategory === 'speed' || sportCategory === 'water'
 
@@ -774,117 +773,123 @@ function ActivityDetailPageInner() {
   const isRunning = sportCategory === 'running'
   const hasGap = isRunning && streamSeries.gap.length > 0
 
+  const sportAccent = getSportColor(activity.sport_type)
+
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      <div>
+    <div className="max-w-6xl mx-auto space-y-10 pb-12">
+      {/* ── Header ───────────────────────────────────── */}
+      <header>
         <button
           onClick={() => navigate(-1)}
           className={clsx(
-            'group flex items-center gap-1.5 text-sm mb-3 px-0 py-0.5 transition-colors duration-150',
-            isLight ? 'text-gray-500 hover:text-gray-900' : 'text-gray-400 hover:text-white'
+            'group inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.18em] mb-4 transition-colors duration-150',
+            isLight ? 'text-gray-500 hover:text-gray-900' : 'text-gray-500 hover:text-gray-100',
           )}
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 16 16"
             fill="currentColor"
-            className="w-4 h-4 transition-transform duration-150 group-hover:-translate-x-0.5"
+            className="w-3 h-3 transition-transform duration-150 group-hover:-translate-x-0.5"
+            aria-hidden="true"
           >
             <path fillRule="evenodd" d="M9.78 4.22a.75.75 0 0 1 0 1.06L7.06 8l2.72 2.72a.75.75 0 1 1-1.06 1.06L5.47 8.53a.75.75 0 0 1 0-1.06l3.25-3.25a.75.75 0 0 1 1.06 0Z" clipRule="evenodd" />
           </svg>
           Back
         </button>
-        <h2 className="text-2xl font-bold">{activity.name}</h2>
-        <div className="flex items-center gap-3 mt-1">
-          <span className="text-sm flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: getSportColor(activity.sport_type) }} />
-            <span style={{ color: getSportColor(activity.sport_type) }}>{activity.sport_type}</span>
-          </span>
-          <span className={clsx('text-sm', isLight ? 'text-gray-500' : 'text-gray-400')}>
-            {activity.start_date_local ? new Date(activity.start_date_local).toLocaleDateString() : ''}
-          </span>
-          <ExportButton
-            url={`/api/exports/activity/${id}`}
-            label="Export to PNG"
-            filename={`activity_${id}.png`}
-            exportType="activity"
-          />
+
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-3 flex-wrap mb-2">
+              <span
+                className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.18em] font-semibold px-2 py-1 rounded-full border"
+                style={{
+                  backgroundColor: `${sportAccent}15`,
+                  color: sportAccent,
+                  borderColor: `${sportAccent}40`,
+                }}
+              >
+                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: sportAccent }} aria-hidden="true" />
+                {activity.sport_type}
+              </span>
+              <span className={clsx('text-[11px] font-mono tabular-nums', isLight ? 'text-gray-500' : 'text-gray-500')}>
+                {activity.start_date_local ? new Date(activity.start_date_local).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' }) : ''}
+              </span>
+            </div>
+            <h2
+              className={clsx('text-2xl md:text-3xl font-semibold tracking-tight leading-tight', isLight ? 'text-gray-900' : 'text-gray-100')}
+              style={{ letterSpacing: '-0.02em' }}
+            >
+              {activity.name}
+            </h2>
+          </div>
+          <div className="shrink-0">
+            <ExportButton
+              url={`/api/exports/activity/${id}`}
+              label="PNG"
+              filename={`activity_${id}.png`}
+              exportType="activity"
+            />
+          </div>
         </div>
+
         {activity.description && (
-          <p className={clsx('text-sm mt-2 whitespace-pre-line', isLight ? 'text-gray-600' : 'text-gray-400')}>{activity.description}</p>
+          <p className={clsx('text-sm mt-4 whitespace-pre-line max-w-3xl', isLight ? 'text-gray-600' : 'text-gray-400')}>
+            {activity.description}
+          </p>
         )}
         {activity.photos && activity.photos.length > 0 && (
-          <div className="mt-3">
+          <div className="mt-5">
             <PhotoGallery photos={activity.photos} />
           </div>
         )}
-        {/* Metadata pills */}
-        <div className="flex flex-wrap gap-2 mt-3">
-          {activity.device_name && (
-            <span className={clsx('inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full', isLight ? 'bg-gray-100 text-gray-600' : 'bg-surface-700 text-gray-400')}>
-              <span className="opacity-60">📱</span>
-              {activity.device_name}
-            </span>
-          )}
-          {activity.gear && (
-            <span className={clsx('inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full', isLight ? 'bg-gray-100 text-gray-600' : 'bg-surface-700 text-gray-400')}>
-              <span className="opacity-60">👟</span>
-              {activity.gear.nickname || activity.gear.name}
-              {activity.gear.converted_distance != null && (
-                <span className="opacity-50">· {Math.round(activity.gear.converted_distance)} km</span>
-              )}
-            </span>
-          )}
-          {activity.average_temp != null && (
-            <span className={clsx('inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full', isLight ? 'bg-gray-100 text-gray-600' : 'bg-surface-700 text-gray-400')}>
-              <span className="opacity-60">🌡️</span>
-              {Math.round(activity.average_temp)}°C
-            </span>
-          )}
-          {activity.timezone && (
-            <span className={clsx('inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full', isLight ? 'bg-gray-100 text-gray-600' : 'bg-surface-700 text-gray-400')}>
-              <span className="opacity-60">🕐</span>
-              {activity.timezone.replace(/^\(.*?\)\s*/, '')}
-            </span>
-          )}
-          {activity.workout_type != null && (
-            <span className={clsx('inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full', isLight ? 'bg-gray-100 text-gray-600' : 'bg-surface-700 text-gray-400')}>
-              <span className="opacity-60">🏋️</span>
-              {activity.workout_type}
-            </span>
-          )}
-          {activity.pr_count > 0 && (
-            <span className={clsx('inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium', isLight ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-amber-500/10 text-amber-400 border border-amber-500/30')}>
-              <span>🏅</span>
-              {activity.pr_count} PR{activity.pr_count > 1 ? 's' : ''}
-            </span>
-          )}
-          {activity.achievement_count > 0 && (
-            <span className={clsx('inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium', isLight ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-green-500/10 text-green-400 border border-green-500/30')}>
-              <span>🏆</span>
-              {activity.achievement_count} achievement{activity.achievement_count > 1 ? 's' : ''}
-            </span>
-          )}
-        </div>
-      </div>
 
-      {/* Map */}
+        {/* Metadata pills — hairline-bordered, sport-agnostic */}
+        {(activity.device_name || activity.gear || activity.average_temp != null || activity.timezone || activity.workout_type != null || activity.pr_count > 0 || activity.achievement_count > 0) && (
+          <div className="flex flex-wrap gap-1.5 mt-5">
+            {activity.device_name && <MetaPill icon="📱" text={activity.device_name} />}
+            {activity.gear && (
+              <MetaPill
+                icon="👟"
+                text={activity.gear.nickname || activity.gear.name}
+                suffix={activity.gear.converted_distance != null ? `${Math.round(activity.gear.converted_distance)} km` : undefined}
+              />
+            )}
+            {activity.average_temp != null && <MetaPill icon="🌡️" text={`${Math.round(activity.average_temp)}°C`} />}
+            {activity.timezone && <MetaPill icon="🕐" text={activity.timezone.replace(/^\(.*?\)\s*/, '')} />}
+            {activity.workout_type != null && <MetaPill icon="🏋️" text={String(activity.workout_type)} />}
+            {activity.pr_count > 0 && (
+              <MetaPill icon="🏅" text={`${activity.pr_count} PR${activity.pr_count > 1 ? 's' : ''}`} tone="amber" />
+            )}
+            {activity.achievement_count > 0 && (
+              <MetaPill icon="🏆" text={`${activity.achievement_count} achievement${activity.achievement_count > 1 ? 's' : ''}`} tone="green" />
+            )}
+          </div>
+        )}
+      </header>
+
+      {/* ── Map ──────────────────────────────────────── */}
       {positions.length > 0 && (
-        <div className={clsx('h-[400px] rounded-xl overflow-hidden border', isLight ? 'border-gray-200' : 'border-surface-600')}>
-          <MapView
-            positions={positions}
-            color={getSportColor(activity.sport_type)}
-            kmMarkers={kmMarkers}
-            velocities={velocities.length === positions.length ? velocities : undefined}
-            invertGradient={sportCategory !== 'cycling' && sportCategory !== 'speed' && sportCategory !== 'water'}
-            gradientFastLabel={gradientFastLabel}
-            gradientSlowLabel={gradientSlowLabel}
-          />
-        </div>
+        <section>
+          <div className="section-head mb-4"><span className="eyebrow">Route</span></div>
+          <div className={clsx('h-[400px] rounded-xl overflow-hidden border', isLight ? 'border-gray-200' : 'border-surface-600')}>
+            <MapView
+              positions={positions}
+              color={sportAccent}
+              kmMarkers={kmMarkers}
+              velocities={velocities.length === positions.length ? velocities : undefined}
+              invertGradient={sportCategory !== 'cycling' && sportCategory !== 'speed' && sportCategory !== 'water'}
+              gradientFastLabel={gradientFastLabel}
+              gradientSlowLabel={gradientSlowLabel}
+            />
+          </div>
+        </section>
       )}
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {/* ── Metrics ─────────────────────────────────── */}
+      <section>
+        <div className="section-head mb-4"><span className="eyebrow">Metrics</span></div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 stagger-children">
         <StatCard label="Distance" value={sportCategory === 'swimming' ? Math.round((activity.distance_km ?? 0) * 1000) : activity.distance_km?.toFixed(2)} unit={sportCategory === 'swimming' ? 'm' : 'km'} />
         <StatCard label="Moving Time" value={activity.moving_time_formatted} />
         {activity.elapsed_time_formatted && activity.elapsed_time !== activity.moving_time && (
@@ -920,12 +925,12 @@ function ActivityDetailPageInner() {
         {activity.max_watts && (
           <StatCard label="Max Power" value={Math.round(activity.max_watts)} unit="W" color="text-purple-400" />
         )}
-      </div>
+        </div>
+      </section>
 
-      {/* Best Efforts */}
+      {/* ── Best Efforts ────────────────────────────── */}
       {activity.best_efforts && activity.best_efforts.length > 0 && (
-        <div className={cardClass}>
-          <div className="text-xs text-gray-500 uppercase mb-3">Best Efforts</div>
+        <ChartPanel title="Best efforts" accent={sportAccent} glow={false}>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
             {activity.best_efforts.map((effort: Record<string, unknown>, i: number) => {
               const prRank = effort.pr_rank as number | null
@@ -933,7 +938,7 @@ function ActivityDetailPageInner() {
                 <div
                   key={i}
                   className={clsx(
-                    'flex items-center justify-between px-3 py-2 rounded-lg border text-sm font-mono',
+                    'flex items-center justify-between px-3 py-2 rounded-lg border text-sm font-mono tabular-nums',
                     prRank === 1
                       ? (isLight ? 'border-amber-300 bg-amber-50' : 'border-amber-500/40 bg-amber-500/10')
                       : prRank === 2
@@ -958,7 +963,7 @@ function ActivityDetailPageInner() {
               )
             })}
           </div>
-        </div>
+        </ChartPanel>
       )}
 
       {/* Execution Score */}
@@ -1052,10 +1057,9 @@ function ActivityDetailPageInner() {
         )
       })()}
 
-      {/* HR Zone Distribution */}
+      {/* ── HR Zone Distribution ────────────────────── */}
       {hrZoneDistribution && hrZoneDistribution.some(v => v > 0) && (
-        <div className={cardClass}>
-          <div className="text-xs text-gray-500 uppercase mb-3">HR Zone Distribution</div>
+        <ChartPanel title="HR zone distribution" glow={false}>
           <div className="flex gap-0.5 h-8 rounded overflow-hidden">
             {[1, 2, 3, 4, 5].map(z => {
               const pct = hrZoneDistribution[z - 1]
@@ -1067,24 +1071,23 @@ function ActivityDetailPageInner() {
               return pct > 0 ? (
                 <div
                   key={z}
-                  className={`${colors[z - 1]} flex items-center justify-center text-[10px] font-bold text-white cursor-default`}
+                  className={`${colors[z - 1]} flex items-center justify-center text-[10px] font-bold text-white cursor-default tabular-nums`}
                   style={{ width: `${pct}%`, minWidth: pct > 0 ? '4px' : 0 }}
                   title={tooltip}
                 >
-                  {pct >= 8 ? `Z${z}: ${Math.round(pct)}%` : ''}
+                  {pct >= 8 ? `Z${z} · ${Math.round(pct)}%` : ''}
                 </div>
               ) : null
             })}
           </div>
-        </div>
+        </ChartPanel>
       )}
 
-      {/* Garmin Laps */}
+      {/* ── Garmin Laps ────────────────────────────── */}
       {activity.laps && activity.laps.length > 1 && (() => {
         const laps = activity.laps as Record<string, unknown>[]
         return (
-          <div className={cardClass}>
-            <div className="text-xs text-gray-500 uppercase mb-3">Laps</div>
+          <ChartPanel title="Laps" accent={sportAccent} glow={false}>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -1155,11 +1158,11 @@ function ActivityDetailPageInner() {
                 </tbody>
               </table>
             </div>
-          </div>
+          </ChartPanel>
         )
       })()}
 
-      {/* Per-km Splits */}
+      {/* ── Per-km Splits ──────────────────────────── */}
       {splits.length > 1 && (() => {
         const fullSplits = splits.filter((s: Split) => !s.isPartial)
         const bestPace = fullSplits.length > 0
@@ -1174,8 +1177,7 @@ function ActivityDetailPageInner() {
           : null
 
         return (
-          <div className={cardClass}>
-            <div className="text-xs text-gray-500 uppercase mb-3">Splits</div>
+          <ChartPanel title="Splits" accent={sportAccent} glow={false}>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -1275,11 +1277,11 @@ function ActivityDetailPageInner() {
                 </tbody>
               </table>
             </div>
-          </div>
+          </ChartPanel>
         )
       })()}
 
-      {/* Stream Charts */}
+      {/* ── Stream Charts ──────────────────────────── */}
       {hasElevation && (
         <StreamChart
           title="Elevation"
@@ -1381,29 +1383,37 @@ function ActivityDetailPageInner() {
               }
             })
           : []
+        const statusPills = (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {sa.pr_rank === 1 && (
+              <span className={clsx('text-[10px] font-bold px-2 py-0.5 rounded-full border', isLight ? 'bg-amber-50 text-amber-600 border-amber-200' : 'bg-amber-500/15 text-amber-400 border-amber-500/30')}>
+                PR
+              </span>
+            )}
+            {sa.pr_rank != null && sa.pr_rank > 1 && (
+              <span className={clsx('text-[10px] px-2 py-0.5 rounded-full', isLight ? 'bg-gray-100 text-gray-500' : 'bg-surface-700 text-gray-500')}>
+                #{sa.pr_rank}/{sa.effort_count}
+              </span>
+            )}
+            {trend && (
+              <span className={clsx('text-[10px] font-medium px-2 py-0.5 rounded-full border', trendPillClass)}>
+                {trendArrow} {trendLabel}
+              </span>
+            )}
+          </div>
+        )
         return (
-          <div className={cardClass}>
-            <div className="flex items-center gap-2 mb-3">
-              <span className="text-xs text-gray-500 uppercase">Route Performance</span>
-              {sa.pr_rank === 1 && (
-                <span className={clsx('text-[10px] font-bold px-2 py-0.5 rounded-full border', isLight ? 'bg-amber-50 text-amber-600 border-amber-200' : 'bg-amber-500/15 text-amber-400 border-amber-500/30')}>
-                  PR
-                </span>
-              )}
-              {sa.pr_rank != null && sa.pr_rank > 1 && (
-                <span className={clsx('text-[10px] px-2 py-0.5 rounded-full', isLight ? 'bg-gray-100 text-gray-500' : 'bg-surface-700 text-gray-500')}>
-                  #{sa.pr_rank}/{sa.effort_count}
-                </span>
-              )}
-              {trend && (
-                <span className={clsx('text-[10px] font-medium px-2 py-0.5 rounded-full border', trendPillClass)}>
-                  {trendArrow} {trendLabel}
-                </span>
-              )}
-              <span className={clsx('text-[10px] ml-auto', isLight ? 'text-gray-400' : 'text-gray-500')}>
+          <ChartPanel
+            title="Route performance"
+            accent={sportAccent}
+            status={statusPills}
+            toolbar={
+              <span className={clsx('text-[10px] uppercase tracking-[0.15em]', isLight ? 'text-gray-400' : 'text-gray-500')}>
                 {sa.effort_count} efforts
               </span>
-            </div>
+            }
+            glow={false}
+          >
             {chartData.length > 0 && (
               <div className="h-[150px]">
                 <ResponsiveContainer width="100%" height="100%">
@@ -1485,14 +1495,13 @@ function ActivityDetailPageInner() {
                 </ResponsiveContainer>
               </div>
             )}
-          </div>
+          </ChartPanel>
         )
       })()}
 
-      {/* Similar Activities */}
+      {/* ── Similar Activities ─────────────────────── */}
       {similarActivities && similarActivities.length > 0 && (
-        <div className={cardClass}>
-          <div className="text-xs text-gray-500 uppercase mb-3">Similar Activities</div>
+        <ChartPanel title="Similar activities" accent={sportAccent} glow={false}>
           <div className={clsx('divide-y', isLight ? 'divide-gray-100' : 'divide-surface-700')}>
             {similarActivities.map((sa: Record<string, unknown>) => (
               <Link
@@ -1523,19 +1532,22 @@ function ActivityDetailPageInner() {
               </Link>
             ))}
           </div>
-        </div>
+        </ChartPanel>
       )}
 
-      {/* Strava Segments */}
+      {/* ── Strava Segments ───────────────────────── */}
       {activity.segment_efforts && activity.segment_efforts.length > 0 && (() => {
         const efforts = activity.segment_efforts as Record<string, unknown>[]
         return (
-          <details className={cardClass} open>
-            <summary className="text-xs text-gray-500 uppercase cursor-pointer select-none list-none flex items-center justify-between">
-              <span>Strava Segments ({efforts.length})</span>
-              <span className={clsx('text-[10px] transition-transform', isLight ? 'text-gray-400' : 'text-gray-600')}>▼</span>
+          <details
+            className={clsx('panel p-5 group', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}
+            open
+          >
+            <summary className="eyebrow cursor-pointer select-none list-none flex items-center justify-between">
+              <span>Strava segments · {efforts.length}</span>
+              <span className={clsx('text-[10px] transition-transform group-open:rotate-180', isLight ? 'text-gray-400' : 'text-gray-600')}>▼</span>
             </summary>
-            <div className="space-y-3 mt-3">
+            <div className="space-y-3 mt-4">
               {efforts.map((effort, i) => {
                 const segment = effort.segment as Record<string, unknown> | undefined
                 const name = (effort.name as string) || (segment?.name as string) || `Segment ${i + 1}`
@@ -1627,5 +1639,40 @@ function ActivityDetailPageInner() {
         )
       })()}
     </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────
+// MetaPill — compact header-level metadata chip
+// ────────────────────────────────────────────────────────
+
+function MetaPill({
+  icon,
+  text,
+  suffix,
+  tone = 'neutral',
+}: {
+  icon: string
+  text: string
+  suffix?: string
+  tone?: 'neutral' | 'amber' | 'green'
+}) {
+  const { theme } = useTheme()
+  const isLight = theme === 'light'
+  const palette =
+    tone === 'amber'
+      ? (isLight ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-amber-500/10 text-amber-400 border-amber-500/30')
+      : tone === 'green'
+        ? (isLight ? 'bg-green-50 text-green-700 border-green-200' : 'bg-green-500/10 text-green-400 border-green-500/30')
+        : (isLight ? 'bg-gray-50 text-gray-600 border-gray-200' : 'bg-surface-700/60 text-gray-400 border-surface-600')
+  return (
+    <span className={clsx(
+      'inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full border font-medium',
+      palette,
+    )}>
+      <span className="opacity-60" aria-hidden="true">{icon}</span>
+      <span>{text}</span>
+      {suffix && <span className="opacity-50 tabular-nums">· {suffix}</span>}
+    </span>
   )
 }
