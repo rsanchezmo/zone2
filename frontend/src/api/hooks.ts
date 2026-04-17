@@ -73,6 +73,7 @@ export function useSportTypes() {
   return useQuery({
     queryKey: ['sport-types'],
     queryFn: () => api.get('/activities/sport-types').then(r => r.data),
+    staleTime: 1000 * 60 * 60,
   });
 }
 
@@ -80,6 +81,7 @@ export function useYears() {
   return useQuery({
     queryKey: ['years'],
     queryFn: () => api.get('/activities/years').then(r => r.data),
+    staleTime: 1000 * 60 * 60,
   });
 }
 
@@ -415,6 +417,69 @@ export function useGoalProgress(weekStart?: string) {
     queryFn: () =>
       api.get('/goals/progress', { params: { week_start: weekStart } }).then(r => r.data),
     enabled: !!weekStart,
+  });
+}
+
+// Race Events
+export function useRaceEvents(year?: number) {
+  return useQuery({
+    queryKey: ['race-events', year],
+    queryFn: () => api.get('/races/', { params: year ? { year } : {} }).then(r => r.data),
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useRaceEventsByRange(dateFrom?: string, dateTo?: string) {
+  return useQuery({
+    queryKey: ['race-events-range', dateFrom, dateTo],
+    queryFn: () =>
+      api.get('/races/', { params: { date_from: dateFrom, date_to: dateTo } }).then(r => r.data),
+    enabled: !!dateFrom && !!dateTo,
+  });
+}
+
+export function useUpcomingRaces() {
+  return useQuery({
+    queryKey: ['upcoming-races'],
+    queryFn: () => api.get('/races/upcoming').then(r => r.data),
+  });
+}
+
+export function useCreateRaceEvent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Record<string, unknown>) =>
+      api.post('/races/', data).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['race-events'] });
+      qc.invalidateQueries({ queryKey: ['race-events-range'] });
+      qc.invalidateQueries({ queryKey: ['upcoming-races'] });
+    },
+  });
+}
+
+export function useUpdateRaceEvent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: number } & Record<string, unknown>) =>
+      api.put(`/races/${id}`, data).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['race-events'] });
+      qc.invalidateQueries({ queryKey: ['race-events-range'] });
+      qc.invalidateQueries({ queryKey: ['upcoming-races'] });
+    },
+  });
+}
+
+export function useDeleteRaceEvent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.delete(`/races/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['race-events'] });
+      qc.invalidateQueries({ queryKey: ['race-events-range'] });
+      qc.invalidateQueries({ queryKey: ['upcoming-races'] });
+    },
   });
 }
 

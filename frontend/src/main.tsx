@@ -8,7 +8,14 @@ import App from './App'
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 60_000,
+      // Activity data only changes on sync, which explicitly invalidates
+      // dependent keys. A longer default avoids needless refetches on
+      // remount and focus changes for the 90% of hooks that don't need
+      // sub-minute freshness. Hooks that do (sync-status, rate-limits,
+      // cache-completeness) override via refetchInterval.
+      staleTime: 5 * 60_000,
+      gcTime: 30 * 60_000,
+      refetchOnWindowFocus: false,
       retry: 1,
     },
   },
