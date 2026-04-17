@@ -92,7 +92,6 @@ export default function AggregationsPage() {
       .filter(Boolean) as DecodedActivity[]
   }, [rawPolylines])
 
-  // Compute bounds from all positions
   const allBounds = useMemo(() => {
     const pts: [number, number][] = []
     for (const a of activities) {
@@ -104,7 +103,6 @@ export default function AggregationsPage() {
     return pts
   }, [activities])
 
-  // Build heatmap export URL with all active filters
   const heatmapUrl = useMemo(() => {
     const params = new URLSearchParams()
     if (heatmapCity) params.set('location', heatmapCity)
@@ -118,7 +116,7 @@ export default function AggregationsPage() {
     setIsGeocoding(true)
     try {
       const res = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(heatmapCity)}&format=json&limit=1`
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(heatmapCity)}&format=json&limit=1`,
       )
       const data = await res.json()
       if (data.length > 0) {
@@ -134,35 +132,51 @@ export default function AggregationsPage() {
 
   const overlayClass = clsx(
     'rounded-lg border backdrop-blur-md',
-    isLight
-      ? 'bg-white/85 border-gray-200/80 shadow-sm'
-      : 'bg-surface-800/85 border-surface-600/80',
+    isLight ? 'bg-white/85 border-gray-200/80 shadow-sm' : 'bg-surface-800/85 border-surface-600/80',
   )
-
   const selectClass = 'select !text-xs !py-1 !px-1.5'
 
+  // Compute sport breakdown for the overlay badge (top N)
+  const sportBreakdown = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const a of activities) counts.set(a.sport_type, (counts.get(a.sport_type) ?? 0) + 1)
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+  }, [activities])
+
   return (
-    <div className={expanded ? '' : 'max-w-6xl mx-auto'}>
-      {/* Map */}
-      <div className={expanded
-        ? 'fixed inset-0 z-50 w-screen h-screen'
-        : clsx('relative h-[calc(100vh-3rem)] rounded-xl overflow-hidden border', isLight ? 'border-gray-200' : 'border-surface-600')
-      }>
+    <div className={expanded ? '' : 'max-w-6xl mx-auto space-y-6 pb-6'}>
+      {/* ── Breadcrumb header (hidden in fullscreen) ──── */}
+      {!expanded && (
+        <header className="flex items-baseline gap-2 flex-wrap">
+          <span className="eyebrow">Aggregations</span>
+          <span className={clsx('text-[11px]', isLight ? 'text-gray-300' : 'text-gray-700')}>·</span>
+          <span className="text-[11px] text-gray-500 normal-case tracking-normal">every route you've recorded, on one map</span>
+        </header>
+      )}
+
+      {/* ── Map ────────────────────────────────────── */}
+      <div
+        className={expanded
+          ? 'fixed inset-0 z-50 w-screen h-screen'
+          : clsx('relative h-[calc(100vh-8rem)] rounded-xl overflow-hidden border', isLight ? 'border-gray-200' : 'border-surface-600')}
+      >
         {isLoading ? (
           <div className={clsx('flex flex-col items-center justify-center h-full gap-3', isLight ? 'bg-gray-50' : 'bg-surface-900')}>
-            <svg className="w-8 h-8 text-gray-500 animate-spin" fill="none" viewBox="0 0 24 24">
+            <svg className="w-8 h-8 text-gray-500 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
-            <span className="text-sm text-gray-500">Loading routes...</span>
+            <span className="eyebrow">Loading routes</span>
           </div>
         ) : activities.length === 0 ? (
-          <div className={clsx('flex flex-col items-center justify-center h-full gap-2', isLight ? 'bg-gray-50' : 'bg-surface-900')}>
-            <svg className="w-12 h-12 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <div className={clsx('flex flex-col items-center justify-center h-full gap-3', isLight ? 'bg-gray-50' : 'bg-surface-900')}>
+            <svg className={clsx('w-10 h-10', isLight ? 'text-gray-300' : 'text-gray-600')} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 6.75V15m6-6v8.25m.503 3.498l4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 00-1.006 0L3.622 5.689C3.24 5.88 3 6.27 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.158.69.158 1.006 0z" />
             </svg>
-            <p className="text-sm text-gray-500">No routes found</p>
-            <p className="text-xs text-gray-600">Try adjusting your filters</p>
+            <p className={clsx('text-sm', isLight ? 'text-gray-500' : 'text-gray-500')}>No routes found</p>
+            <p className={clsx('text-[11px]', isLight ? 'text-gray-400' : 'text-gray-600')}>Try adjusting your filters</p>
           </div>
         ) : (
           <MapContainer
@@ -172,7 +186,7 @@ export default function AggregationsPage() {
             zoomControl={false}
           >
             <TileLayer
-              attribution='&copy; CartoDB'
+              attribution="&copy; CartoDB"
               url={isLight
                 ? 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
                 : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'}
@@ -186,11 +200,11 @@ export default function AggregationsPage() {
                   pathOptions={{ color, weight: 2, opacity: 0.6 }}
                   eventHandlers={{
                     click: () => navigate(`/activities/${a.id}`),
-                    mouseover: (e) => {
+                    mouseover: e => {
                       e.target.setStyle({ weight: 4, opacity: 1 })
                       e.target.bindTooltip(`${a.sport_type}: ${a.name}`, { sticky: true }).openTooltip()
                     },
-                    mouseout: (e) => {
+                    mouseout: e => {
                       e.target.setStyle({ weight: 2, opacity: 0.6 })
                       e.target.closeTooltip()
                     },
@@ -204,80 +218,101 @@ export default function AggregationsPage() {
           </MapContainer>
         )}
 
-        {/* Controls overlay — top left */}
-        <div className={clsx('absolute top-3 left-3 z-[1000]', overlayClass, 'px-2 py-1.5 flex items-center gap-1.5')}>
-          <select value={sport} onChange={e => setSport(e.target.value)} className={selectClass}>
-            <option value="">All Sports</option>
-            {(sportTypes ?? []).map((s: string) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-          <select value={year} onChange={e => setYear(e.target.value)} className={selectClass}>
-            <option value="">All Years</option>
-            {(years ?? []).map((y: number) => (
-              <option key={y} value={y}>{y}</option>
-            ))}
-          </select>
-          <span className={clsx('text-xs font-mono tabular-nums', isLight ? 'text-gray-500' : 'text-gray-400')}>
-            {activities.length} routes
-          </span>
+        {/* ── Filter overlay — top left ────────────── */}
+        <div className={clsx('absolute top-3 left-3 z-[1000] px-3 py-2 flex items-center gap-3', overlayClass)}>
+          <div className="flex flex-col gap-0.5">
+            <span className="eyebrow text-[9px]">Sport</span>
+            <select value={sport} onChange={e => setSport(e.target.value)} className={selectClass} aria-label="Sport">
+              <option value="">All</option>
+              {(sportTypes ?? []).map((s: string) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <span className="eyebrow text-[9px]">Year</span>
+            <select value={year} onChange={e => setYear(e.target.value)} className={selectClass} aria-label="Year">
+              <option value="">All</option>
+              {(years ?? []).map((y: number) => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          </div>
+          <div className={clsx('w-px h-8 self-center', isLight ? 'bg-gray-200' : 'bg-surface-600')} aria-hidden="true" />
+          <div className="flex flex-col gap-0.5">
+            <span className="eyebrow text-[9px]">Routes</span>
+            <span className={clsx('text-sm font-mono tabular-nums font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>
+              {activities.length.toLocaleString()}
+            </span>
+          </div>
         </div>
 
-        {/* Heatmap export overlay — bottom left */}
-        <div className={clsx('absolute bottom-3 left-3 z-[1000]', overlayClass, 'p-2 flex items-center gap-2')}>
-          <svg className={clsx('w-4 h-4 shrink-0', isLight ? 'text-gray-400' : 'text-gray-500')} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-          </svg>
+        {/* ── Sport breakdown overlay — top right (only when we have enough data) ── */}
+        {sportBreakdown.length > 1 && (
+          <div className={clsx('absolute top-3 right-[3.5rem] z-[1000] px-3 py-2 hidden md:flex items-center gap-3', overlayClass)}>
+            {sportBreakdown.map(([name, count]) => (
+              <div key={name} className="flex items-center gap-1.5">
+                <span
+                  className="w-1.5 h-1.5 rounded-full"
+                  style={{ backgroundColor: getSportColor(name) }}
+                  aria-hidden="true"
+                />
+                <span className={clsx('text-[10px] uppercase tracking-[0.1em]', isLight ? 'text-gray-600' : 'text-gray-400')}>{name}</span>
+                <span className="text-[10px] font-mono tabular-nums text-gray-500">{count}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── Heatmap export overlay — bottom left ── */}
+        <div className={clsx('absolute bottom-3 left-3 z-[1000] p-2.5 flex items-center gap-2 flex-wrap', overlayClass)}>
+          <div className="flex items-center gap-1.5">
+            <svg className={clsx('w-3.5 h-3.5 shrink-0', isLight ? 'text-gray-400' : 'text-gray-500')} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            <span className="eyebrow text-[9px]">Heatmap</span>
+          </div>
           <input
             placeholder="City (e.g. Paris)"
             value={heatmapCity}
             onChange={e => setHeatmapCity(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') handleGoToCity() }}
-            className={clsx(
-              'border rounded px-2 py-1 text-sm w-36 placeholder-gray-500 focus:outline-none',
-              isLight
-                ? 'bg-white/90 border-gray-200 focus:border-gray-300'
-                : 'bg-surface-700/90 border-surface-600 focus:border-surface-500',
-            )}
+            className="input !py-1 !px-2 !text-xs w-40"
           />
           <button
             onClick={handleGoToCity}
             disabled={!heatmapCity.trim() || isGeocoding}
-            className={clsx(
-              'px-2 py-1 text-xs font-medium rounded border transition-colors disabled:opacity-40',
-              isLight
-                ? 'bg-gray-100 border-gray-200 text-gray-700 hover:bg-gray-200'
-                : 'bg-surface-600 border-surface-500 text-gray-300 hover:bg-surface-500',
-            )}
+            className="btn !text-[11px] !py-1 !px-2.5"
             title="Zoom map to this city"
           >
-            {isGeocoding ? '...' : 'Go'}
+            {isGeocoding ? '…' : 'Go'}
           </button>
           <ExportButton
             url={heatmapUrl}
-            label="Export Heatmap"
+            label="PNG"
             filename={`heatmap_${heatmapCity || 'all'}.png`}
             exportType="thunderstorm-heatmap"
           />
         </div>
 
-        {/* Fullscreen toggle — top right */}
+        {/* ── Fullscreen toggle — top right ─────────── */}
         <button
           onClick={() => setExpanded(e => !e)}
           className={clsx(
             'absolute top-3 right-3 z-[1000] rounded-lg p-2 transition-colors',
             overlayClass,
-            isLight ? 'text-gray-500 hover:text-gray-900' : 'text-gray-400 hover:text-white'
+            isLight ? 'text-gray-500 hover:text-gray-900' : 'text-gray-400 hover:text-gray-100',
           )}
           title={expanded ? 'Exit fullscreen' : 'Fullscreen'}
+          aria-label={expanded ? 'Exit fullscreen' : 'Enter fullscreen'}
         >
           {expanded ? (
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M6 2v4H2M10 14v-4h4M14 2l-4 4M2 14l4-4" />
             </svg>
           ) : (
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M2 6V2h4M14 10v4h-4M2 2l4 4M14 14l-4-4" />
             </svg>
           )}
