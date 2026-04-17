@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.config import settings
 from backend.dependencies import set_strava_intelligence
-from backend.routers import activities, stats, exports, calendar, sync, athlete, goals, workouts, races
+from backend.routers import activities, stats, exports, calendar, sync, athlete, goals, workouts, races, health
 from backend.db import init_db
 from strava.strava_intelligence import StravaIntelligence
 
@@ -55,6 +55,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(health.router, prefix="/api/health", tags=["health"])
 app.include_router(activities.router, prefix="/api/activities", tags=["activities"])
 app.include_router(stats.router, prefix="/api/stats", tags=["stats"])
 app.include_router(exports.router, prefix="/api/exports", tags=["exports"])
