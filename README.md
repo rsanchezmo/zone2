@@ -9,11 +9,15 @@ A Python toolkit for analyzing and visualizing your Strava activities without pa
 ## ✨ Current features
 
 - **Web Dashboard**: Full-featured React frontend with FastAPI backend:
-  - 📅 **Calendar**: Monthly calendar with activity display, training session planning, and weekly reports
-  - 🏃 **Activities**: Browsable activity list with detail views, stream charts, and map visualization
-  - 🌍 **World Footprint**: Interactive Leaflet map with all your routes, filterable by sport and year
-  - ⚡ **Year in Sport**: Yearly stats with monthly charts, records, and sport breakdowns
-  - 👤 **Profile**: Athlete profile with HR zones, subscription status, and personal info
+  - 📅 **Calendar**: Monthly calendar with activity overlay, training session planning, weekly report, goal progress, streaks, and race countdowns
+  - 🏃 **Activities**: Browsable activity list with detail views, stream charts, splits, segments, and map visualization
+  - 🌍 **Aggregations**: Interactive Leaflet map with all your routes, filterable by sport and year, plus heatmap export
+  - ⚡ **Dashboard**: Yearly stats with goal ring, monthly charts, records, and sport breakdowns
+  - 🏆 **Personal Records**: Best efforts at standard distances with sport-category totals
+  - 🏋️ **Workouts**: Structured workout templates with segments (warmup / work / recovery / cooldown)
+  - ⚑ **Races**: Race calendar with day-countdowns, past-race activity linking, and notes
+  - 👤 **Profile**: Athlete profile, HR zones, goals management, cache completeness, and API rate limits
+  - 📸 **PNG Exports**: Preview-first export dialog for every visualization (quality, color, filename)
   - 🌗 **Dark/Light Mode**: Full theme toggle with persistent preference
 - **Activity Sync**: Automatically sync and cache your Strava activities locally using Parquet files
 - **Cool Visualizations**: Generate visualizations including:
@@ -121,6 +125,16 @@ python run_dev.py
 ```
 
 The app will be available at `http://localhost:5173`. The backend API runs on `http://localhost:8000`.
+
+### Production deployment
+
+To run the web app on a home server (Raspberry Pi, small VPS, etc.) behind a Cloudflare Tunnel with Cloudflare Access authentication, see **[DEPLOY.md](./DEPLOY.md)**. It covers:
+
+- Cloudflare Tunnel + Access setup
+- Docker Compose on ARM64
+- Seeding the activity cache to skip the interactive OAuth on a headless box
+- SSH over the same tunnel
+- Automated redeploys on push via a systemd timer (see [`deploy/README.md`](./deploy/README.md))
 
 ## 🚀 Quick Start (Python API)
 
@@ -252,43 +266,73 @@ Export your activities as GeoJSON for advanced spatial analysis in QGIS.
 
 ```
 strava-intelligence/
-├── main.py                    # Example usage (Python API)
-├── run_dev.py                 # Dev server launcher (backend + frontend)
-├── pyproject.toml             # Poetry configuration
+├── main.py                         # Example usage (Python API)
+├── telegram_bot.py                 # Scheduled Telegram reports
+├── run_dev.py                      # Dev launcher (backend + frontend)
+├── pyproject.toml                  # Poetry configuration
+├── Dockerfile                      # Multi-stage build (Node → Python)
+├── docker-compose.yml              # App + Cloudflare Tunnel
 ├── README.md
-├── backend/                   # FastAPI backend
-│   ├── app.py                 # FastAPI application
-│   ├── config.py              # Settings
-│   ├── dependencies.py        # Dependency injection
-│   ├── db.py                  # SQLite for calendar sessions
-│   └── routers/               # API route handlers
+├── DEPLOY.md                       # Raspberry Pi / production guide
+├── backend/                        # FastAPI backend
+│   ├── app.py                      # FastAPI application + lifespan
+│   ├── config.py                   # Pydantic settings
+│   ├── db.py                       # SQLite (calendar / goals / workouts)
+│   ├── dependencies.py             # DI for the StravaIntelligence singleton
+│   ├── export_cache.py             # In-memory TTL cache for PNG exports
+│   ├── scoring.py                  # Session execution scoring
+│   ├── _serialize.py               # numpy/pandas → JSON sanitizer
+│   ├── _ttl_cache.py               # Thread-safe TTL cache primitive
+│   └── routers/                    # API route handlers
 │       ├── activities.py
 │       ├── athlete.py
 │       ├── calendar.py
 │       ├── exports.py
+│       ├── goals.py
+│       ├── health.py
+│       ├── races.py
 │       ├── stats.py
-│       └── sync.py
-├── frontend/                  # React + Vite frontend
+│       ├── sync.py
+│       └── workouts.py
+├── frontend/                       # React + Vite (TypeScript) SPA
 │   ├── src/
-│   │   ├── App.tsx
-│   │   ├── api/               # API client & React Query hooks
-│   │   ├── components/        # Shared components (MapView, charts, layout)
-│   │   ├── hooks/             # Custom hooks (useTheme)
-│   │   └── pages/             # Page components
-│   └── ...
-└── strava/                    # Core Python library
-    ├── constants.py           # CRS constants
-    ├── strava_activities_cache.py  # Activity caching logic
-    ├── strava_analytics.py    # Analytics calculations
-    ├── strava_endpoint.py     # Strava API client
-    ├── strava_intelligence.py # Main orchestrator class
-    ├── strava_map_matching.py # OSM map matching & coverage
-    ├── strava_user_cache.py   # User data caching
-    ├── strava_utils.py        # Utility functions
-    └── strava_visualizer.py   # Visualization generators
+│   │   ├── App.tsx                 # Routes + lazy pages + ErrorBoundary
+│   │   ├── main.tsx                # Entry point + QueryClient defaults
+│   │   ├── index.css               # Tailwind v4 tokens + primitives
+│   │   ├── api/                    # Axios client + React Query hooks
+│   │   ├── components/
+│   │   │   ├── icons.tsx           # Inline SVG icon set
+│   │   │   ├── layout/             # AppShell, RootErrorBoundary
+│   │   │   └── shared/             # ChartPanel, GoalRing, StatCard, …
+│   │   ├── hooks/                  # Theme + toast
+│   │   └── pages/                  # Dashboard, Calendar, Activities, …
+│   └── vite.config.ts
+├── deploy/                         # systemd units for auto-deploy
+│   ├── strava-deploy.service
+│   ├── strava-deploy.timer
+│   └── README.md
+├── scripts/                        # Deploy + dev scripts
+│   ├── auto-deploy.sh              # prod-branch poller (run by systemd)
+│   ├── install-hooks.sh            # one-shot git hooks installer
+│   └── hooks/pre-commit            # secret-scanning pre-commit hook
+└── strava/                         # Core Python library
+    ├── constants.py                # CRS constants
+    ├── strava_activities_cache.py  # Parquet-backed cache w/ cache_version
+    ├── strava_analytics.py         # Year-in-sport, weekly report, PRs, PMC
+    ├── strava_endpoint.py          # Strava API client w/ rate-limit pre-check
+    ├── strava_intelligence.py      # Main orchestrator class
+    ├── strava_map_matching.py      # OSM map matching & coverage
+    ├── strava_user_cache.py        # User data caching
+    ├── strava_utils.py             # Utility functions
+    └── strava_visualizer.py        # Visualization generators
 ```
 
 ## 📝 API Reference
+
+The library is organized around one orchestrator (`StravaIntelligence`) that
+wires together four focused components. All Python methods listed below are
+the public surface; the web API exposes the same functionality via
+`/api/*` routes (see `backend/routers/`).
 
 ### StravaIntelligence
 
@@ -296,32 +340,55 @@ The main class that orchestrates all functionality.
 
 ```python
 StravaIntelligence(
-    workdir: Path,           # Working directory for outputs
-    auto_sync: bool = True,  # Auto-sync on initialization
-    sync_max_age_hours: int = 12  # Cache age threshold
+    workdir: Path,                  # Working directory for generated outputs
+    auto_sync: bool = True,         # Auto-sync on initialization
+    sync_max_age_hours: int = 12,   # Cache age threshold for auto-sync
 )
 ```
 
-**Current methods:**
-- `sync_activities(full_sync=False, include_streams=False)` - Sync activities from Strava
-- `save_geojson_activities()` - Export activities as GeoJSON
-- `get_year_in_sport(year, main_sport, neon_color, comparison_year=None, comparison_neon_color="#00aaff")` - Generate Year in Sport visualizations with optional year comparison
-- `get_weekly_report(week_start_date=None, neon_color="#fc0101")` - Generate weekly training report (defaults to current week)
+**Methods:**
+- `sync_activities(full_sync=False, include_streams=False)` — pull new activities from Strava
+- `ensure_activities_with_streams()` — backfill streams / photos / detail for cached activities
+- `save_geojson_activities()` / `save_gpkg_activities()` — export the full cache to GeoJSON or GeoPackage
+- `plot_last_activity(sport_type)` — render the most recent activity of the given sport
+- `get_year_in_sport(year, main_sport, neon_color, comparison_year=None, comparison_neon_color="#00aaff")` — Year-in-Sport visualizations with optional year comparison
+- `get_weekly_report(week_start_date=None, neon_color="#fc0101")` — weekly training summary (current week by default)
 
 ### StravaVisualizer
 
-Generates all visualizations.
+Generates all matplotlib visualizations. Every rendering method supports
+`return_buffer=True` (returns a PNG `BytesIO` — used by the web `/api/exports`
+endpoints) and `dpi=<int>` (override quality).
 
-**Current methods:**
-- `thunderstorm_heatmap(location, sport_types, radius_km, add_basemap, neon_color, show_title)`
-- `activity_clock(sport_types, neon_color, max_dist_km, show_title)`
-- `hud_dashboard(sport_types, bins)`
-- `plot_efficiency_factor(sport_types, window)`
-- `plot_performance_frontier(sport_types)`
-- `plot_weekly_report(weekly_report, folder, neon_color)`
-- `plot_year_in_sport_main(year, year_in_sport, main_sport, folder, neon_color)`
-- `plot_year_in_sport_totals(year, year_in_sport, folder, neon_color)`
-- `plot_activity(activity_id, strava_endpoint, folder, title, neon_color)`
+**Methods:**
+- `thunderstorm_heatmap(location, sport_types, radius_km, neon_color, show_title, year, return_buffer, dpi)` — neon route overlay
+- `activity_bubble_map(region, sport_types, min_radius_scale, grid_density, neon_color, show_title, return_buffer, dpi)` — bubble aggregation per grid cell
+- `activity_clock(sport_types, neon_color, return_buffer, dpi)` — polar plot (time-of-day × distance)
+- `plot_activity(activity_id, strava_endpoint, folder, title, neon_color, return_buffer, dpi)` — single-activity neon plot
+- `plot_year_in_sport_main(year, year_in_sport, main_sport, folder, neon_color, comparison_year, comparison_data, comparison_neon_color, return_buffer, dpi)`
+- `plot_year_in_sport_totals(year, year_in_sport, folder, neon_color, comparison_year, comparison_data, comparison_neon_color, return_buffer, dpi)`
+- `hud_dashboard(sport_type, neon_color, return_buffer, dpi)` — cyberpunk histograms
+- `plot_efficiency_factor(sport_type, window=14, return_buffer, dpi)` — aerobic efficiency over time
+- `plot_performance_frontier(sport_types, return_buffer, dpi)` — Pareto frontier + Riegel fit
+- `plot_weekly_report(weekly_report, folder, neon_color, last_week_report, return_buffer, dpi)` — Instagram-Story sized weekly summary
+
+### StravaAnalytics
+
+Pure-Python analytics over the activity cache. All methods are memoized and
+invalidate on sync via a `cache_version` token.
+
+**Methods:**
+- `get_weekly_report(week_start_date=None, cutoff_date=None)` — weekly totals, HR zones, sport breakdown
+- `get_year_in_sport(year, main_sport, cutoff_month_day=None)` — yearly aggregates for one sport
+- `get_all_year_in_sport(year, cutoff_month_day=None)` — cross-sport yearly aggregates
+- `get_personal_records()` — best efforts at standard distances per sport category
+- `get_race_predictions(sport_category="running")` — VDOT/Riegel-based predicted race times
+- `get_daily_training_load()` — per-day TRIMP (zone-weighted when streams available, Banister fallback)
+- `get_pmc_chart(start_date=None, end_date=None)` — Performance Management Chart (CTL / ATL / TSB)
+- `get_fitness_trend(sport_type="Run", start_date=None, end_date=None)` — VDOT trend with rolling average
+- `get_hr_zones()` / `get_max_heart_rate()` / `get_rest_heart_rate()` — HR zone configuration
+- `get_current_vo2_max()` — VO₂max estimate from recent efforts
+- `invalidate_caches()` — clear all memoized analytics (called on sync)
 
 ### StravaMapMatcher
 
@@ -329,25 +396,16 @@ HMM-based map matching of GPS tracks to OSM road networks.
 
 ```python
 StravaMapMatcher(
-    city_name: str,          # City name for OSM network download
-    workdir: Path,           # Working directory for cached maps
-    force_reload: bool = False  # Force re-download of OSM data
+    city_name: str,              # City name for OSM network download
+    workdir: Path,               # Working directory for cached maps
+    force_reload: bool = False,  # Force re-download of OSM data
 )
 ```
 
-**Current methods:**
-- `match(activities)` - Map match a GeoDataFrame of activities, returns matched GeoDataFrame + per-activity MatchResult dict
-- `coverage_stats(match_results)` - Compute city-wide street coverage statistics (km traversed, % covered, unique roads)
-- `plot_coverage(match_results, save_path, neon_color, figsize)` - Render a neon-glow coverage map of traversed vs untraversed streets
-
-### [WIP] StravaAnalytics
-
-Provides analytics calculations.
-
-**Current methods:**
-- `get_rest_heart_rate()` - Get estimated resting heart rate
-- `get_max_heart_rate()` - Get maximum heart rate from zones
-- `get_current_vo2_max()` - Calculate VO2 Max estimate
+**Methods:**
+- `match(activities)` — map-match a GeoDataFrame of activities; returns matched GeoDataFrame + per-activity `MatchResult` dict
+- `coverage_stats(match_results)` — city-wide coverage (km traversed, % covered, unique roads)
+- `plot_coverage(match_results, save_path, neon_color, figsize)` — neon-glow coverage map
 
 ## 🗺️ Roadmap
 
