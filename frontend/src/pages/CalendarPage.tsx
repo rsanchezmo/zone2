@@ -11,7 +11,7 @@ import {
   useRaceEventsByRange, useUpcomingRaces, useCreateRaceEvent, useUpdateRaceEvent, useDeleteRaceEvent,
 } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
-import { getPaceUnit, getSportCategory, formatDist, distValue, getDistUnit } from '../utils/formatSpeed'
+import { getPaceUnit, getSportCategory, formatDist, getDistUnit } from '../utils/formatSpeed'
 import SportTypeCombobox from '../components/shared/SportTypeCombobox'
 import StatCard from '../components/shared/StatCard'
 import ExportButton from '../components/shared/ExportButton'
@@ -517,9 +517,9 @@ function SessionModal({
                       <span className="text-amber-500"><FlagIcon size={11} /></span>
                       <span className="text-sm text-amber-500 font-medium">{String(r.name)}</span>
                       {r.distance_km != null && (
-                        <span className="text-xs text-gray-400">{r.distance_km} km</span>
+                        <span className="text-xs text-gray-400">{r.distance_km as number} km</span>
                       )}
-                      {r.location && (
+                      {r.location != null && (
                         <span className="text-xs text-gray-500 truncate">{String(r.location)}</span>
                       )}
                     </div>

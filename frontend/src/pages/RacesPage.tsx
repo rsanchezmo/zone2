@@ -293,14 +293,14 @@ export default function RacesPage() {
                           </div>
                           <div className="flex items-center gap-3 text-[11px] text-gray-500 flex-wrap font-mono tabular-nums">
                             <span>{format(parseISO(r.date as string), 'EEE · MMM d, yyyy')}</span>
-                            {r.distance_km != null && <span>{r.distance_km} km</span>}
-                            {r.target_pace != null && <span>{r.target_pace} {getPaceUnit(r.sport_type as string)}</span>}
-                            {r.location && <span className="normal-case">{r.location as string}</span>}
+                            {r.distance_km != null && <span>{r.distance_km as number} km</span>}
+                            {r.target_pace != null && <span>{r.target_pace as number} {getPaceUnit(r.sport_type as string)}</span>}
+                            {r.location != null && <span className="normal-case">{r.location as string}</span>}
                           </div>
-                          {r.description && (
+                          {r.description != null && (
                             <div className={clsx('text-xs mt-2 whitespace-pre-line', isLight ? 'text-gray-500' : 'text-gray-400')}>{r.description as string}</div>
                           )}
-                          {r.url && (
+                          {r.url != null && (
                             <a
                               href={r.url as string}
                               target="_blank"
@@ -360,16 +360,16 @@ export default function RacesPage() {
                           </div>
                           <div className="flex items-center gap-3 text-[11px] text-gray-500 flex-wrap font-mono tabular-nums">
                             <span>{format(parseISO(r.date as string), 'MMM d, yyyy')}</span>
-                            {r.distance_km != null && <span>{r.distance_km} km</span>}
-                            {r.target_pace != null && <span>{r.target_pace} {getPaceUnit(r.sport_type as string)}</span>}
-                            {r.location && <span className="normal-case">{r.location as string}</span>}
-                            {r.url && (
+                            {r.distance_km != null && <span>{r.distance_km as number} km</span>}
+                            {r.target_pace != null && <span>{r.target_pace as number} {getPaceUnit(r.sport_type as string)}</span>}
+                            {r.location != null && <span className="normal-case">{r.location as string}</span>}
+                            {r.url != null && (
                               <a href={r.url as string} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1" style={{ color: RACE_ACCENT }} onClick={e => e.stopPropagation()}>
                                 Website <ExternalLinkIcon size={9} />
                               </a>
                             )}
                           </div>
-                          {r.description && (
+                          {r.description != null && (
                             <div className={clsx('text-xs mt-1.5 whitespace-pre-line', isLight ? 'text-gray-400' : 'text-gray-500')}>{r.description as string}</div>
                           )}
                         </div>
