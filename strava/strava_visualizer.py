@@ -38,17 +38,18 @@ class StravaVisualizer:
         return_buffer: bool = False,
         **kwargs
     ) -> BytesIO | None:
-        if return_buffer:
-            buf = BytesIO()
-            fig.savefig(buf, format='png', dpi=dpi, facecolor=facecolor, bbox_inches='tight', **kwargs)
+        try:
+            if return_buffer:
+                buf = BytesIO()
+                fig.savefig(buf, format='png', dpi=dpi, facecolor=facecolor, bbox_inches='tight', **kwargs)
+                buf.seek(0)
+                return buf
+            if save_path:
+                save_path.parent.mkdir(parents=True, exist_ok=True)
+                fig.savefig(save_path, dpi=dpi, facecolor=facecolor, bbox_inches='tight', **kwargs)
+            return None
+        finally:
             plt.close(fig)
-            buf.seek(0)
-            return buf
-        if save_path:
-            save_path.parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(save_path, dpi=dpi, facecolor=facecolor, bbox_inches='tight', **kwargs)
-        plt.close(fig)
-        return None
 
     def _get_centroid_of_map(self, gdf: gpd.GeoDataFrame, center_latlon: tuple[float, float] | None) -> Point:
         """
@@ -131,6 +132,7 @@ class StravaVisualizer:
             show_title: bool = True,
             return_buffer: bool = False,
             year: int | None = None,
+            dpi: int | None = None,
             ) -> BytesIO | None:
         """
         Generates a high-contrast 'Neon' visualization of activities.
@@ -200,7 +202,7 @@ class StravaVisualizer:
         filename = f"thunderstorm_{location or 'median'}_{sport_str.replace(' ', '_')}.png"
         save_path = self.output_dir / filename.lower()
 
-        result = self._finalize_figure(fig, save_path, dpi=600, return_buffer=return_buffer, pad_inches=0.2)
+        result = self._finalize_figure(fig, save_path, dpi=dpi or 600, return_buffer=return_buffer, pad_inches=0.2)
         if not return_buffer:
             print(f"⚡ Thunderstorm map saved to: {save_path}")
         return result
@@ -213,7 +215,8 @@ class StravaVisualizer:
             grid_density: int = 100,  # if too low, bubbles may lose position accuracy
             neon_color: str = "#fc0101",
             show_title: bool = False,
-            return_buffer: bool = False
+            return_buffer: bool = False,
+            dpi: int | None = None,
     ) -> BytesIO | None:
         """
         Generates a 'Bubble Map' where the size of the circle represents 
@@ -360,7 +363,7 @@ class StravaVisualizer:
         filename = f"bubble_map_{region.replace(' ', '_')}.png"
         save_path = self.output_dir / filename.lower()
 
-        result = self._finalize_figure(fig, save_path, dpi=600, return_buffer=return_buffer)
+        result = self._finalize_figure(fig, save_path, dpi=dpi or 600, return_buffer=return_buffer)
         if not return_buffer:
             print(f"⚪ Bubble map saved to: {save_path}")
         return result
@@ -372,7 +375,8 @@ class StravaVisualizer:
         neon_color: str = "#fa2100",
         max_dist_km: float | None = None,
         show_title: bool = True,
-        return_buffer: bool = False
+        return_buffer: bool = False,
+        dpi: int | None = None,
     ) -> BytesIO | None:
         """
         Generates a polar scatter plot of activities (Time vs Distance) 
@@ -453,7 +457,7 @@ class StravaVisualizer:
         filename = f"activity_clock_{sport_str.replace(' ', '_')}.png"
         save_path = self.output_dir / filename.lower()
 
-        result = self._finalize_figure(fig, save_path, dpi=600, return_buffer=return_buffer)
+        result = self._finalize_figure(fig, save_path, dpi=dpi or 600, return_buffer=return_buffer)
         if not return_buffer:
             print(f"🕑 Activity clock saved to: {save_path}")
         return result
@@ -466,7 +470,8 @@ class StravaVisualizer:
         title: str | None = None,
         neon_color: str = "#fc0101",
         filename: str | None = None,
-        return_buffer: bool = False
+        return_buffer: bool = False,
+        dpi: int | None = None,
     ) -> BytesIO | None:
         """
         Plot a single activity with neon style map and elevation profile below.
@@ -658,7 +663,7 @@ class StravaVisualizer:
         filename = f"activity_{activity_id}_{safe_title}.png" if filename is None else filename
         save_path = output_folder / filename
 
-        result = self._finalize_figure(fig, save_path, dpi=300, return_buffer=return_buffer, pad_inches=0.3)
+        result = self._finalize_figure(fig, save_path, dpi=dpi or 300, return_buffer=return_buffer, pad_inches=0.3)
         if not return_buffer:
             print(f"🗺️ Activity plot saved to: {save_path}")
         return result
@@ -673,7 +678,8 @@ class StravaVisualizer:
         comparison_year: int | None = None,
         comparison_data: dict | None = None,
         comparison_neon_color: str = "#00aaff",
-        return_buffer: bool = False
+        return_buffer: bool = False,
+        dpi: int | None = None,
     ) -> BytesIO | None:
         """
         Plot main sport statistics in neon style for Instagram Stories.
@@ -1061,7 +1067,7 @@ class StravaVisualizer:
         filename = f"year_in_sport_{year}_{main_sport.lower()}.png"
         save_path = output_folder / filename
 
-        result = self._finalize_figure(fig, save_path, dpi=300, return_buffer=return_buffer, pad_inches=0.3)
+        result = self._finalize_figure(fig, save_path, dpi=dpi or 300, return_buffer=return_buffer, pad_inches=0.3)
         if not return_buffer:
             print(f"📊 Year in sport ({main_sport}) saved to: {save_path}")
         return result
@@ -1075,7 +1081,8 @@ class StravaVisualizer:
         comparison_year: int | None = None,
         comparison_data: dict | None = None,
         comparison_neon_color: str = "#00aaff",
-        return_buffer: bool = False
+        return_buffer: bool = False,
+        dpi: int | None = None,
     ) -> BytesIO | None:
         """
         Plot total year statistics across all sports in neon style for Instagram Stories.
@@ -1422,7 +1429,7 @@ class StravaVisualizer:
         filename = f"year_in_sport_{year}_totals.png"
         save_path = output_folder / filename
 
-        result = self._finalize_figure(fig, save_path, dpi=300, return_buffer=return_buffer, pad_inches=0.3)
+        result = self._finalize_figure(fig, save_path, dpi=dpi or 300, return_buffer=return_buffer, pad_inches=0.3)
         if not return_buffer:
             print(f"📊 Year in sport (totals) saved to: {save_path}")
         return result
@@ -1431,7 +1438,8 @@ class StravaVisualizer:
         self,
         sport_type: str,
         bins: int = 40,
-        return_buffer: bool = False
+        return_buffer: bool = False,
+        dpi: int | None = None,
     ) -> BytesIO | None:
         """
         Generates a 3-row 'Cyberpunk HUD' dashboard showing distributions of
@@ -1530,12 +1538,12 @@ class StravaVisualizer:
         filename = f"hud_{sport_str.replace(' ', '_')}.png"
         save_path = self.output_dir / filename.lower()
 
-        result = self._finalize_figure(fig, save_path, dpi=600, return_buffer=return_buffer)
+        result = self._finalize_figure(fig, save_path, dpi=dpi or 600, return_buffer=return_buffer)
         if not return_buffer:
             print(f"🎛️ HUD dashboard saved to: {save_path}")
         return result
 
-    def plot_efficiency_factor(self, sport_type: str, window=14, return_buffer: bool = False) -> BytesIO | None:
+    def plot_efficiency_factor(self, sport_type: str, window=14, return_buffer: bool = False, dpi: int | None = None) -> BytesIO | None:
         """
         Plots Aerobic Efficiency (Speed / HR) with publication-quality styling.
         Includes rolling average, standard deviation bands, and peak annotations.
@@ -1640,12 +1648,12 @@ class StravaVisualizer:
             # Save
             output_path = self.output_dir / "efficiency_factor.png"
 
-            result = self._finalize_figure(fig, output_path, dpi=600, facecolor='white', return_buffer=return_buffer)
+            result = self._finalize_figure(fig, output_path, dpi=dpi or 600, facecolor='white', return_buffer=return_buffer)
             if not return_buffer:
                 print(f"📈 Professional efficiency plot saved to {output_path}")
             return result
 
-    def plot_performance_frontier(self, sport_types=['Run'], return_buffer: bool = False) -> BytesIO | None:
+    def plot_performance_frontier(self, sport_types=['Run'], return_buffer: bool = False, dpi: int | None = None) -> BytesIO | None:
         """
         Plots the Distance-Pace Frontier with Riegel's Fatigue Model fitting.
         
@@ -1766,7 +1774,7 @@ class StravaVisualizer:
             plt.tight_layout()
             out_path = self.output_dir / "performance_frontier.png"
 
-            result = self._finalize_figure(fig, out_path, dpi=600, facecolor='white', return_buffer=return_buffer)
+            result = self._finalize_figure(fig, out_path, dpi=dpi or 600, facecolor='white', return_buffer=return_buffer)
             if not return_buffer:
                 print(f"🚀 Frontier plot saved to {out_path}")
             return result
@@ -1779,6 +1787,7 @@ class StravaVisualizer:
         neon_color: str = "#fc0101",
         return_buffer: bool = False,
         last_week_report: dict | None = None,
+        dpi: int | None = None,
     ) -> BytesIO | None:
         """
         Plot weekly report statistics in neon style for Instagram Stories.
@@ -2293,7 +2302,7 @@ class StravaVisualizer:
         filename = f"weekly_report_{week_start}.png"
         out_path = folder / filename
 
-        result = self._finalize_figure(fig, out_path, dpi=300, return_buffer=return_buffer)
+        result = self._finalize_figure(fig, out_path, dpi=dpi or 300, return_buffer=return_buffer)
         if not return_buffer:
             print(f"📊 Weekly report saved to {out_path}")
         return result

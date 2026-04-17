@@ -1,3 +1,4 @@
+import matplotlib.pyplot as plt
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import StreamingResponse
 
@@ -24,14 +25,22 @@ def _png_response(buf):
 
 
 def _safe_export(fn):
-    """Wrap a matplotlib export call to catch errors gracefully."""
-    try:
-        with StravaVisualizer._mpl_lock:
+    """Wrap a matplotlib export call to catch errors gracefully.
+
+    On exception between plt.figure/subplots and _finalize_figure, the figure
+    is never closed by the plot function — `plt.close("all")` inside the
+    lock reclaims any leaked figures. Safe because _mpl_lock serializes all
+    matplotlib work.
+    """
+    with StravaVisualizer._mpl_lock:
+        try:
             return fn()
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Export failed: {e}")
+        except HTTPException:
+            plt.close("all")
+            raise
+        except Exception as e:
+            plt.close("all")
+            raise HTTPException(status_code=422, detail=f"Export failed: {e}")
 
 
 @router.get("/weekly-report")
