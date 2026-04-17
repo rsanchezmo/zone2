@@ -9,6 +9,10 @@ import type { ChartZone } from '../components/shared/StreamChart'
 import polyline from '@mapbox/polyline'
 import ExportButton from '../components/shared/ExportButton'
 import ChartPanel from '../components/shared/ChartPanel'
+import {
+  DeviceIcon, ShoeIcon, ThermometerIcon, ClockIcon, DumbbellIcon, MedalIcon, TrophyIcon,
+  DistanceIcon, TimerIcon, BoltIcon, RangeIcon, HeartIcon,
+} from '../components/icons'
 import { getSportColor } from '../constants/sportColors'
 import { getSportCategory, convertSpeed, formatPace } from '../utils/formatSpeed'
 import { SegmentSummary, getSegmentColor, type Segment } from '../components/shared/SegmentListBuilder'
@@ -319,7 +323,7 @@ function ExecutionScoreCollapsible({
   segmentScores: Record<string, unknown>[] | undefined
   metrics: Record<string, Record<string, unknown>> | undefined
   sc: (s: number) => string
-  metricConfig: Record<string, { label: string; icon: string; color: string }>
+  metricConfig: Record<string, { label: string; icon: ReactNode; color: string }>
   formatGoal: (key: string, m: Record<string, unknown>) => string
   formatActual: (key: string, m: Record<string, unknown>) => string
   segTypeLabels: Record<string, string>
@@ -419,7 +423,7 @@ function ExecutionScoreCollapsible({
                       {segMetrics && Object.keys(segMetrics).length > 0 && (
                         <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1">
                           {Object.entries(segMetrics).map(([key, m]) => {
-                            const cfg = metricConfig[key] ?? { label: key, icon: '?', color: '#9ca3af' }
+                            const cfg = metricConfig[key] ?? { label: key, icon: null, color: '#9ca3af' }
                             const metricScore = m.score as number
                             return (
                               <div key={key} className="flex items-center gap-1.5 text-[11px]">
@@ -445,7 +449,7 @@ function ExecutionScoreCollapsible({
             <div className="grid gap-2">
               {Object.entries(metrics).map(([key, m]) => {
                 const s = m.score as number
-                const cfg = metricConfig[key] ?? { label: key, icon: '?', color: '#9ca3af' }
+                const cfg = metricConfig[key] ?? { label: key, icon: null, color: '#9ca3af' }
                 return (
                   <div key={key} className="flex rounded-lg overflow-hidden border" style={{ borderColor: `${cfg.color}20` }}>
                     <div className="w-1 shrink-0" style={{ backgroundColor: cfg.color }} />
@@ -847,22 +851,22 @@ function ActivityDetailPageInner() {
         {/* Metadata pills — hairline-bordered, sport-agnostic */}
         {(activity.device_name || activity.gear || activity.average_temp != null || activity.timezone || activity.workout_type != null || activity.pr_count > 0 || activity.achievement_count > 0) && (
           <div className="flex flex-wrap gap-1.5 mt-5">
-            {activity.device_name && <MetaPill icon="📱" text={activity.device_name} />}
+            {activity.device_name && <MetaPill icon={<DeviceIcon size={11} />} text={activity.device_name} />}
             {activity.gear && (
               <MetaPill
-                icon="👟"
+                icon={<ShoeIcon size={11} />}
                 text={activity.gear.nickname || activity.gear.name}
                 suffix={activity.gear.converted_distance != null ? `${Math.round(activity.gear.converted_distance)} km` : undefined}
               />
             )}
-            {activity.average_temp != null && <MetaPill icon="🌡️" text={`${Math.round(activity.average_temp)}°C`} />}
-            {activity.timezone && <MetaPill icon="🕐" text={activity.timezone.replace(/^\(.*?\)\s*/, '')} />}
-            {activity.workout_type != null && <MetaPill icon="🏋️" text={String(activity.workout_type)} />}
+            {activity.average_temp != null && <MetaPill icon={<ThermometerIcon size={11} />} text={`${Math.round(activity.average_temp)}°C`} />}
+            {activity.timezone && <MetaPill icon={<ClockIcon size={11} />} text={activity.timezone.replace(/^\(.*?\)\s*/, '')} />}
+            {activity.workout_type != null && <MetaPill icon={<DumbbellIcon size={11} />} text={String(activity.workout_type)} />}
             {activity.pr_count > 0 && (
-              <MetaPill icon="🏅" text={`${activity.pr_count} PR${activity.pr_count > 1 ? 's' : ''}`} tone="amber" />
+              <MetaPill icon={<MedalIcon size={11} />} text={`${activity.pr_count} PR${activity.pr_count > 1 ? 's' : ''}`} tone="amber" />
             )}
             {activity.achievement_count > 0 && (
-              <MetaPill icon="🏆" text={`${activity.achievement_count} achievement${activity.achievement_count > 1 ? 's' : ''}`} tone="green" />
+              <MetaPill icon={<TrophyIcon size={11} />} text={`${activity.achievement_count} achievement${activity.achievement_count > 1 ? 's' : ''}`} tone="green" />
             )}
           </div>
         )}
@@ -976,12 +980,12 @@ function ActivityDetailPageInner() {
         const sessionSegments = session?.segments as Segment[] | undefined
         const sc = (s: number) => s >= 80 ? '#22c55e' : s >= 50 ? '#eab308' : '#ef4444'
 
-        const metricConfig: Record<string, { label: string; icon: string; color: string }> = {
-          distance: { label: 'Distance', icon: '↔', color: '#3b82f6' },
-          duration: { label: 'Duration', icon: '⏱', color: '#22c55e' },
-          avg_pace: { label: 'Avg Pace', icon: '⚡', color: '#f97316' },
-          pace: { label: 'Pace Range', icon: '↕', color: '#a855f7' },
-          hr_zone: { label: 'HR Zone', icon: '♥', color: '#ef4444' },
+        const metricConfig: Record<string, { label: string; icon: ReactNode; color: string }> = {
+          distance: { label: 'Distance', icon: <DistanceIcon size={11} />, color: '#3b82f6' },
+          duration: { label: 'Duration', icon: <TimerIcon size={11} />, color: '#22c55e' },
+          avg_pace: { label: 'Avg Pace', icon: <BoltIcon size={11} />, color: '#f97316' },
+          pace: { label: 'Pace Range', icon: <RangeIcon size={11} />, color: '#a855f7' },
+          hr_zone: { label: 'HR Zone', icon: <HeartIcon size={11} />, color: '#ef4444' },
         }
 
         const formatGoal = (key: string, m: Record<string, unknown>) => {
@@ -1652,7 +1656,7 @@ function MetaPill({
   suffix,
   tone = 'neutral',
 }: {
-  icon: string
+  icon: ReactNode
   text: string
   suffix?: string
   tone?: 'neutral' | 'amber' | 'green'
@@ -1670,7 +1674,7 @@ function MetaPill({
       'inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full border font-medium',
       palette,
     )}>
-      <span className="opacity-60" aria-hidden="true">{icon}</span>
+      <span className="opacity-70 shrink-0" aria-hidden="true">{icon}</span>
       <span>{text}</span>
       {suffix && <span className="opacity-50 tabular-nums">· {suffix}</span>}
     </span>

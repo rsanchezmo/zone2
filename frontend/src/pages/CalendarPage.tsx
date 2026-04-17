@@ -1,4 +1,4 @@
-import { Fragment, useState, useMemo, useRef, useEffect, useCallback } from 'react'
+import { Fragment, useState, useMemo, useRef, useEffect, useCallback, type ReactNode } from 'react'
 import {
   startOfMonth, endOfMonth, eachDayOfInterval, format, addMonths, subMonths, addDays, subDays,
   isSameMonth, isToday, startOfWeek, endOfWeek, isSameWeek, parseISO, differenceInDays,
@@ -15,6 +15,9 @@ import { getPaceUnit, getSportCategory, formatDist, distValue, getDistUnit } fro
 import SportTypeCombobox from '../components/shared/SportTypeCombobox'
 import StatCard from '../components/shared/StatCard'
 import ExportButton from '../components/shared/ExportButton'
+import {
+  FlagIcon, CheckIcon, DistanceIcon, TimerIcon, BoltIcon, RangeIcon, HeartIcon,
+} from '../components/icons'
 import clsx from 'clsx'
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -491,7 +494,7 @@ function SessionModal({
         {(races.length > 0 || showRaceForm) && (
           <div className="mb-4 space-y-2">
             <div className="eyebrow flex items-center gap-1.5">
-              <span className="text-amber-500">&#9873;</span> Race Events
+              <span className="text-amber-500"><FlagIcon size={10} /></span> Race events
             </div>
             {races.map(r => {
               const isConfirmingRace = confirmDeleteRaceId === (r.id as number)
@@ -511,7 +514,7 @@ function SessionModal({
                       setRaceUrl((r.url as string) || '')
                       setShowRaceForm(true)
                     }}>
-                      <span className="text-amber-500 text-xs">&#9873;</span>
+                      <span className="text-amber-500"><FlagIcon size={11} /></span>
                       <span className="text-sm text-amber-500 font-medium">{String(r.name)}</span>
                       {r.distance_km != null && (
                         <span className="text-xs text-gray-400">{r.distance_km} km</span>
@@ -655,9 +658,9 @@ function SessionModal({
         {!showRaceForm && (
           <button
             onClick={() => { setShowRaceForm(true); setEditingRaceId(null) }}
-            className="mb-3 text-xs flex items-center gap-1 text-amber-500/70 hover:text-amber-500 transition-colors"
+            className="mb-3 text-[11px] uppercase tracking-[0.15em] flex items-center gap-1.5 text-amber-500/70 hover:text-amber-500 transition-colors"
           >
-            <span>&#9873;</span> Add Race Event
+            <FlagIcon size={10} /> Add race event
           </button>
         )}
 
@@ -793,7 +796,7 @@ function SessionModal({
                   <div className="flex-1 p-2.5" style={{ backgroundColor: '#3b82f608' }}>
                     <div className="flex items-center justify-between mb-1.5">
                       <span className="text-xs font-medium flex items-center gap-1.5" style={{ color: '#3b82f6' }}>
-                        <span>↔</span> Distance
+                        <DistanceIcon size={11} /> Distance
                       </span>
                       <button onClick={() => removeGoal('distance')} className="text-gray-500 hover:text-gray-300 text-xs leading-none px-1">✕</button>
                     </div>
@@ -815,7 +818,7 @@ function SessionModal({
                   <div className="flex-1 p-2.5" style={{ backgroundColor: '#22c55e08' }}>
                     <div className="flex items-center justify-between mb-1.5">
                       <span className="text-xs font-medium flex items-center gap-1.5" style={{ color: '#22c55e' }}>
-                        <span>⏱</span> Duration
+                        <TimerIcon size={11} /> Duration
                       </span>
                       <button onClick={() => removeGoal('duration')} className="text-gray-500 hover:text-gray-300 text-xs leading-none px-1">✕</button>
                     </div>
@@ -837,7 +840,7 @@ function SessionModal({
                   <div className="flex-1 p-2.5" style={{ backgroundColor: '#f9731608' }}>
                     <div className="flex items-center justify-between mb-1.5">
                       <span className="text-xs font-medium flex items-center gap-1.5" style={{ color: '#f97316' }}>
-                        <span>⚡</span> Avg Pace
+                        <BoltIcon size={11} /> Avg Pace
                       </span>
                       <button onClick={() => removeGoal('avg_pace')} className="text-gray-500 hover:text-gray-300 text-xs leading-none px-1">✕</button>
                     </div>
@@ -859,7 +862,7 @@ function SessionModal({
                   <div className="flex-1 p-2.5" style={{ backgroundColor: '#a855f708' }}>
                     <div className="flex items-center justify-between mb-1.5">
                       <span className="text-xs font-medium flex items-center gap-1.5" style={{ color: '#a855f7' }}>
-                        <span>↕</span> Pace Range
+                        <RangeIcon size={11} /> Pace Range
                       </span>
                       <button onClick={() => removeGoal('pace_range')} className="text-gray-500 hover:text-gray-300 text-xs leading-none px-1">✕</button>
                     </div>
@@ -895,7 +898,7 @@ function SessionModal({
                   <div className="flex-1 p-2.5" style={{ backgroundColor: '#ef444408' }}>
                     <div className="flex items-center justify-between mb-1.5">
                       <span className="text-xs font-medium flex items-center gap-1.5" style={{ color: '#ef4444' }}>
-                        <span>♥</span> HR Zone
+                        <HeartIcon size={11} /> HR Zone
                       </span>
                       <button onClick={() => removeGoal('hr_zone')} className="text-gray-500 hover:text-gray-300 text-xs leading-none px-1">✕</button>
                     </div>
@@ -1048,12 +1051,12 @@ function SessionModal({
             {showGoalPicker && (
               <div className="flex flex-wrap gap-1.5 mt-2">
                 {([
-                  { key: 'distance', label: 'Distance', color: '#3b82f6', icon: '↔' },
-                  { key: 'duration', label: 'Duration', color: '#22c55e', icon: '⏱' },
-                  { key: 'avg_pace', label: 'Avg Pace', color: '#f97316', icon: '⚡' },
-                  { key: 'pace_range', label: 'Pace Range', color: '#a855f7', icon: '↕' },
-                  { key: 'hr_zone', label: 'HR Zone', color: '#ef4444', icon: '♥' },
-                  { key: 'segments', label: 'Structured', color: '#22d3ee', icon: '▦' },
+                  { key: 'distance', label: 'Distance', color: '#3b82f6', icon: <DistanceIcon size={10} /> },
+                  { key: 'duration', label: 'Duration', color: '#22c55e', icon: <TimerIcon size={10} /> },
+                  { key: 'avg_pace', label: 'Avg Pace', color: '#f97316', icon: <BoltIcon size={10} /> },
+                  { key: 'pace_range', label: 'Pace Range', color: '#a855f7', icon: <RangeIcon size={10} /> },
+                  { key: 'hr_zone', label: 'HR Zone', color: '#ef4444', icon: <HeartIcon size={10} /> },
+                  { key: 'segments', label: 'Structured', color: '#22d3ee', icon: null },
                 ] as const).map(g => {
                   const isActive = activeGoals.has(g.key)
                   return (
@@ -1061,7 +1064,7 @@ function SessionModal({
                       key={g.key}
                       disabled={isActive}
                       onClick={() => addGoal(g.key)}
-                      className="text-xs rounded-full px-2.5 py-1 border transition-all"
+                      className="text-xs rounded-full px-2.5 py-1 border transition-all inline-flex items-center gap-1.5"
                       style={{
                         borderColor: isActive ? '#4b5563' : `${g.color}50`,
                         color: isActive ? '#6b7280' : g.color,
@@ -1158,13 +1161,13 @@ function UpcomingPlan({ sessions, todayStr }: { sessions: Record<string, unknown
                   <span className="text-[10px] text-gray-600 shrink-0">{isExpanded ? '▲' : '▼'}</span>
                 </div>
                 {isExpanded && (() => {
-                  const goals: { icon: string; color: string; label: string }[] = []
+                  const goals: { icon: ReactNode; color: string; label: string }[] = []
                   const cardHasSegments = s.segments && Array.isArray(s.segments) && (s.segments as Segment[]).length > 0
-                  if (s.planned_distance_km != null && !cardHasSegments) goals.push({ icon: '↔', color: '#3b82f6', label: formatDist(s.planned_distance_km as number, s.sport_type as string) })
-                  if (s.planned_duration_mins != null) goals.push({ icon: '⏱', color: '#22c55e', label: `${s.planned_duration_mins} min` })
+                  if (s.planned_distance_km != null && !cardHasSegments) goals.push({ icon: <DistanceIcon size={10} />, color: '#3b82f6', label: formatDist(s.planned_distance_km as number, s.sport_type as string) })
+                  if (s.planned_duration_mins != null) goals.push({ icon: <TimerIcon size={10} />, color: '#22c55e', label: `${s.planned_duration_mins} min` })
                   if (s.target_avg_pace != null) {
                     const pu = getPaceUnit(s.sport_type as string)
-                    goals.push({ icon: '⚡', color: '#f97316', label: `${s.target_avg_pace} ${pu}` })
+                    goals.push({ icon: <BoltIcon size={10} />, color: '#f97316', label: `${s.target_avg_pace} ${pu}` })
                   }
                   if (s.target_pace_min != null || s.target_pace_max != null) {
                     const pu = getPaceUnit(s.sport_type as string)
@@ -1172,11 +1175,11 @@ function UpcomingPlan({ sessions, todayStr }: { sessions: Record<string, unknown
                     const parts: string[] = []
                     if (s.target_pace_min != null) parts.push(`${isRun ? 'fastest' : 'min'} ${s.target_pace_min}`)
                     if (s.target_pace_max != null) parts.push(`${isRun ? 'slowest' : 'max'} ${s.target_pace_max}`)
-                    goals.push({ icon: '↕', color: '#a855f7', label: `${parts.join(' – ')} ${pu}` })
+                    goals.push({ icon: <RangeIcon size={10} />, color: '#a855f7', label: `${parts.join(' – ')} ${pu}` })
                   }
                   if (s.target_hr_zone != null) {
                     const pct = s.target_zone_pct ?? 80
-                    goals.push({ icon: '♥', color: '#ef4444', label: `Zone ${s.target_hr_zone} @ ${pct}%` })
+                    goals.push({ icon: <HeartIcon size={10} />, color: '#ef4444', label: `Zone ${s.target_hr_zone} @ ${pct}%` })
                   }
                   return (
                     <div className="px-3 pb-3 pt-1 border-t border-dashed" style={{ borderColor: `${color}20` }}>
@@ -1190,7 +1193,7 @@ function UpcomingPlan({ sessions, todayStr }: { sessions: Record<string, unknown
                           {goals.map((g, i) => (
                             <span
                               key={i}
-                              className="text-[11px] rounded-full px-2 py-0.5 border font-mono"
+                              className="text-[11px] rounded-full px-2 py-0.5 border font-mono tabular-nums inline-flex items-center gap-1.5"
                               style={{ color: g.color, borderColor: `${g.color}40`, backgroundColor: `${g.color}10` }}
                             >
                               {g.icon} {g.label}
@@ -1619,7 +1622,7 @@ export default function CalendarPage() {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-0.5">
-                  <span className="eyebrow" style={{ color: '#eab308' }} aria-hidden="true">⚑</span>
+                  <span style={{ color: '#eab308' }}><FlagIcon size={11} /></span>
                   <span className={clsx('text-sm font-semibold tracking-tight truncate', isLight ? 'text-gray-900' : 'text-gray-100')}>
                     {nextRace.name}
                   </span>
@@ -1890,10 +1893,10 @@ export default function CalendarPage() {
                       )}
                       title={`${r.name}${r.location ? ` — ${r.location}` : ''}${r.distance_km ? ` (${r.distance_km} km)` : ''}`}
                     >
-                      &#9873; {r.name as string}
+                      <span className="inline-flex items-center gap-1"><FlagIcon size={9} /> {r.name as string}</span>
                       {matchedActivity && (
-                        <Link to={`/activities/${matchedActivity.id}`} onClick={e => e.stopPropagation()} className="text-green-400 ml-1 inline">
-                          &#10003;
+                        <Link to={`/activities/${matchedActivity.id}`} onClick={e => e.stopPropagation()} className="text-green-400 ml-1 inline-flex items-center align-middle">
+                          <CheckIcon size={9} />
                         </Link>
                       )}
                     </div>

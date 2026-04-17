@@ -8,6 +8,7 @@ import {
 import { getSportColor } from '../constants/sportColors'
 import { getPaceUnit } from '../utils/formatSpeed'
 import SportTypeCombobox from '../components/shared/SportTypeCombobox'
+import { FlagIcon, CheckIcon, ExternalLinkIcon } from '../components/icons'
 import clsx from 'clsx'
 import { useTheme } from '../hooks/useTheme'
 import { useToast } from '../hooks/useToast'
@@ -143,7 +144,7 @@ export default function RacesPage() {
         <section className={clsx(panelClass, 'hero-brackets p-5 md:p-6 space-y-4')} style={{ ['--card-accent' as string]: RACE_ACCENT }}>
           <div className="flex items-center justify-between">
             <div className="eyebrow flex items-center gap-2" style={{ color: RACE_ACCENT }}>
-              <span aria-hidden="true">⚑</span>
+              <FlagIcon size={11} />
               {editingId ? 'Edit race' : 'New race'}
             </div>
             <button onClick={resetForm} className={clsx('text-[11px] uppercase tracking-[0.15em]', isLight ? 'text-gray-400 hover:text-gray-600' : 'text-gray-500 hover:text-gray-200')}>Close</button>
@@ -308,7 +309,7 @@ export default function RacesPage() {
                               style={{ color: RACE_ACCENT }}
                               onClick={e => e.stopPropagation()}
                             >
-                              Race website <span aria-hidden="true">↗</span>
+                              Race website <ExternalLinkIcon size={10} />
                             </a>
                           )}
                         </div>
@@ -350,9 +351,10 @@ export default function RacesPage() {
                             {matchedActivity && (
                               <Link
                                 to={`/activities/${matchedActivity.id}`}
-                                className="text-[10px] uppercase tracking-[0.15em] text-green-400 hover:text-green-300 inline-flex items-center gap-0.5"
+                                className="text-[10px] uppercase tracking-[0.15em] text-green-400 hover:text-green-300 inline-flex items-center gap-1"
                               >
-                                ✓ View activity
+                                <CheckIcon size={10} />
+                                View activity
                               </Link>
                             )}
                           </div>
@@ -362,8 +364,8 @@ export default function RacesPage() {
                             {r.target_pace != null && <span>{r.target_pace} {getPaceUnit(r.sport_type as string)}</span>}
                             {r.location && <span className="normal-case">{r.location as string}</span>}
                             {r.url && (
-                              <a href={r.url as string} target="_blank" rel="noopener noreferrer" style={{ color: RACE_ACCENT }} onClick={e => e.stopPropagation()}>
-                                Website ↗
+                              <a href={r.url as string} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1" style={{ color: RACE_ACCENT }} onClick={e => e.stopPropagation()}>
+                                Website <ExternalLinkIcon size={9} />
                               </a>
                             )}
                           </div>
@@ -388,7 +390,7 @@ export default function RacesPage() {
 
           {upcoming.length === 0 && past.length === 0 && !showForm && (
             <div className={clsx(panelClass, 'p-10 text-center flex flex-col items-center gap-3')}>
-              <div className="text-3xl" style={{ color: RACE_ACCENT }} aria-hidden="true">⚑</div>
+              <div style={{ color: RACE_ACCENT }}><FlagIcon size={32} /></div>
               <div className={clsx('text-sm', isLight ? 'text-gray-500' : 'text-gray-500')}>No races for {filterYear}</div>
               <button
                 onClick={() => { resetForm(); setShowForm(true); setDate(format(today, 'yyyy-MM-dd')) }}
