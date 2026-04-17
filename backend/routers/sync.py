@@ -39,6 +39,9 @@ def _run_sync(si: StravaIntelligence, full_sync: bool, include_streams: bool):
     finally:
         si.strava_analytics.invalidate_caches()
         clear_stats_cache()
+        # Eagerly warm the in-memory cache so the first post-sync read doesn't
+        # pay the full parquet reload cost on the user's request.
+        si.strava_activities_cache._load_to_memory()
         _release_sync(err)
 
 
@@ -64,6 +67,7 @@ def _run_backfill_streams(si: StravaIntelligence):
     finally:
         si.strava_analytics.invalidate_caches()
         clear_stats_cache()
+        si.strava_activities_cache._load_to_memory()
         _release_sync(err)
 
 

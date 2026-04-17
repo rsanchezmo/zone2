@@ -1,6 +1,7 @@
 import matplotlib
 matplotlib.use("Agg")
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -12,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.config import settings
 from backend.dependencies import set_strava_intelligence
 from backend.routers import activities, stats, exports, calendar, sync, athlete, goals, workouts, races, health
+from backend.routers.sync import _try_claim_sync, _run_sync
 from backend.db import init_db
 from strava.strava_intelligence import StravaIntelligence
 
@@ -32,6 +34,26 @@ def _configure_logging() -> None:
     )
 
 
+async def _periodic_sync_loop(si: StravaIntelligence, interval_hours: int) -> None:
+    """Fire an incremental sync every interval_hours. Skips if a manual sync
+    is already running (shares the _sync_lock with the /api/sync endpoint)."""
+    log = logging.getLogger("backend.autosync")
+    log.info("auto-sync scheduler enabled (every %dh)", interval_hours)
+    while True:
+        try:
+            await asyncio.sleep(interval_hours * 3600)
+            if _try_claim_sync():
+                log.info("auto-sync starting")
+                await asyncio.to_thread(_run_sync, si, False, False)
+                log.info("auto-sync finished")
+            else:
+                log.info("auto-sync skipped: another sync already running")
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            log.exception("auto-sync errored, will retry next interval")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: initialize StravaIntelligence singleton
@@ -43,7 +65,20 @@ async def lifespan(app: FastAPI):
     )
     set_strava_intelligence(si)
     await init_db()
-    yield
+
+    sync_task: asyncio.Task | None = None
+    if settings.auto_sync_hours > 0:
+        sync_task = asyncio.create_task(_periodic_sync_loop(si, settings.auto_sync_hours))
+
+    try:
+        yield
+    finally:
+        if sync_task is not None:
+            sync_task.cancel()
+            try:
+                await sync_task
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(title="Strava Intelligence", lifespan=lifespan)
