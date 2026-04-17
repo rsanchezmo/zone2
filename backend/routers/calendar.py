@@ -4,8 +4,8 @@ from pydantic import BaseModel
 import aiosqlite
 import json
 import pandas as pd
-import numpy as np
 
+from backend._serialize import sanitize as _sanitize
 from backend.db import get_db
 from backend.dependencies import get_si
 from backend.scoring import match_activity, compute_execution_score, has_targets
@@ -98,18 +98,6 @@ async def list_sessions(
     return [_row_to_dict(row) for row in rows]
 
 
-def _sanitize(val):
-    if val is None or (isinstance(val, float) and pd.isna(val)):
-        return None
-    if isinstance(val, (np.integer,)):
-        return int(val)
-    if isinstance(val, (np.floating,)):
-        return float(val)
-    if isinstance(val, np.bool_):
-        return bool(val)
-    return val
-
-
 def _activity_row_to_dict(row: pd.Series) -> dict:
     """Minimal activity dict for scoring — includes streams."""
     d = {}
@@ -120,11 +108,7 @@ def _activity_row_to_dict(row: pd.Series) -> dict:
     if d.get("distance") is not None:
         d["distance_km"] = round(d["distance"] / 1000, 2)
     if "streams" in row.index and row["streams"] is not None:
-        try:
-            streams = row["streams"] if isinstance(row["streams"], (list, dict)) else json.loads(row["streams"])
-            d["streams"] = streams
-        except (json.JSONDecodeError, TypeError):
-            d["streams"] = None
+        d["streams"] = row["streams"] if isinstance(row["streams"], (list, dict)) else None
     return d
 
 
