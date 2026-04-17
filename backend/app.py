@@ -1,6 +1,7 @@
 import matplotlib
 matplotlib.use("Agg")
 
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -15,9 +16,26 @@ from backend.db import init_db
 from strava.strava_intelligence import StravaIntelligence
 
 
+def _configure_logging() -> None:
+    """Wire our app + strava loggers into stdout with a consistent format.
+
+    Uses force=True so we override whatever uvicorn set up by default —
+    otherwise our `logger.info(...)` calls in strava/ would get swallowed
+    or formatted differently from FastAPI's own request logs.
+    """
+    level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
+        datefmt="%H:%M:%S",
+        force=True,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: initialize StravaIntelligence singleton
+    _configure_logging()
     si = StravaIntelligence(
         workdir=settings.workdir,
         auto_sync=False,
