@@ -236,13 +236,12 @@ export function useAthleteZones() {
   });
 }
 
-export function useRateLimits() {
-  const { data: syncStatus } = useSyncStatus();
+export function useRateLimits(isSyncing?: boolean) {
   return useQuery({
     queryKey: ['rate-limits'],
     queryFn: () => api.get('/athlete/rate-limits').then(r => r.data),
-    staleTime: syncStatus?.syncing ? 0 : 1000 * 60 * 2,
-    refetchInterval: syncStatus?.syncing ? 5000 : false,
+    staleTime: isSyncing ? 0 : 1000 * 60 * 2,
+    refetchInterval: isSyncing ? 5000 : false,
   });
 }
 
@@ -277,13 +276,12 @@ export function useBackfillStreams() {
   });
 }
 
-export function useCacheCompleteness() {
-  const { data: syncStatus } = useSyncStatus();
+export function useCacheCompleteness(isSyncing?: boolean) {
   return useQuery({
     queryKey: ['cache-completeness'],
     queryFn: () => api.get('/sync/cache-completeness').then(r => r.data),
-    staleTime: syncStatus?.syncing ? 0 : 1000 * 60 * 5,
-    refetchInterval: syncStatus?.syncing ? 3000 : false,
+    staleTime: isSyncing ? 0 : 1000 * 60 * 5,
+    refetchInterval: isSyncing ? 3000 : false,
   });
 }
 
