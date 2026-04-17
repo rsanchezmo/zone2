@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { ThemeProvider } from './hooks/useTheme'
 import { ToastProvider } from './hooks/useToast'
 import AppShell from './components/layout/AppShell'
+import RootErrorBoundary from './components/layout/RootErrorBoundary'
 import CalendarPage from './pages/CalendarPage'
 
 // CalendarPage stays eager — it's the landing route, so making it lazy would
@@ -27,25 +28,27 @@ function RouteFallback() {
 
 export default function App() {
   return (
-    <ThemeProvider>
-      <ToastProvider>
-        <AppShell>
-          <Suspense fallback={<RouteFallback />}>
-            <Routes>
-              <Route path="/" element={<Navigate to="/calendar" replace />} />
-              <Route path="/dashboard" element={<DashboardPage />} />
-              <Route path="/activities" element={<ActivitiesPage />} />
-              <Route path="/activities/:id" element={<ActivityDetailPage />} />
-              <Route path="/aggregations" element={<AggregationsPage />} />
-              <Route path="/calendar" element={<CalendarPage />} />
-              <Route path="/records" element={<PersonalRecordsPage />} />
-              <Route path="/workouts" element={<WorkoutsPage />} />
-              <Route path="/races" element={<RacesPage />} />
-              <Route path="/profile" element={<ProfilePage />} />
-            </Routes>
-          </Suspense>
-        </AppShell>
-      </ToastProvider>
-    </ThemeProvider>
+    <RootErrorBoundary>
+      <ThemeProvider>
+        <ToastProvider>
+          <AppShell>
+            <Suspense fallback={<RouteFallback />}>
+              <Routes>
+                <Route path="/" element={<Navigate to="/calendar" replace />} />
+                <Route path="/dashboard" element={<DashboardPage />} />
+                <Route path="/activities" element={<ActivitiesPage />} />
+                <Route path="/activities/:id" element={<ActivityDetailPage />} />
+                <Route path="/aggregations" element={<AggregationsPage />} />
+                <Route path="/calendar" element={<CalendarPage />} />
+                <Route path="/records" element={<PersonalRecordsPage />} />
+                <Route path="/workouts" element={<WorkoutsPage />} />
+                <Route path="/races" element={<RacesPage />} />
+                <Route path="/profile" element={<ProfilePage />} />
+              </Routes>
+            </Suspense>
+          </AppShell>
+        </ToastProvider>
+      </ThemeProvider>
+    </RootErrorBoundary>
   )
 }
