@@ -29,6 +29,15 @@ authentication. SSH into the Pi can go through the same tunnel (see
 
 ## Step 2: Create a Cloudflare Tunnel
 
+There are two ways to run `cloudflared`:
+
+- **Dashboard tunnel + token in Docker** (simplest, default in `docker-compose.yml`)
+- **CLI tunnel + credentials JSON on the Pi as a systemd service** (cleaner
+  if you also want SSH-over-tunnel, since one cloudflared process can serve
+  both the app and host services like `localhost:22`)
+
+### Option A — dashboard-created tunnel (token in Docker)
+
 1. Go to [Cloudflare Zero Trust](https://one.dash.cloudflare.com) → **Networks** → **Tunnels**
 2. **Create a tunnel** → select **Cloudflared** → name it (e.g., `strava-pi`)
 3. Copy the tunnel token — you'll need it for `.env`
@@ -37,6 +46,52 @@ authentication. SSH into the Pi can go through the same tunnel (see
    - Domain: `yourdomain.com`
    - Service type: `HTTP`
    - URL: `app:8000`
+
+### Option B — CLI-created tunnel (systemd service on the host)
+
+On the Pi:
+
+```bash
+# Install cloudflared
+curl -L https://pkg.cloudflare.com/cloudflared-stable-linux-arm64.deb -o /tmp/cf.deb
+sudo dpkg -i /tmp/cf.deb
+
+# Authenticate the browser once (copies the origin cert to ~/.cloudflared/cert.pem)
+cloudflared tunnel login
+
+# Create the tunnel — writes <UUID>.json credentials to ~/.cloudflared/
+cloudflared tunnel create strava-pi
+
+# Map DNS names to the tunnel (idempotent)
+cloudflared tunnel route dns strava-pi strava.yourdomain.com
+cloudflared tunnel route dns strava-pi ssh.yourdomain.com    # optional, for SSH
+```
+
+Then write `/etc/cloudflared/config.yml` (requires `sudo`), copying the
+credentials JSON alongside it:
+
+```yaml
+tunnel: <TUNNEL_UUID>
+credentials-file: /etc/cloudflared/<TUNNEL_UUID>.json
+
+ingress:
+  - hostname: strava.yourdomain.com
+    service: http://localhost:8000
+  - hostname: ssh.yourdomain.com
+    service: ssh://localhost:22
+  - service: http_status:404
+```
+
+Install as a systemd service:
+
+```bash
+sudo cloudflared --config /etc/cloudflared/config.yml tunnel ingress validate
+sudo cloudflared service install
+sudo systemctl status cloudflared
+```
+
+With this option, disable the compose `cloudflared` service (see the
+`docker-compose.override.yml` in Step 4).
 
 ## Step 3: Protect with Cloudflare Access
 
@@ -57,25 +112,48 @@ app locally once on your laptop, complete OAuth there, then copy the populated
 `.strava/` directory onto the Pi before the first `docker compose up`.
 
 On your laptop, after running the app once and authorizing with Strava, the
-`.strava/` folder contains `token.json`, `metadata.json`, and cached
-Parquet activity files. Rsync it to the Pi:
+`.strava/` folder contains `token.json`, `metadata.json`, and cached Parquet
+activity files. The `cache/` folder next to it holds SHA-indexed user-data
+JSON (populated by `StravaUserCache`). **Both directories are gitignored**,
+so a fresh `git clone` on the Pi has neither — rsync them before the first
+build (the Dockerfile `COPY`s `cache/`, so the build fails without it):
 
 ```bash
-# Change the bind-mount target inside docker-compose.yml first (see below)
+# On the Pi, switch to bind-mounts first (see docker-compose.override.yml below).
 rsync -avz --delete ./.strava/ pi:/home/pi/strava-intelligence/strava-data/
+rsync -avz           ./cache/  pi:/home/pi/strava-intelligence/cache/
 ```
 
-For the rsync target to work, change the `app` service's volumes in
-`docker-compose.yml` from named volumes to bind-mounts so the folders are
-visible on the Pi filesystem (and inspectable / backup-able over SSH):
+Instead of editing the tracked `docker-compose.yml`, drop a
+`docker-compose.override.yml` next to it on the Pi — it's auto-merged by
+compose and left alone by `git pull`:
 
 ```yaml
-    volumes:
+# docker-compose.override.yml — Pi only, not committed
+services:
+  app:
+    ports: !override
+      - "127.0.0.1:8000:8000"     # loopback-only; host cloudflared reaches it
+    volumes: !override
       - ./strava-data:/app/.strava
       - ./strava-workdir:/app/strava_intelligence_workdir
+  cloudflared:
+    profiles: ["disabled"]        # skip if you run cloudflared on the host
+
+volumes:
+  strava-data: !reset null
+  strava-workdir: !reset null
 ```
 
-(and delete the `volumes:` block at the bottom of `docker-compose.yml`).
+The `!override` tag replaces (rather than merges) the base list, and
+`!reset null` drops the named volumes inherited from `docker-compose.yml`.
+Binding the app port to `127.0.0.1` keeps it off the LAN — Cloudflare Tunnel
+is the only path in.
+
+> If you prefer the token-in-Docker cloudflared flow (Step 2), drop the
+> `cloudflared: profiles: ["disabled"]` block and publish the port as
+> `"8000:8000"` (or keep loopback-only since both containers share the
+> compose network).
 
 ## Step 5: Deploy on the Pi
 
@@ -89,8 +167,8 @@ cp .env.example .env
 nano .env
 #   STRAVA_CLIENT_ID=...
 #   STRAVA_CLIENT_SECRET=...
-#   CLOUDFLARE_TUNNEL_TOKEN=...
-#   STRAVA_WEB_CORS_ORIGINS=["https://strava.yourdomain.com"]
+#   CLOUDFLARE_TUNNEL_TOKEN=...                           # Option A only
+#   STRAVA_WEB_CORS_ORIGINS=["https://strava.yourdomain.com"]   # JSON array literal
 
 # Copy your seeded .strava/ from the laptop (see Step 4)
 
@@ -109,8 +187,11 @@ See [`deploy/README.md`](./deploy/README.md) for full details. Short version:
 
 ```bash
 # On the Pi, inside /home/pi/strava-intelligence
-sudo cp deploy/strava-deploy.service /etc/systemd/system/
-sudo cp deploy/strava-deploy.timer   /etc/systemd/system/
+# If your user/path differ from pi:/home/pi, patch the service in-flight:
+sed -e "s|User=pi|User=$USER|" -e "s|Group=pi|Group=$USER|" \
+    -e "s|/home/pi/|$HOME/|g" deploy/strava-deploy.service \
+  | sudo tee /etc/systemd/system/strava-deploy.service > /dev/null
+sudo cp deploy/strava-deploy.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now strava-deploy.timer
 ```
@@ -139,27 +220,22 @@ journalctl -u strava-deploy.service -f
 You can route SSH through the same Cloudflare Tunnel instead of opening port
 22 on your router.
 
-1. In the Cloudflare Zero Trust dashboard → your tunnel → **Public Hostnames**,
-   add a second entry:
-   - Subdomain: `ssh`
-   - Domain: `yourdomain.com`
-   - Service type: `SSH`
-   - URL: `localhost:22`
-2. Optionally add a Cloudflare Access policy on `ssh.yourdomain.com` to gate
-   authentication (email OTP / Google SSO).
-3. The `cloudflared` container needs to reach the Pi host's `localhost:22`.
-   The simplest pattern is to run `cloudflared` as a **systemd service on the
-   Pi host** (outside Docker) instead of in Docker Compose — it can then
-   reach both the app (port 8000 on the host) and `localhost:22` naturally:
-
+1. If you used **Option A** (dashboard tunnel + token in Docker), add a second
+   **Public Hostname** to your tunnel (Zero Trust → your tunnel → Public Hostnames):
+   - Subdomain: `ssh`, Domain: `yourdomain.com`, Service: `SSH`, URL: `localhost:22`
+   Then move `cloudflared` out of Docker onto the host (only the host can reach
+   `localhost:22`, not a container):
    ```bash
-   curl -L https://pkg.cloudflare.com/cloudflared-stable-linux-arm64.deb -o cloudflared.deb
-   sudo dpkg -i cloudflared.deb
    sudo cloudflared service install <YOUR_TUNNEL_TOKEN>
    ```
+   Disable the compose `cloudflared` service via the override file (Step 4).
 
-   After this, you can remove the `cloudflared` service from
-   `docker-compose.yml`.
+2. If you used **Option B** (CLI tunnel + config.yml), the `ssh.yourdomain.com`
+   ingress rule and host-run service are already in place — nothing extra to do
+   server-side. Just route DNS: `cloudflared tunnel route dns strava-pi ssh.yourdomain.com`.
+
+3. **Recommended:** add a Cloudflare Access policy on `ssh.yourdomain.com`
+   (defense-in-depth over key-only SSH). Same flow as Step 3.
 
 4. On your laptop, install `cloudflared` and add to `~/.ssh/config`:
 
@@ -168,10 +244,49 @@ You can route SSH through the same Cloudflare Tunnel instead of opening port
      HostName ssh.yourdomain.com
      ProxyCommand cloudflared access ssh --hostname %h
      User pi
+     IdentityFile ~/.ssh/id_ed25519
+   ```
+
+   If Access is on, do a one-time browser login (token is then cached ~30d):
+
+   ```bash
+   cloudflared access login ssh.yourdomain.com
    ```
 
    Then just `ssh pi` — Cloudflare gates the connection, Pi never exposes
    port 22 to the internet.
+
+## Monitoring & alerts
+
+The app exposes `GET /api/health` returning JSON with `status: "ok"` and cache
+state. Combine it with a **dead-man's switch** service (e.g., free
+[Healthchecks.io](https://healthchecks.io)) to get notified when the Pi goes
+down, the app crashes, or the tunnel breaks — all from one alert.
+
+Flow: a systemd timer on the Pi probes `/api/health` locally; on success it
+pings the check's URL, on failure it pings `<url>/fail`. If either path stops
+pinging (Pi off, network dead, cron broken), the monitor alerts after the grace
+period.
+
+```bash
+# On the Pi — store the ping URL (600 so only root reads it)
+echo "HC_URL=https://hc-ping.com/<your-check-uuid>" \
+  | sudo tee /etc/strava-healthcheck.env > /dev/null
+sudo chmod 600 /etc/strava-healthcheck.env
+
+# Install the script + systemd timer (see scripts/healthcheck.sh + deploy/).
+# Same sed patch as the auto-deploy unit, for non-pi users/paths:
+sed -e "s|User=pi|User=$USER|" -e "s|Group=pi|Group=$USER|" \
+    -e "s|/home/pi/|$HOME/|g" deploy/strava-healthcheck.service \
+  | sudo tee /etc/systemd/system/strava-healthcheck.service > /dev/null
+sudo cp deploy/strava-healthcheck.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now strava-healthcheck.timer
+```
+
+Keep the Pi timer cadence and the HC.io **period** in sync (both `12h` is a
+sensible default — `30m` grace gives leeway for transient hiccups). Connect a
+Telegram/email integration in HC.io under **Integrations** to route alerts.
 
 ## Local development (without Cloudflare)
 

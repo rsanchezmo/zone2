@@ -1,0 +1,15 @@
+[Unit]
+Description=Strava Intelligence health probe (Healthchecks.io dead-man's switch)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/strava-healthcheck.env
+# EDIT THESE to match your Pi: the user that owns the repo and its path.
+User=pi
+Group=pi
+ExecStart=/home/pi/strava-intelligence/scripts/healthcheck.sh
+
+StandardOutput=journal
+StandardError=journal
