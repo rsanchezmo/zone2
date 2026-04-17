@@ -1,37 +1,25 @@
 from datetime import datetime, timedelta, date
-from functools import lru_cache
-import json
 from fastapi import APIRouter, Depends, Query
 import pandas as pd
 import numpy as np
 
+from backend._ttl_cache import TTLCache
 from backend.dependencies import get_si
 from strava.strava_intelligence import StravaIntelligence
 from strava.strava_utils import convert_speed, get_sport_category
 
 router = APIRouter()
 
-# In-memory cache for stats (cleared on sync)
-_weekly_report_cache: dict[str, dict] = {}
-_year_in_sport_cache: dict[str, dict] = {}
-
-
-_race_predictions_cache: dict[str, dict] = {}
-_training_load_cache: dict | None = None
-_fitness_chart_cache: dict[str, dict] = {}
-_fitness_trend_cache: dict[str, dict] = {}
+# Single TTL cache for all stats endpoints. Keys are tuples
+# (endpoint, *params, cache_version) so entries self-invalidate when the
+# underlying activities dataset changes.
+_stats_cache = TTLCache(maxsize=256, ttl_seconds=900)
 
 
 def clear_stats_cache():
-    """Call after sync to invalidate cached reports."""
-    global _personal_records_cache, _training_load_cache
-    _weekly_report_cache.clear()
-    _year_in_sport_cache.clear()
-    _personal_records_cache = None
-    _race_predictions_cache.clear()
-    _training_load_cache = None
-    _fitness_chart_cache.clear()
-    _fitness_trend_cache.clear()
+    """Call after sync to drop cached reports immediately (TTL + cache_version
+    also handle this lazily — this just reclaims memory sooner)."""
+    _stats_cache.clear()
 
 
 def _serialize_enum_dict(d: dict) -> dict:
@@ -40,11 +28,12 @@ def _serialize_enum_dict(d: dict) -> dict:
 
 
 def _get_weekly_report_cached(si: StravaIntelligence, week_start: str | None, cutoff_date: str | None = None) -> dict:
-    cache_key = f"{week_start}|{cutoff_date}"
-    if cache_key in _weekly_report_cache:
-        return _weekly_report_cache[cache_key]
+    key = ("weekly", week_start, cutoff_date, si.strava_activities_cache.cache_version)
+    cached = _stats_cache.get(key)
+    if cached is not None:
+        return cached
     result = si.strava_analytics.get_weekly_report(week_start, cutoff_date=cutoff_date)
-    _weekly_report_cache[cache_key] = result
+    _stats_cache.set(key, result)
     return result
 
 
@@ -80,14 +69,16 @@ def weekly_report(
     }
 
 
-def _get_year_in_sport_cached(si: StravaIntelligence, cache_key: str, year: int, main_sport: str, cutoff):
-    if cache_key in _year_in_sport_cache:
-        return _year_in_sport_cache[cache_key]
+def _get_year_in_sport_cached(si: StravaIntelligence, year: int, main_sport: str, cutoff):
+    key = ("year_in_sport", year, main_sport, cutoff, si.strava_activities_cache.cache_version)
+    cached = _stats_cache.get(key)
+    if cached is not None:
+        return cached
     result = {
         "main": si.strava_analytics.get_year_in_sport(year, main_sport, cutoff_month_day=cutoff),
         "all": si.strava_analytics.get_all_year_in_sport(year, cutoff_month_day=cutoff),
     }
-    _year_in_sport_cache[cache_key] = result
+    _stats_cache.set(key, result)
     return result
 
 
@@ -104,7 +95,7 @@ def year_in_sport(
     # Only apply cutoff when viewing the current (incomplete) year
     cutoff = (today.month, today.day) if is_current_year else None
 
-    data = _get_year_in_sport_cached(si, f"{year}|{main_sport}|{cutoff}", year, main_sport, cutoff)
+    data = _get_year_in_sport_cached(si, year, main_sport, cutoff)
 
     result = {
         "main_sport": _serialize_enum_dict(data["main"]),
@@ -114,7 +105,7 @@ def year_in_sport(
     }
 
     if comparison_year:
-        comp_data = _get_year_in_sport_cached(si, f"{comparison_year}|{main_sport}|{cutoff}", comparison_year, main_sport, cutoff)
+        comp_data = _get_year_in_sport_cached(si, comparison_year, main_sport, cutoff)
         result["comparison"] = {
             "main_sport": _serialize_enum_dict(comp_data["main"]),
             "all_sports": _serialize_enum_dict(comp_data["all"]),
@@ -130,8 +121,12 @@ def efficiency_factor(
     window: int = Query(default=14, ge=3, le=90),
     si: StravaIntelligence = Depends(get_si),
 ):
-    activities = si.strava_activities_cache.activities_raw.copy()
-    activities["start_date_local"] = pd.to_datetime(activities["start_date_local"])
+    key = ("efficiency_factor", sport_type, window, si.strava_activities_cache.cache_version)
+    cached = _stats_cache.get(key)
+    if cached is not None:
+        return cached
+
+    activities = si.strava_analytics._get_prepared_activities()
     filtered = activities[activities["sport_type"] == sport_type].copy()
 
     if filtered.empty:
@@ -164,7 +159,9 @@ def efficiency_factor(
         for d in ef_data:
             d["ef_rolling"] = d["ef"]
 
-    return {"data": ef_data, "sport_type": sport_type, "window": window}
+    result = {"data": ef_data, "sport_type": sport_type, "window": window}
+    _stats_cache.set(key, result)
+    return result
 
 
 @router.get("/performance-frontier")
@@ -172,8 +169,13 @@ def performance_frontier(
     sport_types: str = Query(default="Run"),
     si: StravaIntelligence = Depends(get_si),
 ):
+    key = ("performance_frontier", sport_types, si.strava_activities_cache.cache_version)
+    cached = _stats_cache.get(key)
+    if cached is not None:
+        return cached
+
     sport_list = [s.strip() for s in sport_types.split(",")]
-    activities = si.strava_activities_cache.activities_raw.copy()
+    activities = si.strava_analytics._get_prepared_activities()
     filtered = activities[activities["sport_type"].isin(sport_list)].copy()
 
     if filtered.empty:
@@ -204,7 +206,6 @@ def performance_frontier(
     if points:
         distances = np.array([p["distance_km"] for p in points])
         paces = np.array([p["pace"] for p in points])
-        # For pace sports, lower is better; for speed sports, higher is better
         n_bins = min(20, len(points))
         bins = np.linspace(distances.min(), distances.max(), n_bins + 1)
         frontier = []
@@ -219,7 +220,9 @@ def performance_frontier(
     else:
         frontier = []
 
-    return {"data": points, "frontier": frontier, "sport_types": sport_list}
+    result = {"data": points, "frontier": frontier, "sport_types": sport_list}
+    _stats_cache.set(key, result)
+    return result
 
 
 @router.get("/activity-clock")
@@ -227,9 +230,13 @@ def activity_clock(
     sport_types: str = Query(default="Run"),
     si: StravaIntelligence = Depends(get_si),
 ):
+    key = ("activity_clock", sport_types, si.strava_activities_cache.cache_version)
+    cached = _stats_cache.get(key)
+    if cached is not None:
+        return cached
+
     sport_list = [s.strip() for s in sport_types.split(",")]
-    activities = si.strava_activities_cache.activities_raw.copy()
-    activities["start_date_local"] = pd.to_datetime(activities["start_date_local"])
+    activities = si.strava_analytics._get_prepared_activities()
     filtered = activities[activities["sport_type"].isin(sport_list)].copy()
 
     if filtered.empty:
@@ -247,7 +254,9 @@ def activity_clock(
             "date": row["start_date_local"].isoformat(),
         })
 
-    return {"data": points, "sport_types": sport_list}
+    result = {"data": points, "sport_types": sport_list}
+    _stats_cache.set(key, result)
+    return result
 
 
 @router.get("/cumulative-distance")
@@ -411,9 +420,6 @@ def streaks(
     }
 
 
-_personal_records_cache: dict | None = None
-
-
 def _compute_sport_totals(si: StravaIntelligence) -> dict:
     """Compute total distance (km) and time (seconds) per sport category."""
     activities = si.strava_activities_cache.activities
@@ -456,11 +462,13 @@ def personal_records(
     bust_cache: bool = Query(default=False),
 ):
     """Personal records (best efforts) at standard distances for running, cycling, and swimming."""
-    global _personal_records_cache
-    if _personal_records_cache is not None and not bust_cache:
-        return _personal_records_cache
+    key = ("personal_records", si.strava_activities_cache.cache_version)
+    if not bust_cache:
+        cached = _stats_cache.get(key)
+        if cached is not None:
+            return cached
     result = si.strava_analytics.get_personal_records()
-    _personal_records_cache = result
+    _stats_cache.set(key, result)
     return result
 
 
@@ -519,10 +527,12 @@ def race_predictions(
     sport_category: str = Query(default="running"),
     si: StravaIntelligence = Depends(get_si),
 ):
-    if sport_category in _race_predictions_cache:
-        return _race_predictions_cache[sport_category]
+    key = ("race_predictions", sport_category, si.strava_activities_cache.cache_version)
+    cached = _stats_cache.get(key)
+    if cached is not None:
+        return cached
     result = si.strava_analytics.get_race_predictions(sport_category)
-    _race_predictions_cache[sport_category] = result
+    _stats_cache.set(key, result)
     return result
 
 
@@ -549,11 +559,12 @@ def fitness_chart(
     end_date: str | None = None,
     si: StravaIntelligence = Depends(get_si),
 ):
-    cache_key = f"{start_date}|{end_date}"
-    if cache_key in _fitness_chart_cache:
-        return _fitness_chart_cache[cache_key]
+    key = ("fitness_chart", start_date, end_date, si.strava_activities_cache.cache_version)
+    cached = _stats_cache.get(key)
+    if cached is not None:
+        return cached
     result = si.strava_analytics.get_pmc_chart(start_date, end_date)
-    _fitness_chart_cache[cache_key] = result
+    _stats_cache.set(key, result)
     return result
 
 
@@ -564,9 +575,10 @@ def fitness_trend(
     end_date: str | None = None,
     si: StravaIntelligence = Depends(get_si),
 ):
-    cache_key = f"{sport_type}|{start_date}|{end_date}"
-    if cache_key in _fitness_trend_cache:
-        return _fitness_trend_cache[cache_key]
+    key = ("fitness_trend", sport_type, start_date, end_date, si.strava_activities_cache.cache_version)
+    cached = _stats_cache.get(key)
+    if cached is not None:
+        return cached
     result = si.strava_analytics.get_fitness_trend(sport_type, start_date, end_date)
-    _fitness_trend_cache[cache_key] = result
+    _stats_cache.set(key, result)
     return result

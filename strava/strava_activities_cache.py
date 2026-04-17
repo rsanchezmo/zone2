@@ -21,6 +21,14 @@ class StravaActivitiesCache:
         self._memory_cache: pd.DataFrame | None = None
         self._cache_loaded_at: datetime | None = None
 
+        # Monotonic version bumped whenever the underlying dataset changes.
+        # Downstream caches (stats, prepared views) use this as a key component
+        # so stale entries self-invalidate without needing an explicit clear.
+        self._cache_version: int = 0
+
+    @property
+    def cache_version(self) -> int:
+        return self._cache_version
 
     def __load_metadata(self):
         """Load cache metadata or initialize if missing."""
@@ -41,6 +49,7 @@ class StravaActivitiesCache:
         """Invalidate the in-memory cache after data changes."""
         self._memory_cache = None
         self._cache_loaded_at = None
+        self._cache_version += 1
 
     def _load_to_memory(self) -> pd.DataFrame:
         """
