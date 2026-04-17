@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { usePolylines, useSportTypes, useYears } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
@@ -13,9 +13,11 @@ import clsx from 'clsx'
 
 function FitAll({ bounds }: { bounds: [number, number][] }) {
   const map = useMap()
+  const hasFitted = useRef(false)
   useEffect(() => {
-    if (bounds.length > 0) {
+    if (bounds.length > 0 && !hasFitted.current) {
       map.fitBounds(bounds as LatLngBoundsExpression, { padding: [30, 30] })
+      hasFitted.current = true
     }
   }, [map, bounds])
   return null
@@ -39,7 +41,8 @@ function FlyToCity({ target }: { target: { lat: number; lon: number; bbox: [numb
 function InvalidateSize({ expanded }: { expanded: boolean }) {
   const map = useMap()
   useEffect(() => {
-    setTimeout(() => map.invalidateSize(), 100)
+    const id = setTimeout(() => map.invalidateSize(), 100)
+    return () => clearTimeout(id)
   }, [map, expanded])
   return null
 }
@@ -255,6 +258,7 @@ export default function AggregationsPage() {
             url={heatmapUrl}
             label="Export Heatmap"
             filename={`heatmap_${heatmapCity || 'all'}.png`}
+            exportType="thunderstorm-heatmap"
           />
         </div>
 
