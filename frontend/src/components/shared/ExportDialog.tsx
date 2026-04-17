@@ -216,24 +216,26 @@ export default function ExportDialog({
         {/* Header */}
         <div className={clsx(
           'flex items-center justify-between px-5 py-4 border-b',
-          isLight ? 'border-gray-100' : 'border-surface-600'
+          isLight ? 'border-gray-100' : 'border-surface-600',
         )}>
           <div>
-            <h3 className={clsx('text-sm font-semibold', isLight ? 'text-gray-800' : 'text-gray-100')}>
-              Export Settings
-            </h3>
-            <p className={clsx('text-xs mt-0.5', isLight ? 'text-gray-400' : 'text-gray-500')}>
+            <div className="eyebrow mb-0.5">Export</div>
+            <h3
+              className={clsx('text-sm font-semibold tracking-tight', isLight ? 'text-gray-900' : 'text-gray-100')}
+              style={{ letterSpacing: '-0.015em' }}
+            >
               {EXPORT_LABELS[exportType]}
-            </p>
+            </h3>
           </div>
           <button
             onClick={onClose}
             className={clsx(
               'w-7 h-7 rounded-md flex items-center justify-center transition-colors',
-              isLight ? 'hover:bg-gray-100 text-gray-400' : 'hover:bg-surface-600 text-gray-500'
+              isLight ? 'hover:bg-gray-100 text-gray-400' : 'hover:bg-surface-600 text-gray-500',
             )}
+            aria-label="Close"
           >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
               <path d="M1 1l12 12M13 1L1 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
           </button>
@@ -250,24 +252,24 @@ export default function ExportDialog({
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div className={clsx(
                     'flex flex-col items-center gap-3',
-                    isLight ? 'text-gray-400' : 'text-gray-500'
+                    isLight ? 'text-gray-400' : 'text-gray-500',
                   )}>
                     <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                    <span className="text-xs">Generating preview...</span>
+                    <span className="eyebrow">Generating preview</span>
                   </div>
                 </div>
               )}
               {!previewSrc && !previewLoading && !previewError && (
                 <div className={clsx(
                   'flex flex-col items-center gap-2 py-8',
-                  isLight ? 'text-gray-400' : 'text-gray-500'
+                  isLight ? 'text-gray-400' : 'text-gray-500',
                 )}>
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
                     <rect x="3" y="3" width="18" height="18" rx="2" />
                     <circle cx="8.5" cy="8.5" r="1.5" />
                     <path d="m21 15-5-5L5 21" />
                   </svg>
-                  <span className="text-xs">Click refresh to generate preview</span>
+                  <span className="eyebrow">Click refresh to generate</span>
                 </div>
               )}
               {previewError && !previewLoading && (
@@ -412,16 +414,27 @@ export default function ExportDialog({
             onClick={handleDownload}
             disabled={downloading}
             className={clsx(
-              'btn font-semibold',
-              downloading && 'opacity-50'
+              'btn inline-flex items-center gap-1.5 !text-[10px] uppercase font-semibold',
+              downloading && 'opacity-50',
             )}
             style={{
+              letterSpacing: '0.15em',
               borderColor: colorOption ? neonColor : undefined,
               color: colorOption ? neonColor : undefined,
               boxShadow: colorOption ? `0 0 12px ${neonColor}20` : undefined,
             }}
           >
-            {downloading ? 'Exporting...' : 'Download'}
+            {downloading ? (
+              <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            ) : (
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M8 1v9M4 7l4 4 4-4M2 13h12" />
+              </svg>
+            )}
+            <span>{downloading ? 'Exporting' : 'Download'}</span>
           </button>
         </div>
       </div>
@@ -434,10 +447,10 @@ function hasColorOption(exportType: ExportType) {
   return !['efficiency-factor', 'performance-frontier'].includes(exportType)
 }
 
-function Section({ label, isLight, children }: { label: string; isLight: boolean; children: React.ReactNode }) {
+function Section({ label, isLight: _isLight, children }: { label: string; isLight: boolean; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <label className={clsx('text-xs font-medium', isLight ? 'text-gray-500' : 'text-gray-400')}>
+      <label className="eyebrow">
         {label}
       </label>
       {children}
