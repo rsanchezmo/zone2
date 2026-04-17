@@ -342,3 +342,111 @@ body::before {
   from { opacity: 0; transform: scale(0.95); }
   to { opacity: 1; transform: scale(1); }
 }
+
+/* ── Telemetry-console primitives ─────────────────── */
+
+/* Uppercase micro-cap label — instrument-panel nomenclature.
+ * Use for section titles, stat labels, any metadata above a number. */
+.eyebrow {
+  @apply text-[11px] font-medium uppercase;
+  letter-spacing: 0.18em;
+  color: #6b7280;
+}
+.light .eyebrow {
+  color: #6b7280;
+}
+
+/* Hairline-bordered panel. Restrained sibling of `.card` — use when the
+ * content is the focus and the container should recede. */
+.panel {
+  @apply rounded-xl border transition-all duration-200;
+  background: var(--color-surface-800);
+  border-color: var(--color-surface-600);
+}
+.panel:hover {
+  border-color: var(--color-surface-500);
+}
+.light .panel {
+  background: #ffffff;
+  border-color: #ececec;
+}
+.light .panel:hover {
+  border-color: #d9d9d9;
+}
+
+/* Section header — eyebrow label + hairline rule extending to the right.
+ * Used to separate dashboard sections without adding boxes around everything. */
+.section-head {
+  @apply flex items-center gap-3;
+}
+.section-head::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(to right, var(--color-surface-600) 0%, transparent 75%);
+}
+.light .section-head::after {
+  background: linear-gradient(to right, #e5e5e5 0%, transparent 75%);
+}
+
+/* Hero corner brackets — tactical/instrument detail. Apply with an accent
+ * color via `--card-accent`. */
+.hero-brackets {
+  position: relative;
+}
+.hero-brackets::before,
+.hero-brackets::after {
+  content: '';
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-color: var(--card-accent, rgba(255, 255, 255, 0.2));
+  opacity: 0.55;
+  pointer-events: none;
+}
+.hero-brackets::before {
+  top: -1px;
+  left: -1px;
+  border-top: 1px solid;
+  border-left: 1px solid;
+  border-top-left-radius: 12px;
+}
+.hero-brackets::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 1px solid;
+  border-right: 1px solid;
+  border-bottom-right-radius: 12px;
+}
+
+/* Key/value row in a telemetry strip — monospace number right-aligned to a
+ * muted label. Thin separator border by default. */
+.telemetry-row {
+  @apply flex items-baseline justify-between gap-3 py-2.5;
+  border-top: 1px solid var(--color-surface-600);
+}
+.telemetry-row:first-child {
+  border-top: none;
+}
+.light .telemetry-row {
+  border-top-color: #ececec;
+}
+
+/* Divider-label — small text label centered on a hairline rule. Good for
+ * subdued section separators inside a panel. */
+.divider-label {
+  @apply flex items-center gap-3 text-[10px] uppercase font-medium;
+  letter-spacing: 0.2em;
+  color: #6b7280;
+}
+.divider-label::before,
+.divider-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-surface-600);
+}
+.light .divider-label::before,
+.light .divider-label::after {
+  background: #ececec;
+}
