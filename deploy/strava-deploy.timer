@@ -1,0 +1,15 @@
+[Unit]
+Description=Run Strava Intelligence auto-deploy every 12 hours
+
+[Timer]
+# First run shortly after boot — catches any commits pushed while the Pi
+# was offline and makes reboot ≈ deploy.
+OnBootSec=2min
+# Then every 12h from the last run.
+OnUnitActiveSec=12h
+Unit=strava-deploy.service
+# If the Pi was off when a firing was due, run it on next boot.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
