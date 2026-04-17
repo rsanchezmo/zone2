@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { format, parseISO, differenceInDays } from 'date-fns'
 import {
-  useRaceEvents, useUpcomingRaces, useCreateRaceEvent, useUpdateRaceEvent, useDeleteRaceEvent,
+  useRaceEvents, useCreateRaceEvent, useUpdateRaceEvent, useDeleteRaceEvent,
   useActivitiesByDateRange,
 } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
@@ -12,6 +12,8 @@ import clsx from 'clsx'
 import { useTheme } from '../hooks/useTheme'
 import { useToast } from '../hooks/useToast'
 
+const RACE_ACCENT = '#eab308' // amber — race identity across the page
+
 export default function RacesPage() {
   const { theme } = useTheme()
   const isLight = theme === 'light'
@@ -19,17 +21,14 @@ export default function RacesPage() {
   const [filterYear, setFilterYear] = useState<number>(new Date().getFullYear())
 
   const { data: allRaces, isLoading } = useRaceEvents(filterYear)
-  const { data: upcomingRaces } = useUpcomingRaces()
   const createRace = useCreateRaceEvent()
   const updateRace = useUpdateRaceEvent()
   const deleteRace = useDeleteRaceEvent()
 
-  // For linking past races to activities — fetch the year's activities
   const dateFrom = `${filterYear}-01-01`
   const dateTo = `${filterYear}-12-31`
   const { data: activitiesData } = useActivitiesByDateRange(dateFrom, dateTo)
 
-  // Form state
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [name, setName] = useState('')
@@ -85,7 +84,6 @@ export default function RacesPage() {
     }
   }
 
-  // Build activity map by date for linking past races
   const activityByDate: Record<string, Array<{ id: number; name: string; sport_type: string; distance_km: number }>> = {}
   if (activitiesData?.items) {
     for (const a of activitiesData.items) {
@@ -103,271 +101,285 @@ export default function RacesPage() {
 
   const paceUnit = getPaceUnit(sportType)
 
+  const panelClass = clsx(
+    'panel',
+    isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
+  )
+
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="page-title">Races</h2>
-        <div className="flex items-center gap-2">
+    <div className="max-w-4xl mx-auto space-y-10 pb-12">
+      {/* ── Breadcrumb header ─────────────────────────── */}
+      <header className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-baseline gap-2">
+          <span className="eyebrow">Races</span>
+          <span className={clsx('text-[11px]', isLight ? 'text-gray-300' : 'text-gray-700')}>/</span>
           <select
             value={filterYear}
             onChange={e => setFilterYear(Number(e.target.value))}
-            className={clsx('border rounded-lg px-3 py-1.5 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
+            className="select shrink-0"
+            style={{ borderLeftWidth: 2, borderLeftColor: RACE_ACCENT }}
+            aria-label="Year"
           >
             {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() + 1 - i).map(y => (
               <option key={y} value={y}>{y}</option>
             ))}
           </select>
-          <button
-            onClick={() => { resetForm(); setShowForm(true); setDate(format(today, 'yyyy-MM-dd')) }}
-            className={clsx('rounded-lg px-4 py-1.5 text-sm font-medium transition-colors', 'bg-amber-500/20 text-amber-500 border border-amber-500/30 hover:bg-amber-500/30')}
-          >
-            + Add Race
-          </button>
         </div>
-      </div>
+        <button
+          onClick={() => { resetForm(); setShowForm(true); setDate(format(today, 'yyyy-MM-dd')) }}
+          className="btn"
+          style={{
+            borderColor: `${RACE_ACCENT}40`,
+            color: RACE_ACCENT,
+            backgroundColor: `${RACE_ACCENT}15`,
+          }}
+        >
+          + Add race
+        </button>
+      </header>
 
-      {/* Create / Edit form */}
+      {/* ── Create / Edit form ────────────────────────── */}
       {showForm && (
-        <div className={clsx('rounded-xl p-5 border', isLight ? 'bg-white border-amber-200' : 'bg-surface-800 border-amber-500/20')}>
-          <div className="flex items-center justify-between mb-4">
-            <div className="text-sm font-semibold flex items-center gap-2 text-amber-500">
-              <span>&#9873;</span> {editingId ? 'Edit Race' : 'New Race'}
+        <section className={clsx(panelClass, 'hero-brackets p-5 md:p-6 space-y-4')} style={{ ['--card-accent' as string]: RACE_ACCENT }}>
+          <div className="flex items-center justify-between">
+            <div className="eyebrow flex items-center gap-2" style={{ color: RACE_ACCENT }}>
+              <span aria-hidden="true">⚑</span>
+              {editingId ? 'Edit race' : 'New race'}
             </div>
-            <button onClick={resetForm} className={clsx('text-gray-400 hover:text-gray-200 text-xs')}>Cancel</button>
+            <button onClick={resetForm} className={clsx('text-[11px] uppercase tracking-[0.15em]', isLight ? 'text-gray-400 hover:text-gray-600' : 'text-gray-500 hover:text-gray-200')}>Close</button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className="md:col-span-2">
-              <label className="text-xs text-gray-500 mb-1 block">Race Name *</label>
+              <label className="eyebrow mb-1.5 block">Race name *</label>
               <input
                 type="text" placeholder="e.g. Berlin Marathon"
                 value={name} onChange={e => setName(e.target.value)}
-                className={clsx('w-full border rounded-lg px-3 py-2.5 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
+                className="input w-full"
                 autoFocus
               />
             </div>
             <div>
-              <label className="text-xs text-gray-500 mb-1 block">Date *</label>
+              <label className="eyebrow mb-1.5 block">Date *</label>
               <input
                 type="date"
                 value={date} onChange={e => setDate(e.target.value)}
-                className={clsx('w-full border rounded-lg px-3 py-2.5 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
+                className="input w-full"
               />
             </div>
             <div>
-              <label className="text-xs text-gray-500 mb-1 block">Sport</label>
+              <label className="eyebrow mb-1.5 block">Sport</label>
               <SportTypeCombobox
                 value={sportType}
                 onChange={setSportType}
-                className={clsx('w-full border rounded-lg px-3 py-2.5 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
+                className="input w-full"
                 isLight={isLight}
               />
             </div>
             <div>
-              <label className="text-xs text-gray-500 mb-1 block">Distance (km)</label>
+              <label className="eyebrow mb-1.5 block">Distance (km)</label>
               <input
                 type="text" inputMode="decimal" placeholder="42.195"
                 value={distanceKm} onChange={e => setDistanceKm(e.target.value)}
-                className={clsx('w-full border rounded-lg px-3 py-2.5 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
+                className="input w-full"
               />
             </div>
             <div>
-              <label className="text-xs text-gray-500 mb-1 block">Target Pace ({paceUnit})</label>
+              <label className="eyebrow mb-1.5 block">Target pace ({paceUnit})</label>
               <input
                 type="text" inputMode="decimal" placeholder={paceUnit === 'min/km' ? '5:00' : '30'}
                 value={targetPace} onChange={e => setTargetPace(e.target.value)}
-                className={clsx('w-full border rounded-lg px-3 py-2.5 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
+                className="input w-full"
               />
             </div>
             <div>
-              <label className="text-xs text-gray-500 mb-1 block">Location</label>
+              <label className="eyebrow mb-1.5 block">Location</label>
               <input
                 type="text" placeholder="Berlin, Germany"
                 value={location} onChange={e => setLocation(e.target.value)}
-                className={clsx('w-full border rounded-lg px-3 py-2.5 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
+                className="input w-full"
               />
             </div>
             <div className="md:col-span-2">
-              <label className="text-xs text-gray-500 mb-1 block">URL</label>
+              <label className="eyebrow mb-1.5 block">URL</label>
               <input
-                type="text" placeholder="https://..."
+                type="text" placeholder="https://…"
                 value={url} onChange={e => setUrl(e.target.value)}
-                className={clsx('w-full border rounded-lg px-3 py-2.5 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
+                className="input w-full"
               />
             </div>
             <div className="md:col-span-2">
-              <label className="text-xs text-gray-500 mb-1 block">Notes</label>
+              <label className="eyebrow mb-1.5 block">Notes</label>
               <textarea
-                placeholder="Goals, strategy, notes..."
+                placeholder="Goals, strategy, notes…"
                 value={description} onChange={e => setDescription(e.target.value)}
-                className={clsx('w-full border rounded-lg px-3 py-2.5 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
+                className="input w-full"
                 rows={3}
               />
             </div>
           </div>
-          <div className="flex gap-2 mt-4">
+          <div className="flex gap-2">
             <button
               onClick={handleSubmit}
               disabled={!name.trim() || !date}
-              className={clsx(
-                'flex-1 rounded-lg py-2.5 text-sm font-medium transition-colors',
-                'bg-amber-500/20 text-amber-500 border border-amber-500/30 hover:bg-amber-500/30',
-                'disabled:opacity-40 disabled:cursor-not-allowed',
-              )}
+              className="btn flex-1 !text-sm !py-2"
+              style={{
+                borderColor: `${RACE_ACCENT}50`,
+                color: RACE_ACCENT,
+                backgroundColor: `${RACE_ACCENT}15`,
+              }}
             >
-              {editingId ? 'Save Changes' : 'Create Race'}
+              {editingId ? 'Save changes' : 'Create race'}
             </button>
-            <button onClick={resetForm} className={clsx('px-6 rounded-lg py-2.5 text-sm text-gray-400', isLight ? 'bg-gray-100 hover:text-gray-700' : 'bg-surface-700 hover:text-gray-200')}>
-              Cancel
-            </button>
+            <button onClick={resetForm} className="btn !text-sm !py-2 px-6">Cancel</button>
           </div>
-        </div>
+        </section>
       )}
 
       {isLoading ? (
         <div className="space-y-3">
           {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className={clsx('rounded-xl p-5 h-24 border animate-pulse', isLight ? 'bg-gray-100 border-gray-200' : 'bg-surface-800 border-surface-600')} />
+            <div key={i} className={clsx(panelClass, 'p-5 h-24 animate-pulse')} />
           ))}
         </div>
       ) : (
         <>
-          {/* Upcoming Races */}
+          {/* ── Upcoming ─────────────────────────────── */}
           {upcoming.length > 0 && (
             <section>
-              <div className="text-xs text-gray-500 uppercase mb-3">Upcoming</div>
-              <div className="space-y-3">
+              <div className="section-head mb-4"><span className="eyebrow" style={{ color: RACE_ACCENT }}>Upcoming</span></div>
+              <div className="space-y-3 stagger-children">
                 {upcoming.map((r: Record<string, unknown>) => {
                   const daysUntil = differenceInDays(parseISO(r.date as string), today) + 1
                   const sportColor = getSportColor(r.sport_type as string)
                   const isConfirming = confirmDeleteId === (r.id as number)
                   return (
-                    <div key={r.id as number} className={clsx(
-                      'rounded-xl border p-4 transition-colors',
-                      isLight ? 'bg-white border-amber-200 hover:border-amber-300' : 'bg-surface-800 border-amber-500/20 hover:border-amber-500/40',
-                    )}>
+                    <article
+                      key={r.id as number}
+                      className={clsx(panelClass, 'p-4 transition-colors')}
+                      style={{ borderLeftWidth: 2, borderLeftColor: RACE_ACCENT }}
+                    >
                       <div className="flex items-start gap-4">
-                        {/* Countdown */}
-                        <div className={clsx(
-                          'flex flex-col items-center justify-center rounded-lg px-3 py-2 shrink-0 min-w-[60px]',
-                          isLight ? 'bg-amber-50' : 'bg-amber-500/10',
-                        )}>
-                          <div className="text-2xl font-bold text-amber-500 leading-none">{daysUntil}</div>
-                          <div className="text-[10px] text-amber-500/70 uppercase">day{daysUntil !== 1 ? 's' : ''}</div>
+                        {/* Countdown block */}
+                        <div
+                          className="flex flex-col items-center justify-center rounded-lg px-3 py-2 shrink-0 min-w-[68px] border"
+                          style={{
+                            backgroundColor: `${RACE_ACCENT}10`,
+                            borderColor: `${RACE_ACCENT}30`,
+                          }}
+                        >
+                          <div
+                            className="text-2xl font-mono tabular-nums font-bold leading-none"
+                            style={{ color: RACE_ACCENT, letterSpacing: '-0.02em' }}
+                          >
+                            {daysUntil}
+                          </div>
+                          <div className="eyebrow mt-1 text-[9px]" style={{ color: `${RACE_ACCENT}cc` }}>
+                            day{daysUntil !== 1 ? 's' : ''}
+                          </div>
                         </div>
 
                         {/* Details */}
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className={clsx('text-base font-semibold', isLight ? 'text-gray-800' : 'text-gray-100')}>{r.name as string}</span>
-                            <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: sportColor }} />
-                            <span className="text-xs text-gray-500">{r.sport_type as string}</span>
+                          <div className="flex items-center gap-2 flex-wrap mb-1">
+                            <span className={clsx('text-base font-semibold tracking-tight', isLight ? 'text-gray-900' : 'text-gray-100')}>{r.name as string}</span>
+                            <span
+                              className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.15em] px-2 py-0.5 rounded-full border font-semibold"
+                              style={{ color: sportColor, borderColor: `${sportColor}40`, backgroundColor: `${sportColor}15` }}
+                            >
+                              <span className="w-1 h-1 rounded-full" style={{ backgroundColor: sportColor }} aria-hidden="true" />
+                              {r.sport_type as string}
+                            </span>
                           </div>
-                          <div className="flex items-center gap-3 text-xs text-gray-500 flex-wrap">
-                            <span>{format(parseISO(r.date as string), 'EEEE, MMM d, yyyy')}</span>
-                            {r.distance_km != null && <span className="font-mono">{r.distance_km} km</span>}
-                            {r.target_pace != null && <span className="font-mono">{r.target_pace} {getPaceUnit(r.sport_type as string)}</span>}
-                            {r.location && <span>{r.location as string}</span>}
+                          <div className="flex items-center gap-3 text-[11px] text-gray-500 flex-wrap font-mono tabular-nums">
+                            <span>{format(parseISO(r.date as string), 'EEE · MMM d, yyyy')}</span>
+                            {r.distance_km != null && <span>{r.distance_km} km</span>}
+                            {r.target_pace != null && <span>{r.target_pace} {getPaceUnit(r.sport_type as string)}</span>}
+                            {r.location && <span className="normal-case">{r.location as string}</span>}
                           </div>
                           {r.description && (
-                            <div className={clsx('text-xs mt-1.5', isLight ? 'text-gray-500' : 'text-gray-400')}>{r.description as string}</div>
+                            <div className={clsx('text-xs mt-2 whitespace-pre-line', isLight ? 'text-gray-500' : 'text-gray-400')}>{r.description as string}</div>
                           )}
                           {r.url && (
                             <a
                               href={r.url as string}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-xs text-amber-500 hover:text-amber-400 mt-1 inline-block"
+                              className="text-[11px] mt-1.5 inline-flex items-center gap-1"
+                              style={{ color: RACE_ACCENT }}
                               onClick={e => e.stopPropagation()}
                             >
-                              Race website &#8599;
+                              Race website <span aria-hidden="true">↗</span>
                             </a>
                           )}
                         </div>
 
                         {/* Actions */}
-                        <div className="flex items-center gap-2 shrink-0">
-                          {isConfirming ? (
-                            <>
-                              <span className="text-xs text-red-400">Delete?</span>
-                              <button onClick={() => { deleteRace.mutate(r.id as number, { onSuccess: () => toast('Race deleted', 'success') }); setConfirmDeleteId(null) }} className="text-red-400 hover:text-red-300 text-xs font-bold">Yes</button>
-                              <button onClick={() => setConfirmDeleteId(null)} className="text-xs text-gray-400 hover:text-gray-200">No</button>
-                            </>
-                          ) : (
-                            <>
-                              <button onClick={() => startEdit(r)} className="text-xs text-gray-400 hover:text-gray-200">Edit</button>
-                              <button onClick={() => setConfirmDeleteId(r.id as number)} className="text-xs text-red-400 hover:text-red-300">Delete</button>
-                            </>
-                          )}
-                        </div>
+                        <RowActions
+                          isConfirming={isConfirming}
+                          onEdit={() => startEdit(r)}
+                          onConfirmDelete={() => { deleteRace.mutate(r.id as number, { onSuccess: () => toast('Race deleted', 'success') }); setConfirmDeleteId(null) }}
+                          onAskDelete={() => setConfirmDeleteId(r.id as number)}
+                          onCancelDelete={() => setConfirmDeleteId(null)}
+                        />
                       </div>
-                    </div>
+                    </article>
                   )
                 })}
               </div>
             </section>
           )}
 
-          {/* Past Races */}
+          {/* ── Past ───────────────────────────────── */}
           {past.length > 0 && (
             <section>
-              <div className="text-xs text-gray-500 uppercase mb-3">Past Races</div>
-              <div className="space-y-2">
+              <div className="section-head mb-4"><span className="eyebrow">Past races</span></div>
+              <div className="space-y-2 stagger-children">
                 {past.map((r: Record<string, unknown>) => {
                   const sportColor = getSportColor(r.sport_type as string)
                   const dayActivities = activityByDate[r.date as string] || []
                   const matchedActivity = dayActivities.find(a => a.sport_type === r.sport_type)
                   const isConfirming = confirmDeleteId === (r.id as number)
                   return (
-                    <div key={r.id as number} className={clsx(
-                      'rounded-xl border p-4 transition-colors',
-                      isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
-                    )}>
+                    <article key={r.id as number} className={clsx(panelClass, 'p-4 transition-colors')}>
                       <div className="flex items-center gap-4">
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-0.5">
-                            <span className={clsx('text-sm font-medium', isLight ? 'text-gray-700' : 'text-gray-200')}>{r.name as string}</span>
-                            <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: sportColor }} />
-                            <span className="text-xs text-gray-500">{r.sport_type as string}</span>
+                          <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                            <span className={clsx('text-sm font-semibold tracking-tight', isLight ? 'text-gray-900' : 'text-gray-100')}>{r.name as string}</span>
+                            <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: sportColor }} aria-hidden="true" />
+                            <span className="text-[10px] uppercase tracking-[0.15em] text-gray-500">{r.sport_type as string}</span>
                             {matchedActivity && (
                               <Link
                                 to={`/activities/${matchedActivity.id}`}
-                                className="text-xs text-green-400 hover:text-green-300 flex items-center gap-0.5"
+                                className="text-[10px] uppercase tracking-[0.15em] text-green-400 hover:text-green-300 inline-flex items-center gap-0.5"
                               >
-                                &#10003; View activity
+                                ✓ View activity
                               </Link>
                             )}
                           </div>
-                          <div className="flex items-center gap-3 text-xs text-gray-500 flex-wrap">
+                          <div className="flex items-center gap-3 text-[11px] text-gray-500 flex-wrap font-mono tabular-nums">
                             <span>{format(parseISO(r.date as string), 'MMM d, yyyy')}</span>
-                            {r.distance_km != null && <span className="font-mono">{r.distance_km} km</span>}
-                            {r.target_pace != null && <span className="font-mono">{r.target_pace} {getPaceUnit(r.sport_type as string)}</span>}
-                            {r.location && <span>{r.location as string}</span>}
+                            {r.distance_km != null && <span>{r.distance_km} km</span>}
+                            {r.target_pace != null && <span>{r.target_pace} {getPaceUnit(r.sport_type as string)}</span>}
+                            {r.location && <span className="normal-case">{r.location as string}</span>}
                             {r.url && (
-                              <a href={r.url as string} target="_blank" rel="noopener noreferrer" className="text-amber-500 hover:text-amber-400" onClick={e => e.stopPropagation()}>
-                                Website &#8599;
+                              <a href={r.url as string} target="_blank" rel="noopener noreferrer" style={{ color: RACE_ACCENT }} onClick={e => e.stopPropagation()}>
+                                Website ↗
                               </a>
                             )}
                           </div>
                           {r.description && (
-                            <div className={clsx('text-xs mt-1', isLight ? 'text-gray-400' : 'text-gray-500')}>{r.description as string}</div>
+                            <div className={clsx('text-xs mt-1.5 whitespace-pre-line', isLight ? 'text-gray-400' : 'text-gray-500')}>{r.description as string}</div>
                           )}
                         </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          {isConfirming ? (
-                            <>
-                              <span className="text-xs text-red-400">Delete?</span>
-                              <button onClick={() => { deleteRace.mutate(r.id as number, { onSuccess: () => toast('Race deleted', 'success') }); setConfirmDeleteId(null) }} className="text-red-400 hover:text-red-300 text-xs font-bold">Yes</button>
-                              <button onClick={() => setConfirmDeleteId(null)} className="text-xs text-gray-400 hover:text-gray-200">No</button>
-                            </>
-                          ) : (
-                            <>
-                              <button onClick={() => startEdit(r)} className="text-xs text-gray-400 hover:text-gray-200">Edit</button>
-                              <button onClick={() => setConfirmDeleteId(r.id as number)} className="text-xs text-red-400 hover:text-red-300">Delete</button>
-                            </>
-                          )}
-                        </div>
+                        <RowActions
+                          isConfirming={isConfirming}
+                          onEdit={() => startEdit(r)}
+                          onConfirmDelete={() => { deleteRace.mutate(r.id as number, { onSuccess: () => toast('Race deleted', 'success') }); setConfirmDeleteId(null) }}
+                          onAskDelete={() => setConfirmDeleteId(r.id as number)}
+                          onCancelDelete={() => setConfirmDeleteId(null)}
+                        />
                       </div>
-                    </div>
+                    </article>
                   )
                 })}
               </div>
@@ -375,17 +387,56 @@ export default function RacesPage() {
           )}
 
           {upcoming.length === 0 && past.length === 0 && !showForm && (
-            <div className={clsx('rounded-xl border p-8 text-center', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
-              <div className="text-3xl mb-2">&#9873;</div>
-              <div className={clsx('text-sm', isLight ? 'text-gray-500' : 'text-gray-400')}>No races for {filterYear}</div>
+            <div className={clsx(panelClass, 'p-10 text-center flex flex-col items-center gap-3')}>
+              <div className="text-3xl" style={{ color: RACE_ACCENT }} aria-hidden="true">⚑</div>
+              <div className={clsx('text-sm', isLight ? 'text-gray-500' : 'text-gray-500')}>No races for {filterYear}</div>
               <button
                 onClick={() => { resetForm(); setShowForm(true); setDate(format(today, 'yyyy-MM-dd')) }}
-                className="mt-3 text-sm text-amber-500 hover:text-amber-400"
+                className="text-[11px] uppercase tracking-[0.15em] font-semibold"
+                style={{ color: RACE_ACCENT }}
               >
-                Add your first race
+                Add your first race →
               </button>
             </div>
           )}
+        </>
+      )}
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────
+// RowActions — edit/delete controls (with confirm-delete state)
+// ────────────────────────────────────────────────────────
+
+function RowActions({
+  isConfirming,
+  onEdit,
+  onConfirmDelete,
+  onAskDelete,
+  onCancelDelete,
+}: {
+  isConfirming: boolean
+  onEdit: () => void
+  onConfirmDelete: () => void
+  onAskDelete: () => void
+  onCancelDelete: () => void
+}) {
+  const { theme } = useTheme()
+  const isLight = theme === 'light'
+  const actionClass = clsx('text-[11px] uppercase tracking-[0.15em]', isLight ? 'text-gray-400 hover:text-gray-700' : 'text-gray-500 hover:text-gray-200')
+  return (
+    <div className="flex items-center gap-2 shrink-0">
+      {isConfirming ? (
+        <>
+          <span className="text-[11px] uppercase tracking-[0.15em] text-red-400">Delete?</span>
+          <button onClick={onConfirmDelete} className="text-red-400 hover:text-red-300 text-[11px] uppercase tracking-[0.15em] font-bold">Yes</button>
+          <button onClick={onCancelDelete} className={actionClass}>No</button>
+        </>
+      ) : (
+        <>
+          <button onClick={onEdit} className={actionClass}>Edit</button>
+          <button onClick={onAskDelete} className="text-red-400/80 hover:text-red-300 text-[11px] uppercase tracking-[0.15em]">Delete</button>
         </>
       )}
     </div>
