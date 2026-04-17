@@ -15,8 +15,11 @@ import numpy as np
 from scipy.optimize import curve_fit
 import matplotlib.ticker as ticker
 from datetime import datetime
+import logging
 import threading
 from io import BytesIO
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -83,7 +86,7 @@ class StravaVisualizer:
             gdf = gdf[gdf['start_date_local'].dt.year == year]
             
         if gdf.empty:
-            print(f"No activities found for {sport_types}")
+            logger.info("No activities found for %s", sport_types)
             return None, None
         
         # get region_coordinates if location is provided
@@ -139,7 +142,7 @@ class StravaVisualizer:
         """
         gdf, _ = self._filter_and_get_gdf(sport_types, radius_km, location, year=year)
         if gdf is None or gdf.empty:
-            print(f"No data found for the specified parameters.")
+            logger.info("No data found for the specified parameters.")
             return
 
         # Setup the 'Dark Mode' canvas
@@ -168,7 +171,7 @@ class StravaVisualizer:
                     zoom_adjust=1 # Higher res tiles
                 )
             except Exception as e:
-                print(f"Basemap warning: {e}")
+                logger.warning("Basemap warning: %s", e)
 
         ax.set_axis_off()
         
@@ -204,7 +207,7 @@ class StravaVisualizer:
 
         result = self._finalize_figure(fig, save_path, dpi=dpi or 600, return_buffer=return_buffer, pad_inches=0.2)
         if not return_buffer:
-            print(f"⚡ Thunderstorm map saved to: {save_path}")
+            logger.info("Thunderstorm map saved to: %s", save_path)
         return result
 
     def activity_bubble_map(
@@ -231,11 +234,11 @@ class StravaVisualizer:
         )
         
         if gdf is None or gdf.empty:
-            print("No activities found.")
+            logger.info("No activities found.")
             return
-        
+
         if region_info is None:
-            print("Region information not found.")
+            logger.info("Region information not found.")
             return
 
         # 2. Setup Bounding Box (in Web Mercator)
@@ -365,7 +368,7 @@ class StravaVisualizer:
 
         result = self._finalize_figure(fig, save_path, dpi=dpi or 600, return_buffer=return_buffer)
         if not return_buffer:
-            print(f"⚪ Bubble map saved to: {save_path}")
+            logger.info("Bubble map saved to: %s", save_path)
         return result
 
 
@@ -390,7 +393,7 @@ class StravaVisualizer:
             gdf = gdf[gdf['sport_type'].isin(sport_types)]
 
         if gdf.empty:
-            print(f"No activities found.")
+            logger.info("No activities found.")
             return
 
         # 2. Prepare Coordinates
@@ -459,7 +462,7 @@ class StravaVisualizer:
 
         result = self._finalize_figure(fig, save_path, dpi=dpi or 600, return_buffer=return_buffer)
         if not return_buffer:
-            print(f"🕑 Activity clock saved to: {save_path}")
+            logger.info("Activity clock saved to: %s", save_path)
         return result
 
     def plot_activity(
@@ -484,7 +487,7 @@ class StravaVisualizer:
         activity = activities[activities['id'] == int(activity_id)]
         
         if activity.empty:
-            print(f"Activity {activity_id} not found in cache.")
+            logger.info("Activity %s not found in cache.", activity_id)
             return
         
         # TODO: plot zones on that activity if available
@@ -498,7 +501,7 @@ class StravaVisualizer:
             streams = strava_endpoint.get_activity_streams(activity_id)
         
         if not streams:
-            print(f"Could not fetch streams for activity {activity_id}")
+            logger.warning("Could not fetch streams for activity %s", activity_id)
             return
         
         # Extract data from streams
@@ -507,7 +510,7 @@ class StravaVisualizer:
         distances = [p.get('distance', 0) / 1000 for p in streams if 'distance' in p]  # Convert to km
         
         if not latlngs or not altitudes:
-            print(f"No GPS or altitude data for activity {activity_id}")
+            logger.info("No GPS or altitude data for activity %s", activity_id)
             return
         
         # Create LineString geometry
@@ -665,7 +668,7 @@ class StravaVisualizer:
 
         result = self._finalize_figure(fig, save_path, dpi=dpi or 300, return_buffer=return_buffer, pad_inches=0.3)
         if not return_buffer:
-            print(f"🗺️ Activity plot saved to: {save_path}")
+            logger.info("Activity plot saved to: %s", save_path)
         return result
 
     def plot_year_in_sport_main(
@@ -1069,7 +1072,7 @@ class StravaVisualizer:
 
         result = self._finalize_figure(fig, save_path, dpi=dpi or 300, return_buffer=return_buffer, pad_inches=0.3)
         if not return_buffer:
-            print(f"📊 Year in sport ({main_sport}) saved to: {save_path}")
+            logger.info("Year in sport (%s) saved to: %s", main_sport, save_path)
         return result
 
     def plot_year_in_sport_totals(
@@ -1431,7 +1434,7 @@ class StravaVisualizer:
 
         result = self._finalize_figure(fig, save_path, dpi=dpi or 300, return_buffer=return_buffer, pad_inches=0.3)
         if not return_buffer:
-            print(f"📊 Year in sport (totals) saved to: {save_path}")
+            logger.info("Year in sport (totals) saved to: %s", save_path)
         return result
 
     def hud_dashboard(
@@ -1453,7 +1456,7 @@ class StravaVisualizer:
         gdf = gdf[gdf['sport_type'] == sport_type]
         
         if gdf.empty:
-            print("No data found.")
+            logger.info("No data found.")
             return
 
         # 2. Determine sport category for speed/pace formatting
@@ -1540,7 +1543,7 @@ class StravaVisualizer:
 
         result = self._finalize_figure(fig, save_path, dpi=dpi or 600, return_buffer=return_buffer)
         if not return_buffer:
-            print(f"🎛️ HUD dashboard saved to: {save_path}")
+            logger.info("HUD dashboard saved to: %s", save_path)
         return result
 
     def plot_efficiency_factor(self, sport_type: str, window=14, return_buffer: bool = False, dpi: int | None = None) -> BytesIO | None:
@@ -1551,7 +1554,7 @@ class StravaVisualizer:
         # 1. Data Prep
         gdf, _ = self._filter_and_get_gdf([sport_type])
         if gdf is None or gdf.empty:
-            print("No data found for the specified parameters.")
+            logger.info("No data found for the specified parameters.")
             return
 
         df = gdf.copy()
@@ -1650,7 +1653,7 @@ class StravaVisualizer:
 
             result = self._finalize_figure(fig, output_path, dpi=dpi or 600, facecolor='white', return_buffer=return_buffer)
             if not return_buffer:
-                print(f"📈 Professional efficiency plot saved to {output_path}")
+                logger.info("Professional efficiency plot saved to %s", output_path)
             return result
 
     def plot_performance_frontier(self, sport_types=['Run'], return_buffer: bool = False, dpi: int | None = None) -> BytesIO | None:
@@ -1666,7 +1669,7 @@ class StravaVisualizer:
         # --- 1. Data Prep ---
         gdf, _ = self._filter_and_get_gdf(sport_types)
         if gdf is None or gdf.empty:
-            print("No data found.")
+            logger.info("No data found.")
             return
         
         df = gdf[['distance', 'average_speed', 'start_date_local']].dropna()
@@ -1776,7 +1779,7 @@ class StravaVisualizer:
 
             result = self._finalize_figure(fig, out_path, dpi=dpi or 600, facecolor='white', return_buffer=return_buffer)
             if not return_buffer:
-                print(f"🚀 Frontier plot saved to {out_path}")
+                logger.info("Frontier plot saved to %s", out_path)
             return result
 
 
@@ -2304,5 +2307,5 @@ class StravaVisualizer:
 
         result = self._finalize_figure(fig, out_path, dpi=dpi or 300, return_buffer=return_buffer)
         if not return_buffer:
-            print(f"📊 Weekly report saved to {out_path}")
+            logger.info("Weekly report saved to %s", out_path)
         return result

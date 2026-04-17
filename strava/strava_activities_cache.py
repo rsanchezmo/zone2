@@ -1,9 +1,12 @@
+import logging
 from pathlib import Path
 import pandas as pd
 import json
 from datetime import datetime, timedelta
 
 from strava.strava_endpoint import StravaRateLimitError
+
+logger = logging.getLogger(__name__)
 
 
 class StravaActivitiesCache:
@@ -117,7 +120,7 @@ class StravaActivitiesCache:
             try:
                 dfs.append(pd.read_parquet(f))
             except Exception as e:
-                print(f"⚠️ Skipping corrupt parquet file {f}: {e}")
+                logger.warning("Skipping corrupt parquet file %s: %s", f, e)
         self._memory_cache = pd.concat(dfs, ignore_index=True)
         self._memory_cache['start_date'] = pd.to_datetime(self._memory_cache['start_date_local'])
         self._memory_cache = self._memory_cache.sort_values('start_date')
@@ -188,13 +191,13 @@ class StravaActivitiesCache:
                 combined = combined.drop_duplicates(subset=['id'], keep='last')
                 combined.to_parquet(month_file, index=False)
                 monthly_counts[period_key] = len(combined)
-                print(f"✓ Updated {month_file.name} ({len(combined)} activities)")
+                logger.info("Updated %s (%d activities)", month_file.name, len(combined))
             else:
                 # drop year_month column before saving
                 group = group.drop(columns=['year_month'])
                 group.to_parquet(month_file, index=False)
                 monthly_counts[period_key] = len(group)
-                print(f"✓ Created {month_file.name} ({len(group)} activities)")
+                logger.info("Created %s (%d activities)", month_file.name, len(group))
 
         # Update metadata — sum from the monthly_counts dict we just maintained,
         # avoiding a full parquet re-scan on every save.
@@ -289,7 +292,7 @@ class StravaActivitiesCache:
             try:
                 rebuilt[f.stem] = len(pd.read_parquet(f))
             except Exception as e:
-                print(f"⚠️ Corrupt parquet file {f}: {e}")
+                logger.warning("Corrupt parquet file %s: %s", f, e)
         self.metadata['monthly_counts'] = rebuilt
         self.metadata['total_activities'] = sum(rebuilt.values())
         self.__save_metadata()
@@ -445,9 +448,12 @@ class StravaActivitiesCache:
             fifteen = limits['fifteen_min']
             daily = limits['daily']
             remaining = min(fifteen['limit'] - fifteen['usage'], daily['limit'] - daily['usage'])
-            print(f"  Rate limit: {fifteen['usage']}/{fifteen['limit']} (15min), {daily['usage']}/{daily['limit']} (daily) — {remaining} requests available")
+            logger.info(
+                "Rate limit: %d/%d (15min), %d/%d (daily) — %d requests available",
+                fifteen['usage'], fifteen['limit'], daily['usage'], daily['limit'], remaining,
+            )
             if remaining <= 1:
-                print("⚠️ No rate limit budget available. Try again later.")
+                logger.warning("No rate limit budget available. Try again later.")
                 return
         except Exception:
             pass  # Non-critical, continue anyway
@@ -457,7 +463,7 @@ class StravaActivitiesCache:
         df = self._load_to_memory().copy()
 
         if df.empty:
-            print("No activities to sync")
+            logger.info("No activities to sync")
             return
 
         # Filter to specific activity IDs if provided
@@ -465,7 +471,7 @@ class StravaActivitiesCache:
             df = df[df['id'].isin(activity_ids)]
 
         if df.empty:
-            print("No matching activities found")
+            logger.info("No matching activities found")
             return
 
         # Pre-filter: only iterate activities that actually need work (recent first)
@@ -486,7 +492,7 @@ class StravaActivitiesCache:
 
         total = len(df)
         skipped_count = total - len(needs_work)
-        print(f"  {len(needs_work)} activities need work, {skipped_count} already complete")
+        logger.info("%d activities need work, %d already complete", len(needs_work), skipped_count)
 
         synced_count = 0
         updated_activities = []
@@ -499,16 +505,16 @@ class StravaActivitiesCache:
                 needs_update = False
 
                 if needs_streams:
-                    print(f"  [{i+1}/{len(needs_work)}] Fetching streams for activity {activity_id}...")
+                    logger.info("[%d/%d] Fetching streams for activity %s...", i + 1, len(needs_work), activity_id)
                     streams = strava_endpoint.get_activity_streams(activity_id)
                     # Save even empty results as '[]' so we don't retry next time
                     activity['streams'] = json.dumps(streams)
                     needs_update = True
                     if not streams:
-                        print(f"    No streams returned for activity {activity_id}")
+                        logger.info("No streams returned for activity %s", activity_id)
 
                 if needs_detail:
-                    print(f"  [{i+1}/{len(needs_work)}] Fetching detail for activity {activity_id}...")
+                    logger.info("[%d/%d] Fetching detail for activity %s...", i + 1, len(needs_work), activity_id)
                     detail = strava_endpoint.get_activity_detail(activity_id)
                     if detail:
                         for field in self.DETAIL_FIELDS:
@@ -523,7 +529,7 @@ class StravaActivitiesCache:
                     needs_update = True
 
                 if needs_photos:
-                    print(f"  [{i+1}/{len(needs_work)}] Fetching photos for activity {activity_id} ({photo_count} photos)...")
+                    logger.info("[%d/%d] Fetching photos for activity %s (%d photos)...", i + 1, len(needs_work), activity_id, photo_count)
                     photos = strava_endpoint.get_activity_photos(activity_id)
                     if photos:
                         activity['photos'] = json.dumps(photos)
@@ -535,22 +541,28 @@ class StravaActivitiesCache:
 
                 # Save in batches to avoid losing progress on rate limit / crash
                 if len(updated_activities) >= BATCH_SIZE:
-                    print(f"  💾 Saving batch of {len(updated_activities)} activities...")
+                    logger.info("Saving batch of %d activities...", len(updated_activities))
                     self.save_activities(updated_activities)
                     updated_activities = []
 
         except StravaRateLimitError as e:
             rate_limited = True
-            print(f"⚠️ Rate limit reached — stopping sync. {e}")
+            logger.warning("Rate limit reached — stopping sync. %s", e)
 
         # Save remaining (including partial progress on rate limit)
         if updated_activities:
-            print(f"  💾 Saving {'partial' if rate_limited else 'final'} batch of {len(updated_activities)} activities...")
+            logger.info(
+                "Saving %s batch of %d activities...",
+                "partial" if rate_limited else "final", len(updated_activities),
+            )
             self.save_activities(updated_activities)
 
         if rate_limited:
-            print(f"⚠️ Synced {synced_count} activities before rate limit. Re-run later to continue.")
+            logger.warning(
+                "Synced %d activities before rate limit. Re-run later to continue.",
+                synced_count,
+            )
         elif synced_count > 0:
-            print(f"✓ Synced {synced_count} activities, skipped {skipped_count} (already had data)")
+            logger.info("Synced %d activities, skipped %d (already had data)", synced_count, skipped_count)
         else:
-            print(f"✓ All {skipped_count} activities already have the requested data")
+            logger.info("All %d activities already have the requested data", skipped_count)

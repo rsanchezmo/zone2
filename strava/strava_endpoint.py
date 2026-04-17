@@ -247,7 +247,7 @@ class StravaEndpoint:
                 'per_page': per_page
             }
 
-            print(f"Fetching #{per_page} activities from page {page}...")
+            logger.info("Fetching #%d activities from page %d...", per_page, page)
 
             if from_date:
                 params['after'] = int(from_date.timestamp())
@@ -257,7 +257,7 @@ class StravaEndpoint:
             response = requests.get(StravaEndpoint.__ACTIVITIES_URL, headers=headers, params=params)
             
             if response.status_code != 200:
-                print(f"Failed to fetch activities: {response.json()}")
+                logger.error("Failed to fetch activities: %s", response.text)
                 return activities
             
             page_activities = response.json()
@@ -317,7 +317,7 @@ class StravaEndpoint:
         for activity in activities:
             activity_id = activity['id']
 
-            print(f"Fetching streams for activity {activity_id}...")
+            logger.info("Fetching streams for activity %s...", activity_id)
 
             streams = self.get_activity_streams(activity_id)
 
@@ -440,7 +440,7 @@ class StravaEndpoint:
         )
         self._check_rate_limit(response)
         if response.status_code != 200:
-            print(f"Failed to fetch detail for activity {activity_id}: {response.text}")
+            logger.error("Failed to fetch detail for activity %s: %s", activity_id, response.text)
             return None
         return response.json()
 
@@ -458,7 +458,7 @@ class StravaEndpoint:
         )
         self._check_rate_limit(response)
         if response.status_code != 200:
-            print(f"Failed to fetch photos for activity {activity_id}: {response.text}")
+            logger.error("Failed to fetch photos for activity %s: %s", activity_id, response.text)
             return []
         return response.json()
 
@@ -482,7 +482,7 @@ class StravaEndpoint:
         
         self._check_rate_limit(response)
         if response.status_code != 200:
-            print(f"Failed to fetch streams for activity {activity_id}: {response.json()}")
+            logger.error("Failed to fetch streams for activity %s: %s", activity_id, response.text)
             return []
 
         return self.__merge_streams_into_data_points(response.json())
@@ -500,7 +500,7 @@ class StravaEndpoint:
         )
         
         if response.status_code != 200:
-            print(f"Failed to fetch zones for activity {activity_id}: {response.json()}")
+            logger.error("Failed to fetch zones for activity %s: %s", activity_id, response.text)
             return []
         
         return response.json()

@@ -1,3 +1,4 @@
+import logging
 import osmnx as ox
 from leuvenmapmatching.matcher.distance import DistanceMatcher
 from leuvenmapmatching.map.inmem import InMemMap
@@ -11,6 +12,8 @@ from shapely.ops import linemerge
 from shapely.prepared import prep
 import numpy as np
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -142,7 +145,7 @@ class MatchResult:
 
         if save_path is not None:
             fig.savefig(save_path, dpi=150, bbox_inches='tight', facecolor=fig.get_facecolor())
-            print(f"\U0001f4ca Saved plot to {save_path}")
+            logger.info("Saved plot to %s", save_path)
 
         return fig
 
@@ -172,8 +175,10 @@ class StravaMapMatcher:
             if (u, v) not in self._edge_lookup:
                 self._edge_lookup[(u, v)] = idx_tuple
 
-        print(f"🏙️ Map for {self.city_name} loaded with {len(self._edges_gdf)} edges "
-              f"and {len(self._nodes_gdf)} nodes")
+        logger.info(
+            "Map for %s loaded with %d edges and %d nodes",
+            self.city_name, len(self._edges_gdf), len(self._nodes_gdf),
+        )
 
     def _build_matcher_map(self):
         """
@@ -213,7 +218,7 @@ class StravaMapMatcher:
             if 'osmid' in self._nodes_gdf.columns:
                 self._nodes_gdf = self._nodes_gdf.set_index('osmid')
         else:
-            print(f"🌐 Downloading map for {self.city_name} from OSM...")
+            logger.info("Downloading map for %s from OSM...", self.city_name)
             graph = ox.graph_from_place(self.city_name, network_type='all')
             city_boundary = ox.geocode_to_gdf(self.city_name)
             graph_proj = ox.project_graph(graph)
@@ -222,7 +227,7 @@ class StravaMapMatcher:
             edges_gdf.to_file(filepath, layer='edges', driver='GPKG')
             nodes_gdf.to_file(filepath, layer='nodes', driver='GPKG')
             city_boundary_gdf.to_file(filepath, layer='city_boundary', driver='GPKG')
-            print(f"✅ Map for {self.city_name} saved to {filepath}")
+            logger.info("Map for %s saved to %s", self.city_name, filepath)
             self._edges_gdf = edges_gdf
             self._nodes_gdf = nodes_gdf
             self._city_boundary = city_boundary_gdf
@@ -463,7 +468,7 @@ class StravaMapMatcher:
             # Split path into contiguous in-coverage segments
             segments = self._split_path_by_coverage(geom)
             if not segments:
-                print(f"⚠️ Activity {activity_id}: no GPS points within city boundary")
+                logger.warning("Activity %s: no GPS points within city boundary", activity_id)
                 continue
 
             # Match each segment independently and collect results.
@@ -488,7 +493,7 @@ class StravaMapMatcher:
                     try:
                         states, last_idx = matcher.match(remaining)
                     except Exception as e:
-                        print(f"  ⚠️ Sub-segment {sub_id} failed: {e}")
+                        logger.warning("Sub-segment %s failed: %s", sub_id, e)
                         break  # give up on this segment entirely
 
                     if not states or len(states) == 0:
@@ -523,7 +528,7 @@ class StravaMapMatcher:
                     remaining = remaining[resume_at:]
 
             if not all_edges_gdfs or all(df.empty for df in all_edges_gdfs):
-                print(f"⚠️ No match found for activity {activity_id}")
+                logger.warning("No match found for activity %s", activity_id)
                 continue
 
             # Merge all segments
@@ -577,13 +582,18 @@ class StravaMapMatcher:
             result['coverage_pct'] = quality['coverage_pct']
             matched_rows.append(result)
 
-            print(f"✅ Activity {activity_id}: {quality['num_matched_edges']} edges, "
-                  f"avg snap {quality['avg_dist_obs_m']}m, "
-                  f"{quality['num_sub_segments_matched']}/{quality['num_sub_segments']} sub-segments, "
-                  f"coverage {quality['coverage_pct']}%")
+            logger.info(
+                "Activity %s: %d edges, avg snap %sm, %d/%d sub-segments, coverage %s%%",
+                activity_id,
+                quality['num_matched_edges'],
+                quality['avg_dist_obs_m'],
+                quality['num_sub_segments_matched'],
+                quality['num_sub_segments'],
+                quality['coverage_pct'],
+            )
 
         if not matched_rows:
-            print("⚠️ No activities were successfully matched")
+            logger.warning("No activities were successfully matched")
             return gpd.GeoDataFrame(), match_results
 
         result_gdf = gpd.GeoDataFrame(matched_rows, geometry='matched_geometry', crs=utm_crs)
@@ -643,8 +653,11 @@ class StravaMapMatcher:
             '_traversed_edge_set': traversed,
         }
 
-        print(f"📊 Coverage: {stats['traversed_km']} km / {stats['total_network_km']} km "
-              f"({stats['coverage_pct']}%) — {stats['num_unique_streets']} unique edges")
+        logger.info(
+            "Coverage: %s km / %s km (%s%%) — %d unique edges",
+            stats['traversed_km'], stats['total_network_km'], stats['coverage_pct'],
+            stats['num_unique_streets'],
+        )
 
         return stats
 
@@ -732,6 +745,6 @@ class StravaMapMatcher:
 
         if save_path is not None:
             fig.savefig(save_path, dpi=300, bbox_inches='tight', facecolor=fig.get_facecolor())
-            print(f"🗺️ Coverage map saved to {save_path}")
+            logger.info("Coverage map saved to %s", save_path)
 
         return fig

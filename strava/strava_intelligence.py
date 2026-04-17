@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from strava.strava_analytics import StravaAnalytics, YearInSportFeatures
 from strava.strava_user_cache import StravaUserCache
@@ -6,6 +7,8 @@ from strava.strava_endpoint import StravaEndpoint
 from strava.strava_utils import *
 from strava.strava_visualizer import StravaVisualizer
 from datetime import timedelta
+
+logger = logging.getLogger(__name__)
 
 
 class StravaIntelligence:
@@ -28,25 +31,25 @@ class StravaIntelligence:
         """Sync activities from Strava API to local cache."""
         
         if full_sync:
-            print("🔄 Performing full sync (all activities)...")
+            logger.info("Performing full sync (all activities)...")
             activities = self.strava_endpoint.get_activities()
 
         else:
             last_date = self.strava_activities_cache.get_last_activity_date()
             if last_date:
-                print(f"🔄 Syncing activities from {last_date.date()}...")
+                logger.info("Syncing activities from %s...", last_date.date())
                 from_date = last_date - timedelta(days=1)
                 activities = self.strava_endpoint.get_activities(from_date=from_date)
             else:
-                print("🔄 No cached activities found. Performing full sync...")
+                logger.info("No cached activities found. Performing full sync...")
                 activities = self.strava_endpoint.get_activities()
 
         self.strava_activities_cache.save_activities(activities)
-        print(f"✓ Synced {len(activities)} activities")
+        logger.info("Synced %d activities", len(activities))
 
         # Now, fetch streams and zones if requested for the saved activities
         if include_streams:
-            print("🔄 Syncing streams for activities...")
+            logger.info("Syncing streams for activities...")
             self.strava_activities_cache.sync_streams(
                 strava_endpoint=self.strava_endpoint,
                 activity_ids=[activity['id'] for activity in activities]
@@ -55,7 +58,7 @@ class StravaIntelligence:
 
     def ensure_activities_with_streams(self):
         """Ensure all cached activities have streams and zones data."""
-        print("🔄 Ensuring all activities have streams and zones data...")
+        logger.info("Ensuring all activities have streams and zones data...")
         self.strava_activities_cache.sync_streams(
             strava_endpoint=self.strava_endpoint,
         )
@@ -66,14 +69,14 @@ class StravaIntelligence:
         gdf = get_activities_as_gdf(self.strava_activities_cache.activities)
         filepath = self.workdir / "activities.geojson"
         gdf.to_file(filepath, driver="GeoJSON")
-        print(f"✓ Saved activities to {filepath}")
+        logger.info("Saved activities to %s", filepath)
 
     def save_gpkg_activities(self):
         """Save activities as GeoPackage file."""
         gdf = get_activities_as_gdf(self.strava_activities_cache.activities)
         filepath = self.workdir / "activities.gpkg"
         gdf.to_file(filepath, driver="GPKG")
-        print(f"✓ Saved activities to {filepath}")
+        logger.info("Saved activities to %s", filepath)
 
     
     def plot_last_activity(self, sport_type: str):
@@ -83,7 +86,7 @@ class StravaIntelligence:
         # filter by sport type
         activities = activities[activities['sport_type'] == sport_type]
         if activities.empty:
-            print(f"No activities found for sport type: {sport_type}")
+            logger.info("No activities found for sport type: %s", sport_type)
             return
         
         # activities are already ordered by start_date ascending
