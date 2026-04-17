@@ -1,6 +1,7 @@
 from datetime import datetime
 import logging
 import os
+import threading
 from dotenv import load_dotenv
 from pydantic import BaseModel
 import requests
@@ -65,6 +66,9 @@ class StravaEndpoint:
         self.__STRAVA_CLIENT_ID = os.getenv("STRAVA_CLIENT_ID")
         self.__STRAVA_CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET")
         self.__token_data = None
+        # Guards against two threads refreshing with the same refresh_token
+        # (Strava rotates refresh_tokens, so the second request would 400).
+        self.__token_lock = threading.Lock()
 
         self.__cache_dir = cache_dir
         self.__cache_dir.mkdir(parents=True, exist_ok=True)
@@ -145,16 +149,24 @@ class StravaEndpoint:
         return token
     
     def __get_valid_token(self) -> str:
-        """Get a valid access token, refreshing if necessary."""
-        if self.__token_data.is_expired():
-            self.__token_data = self.__refresh_token()
-        return self.__token_data.access_token
+        """Get a valid access token, refreshing if necessary. Thread-safe:
+        concurrent callers serialize on __token_lock and only the first
+        refresh actually hits Strava; the rest see the already-refreshed
+        token on the re-check inside the lock."""
+        if not self.__token_data.is_expired():
+            return self.__token_data.access_token
+        with self.__token_lock:
+            if self.__token_data.is_expired():
+                self.__token_data = self.__refresh_token()
+            return self.__token_data.access_token
 
     def __authenticate(self):
         self.__token_data = self.__get_initial_token()
 
         if self.__token_data.is_expired():
-            self.__token_data = self.__refresh_token()
+            with self.__token_lock:
+                if self.__token_data.is_expired():
+                    self.__token_data = self.__refresh_token()
 
     def __get_headers(self) -> dict[str, str]:
         access_token = self.__get_valid_token()
