@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.config import settings
 from backend.dependencies import set_strava_intelligence
@@ -102,6 +103,20 @@ app.include_router(workouts.router, prefix="/api/workouts", tags=["workouts"])
 app.include_router(races.router, prefix="/api/races", tags=["races"])
 
 # Serve frontend build if it exists
+class _SPAStaticFiles(StaticFiles):
+    """StaticFiles that falls back to index.html on 404 so the React router
+    can handle unknown paths client-side. Without this, deep links and hard
+    refreshes (e.g. /calendar, /activities/123) return 404 from the server."""
+
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as ex:
+            if ex.status_code == 404:
+                return await super().get_response("index.html", scope)
+            raise
+
+
 frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 if frontend_dist.is_dir():
-    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
+    app.mount("/", _SPAStaticFiles(directory=str(frontend_dist), html=True), name="frontend")
