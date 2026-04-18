@@ -1,6 +1,7 @@
 import { AreaChart, Area, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea } from 'recharts'
 import { useMemo, Component, type ReactNode } from 'react'
 import { useTheme } from '../../hooks/useTheme'
+import { useIsMobile } from '../../hooks/useIsMobile'
 
 export interface ChartZone {
   x1: number  // start distance (km)
@@ -102,6 +103,7 @@ export default function StreamChart({
   zones,
 }: StreamChartProps) {
   const { colors } = useTheme()
+  const isMobile = useIsMobile()
 
   const hasZones = zones && zones.length > 0
 
@@ -248,6 +250,7 @@ export default function StreamChart({
               reversed={reversed}
               domain={yDomain}
               tickFormatter={v => fmt(Number(v))}
+              width={isMobile ? 32 : 60}
             />
             <Tooltip
               contentStyle={{ background: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8 }}

@@ -780,7 +780,7 @@ function ManualZonesEditor({
       <div className={clsx('text-[10px] uppercase tracking-[0.15em] mb-3', isLight ? 'text-gray-400' : 'text-gray-500')}>
         Manual thresholds <span className="normal-case tracking-normal">— upper bpm of each zone</span>
       </div>
-      <div className="grid grid-cols-5 gap-2 mb-3">
+      <div className="grid grid-cols-3 md:grid-cols-5 gap-2 mb-3">
         {maxes.map((v, i) => {
           const color = HR_ZONE_COLORS[i] ?? '#6b7280'
           return (

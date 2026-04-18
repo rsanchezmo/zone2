@@ -12,6 +12,7 @@ import {
   AreaChart, Area, LineChart, ReferenceLine, ReferenceArea,
 } from 'recharts'
 import { useTheme } from '../hooks/useTheme'
+import { useIsMobile } from '../hooks/useIsMobile'
 import clsx from 'clsx'
 
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -23,6 +24,7 @@ type WeeklyWindow = 12 | 16 | 24 | 52
 export default function DashboardPage() {
   const { theme, colors } = useTheme()
   const isLight = theme === 'light'
+  const isMobile = useIsMobile()
   const { data: years } = useYears()
   const { data: sportTypes } = useSportTypes()
   const [year, setYear] = useState(new Date().getFullYear())
@@ -181,10 +183,10 @@ export default function DashboardPage() {
       )}
     >
       {/* ── Top bar ───────────────────────────────────── */}
-      <header className="flex items-center justify-between flex-wrap gap-4">
+      <header className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-baseline gap-2 min-w-0 flex-wrap">
           <span className="eyebrow shrink-0">Dashboard</span>
-          <span className={clsx('text-[11px]', isLight ? 'text-gray-300' : 'text-gray-700')}>/</span>
+          <span className={clsx('hidden sm:inline text-[11px]', isLight ? 'text-gray-300' : 'text-gray-700')}>/</span>
           <select
             value={year}
             onChange={e => setYear(Number(e.target.value))}
@@ -195,7 +197,7 @@ export default function DashboardPage() {
               <option key={y} value={y}>{y}</option>
             ))}
           </select>
-          <span className={clsx('text-[11px]', isLight ? 'text-gray-300' : 'text-gray-700')}>/</span>
+          <span className={clsx('hidden sm:inline text-[11px]', isLight ? 'text-gray-300' : 'text-gray-700')}>/</span>
           <select
             value={mainSport}
             onChange={e => setMainSport(e.target.value)}
@@ -208,7 +210,7 @@ export default function DashboardPage() {
             ))}
           </select>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="hidden sm:flex items-center gap-2">
           <ExportButton
             url={`/api/exports/year-in-sport?year=${year}&main_sport=${mainSport}`}
             label="PNG · Sport"
@@ -348,7 +350,7 @@ export default function DashboardPage() {
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke={colors.gridStroke} />
               <XAxis dataKey="label" tick={{ fill: colors.tickFill, fontSize: 10 }} axisLine={false} tickLine={false} interval="equidistantPreserveStart" />
-              <YAxis tick={{ fill: colors.tickFillSecondary, fontSize: 10 }} axisLine={false} tickLine={false} width={55} tickFormatter={(v: number) => formatDistAxis(v, mainSport)} />
+              <YAxis tick={{ fill: colors.tickFillSecondary, fontSize: 10 }} axisLine={false} tickLine={false} width={isMobile ? 32 : 55} tickFormatter={(v: number) => formatDistAxis(v, mainSport)} />
               <Tooltip
                 contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
                 labelStyle={{ color: colors.labelColor }}
@@ -409,7 +411,7 @@ export default function DashboardPage() {
                 tick={{ fill: colors.tickFillSecondary, fontSize: 10 }}
                 axisLine={false}
                 tickLine={false}
-                width={monthlyMetric === 'distance' ? 50 : 30}
+                width={isMobile ? (monthlyMetric === 'distance' ? 32 : 24) : (monthlyMetric === 'distance' ? 50 : 30)}
                 allowDecimals={monthlyMetric === 'distance'}
                 tickFormatter={(v: number) => monthlyMetric === 'distance' ? formatDistAxis(v, mainSport) : `${v}`}
               />
@@ -503,7 +505,7 @@ export default function DashboardPage() {
                     tick={{ fill: colors.tickFillSecondary, fontSize: 10 }}
                     axisLine={false}
                     tickLine={false}
-                    width={50}
+                    width={isMobile ? 32 : 50}
                     allowDecimals={hasDistance}
                     tickFormatter={(v: number) => hasDistance ? formatDistAxis(v, mainSport) : `${v}`}
                   />

@@ -55,7 +55,7 @@ export default function ChartPanel({
   return (
     <section
       className={clsx(
-        'panel p-5',
+        'panel p-3 md:p-5',
         glow && 'chart-card',
         isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
         className,

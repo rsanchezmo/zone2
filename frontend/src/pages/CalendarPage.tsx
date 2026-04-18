@@ -1660,8 +1660,9 @@ export default function CalendarPage() {
         })()}
       </header>
 
-      {/* Calendar grid */}
-      <div className="grid grid-cols-7 gap-1" key={format(currentMonth, 'yyyy-MM')} style={{ animation: 'fadeIn 200ms ease-out' }}>
+      {/* Calendar grid — horizontal scroll on mobile so 7 columns stay legible */}
+      <div className="-mx-6 md:mx-0 px-6 md:px-0 overflow-x-auto">
+        <div className="grid grid-cols-7 gap-1 min-w-[640px] md:min-w-0" key={format(currentMonth, 'yyyy-MM')} style={{ animation: 'fadeIn 200ms ease-out' }}>
         {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(d => (
           <div key={d} className="eyebrow text-center py-1.5">{d}</div>
         ))}
@@ -1907,6 +1908,7 @@ export default function CalendarPage() {
             </Fragment>
           )
         })}
+        </div>
       </div>
 
       {/* Weekly Report — fade in */}

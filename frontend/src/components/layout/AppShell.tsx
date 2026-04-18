@@ -253,6 +253,133 @@ function DockNav({ navRef, items, location, isLight, indicatorStyle, position }:
   )
 }
 
+function MobileNav({ isLight, location }: { isLight: boolean; location: { pathname: string } }) {
+  const [open, setOpen] = useState(false)
+  const { toggleTheme } = useTheme()
+
+  // Close drawer whenever the route changes
+  useEffect(() => { setOpen(false) }, [location.pathname])
+
+  // Escape to close
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [open])
+
+  // Lock body scroll while drawer is open
+  useEffect(() => {
+    if (!open) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prev }
+  }, [open])
+
+  return (
+    <div className="md:hidden">
+      {/* Hamburger button — fixed top-left */}
+      <button
+        onClick={() => setOpen(true)}
+        aria-label="Open navigation"
+        className={clsx(
+          'fixed top-3 left-3 z-[10001] w-11 h-11 flex items-center justify-center rounded-xl border shadow-lg backdrop-blur-sm transition-colors',
+          isLight
+            ? 'bg-white/80 border-gray-200 text-gray-700 hover:bg-white'
+            : 'bg-black/40 border-white/10 text-gray-200 hover:bg-black/60',
+        )}
+      >
+        <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M2 4h12M2 8h12M2 12h12" />
+        </svg>
+      </button>
+
+      {/* Backdrop */}
+      <div
+        onClick={() => setOpen(false)}
+        className={clsx(
+          'fixed inset-0 z-[10002] bg-black/40 backdrop-blur-sm transition-opacity duration-200',
+          open ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none',
+        )}
+      />
+
+      {/* Drawer */}
+      <aside
+        className={clsx(
+          'fixed top-0 left-0 bottom-0 z-[10003] w-[82%] max-w-[320px] border-r shadow-2xl transition-transform duration-250 ease-out flex flex-col',
+          isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
+          open ? 'translate-x-0' : '-translate-x-full',
+        )}
+      >
+        {/* Drawer header */}
+        <div className={clsx('flex items-center justify-between px-4 py-3 border-b', isLight ? 'border-gray-200' : 'border-surface-600')}>
+          <span className={clsx('text-[11px] uppercase tracking-[0.2em] font-semibold', isLight ? 'text-gray-500' : 'text-gray-400')}>Navigation</span>
+          <button
+            onClick={() => setOpen(false)}
+            aria-label="Close navigation"
+            className={clsx('w-8 h-8 flex items-center justify-center rounded-lg', isLight ? 'text-gray-500 hover:bg-gray-100' : 'text-gray-400 hover:bg-surface-700')}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 3l10 10M13 3l-10 10" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Nav list */}
+        <nav className="flex-1 overflow-y-auto py-2">
+          {NAV_ITEMS.map(item => {
+            const isActive = location.pathname.startsWith(item.to)
+            return (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={clsx(
+                  'flex items-center gap-3 px-4 py-3 text-sm font-medium transition-colors',
+                  isActive
+                    ? (isLight ? 'bg-gray-100' : 'bg-white/5')
+                    : (isLight ? 'hover:bg-gray-50' : 'hover:bg-white/[0.03]'),
+                )}
+                style={{ color: isActive ? item.color : (isLight ? '#374151' : '#d1d5db') }}
+              >
+                <span style={{ color: item.color, filter: isActive ? `drop-shadow(0 0 4px ${item.color}60)` : 'none' }}>
+                  {item.icon}
+                </span>
+                <span>{item.label}</span>
+              </NavLink>
+            )
+          })}
+        </nav>
+
+        {/* Utilities footer */}
+        <div className={clsx('border-t p-3 flex items-center gap-2', isLight ? 'border-gray-200' : 'border-surface-600')}>
+          <div className="flex-1">
+            <SyncPopover isLight={isLight} />
+          </div>
+          <button
+            onClick={toggleTheme}
+            aria-label="Toggle theme"
+            className={clsx(
+              'w-11 h-11 flex items-center justify-center rounded-xl transition-colors',
+              isLight ? 'text-gray-500 hover:bg-gray-100' : 'text-gray-400 hover:bg-white/5',
+            )}
+          >
+            {isLight ? (
+              <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <circle cx="8" cy="8" r="3" />
+                <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" />
+              </svg>
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <path d="M13.5 8.5a5.5 5.5 0 01-7-7 5.5 5.5 0 107 7z" />
+              </svg>
+            )}
+          </button>
+        </div>
+      </aside>
+    </div>
+  )
+}
+
 function getInitialDockPosition(): DockPosition {
   if (typeof window === 'undefined') return 'left'
   const stored = localStorage.getItem('dock-position')
@@ -358,14 +485,19 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
-      {/* Main content */}
-      <main className={clsx('min-h-screen p-6', isBottom ? 'pb-24' : 'pl-20')}>
+      {/* Main content — padding differs per viewport:
+          mobile: top clearance for the hamburger
+          tablet+: room for the left/bottom dock */}
+      <main className={clsx('min-h-screen p-6 pt-20', isBottom ? 'md:pb-24' : 'md:pl-20', 'md:pt-6')}>
         {children}
       </main>
 
-      {/* Floating dock */}
+      {/* Mobile nav: hamburger + slide-in drawer */}
+      <MobileNav isLight={isLight} location={location} />
+
+      {/* Desktop/tablet floating dock — hidden on mobile */}
       <div className={clsx(
-        'fixed z-[10000]',
+        'fixed z-[10000] hidden md:block',
         isBottom
           ? 'bottom-3 left-1/2 -translate-x-1/2'
           : 'left-3 top-1/2 -translate-y-1/2',

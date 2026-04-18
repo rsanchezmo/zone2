@@ -876,7 +876,7 @@ function ActivityDetailPageInner() {
       {positions.length > 0 && (
         <section>
           <div className="section-head mb-4"><span className="eyebrow">Route</span></div>
-          <div className={clsx('h-[400px] rounded-xl overflow-hidden border', isLight ? 'border-gray-200' : 'border-surface-600')}>
+          <div className={clsx('h-[300px] md:h-[400px] rounded-xl overflow-hidden border', isLight ? 'border-gray-200' : 'border-surface-600')}>
             <MapView
               positions={positions}
               color={sportAccent}
