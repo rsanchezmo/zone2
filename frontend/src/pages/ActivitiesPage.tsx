@@ -1,14 +1,12 @@
-import { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect } from 'react'
+import { useState, useEffect, useRef, useMemo, useLayoutEffect } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { useActivities, useSportTypes, useYears } from '../api/hooks'
+import { useActivities, useSportTypes, useYears, useAthleteProfile } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
 import { getSportCategory } from '../utils/formatSpeed'
 import { useTheme } from '../hooks/useTheme'
 import clsx from 'clsx'
-import {
-  startOfMonth, endOfMonth, eachDayOfInterval, format, addMonths, subMonths,
-  startOfWeek, endOfWeek, isSameMonth, isToday, parse, isValid,
-} from 'date-fns'
+import { format } from 'date-fns'
+import DatePicker from '../components/shared/DatePicker'
 
 const SORT_OPTIONS = [
   { value: 'date', label: 'Date' },
@@ -18,8 +16,6 @@ const SORT_OPTIONS = [
   { value: 'average_speed', label: 'Pace/Speed' },
 ]
 
-const WEEKDAY_HEADERS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']
-
 function useDebounce<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value)
   useEffect(() => {
@@ -27,194 +23,6 @@ function useDebounce<T>(value: T, delay: number): T {
     return () => clearTimeout(timer)
   }, [value, delay])
   return debounced
-}
-
-/** Format a yyyy-MM-dd string to dd/MM/yyyy for display */
-function toDisplay(isoDate: string): string {
-  if (!isoDate) return ''
-  const [y, m, d] = isoDate.split('-')
-  return `${d}/${m}/${y}`
-}
-
-/** Parse dd/MM/yyyy input to yyyy-MM-dd, returns '' if invalid */
-function fromDisplay(display: string): string {
-  if (!display) return ''
-  const cleaned = display.replace(/[^\d/]/g, '')
-  const parts = cleaned.split('/')
-  if (parts.length !== 3) return ''
-  const [d, m, y] = parts
-  if (!d || !m || !y || y.length !== 4) return ''
-  const date = parse(`${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`, 'yyyy-MM-dd', new Date())
-  if (!isValid(date)) return ''
-  return format(date, 'yyyy-MM-dd')
-}
-
-/* ── DatePicker (Calendar Page style) ──────────────── */
-function DatePicker({ value, onChange, label }: {
-  value: string  // yyyy-MM-dd or ''
-  onChange: (v: string) => void
-  label: string
-}) {
-  const [open, setOpen] = useState(false)
-  const [viewMonth, setViewMonth] = useState(() =>
-    value ? new Date(value + 'T00:00:00') : new Date()
-  )
-  const [textInput, setTextInput] = useState(() => toDisplay(value))
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    setTextInput(toDisplay(value))
-  }, [value])
-
-  useEffect(() => {
-    if (value) {
-      setViewMonth(new Date(value + 'T00:00:00'))
-    }
-  }, [value])
-
-  useEffect(() => {
-    if (!open) return
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open])
-
-  const handleTextChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const raw = e.target.value
-    setTextInput(raw)
-    if (raw.length === 10) {
-      const iso = fromDisplay(raw)
-      if (iso) onChange(iso)
-    }
-  }, [onChange])
-
-  const handleTextBlur = useCallback(() => {
-    if (!textInput) {
-      onChange('')
-      return
-    }
-    const iso = fromDisplay(textInput)
-    if (iso) {
-      onChange(iso)
-    } else {
-      setTextInput(toDisplay(value))
-    }
-  }, [textInput, value, onChange])
-
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      (e.target as HTMLInputElement).blur()
-    }
-  }, [])
-
-  const selectDay = useCallback((d: Date) => {
-    onChange(format(d, 'yyyy-MM-dd'))
-    setOpen(false)
-  }, [onChange])
-
-  const monthStart = startOfMonth(viewMonth)
-  const monthEnd = endOfMonth(viewMonth)
-  const calStart = startOfWeek(monthStart, { weekStartsOn: 1 })
-  const calEnd = endOfWeek(monthEnd, { weekStartsOn: 1 })
-  const days = eachDayOfInterval({ start: calStart, end: calEnd })
-  const selectedIso = value
-
-  return (
-    <div ref={ref} className="relative">
-      <div className="flex items-center gap-1.5">
-        <span className="eyebrow text-[9px] shrink-0">{label}</span>
-        <input
-          type="text"
-          placeholder="dd/mm/yyyy"
-          value={textInput}
-          onChange={handleTextChange}
-          onBlur={handleTextBlur}
-          onKeyDown={handleKeyDown}
-          onFocus={() => setOpen(true)}
-          className="input w-[110px] font-mono tabular-nums"
-          maxLength={10}
-        />
-        <button
-          onClick={() => setOpen(o => !o)}
-          className="btn !p-1.5"
-          type="button"
-        >
-          <svg className="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-          </svg>
-        </button>
-      </div>
-
-      {open && (
-        <div className="absolute top-full mt-1 z-50 bg-surface-800 border border-surface-600 rounded-xl p-3 shadow-xl w-[250px]">
-          {/* Year nav */}
-          <div className="flex items-center justify-between mb-1">
-            <button onClick={() => setViewMonth(m => new Date(m.getFullYear() - 1, m.getMonth(), 1))} className="text-gray-500 hover:text-gray-100 px-1 text-[11px]">&larr;</button>
-            <span className="text-[11px] text-gray-500">{viewMonth.getFullYear()}</span>
-            <button onClick={() => setViewMonth(m => new Date(m.getFullYear() + 1, m.getMonth(), 1))} className="text-gray-500 hover:text-gray-100 px-1 text-[11px]">&rarr;</button>
-          </div>
-          {/* Month nav */}
-          <div className="flex items-center justify-between mb-2">
-            <button onClick={() => setViewMonth(m => subMonths(m, 1))} className="text-gray-400 hover:text-gray-100 px-1 text-sm">&larr;</button>
-            <span className="text-xs font-medium text-gray-300">{format(viewMonth, 'MMMM')}</span>
-            <button onClick={() => setViewMonth(m => addMonths(m, 1))} className="text-gray-400 hover:text-gray-100 px-1 text-sm">&rarr;</button>
-          </div>
-
-          {/* Weekday headers */}
-          <div className="grid grid-cols-7 gap-0.5 text-center mb-1">
-            {WEEKDAY_HEADERS.map(d => (
-              <div key={d} className="text-[9px] text-gray-600 py-0.5">{d}</div>
-            ))}
-          </div>
-
-          {/* Day grid */}
-          <div className="grid grid-cols-7 gap-0.5 text-center">
-            {days.map(d => {
-              const ds = format(d, 'yyyy-MM-dd')
-              const inMonth = isSameMonth(d, viewMonth)
-              const isSelected = ds === selectedIso
-              const isTodayDate = isToday(d)
-              return (
-                <button
-                  key={ds}
-                  onClick={() => selectDay(d)}
-                  className={clsx(
-                    'text-[11px] py-1 rounded transition-colors',
-                    !inMonth && 'text-gray-700',
-                    inMonth && !isSelected && !isTodayDate && 'text-gray-400 hover:bg-surface-700',
-                    isTodayDate && !isSelected && 'bg-surface-600 text-gray-300',
-                    isSelected && 'bg-gray-400/20 text-gray-100 font-bold',
-                  )}
-                >
-                  {format(d, 'd')}
-                </button>
-              )
-            })}
-          </div>
-
-          {/* Quick actions */}
-          <div className="flex gap-1 mt-2">
-            <button
-              onClick={() => { selectDay(new Date()) }}
-              className="flex-1 text-[11px] text-gray-400 hover:text-gray-100 py-1 bg-surface-700 rounded"
-            >
-              Today
-            </button>
-            {value && (
-              <button
-                onClick={() => { onChange(''); setOpen(false) }}
-                className="flex-1 text-[11px] text-gray-400 hover:text-gray-100 py-1 bg-surface-700 rounded"
-              >
-                Clear
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  )
 }
 
 /* ── Activity Card ─────────────────────────────────── */
@@ -353,6 +161,7 @@ export default function ActivitiesPage() {
   const [dateTo, setDateTo] = useState(() => searchParams.get('to') || format(new Date(), 'yyyy-MM-dd'))
   const [sortBy, setSortBy] = useState(() => searchParams.get('sort') || 'date')
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>(() => (searchParams.get('dir') === 'asc' ? 'asc' : 'desc'))
+  const [gearId, setGearId] = useState<string>(() => searchParams.get('gear_id') || '')
   const [defaultsApplied, setDefaultsApplied] = useState(() => !!searchParams.get('from'))
 
   // Sync state to URL params (replaces history entry so back button works)
@@ -366,8 +175,9 @@ export default function ActivitiesPage() {
     if (dateTo && dateTo !== format(new Date(), 'yyyy-MM-dd')) params.set('to', dateTo)
     if (sortBy !== 'date') params.set('sort', sortBy)
     if (sortDir !== 'desc') params.set('dir', sortDir)
+    if (gearId) params.set('gear_id', gearId)
     setSearchParams(params, { replace: true })
-  }, [page, sportType, year, searchInput, dateFrom, dateTo, sortBy, sortDir, setSearchParams])
+  }, [page, sportType, year, searchInput, dateFrom, dateTo, sortBy, sortDir, gearId, setSearchParams])
 
   // Save scroll position before navigating away, restore on mount
   useEffect(() => {
@@ -402,6 +212,7 @@ export default function ActivitiesPage() {
     dateTo || undefined,
     sortBy,
     sortDir,
+    gearId || undefined,
   )
 
   useLayoutEffect(() => {
@@ -414,24 +225,26 @@ export default function ActivitiesPage() {
   const totalPages = data ? Math.ceil(data.total / data.per_page) : 0
 
   // Reset page when any filter changes
-  const prevFilters = useRef({ sportType, year, debouncedSearch, dateFrom, dateTo, sortBy, sortDir })
+  const prevFilters = useRef({ sportType, year, debouncedSearch, dateFrom, dateTo, sortBy, sortDir, gearId })
   useEffect(() => {
     const prev = prevFilters.current
     if (
       prev.sportType !== sportType || prev.year !== year ||
       prev.debouncedSearch !== debouncedSearch || prev.dateFrom !== dateFrom ||
-      prev.dateTo !== dateTo || prev.sortBy !== sortBy || prev.sortDir !== sortDir
+      prev.dateTo !== dateTo || prev.sortBy !== sortBy || prev.sortDir !== sortDir ||
+      prev.gearId !== gearId
     ) {
       setPage(1)
-      prevFilters.current = { sportType, year, debouncedSearch, dateFrom, dateTo, sortBy, sortDir }
+      prevFilters.current = { sportType, year, debouncedSearch, dateFrom, dateTo, sortBy, sortDir, gearId }
     }
-  }, [sportType, year, debouncedSearch, dateFrom, dateTo, sortBy, sortDir])
+  }, [sportType, year, debouncedSearch, dateFrom, dateTo, sortBy, sortDir, gearId])
 
   const activeFilterCount = [
     sportType,
     year,
     debouncedSearch,
     sortBy !== 'date' || sortDir !== 'desc' ? 'sort' : '',
+    gearId,
   ].filter(Boolean).length
 
   const clearAll = () => {
@@ -442,8 +255,21 @@ export default function ActivitiesPage() {
     setDateTo('')
     setSortBy('date')
     setSortDir('desc')
+    setGearId('')
     setPage(1)
   }
+
+  // Resolve gear_id → name for the active-filter chip
+  const { data: profileForGear } = useAthleteProfile()
+  const gearName = useMemo(() => {
+    if (!gearId || !profileForGear) return null
+    const shoes = (profileForGear.shoes as Array<Record<string, unknown>> | undefined) ?? []
+    const bikes = (profileForGear.bikes as Array<Record<string, unknown>> | undefined) ?? []
+    const found = [...shoes, ...bikes].find(g => g.id === gearId)
+    if (!found) return gearId
+    const nick = (found.nickname as string | undefined)?.trim()
+    return nick || (found.name as string | undefined) || gearId
+  }, [gearId, profileForGear])
 
   // Page range for pagination
   const pageRange = useMemo(() => {
@@ -482,6 +308,28 @@ export default function ActivitiesPage() {
           </button>
         )}
       </header>
+
+      {/* ── Active gear filter chip ─────────────────── */}
+      {gearId && (
+        <div
+          className={clsx(
+            'inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-[11px] uppercase tracking-[0.15em]',
+            isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-800 border-surface-600 text-gray-300',
+          )}
+        >
+          <span className={isLight ? 'text-gray-400' : 'text-gray-500'}>Gear</span>
+          <span className={isLight ? 'text-gray-900' : 'text-gray-100'}>{gearName ?? gearId}</span>
+          <button
+            onClick={() => setGearId('')}
+            aria-label="Clear gear filter"
+            className={clsx('ml-1', isLight ? 'text-gray-400 hover:text-gray-700' : 'text-gray-500 hover:text-gray-200')}
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
 
       {/* ── Filter toolbar ─────────────────────────── */}
       <section className={clsx(

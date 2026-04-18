@@ -976,6 +976,7 @@ function SessionModal({
                       segments={segments}
                       onChange={setSegments}
                       paceUnit={paceUnit}
+                      sportType={sportType}
                       compact
                     />
                     {/* Save as template */}

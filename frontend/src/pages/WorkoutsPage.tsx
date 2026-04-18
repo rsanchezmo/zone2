@@ -164,6 +164,7 @@ export default function WorkoutsPage() {
               segments={segments}
               onChange={setSegments}
               paceUnit={getPaceUnit(sportType)}
+              sportType={sportType}
             />
           </div>
 

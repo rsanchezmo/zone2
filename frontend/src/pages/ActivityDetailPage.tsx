@@ -1526,7 +1526,7 @@ function ActivityDetailPageInner() {
                   </div>
                 </div>
                 <div className="flex items-center gap-4 text-xs text-gray-400 font-mono flex-shrink-0">
-                  <span>{sportCategory === 'swimming' ? `${Math.round(((sa.distance_km as number) ?? 0) * 1000)} m` : `${(sa.distance_km as number)?.toFixed(1)} km`}</span>
+                  <span>{getSportCategory(sa.sport_type as string) === 'swimming' ? `${Math.round(((sa.distance_km as number) ?? 0) * 1000)} m` : `${(sa.distance_km as number)?.toFixed(1)} km`}</span>
                   {!!sa.formatted_pace && <span>{String(sa.formatted_pace)}</span>}
                   {(sa.total_elevation_gain as number) > 0 && (
                     <span className="text-green-400/70">+{Math.round(sa.total_elevation_gain as number)}m</span>

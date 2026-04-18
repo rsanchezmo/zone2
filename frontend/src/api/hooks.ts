@@ -22,9 +22,10 @@ export function useActivities(
   dateTo?: string,
   sortBy?: string,
   sortDir?: string,
+  gearId?: string,
 ) {
   return useQuery({
-    queryKey: ['activities', page, perPage, sportType, year, search, dateFrom, dateTo, sortBy, sortDir],
+    queryKey: ['activities', page, perPage, sportType, year, search, dateFrom, dateTo, sortBy, sortDir, gearId],
     queryFn: () =>
       api.get('/activities', {
         params: {
@@ -37,6 +38,7 @@ export function useActivities(
           date_to: dateTo || undefined,
           sort_by: sortBy || undefined,
           sort_dir: sortDir || undefined,
+          gear_id: gearId || undefined,
         },
       }).then(r => r.data),
     placeholderData: keepPreviousData,
@@ -233,6 +235,31 @@ export function useAthleteZones() {
     queryKey: ['athlete-zones'],
     queryFn: () => api.get('/athlete/zones').then(r => r.data),
     staleTime: 1000 * 60 * 60,
+  });
+}
+
+export function useZonesSettings() {
+  return useQuery({
+    queryKey: ['zones-settings'],
+    queryFn: () => api.get('/athlete/zones-settings').then(r => r.data),
+    staleTime: 1000 * 60 * 60,
+  });
+}
+
+export function useUpdateZonesSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { source: 'strava' | 'estimated' | 'manual'; manual_zones?: Array<{ min: number; max: number }> }) =>
+      api.put('/athlete/zones-settings', payload).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['athlete-zones'] });
+      qc.invalidateQueries({ queryKey: ['zones-settings'] });
+      // Downstream analytics that use HR zones
+      qc.invalidateQueries({ queryKey: ['weekly-report'] });
+      qc.invalidateQueries({ queryKey: ['training-load'] });
+      qc.invalidateQueries({ queryKey: ['session-scores'] });
+      qc.invalidateQueries({ queryKey: ['activity-score'] });
+    },
   });
 }
 

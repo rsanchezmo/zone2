@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMemo } from 'react'
-import { useAthleteProfile, useAthleteZones, useSyncStatus, useSportTypes, useGoals, useGoalProgress, useCreateGoal, useUpdateGoal, useDeleteGoal, useRateLimits, useCacheCompleteness, useBackfillStreams } from '../api/hooks'
+import { Link } from 'react-router-dom'
+import { useAthleteProfile, useAthleteZones, useZonesSettings, useUpdateZonesSettings, useSyncStatus, useSportTypes, useGoals, useGoalProgress, useCreateGoal, useUpdateGoal, useDeleteGoal, useRateLimits, useCacheCompleteness, useBackfillStreams } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
 import { getSportCategory } from '../utils/formatSpeed'
 import ChartPanel from '../components/shared/ChartPanel'
@@ -41,6 +42,8 @@ export default function ProfilePage() {
   const { toast } = useToast()
   const { data: profile, isLoading: profileLoading } = useAthleteProfile()
   const { data: zones } = useAthleteZones()
+  const { data: zonesSettings } = useZonesSettings()
+  const updateZonesSettings = useUpdateZonesSettings()
   const { data: syncStatus } = useSyncStatus()
   const { data: sportTypes } = useSportTypes()
   const { data: goals } = useGoals()
@@ -117,6 +120,12 @@ export default function ProfilePage() {
 
   const hrZones = zones?.heart_rate?.zones as { min: number; max: number }[] | undefined
   const maxHr = zones?.heart_rate?.max_hr as number | undefined
+
+  type GearItem = { id: string; name: string; nickname?: string; primary: boolean; retired: boolean; converted_distance: number }
+  const sortByDist = (a: GearItem, b: GearItem) => (b.converted_distance ?? 0) - (a.converted_distance ?? 0)
+  const shoes = (((profile.shoes as unknown) as GearItem[] | undefined) ?? []).slice().sort(sortByDist)
+  const bikes = (((profile.bikes as unknown) as GearItem[] | undefined) ?? []).slice().sort(sortByDist)
+  const hasGear = shoes.length > 0 || bikes.length > 0
 
   const handleGoalSubmit = () => {
     let target = parseFloat(goalForm.target_value)
@@ -242,12 +251,27 @@ export default function ProfilePage() {
         <ChartPanel
           title="Heart rate zones"
           glow={false}
+          toolbar={
+            <ZoneSourceSelector
+              current={(zonesSettings?.source as 'strava' | 'estimated' | 'manual' | undefined) ?? 'estimated'}
+              onChange={source => updateZonesSettings.mutate({ source })}
+              isLight={isLight}
+              pending={updateZonesSettings.isPending}
+            />
+          }
           footer={
-            <span className={clsx('text-[11px]', isLight ? 'text-gray-500' : 'text-gray-500')}>
-              {zones?.heart_rate?.custom_zones
-                ? 'Custom zones from Strava'
-                : `Estimated from activity data (max HR: ${maxHr ?? '?'} bpm)`}
-            </span>
+            <div className="space-y-0.5">
+              <div className={clsx('text-[11px]', isLight ? 'text-gray-500' : 'text-gray-500')}>
+                {zones?.heart_rate?.source === 'strava' && `Custom zones from Strava · max HR ${maxHr ?? '?'} bpm`}
+                {zones?.heart_rate?.source === 'manual' && `Manual zones · max HR ${maxHr ?? '?'} bpm`}
+                {zones?.heart_rate?.source === 'estimated' && `Estimated from activity data · max HR ${maxHr ?? '?'} bpm`}
+              </div>
+              {zones?.heart_rate?.fallback_reason && (
+                <div className="text-[11px] text-amber-400">
+                  Requested <span className="font-semibold">{zones.heart_rate.requested_source}</span>, falling back to {zones.heart_rate.source}: {zones.heart_rate.fallback_reason}
+                </div>
+              )}
+            </div>
           }
         >
           <div className="space-y-2.5">
@@ -283,6 +307,29 @@ export default function ProfilePage() {
                 </div>
               )
             })}
+          </div>
+
+          {zonesSettings?.source === 'manual' && (
+            <ManualZonesEditor
+              initial={(zonesSettings?.manual_zones as Array<{ min: number; max: number }> | undefined) ?? hrZones}
+              isLight={isLight}
+              onSave={zones => updateZonesSettings.mutate({ source: 'manual', manual_zones: zones })}
+              saving={updateZonesSettings.isPending}
+            />
+          )}
+        </ChartPanel>
+      )}
+
+      {/* ── Gear ────────────────────────────────────── */}
+      {hasGear && (
+        <ChartPanel title="Gear" glow={false}>
+          <div className="space-y-6">
+            {shoes.length > 0 && (
+              <GearGroup title="Shoes" items={shoes} isLight={isLight} accent={getSportColor('Run')} />
+            )}
+            {bikes.length > 0 && (
+              <GearGroup title="Bikes" items={bikes} isLight={isLight} accent={getSportColor('Ride')} />
+            )}
           </div>
         </ChartPanel>
       )}
@@ -643,6 +690,185 @@ export default function ProfilePage() {
         </ChartPanel>
       )}
 
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────
+// ZoneSourceSelector — pick strava / estimated / manual
+// ────────────────────────────────────────────────────────
+
+function ZoneSourceSelector({
+  current, onChange, isLight, pending,
+}: {
+  current: 'strava' | 'estimated' | 'manual'
+  onChange: (source: 'strava' | 'estimated' | 'manual') => void
+  isLight: boolean
+  pending: boolean
+}) {
+  const options: Array<{ value: 'strava' | 'estimated' | 'manual'; label: string }> = [
+    { value: 'estimated', label: 'Estimated' },
+    { value: 'strava', label: 'Strava' },
+    { value: 'manual', label: 'Manual' },
+  ]
+  return (
+    <div className={clsx('inline-flex rounded-md overflow-hidden border', isLight ? 'border-gray-200' : 'border-surface-600')}>
+      {options.map((o, i) => {
+        const selected = current === o.value
+        return (
+          <button
+            key={o.value}
+            onClick={() => !selected && onChange(o.value)}
+            disabled={pending}
+            className={clsx(
+              'text-[10px] uppercase tracking-[0.1em] px-2 py-1 transition-colors',
+              i > 0 && (isLight ? 'border-l border-gray-200' : 'border-l border-surface-600'),
+              selected
+                ? (isLight ? 'bg-gray-900 text-white' : 'bg-gray-200 text-gray-900')
+                : (isLight ? 'bg-white text-gray-600 hover:bg-gray-50' : 'bg-surface-800 text-gray-400 hover:bg-surface-700'),
+              pending && 'opacity-60 cursor-wait',
+            )}
+          >
+            {o.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────
+// ManualZonesEditor — edit 5 zone upper-bounds
+// ────────────────────────────────────────────────────────
+
+function ManualZonesEditor({
+  initial, isLight, onSave, saving,
+}: {
+  initial: Array<{ min: number; max: number }>
+  isLight: boolean
+  onSave: (zones: Array<{ min: number; max: number }>) => void
+  saving: boolean
+}) {
+  const [maxes, setMaxes] = useState<string[]>(() => {
+    const src = initial.slice(0, 5)
+    while (src.length < 5) src.push({ min: 0, max: 0 })
+    return src.map(z => String(z.max ?? 0))
+  })
+  const [error, setError] = useState<string | null>(null)
+
+  const parsed = maxes.map(s => parseInt(s, 10))
+  const allValid = parsed.every(n => Number.isFinite(n) && n > 0 && n < 250)
+  const monotonic = allValid && parsed.every((n, i) => i === 0 || n > parsed[i - 1])
+  const canSave = allValid && monotonic
+
+  const handleSave = () => {
+    if (!canSave) {
+      setError(!allValid ? 'All zones must be positive and below 250' : 'Each zone max must be greater than the previous')
+      return
+    }
+    setError(null)
+    const zones: Array<{ min: number; max: number }> = []
+    for (let i = 0; i < 5; i++) {
+      zones.push({ min: i === 0 ? 0 : parsed[i - 1], max: parsed[i] })
+    }
+    onSave(zones)
+  }
+
+  const accent = '#60a5fa' // blue — primary action
+  return (
+    <div className={clsx('mt-5 pt-4 border-t', isLight ? 'border-gray-200' : 'border-surface-600')}>
+      <div className={clsx('text-[10px] uppercase tracking-[0.15em] mb-3', isLight ? 'text-gray-400' : 'text-gray-500')}>
+        Manual thresholds <span className="normal-case tracking-normal">— upper bpm of each zone</span>
+      </div>
+      <div className="grid grid-cols-5 gap-2 mb-3">
+        {maxes.map((v, i) => {
+          const color = HR_ZONE_COLORS[i] ?? '#6b7280'
+          return (
+            <div key={i}>
+              <label className="eyebrow mb-1.5 block" style={{ color }}>Z{i + 1} max</label>
+              <input
+                type="number"
+                inputMode="numeric"
+                value={v}
+                onChange={e => setMaxes(cur => cur.map((x, ix) => ix === i ? e.target.value : x))}
+                className="input w-full font-mono tabular-nums text-center"
+                min={0}
+                max={250}
+              />
+            </div>
+          )
+        })}
+      </div>
+      {error && <div className="text-[11px] text-red-400 mb-2">{error}</div>}
+      <button
+        onClick={handleSave}
+        disabled={saving || !canSave}
+        className="btn"
+        style={{
+          borderColor: `${accent}50`,
+          color: accent,
+          backgroundColor: `${accent}15`,
+        }}
+      >
+        {saving ? 'Saving…' : 'Save zones'}
+      </button>
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────
+// GearGroup — list of gear items (shoes or bikes) from Strava
+// ────────────────────────────────────────────────────────
+
+type GearItemView = { id: string; name: string; nickname?: string; primary: boolean; retired: boolean; converted_distance: number }
+
+function GearGroup({ title, items, isLight, accent }: { title: string; items: GearItemView[]; isLight: boolean; accent: string }) {
+  return (
+    <div>
+      <div className={clsx('text-[11px] uppercase tracking-[0.15em] mb-2 flex items-center gap-2', isLight ? 'text-gray-400' : 'text-gray-500')}>
+        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: accent }} aria-hidden="true" />
+        {title}
+      </div>
+      <div className="space-y-1.5">
+        {items.map(g => {
+          const label = g.nickname && g.nickname.trim() ? g.nickname : g.name
+          const secondary = g.nickname && g.nickname.trim() && g.nickname !== g.name ? g.name : null
+          const distKm = g.converted_distance ?? 0
+          return (
+            <Link
+              key={g.id}
+              to={`/activities?gear_id=${encodeURIComponent(g.id)}`}
+              className={clsx(
+                'flex items-baseline gap-3 py-1.5 px-2 -mx-2 rounded-lg transition-colors',
+                g.retired && 'opacity-50',
+                isLight ? 'hover:bg-gray-50' : 'hover:bg-surface-700',
+              )}
+            >
+              <div className="flex-1 min-w-0 flex items-baseline gap-2 flex-wrap">
+                <span className={clsx('text-sm font-medium truncate', isLight ? 'text-gray-900' : 'text-gray-100')}>{label}</span>
+                {secondary && (
+                  <span className={clsx('text-[11px] truncate', isLight ? 'text-gray-500' : 'text-gray-500')}>{secondary}</span>
+                )}
+                {g.primary && (
+                  <span
+                    className="text-[9px] uppercase tracking-[0.15em] px-1.5 py-0.5 rounded border"
+                    style={{ color: accent, borderColor: `${accent}40`, backgroundColor: `${accent}15` }}
+                  >
+                    Primary
+                  </span>
+                )}
+                {g.retired && (
+                  <span className={clsx('text-[9px] uppercase tracking-[0.15em] px-1.5 py-0.5 rounded border', isLight ? 'border-gray-300 text-gray-400' : 'border-gray-700 text-gray-500')}>Retired</span>
+                )}
+              </div>
+              <span className={clsx('text-sm font-mono tabular-nums shrink-0', isLight ? 'text-gray-700' : 'text-gray-300')}>
+                {distKm.toLocaleString(undefined, { maximumFractionDigits: 1 })}
+                <span className={clsx('ml-1 text-[11px]', isLight ? 'text-gray-400' : 'text-gray-500')}>km</span>
+              </span>
+            </Link>
+          )
+        })}
+      </div>
     </div>
   )
 }

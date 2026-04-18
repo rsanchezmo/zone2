@@ -378,7 +378,7 @@ class StravaAnalytics:
         }
 
 
-    def get_weekly_report(self, week_start_date: str | None = None, cutoff_date: str | None = None) -> dict:
+    def get_weekly_report(self, week_start_date: str | None = None, cutoff_date: str | None = None, hr_zones: list | None = None) -> dict:
         """
         Get weekly report for a given week.
 
@@ -480,7 +480,7 @@ class StravaAnalytics:
                 activities_titles_per_day_per_sport[sport] = titles_per_day
         
         # HR Zone distribution (vectorized with numpy for speed)
-        hr_athlete_zones = self._get_hr_zones_cached()
+        hr_athlete_zones = hr_zones if hr_zones is not None else self._get_hr_zones_cached()
         hr_zone_distribution = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 5: 0.0}
 
         if not activities_week.empty and hr_athlete_zones and 'streams' in activities_week.columns:
@@ -862,19 +862,27 @@ class StravaAnalytics:
 
     # ── Training Load & PMC ───────────────────────────────────────────
 
-    def get_daily_training_load(self) -> list[dict]:
-        """Compute daily TRIMP values from all activities."""
-        if self._training_load_cache is not None:
+    def get_daily_training_load(self, hr_zones: list | None = None) -> list[dict]:
+        """Compute daily TRIMP values from all activities.
+
+        hr_zones: optional zones override (e.g. resolved from user settings).
+                  When provided, bypasses the in-memory cache so callers can
+                  force a recompute against different zone definitions.
+        """
+        use_cache = hr_zones is None
+        if use_cache and self._training_load_cache is not None:
             return self._training_load_cache
 
         hr_max = self.get_max_heart_rate()
         hr_rest = self.get_rest_heart_rate()
-        hr_zones = self._get_hr_zones_cached()
+        if hr_zones is None:
+            hr_zones = self._get_hr_zones_cached()
 
         activities = self._get_prepared_activities()
         if activities.empty:
-            self._training_load_cache = []
-            return self._training_load_cache
+            if use_cache:
+                self._training_load_cache = []
+            return []
 
         # Drop rows that can't contribute a TRIMP value up-front so we only do
         # work on rows with valid avg_hr and positive moving_time.
@@ -883,8 +891,9 @@ class StravaAnalytics:
         mask = hr.notna() & (hr > 0) & mt.notna() & (mt > 0)
         valid = activities[mask]
         if valid.empty:
-            self._training_load_cache = []
-            return self._training_load_cache
+            if use_cache:
+                self._training_load_cache = []
+            return []
 
         # Vectorized Banister TRIMP across all valid rows — replaces the
         # scalar compute_trimp_banister call that ran inside the old iterrows
@@ -943,7 +952,8 @@ class StravaAnalytics:
             })
 
         result = sorted(daily.values(), key=lambda d: d["date"])
-        self._training_load_cache = result
+        if use_cache:
+            self._training_load_cache = result
         return result
 
     def get_pmc_chart(self, start_date: str | None = None, end_date: str | None = None) -> dict:

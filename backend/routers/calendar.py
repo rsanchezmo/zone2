@@ -10,6 +10,7 @@ from backend._serialize import sanitize as _sanitize
 from backend.db import get_db
 from backend.dependencies import get_si
 from backend.scoring import match_activity, compute_execution_score, has_targets
+from backend.services.zones import resolve_hr_zones
 from strava.strava_intelligence import StravaIntelligence
 
 logger = logging.getLogger(__name__)
@@ -163,7 +164,7 @@ async def get_session_scores(
 
     hr_zones = None
     try:
-        hr_zones = si.strava_analytics.get_hr_zones()
+        hr_zones = (await resolve_hr_zones(si, db))["zones"]
     except Exception as e:
         logger.debug("Could not load HR zones for scoring: %s", e)
 
@@ -220,7 +221,7 @@ async def get_score_by_activity(
 
     hr_zones = None
     try:
-        hr_zones = si.strava_analytics.get_hr_zones()
+        hr_zones = (await resolve_hr_zones(si, db))["zones"]
     except Exception as e:
         logger.debug("Could not load HR zones for scoring: %s", e)
 

@@ -8,6 +8,7 @@ import {
 import { getSportColor } from '../constants/sportColors'
 import { getPaceUnit } from '../utils/formatSpeed'
 import SportTypeCombobox from '../components/shared/SportTypeCombobox'
+import DatePicker from '../components/shared/DatePicker'
 import { FlagIcon, CheckIcon, ExternalLinkIcon } from '../components/icons'
 import clsx from 'clsx'
 import { useTheme } from '../hooks/useTheme'
@@ -19,16 +20,11 @@ export default function RacesPage() {
   const { theme } = useTheme()
   const isLight = theme === 'light'
   const { toast } = useToast()
-  const [filterYear, setFilterYear] = useState<number>(new Date().getFullYear())
 
-  const { data: allRaces, isLoading } = useRaceEvents(filterYear)
+  const { data: allRaces, isLoading } = useRaceEvents()
   const createRace = useCreateRaceEvent()
   const updateRace = useUpdateRaceEvent()
   const deleteRace = useDeleteRaceEvent()
-
-  const dateFrom = `${filterYear}-01-01`
-  const dateTo = `${filterYear}-12-31`
-  const { data: activitiesData } = useActivitiesByDateRange(dateFrom, dateTo)
 
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -85,6 +81,16 @@ export default function RacesPage() {
     }
   }
 
+  const today = new Date()
+  const upcoming = (allRaces || []).filter((r: Record<string, unknown>) => (r.date as string) >= format(today, 'yyyy-MM-dd'))
+  const past = (allRaces || []).filter((r: Record<string, unknown>) => (r.date as string) < format(today, 'yyyy-MM-dd')).reverse()
+
+  // Fetch activities only across the span of past races, for "View activity" matching.
+  const pastDates = past.map((r: Record<string, unknown>) => r.date as string)
+  const dateFrom = pastDates.length > 0 ? pastDates[pastDates.length - 1] : undefined
+  const dateTo = pastDates.length > 0 ? pastDates[0] : undefined
+  const { data: activitiesData } = useActivitiesByDateRange(dateFrom, dateTo)
+
   const activityByDate: Record<string, Array<{ id: number; name: string; sport_type: string; distance_km: number }>> = {}
   if (activitiesData?.items) {
     for (const a of activitiesData.items) {
@@ -95,10 +101,6 @@ export default function RacesPage() {
       }
     }
   }
-
-  const today = new Date()
-  const upcoming = (allRaces || []).filter((r: Record<string, unknown>) => (r.date as string) >= format(today, 'yyyy-MM-dd'))
-  const past = (allRaces || []).filter((r: Record<string, unknown>) => (r.date as string) < format(today, 'yyyy-MM-dd')).reverse()
 
   const paceUnit = getPaceUnit(sportType)
 
@@ -112,19 +114,7 @@ export default function RacesPage() {
       {/* ── Breadcrumb header ─────────────────────────── */}
       <header className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-baseline gap-2">
-          <span className="eyebrow">Races</span>
-          <span className={clsx('text-[11px]', isLight ? 'text-gray-300' : 'text-gray-700')}>/</span>
-          <select
-            value={filterYear}
-            onChange={e => setFilterYear(Number(e.target.value))}
-            className="select shrink-0"
-            style={{ borderLeftWidth: 2, borderLeftColor: RACE_ACCENT }}
-            aria-label="Year"
-          >
-            {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() + 1 - i).map(y => (
-              <option key={y} value={y}>{y}</option>
-            ))}
-          </select>
+          <span className="eyebrow" style={{ borderLeftWidth: 2, borderLeftColor: RACE_ACCENT, paddingLeft: 8 }}>Races</span>
         </div>
         <button
           onClick={() => { resetForm(); setShowForm(true); setDate(format(today, 'yyyy-MM-dd')) }}
@@ -161,10 +151,10 @@ export default function RacesPage() {
             </div>
             <div>
               <label className="eyebrow mb-1.5 block">Date *</label>
-              <input
-                type="date"
-                value={date} onChange={e => setDate(e.target.value)}
-                className="input w-full"
+              <DatePicker
+                value={date}
+                onChange={setDate}
+                inputClassName="w-full"
               />
             </div>
             <div>
@@ -391,7 +381,7 @@ export default function RacesPage() {
           {upcoming.length === 0 && past.length === 0 && !showForm && (
             <div className={clsx(panelClass, 'p-10 text-center flex flex-col items-center gap-3')}>
               <div style={{ color: RACE_ACCENT }}><FlagIcon size={32} /></div>
-              <div className={clsx('text-sm', isLight ? 'text-gray-500' : 'text-gray-500')}>No races for {filterYear}</div>
+              <div className={clsx('text-sm', isLight ? 'text-gray-500' : 'text-gray-500')}>No races yet</div>
               <button
                 onClick={() => { resetForm(); setShowForm(true); setDate(format(today, 'yyyy-MM-dd')) }}
                 className="text-[11px] uppercase tracking-[0.15em] font-semibold"

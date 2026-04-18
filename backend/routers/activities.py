@@ -98,6 +98,7 @@ def list_activities(
     year: int | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    gear_id: str | None = None,
     search: str | None = Query(None),
     sort_by: str = Query("date"),
     sort_dir: str = Query("desc"),
@@ -116,6 +117,8 @@ def list_activities(
         mask &= activities["name"].str.contains(search, case=False, na=False)
     if sport_type:
         mask &= activities["sport_type"] == sport_type
+    if gear_id and "gear_id" in activities.columns:
+        mask &= activities["gear_id"] == gear_id
     if year:
         mask &= sdl.dt.year == year
     tz = sdl.dt.tz

@@ -1,10 +1,14 @@
+import json
 from datetime import datetime, timedelta, date
 from fastapi import APIRouter, Depends, Query
+import aiosqlite
 import pandas as pd
 import numpy as np
 
 from backend._ttl_cache import TTLCache
+from backend.db import get_db
 from backend.dependencies import get_si
+from backend.services.zones import resolve_hr_zones
 from strava.strava_intelligence import StravaIntelligence
 from strava.strava_utils import convert_speed, get_sport_category
 
@@ -27,22 +31,37 @@ def _serialize_enum_dict(d: dict) -> dict:
     return {str(k): v for k, v in d.items()}
 
 
-def _get_weekly_report_cached(si: StravaIntelligence, week_start: str | None, cutoff_date: str | None = None) -> dict:
-    key = ("weekly", week_start, cutoff_date, si.strava_activities_cache.cache_version)
+def _zones_signature(hr_zones: list | None) -> str:
+    """Stable fingerprint for the zones so the stats cache differentiates by source."""
+    if not hr_zones:
+        return "none"
+    return json.dumps(hr_zones, sort_keys=True, separators=(",", ":"))
+
+
+def _get_weekly_report_cached(
+    si: StravaIntelligence,
+    week_start: str | None,
+    cutoff_date: str | None = None,
+    hr_zones: list | None = None,
+) -> dict:
+    key = ("weekly", week_start, cutoff_date, si.strava_activities_cache.cache_version, _zones_signature(hr_zones))
     cached = _stats_cache.get(key)
     if cached is not None:
         return cached
-    result = si.strava_analytics.get_weekly_report(week_start, cutoff_date=cutoff_date)
+    result = si.strava_analytics.get_weekly_report(week_start, cutoff_date=cutoff_date, hr_zones=hr_zones)
     _stats_cache.set(key, result)
     return result
 
 
 @router.get("/weekly-report")
-def weekly_report(
+async def weekly_report(
     week_start: str | None = None,
     si: StravaIntelligence = Depends(get_si),
+    db: aiosqlite.Connection = Depends(get_db),
 ):
-    report = _get_weekly_report_cached(si, week_start)
+    resolved = await resolve_hr_zones(si, db)
+    hr_zones = resolved["zones"]
+    report = _get_weekly_report_cached(si, week_start, hr_zones=hr_zones)
     # Previous week for deltas — with same day-of-week cutoff for fairness
     week_start_str = report.get("week_start")
     prev_report = None
@@ -59,9 +78,10 @@ def weekly_report(
             prev_report = _get_weekly_report_cached(
                 si, prev_monday.strftime("%Y-%m-%d"),
                 cutoff_date=cutoff_day_prev.strftime("%Y-%m-%d"),
+                hr_zones=hr_zones,
             )
         else:
-            prev_report = _get_weekly_report_cached(si, prev_monday.strftime("%Y-%m-%d"))
+            prev_report = _get_weekly_report_cached(si, prev_monday.strftime("%Y-%m-%d"), hr_zones=hr_zones)
 
     return {
         "current": _serialize_enum_dict(report),
@@ -537,12 +557,14 @@ def race_predictions(
 
 
 @router.get("/training-load")
-def training_load(
+async def training_load(
     start_date: str | None = None,
     end_date: str | None = None,
     si: StravaIntelligence = Depends(get_si),
+    db: aiosqlite.Connection = Depends(get_db),
 ):
-    data = si.strava_analytics.get_daily_training_load()
+    resolved = await resolve_hr_zones(si, db)
+    data = si.strava_analytics.get_daily_training_load(hr_zones=resolved["zones"])
     if start_date or end_date:
         filtered = data
         if start_date:

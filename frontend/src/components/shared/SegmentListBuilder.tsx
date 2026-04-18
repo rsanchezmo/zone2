@@ -1,5 +1,6 @@
 import { useCallback, useState, useEffect } from 'react'
 import clsx from 'clsx'
+import { getDistUnit } from '../../utils/formatSpeed'
 
 /* Numeric input that keeps a local string buffer so users can type decimals freely */
 function NumericInput({ value, onChange, className, placeholder = '--' }: {
@@ -85,14 +86,30 @@ function emptySegment(type: Segment['type'] = 'work'): Segment {
   return { type, distance_km: null, duration_mins: null, repetitions: 1 }
 }
 
+/** True for time-based pace units (min/km, min/100m) where smaller = faster.
+ *  False for speed units (km/h) where larger = faster. */
+function isPaceUnit(unit: string): boolean {
+  return unit.startsWith('min/')
+}
+
 interface Props {
   segments: Segment[]
   onChange: (segments: Segment[]) => void
   paceUnit?: string
+  sportType?: string
   compact?: boolean
 }
 
-export default function SegmentListBuilder({ segments, onChange, paceUnit = 'min/km', compact = false }: Props) {
+export default function SegmentListBuilder({ segments, onChange, paceUnit = 'min/km', sportType, compact = false }: Props) {
+  const distUnit = getDistUnit(sportType)
+  const distIsMeters = distUnit === 'm'
+  const toDisplayDist = (km: number | null | undefined) => (km == null ? km : (distIsMeters ? km * 1000 : km))
+  const fromDisplayDist = (v: number | null) => (v == null ? v : (distIsMeters ? v / 1000 : v))
+
+  const isPace = isPaceUnit(paceUnit)
+  const fastLabel = isPace ? 'Fastest' : 'Min speed'
+  const slowLabel = isPace ? 'Slowest' : 'Max speed'
+
   const update = useCallback((idx: number, patch: Partial<Segment>) => {
     const next = segments.map((s, i) => i === idx ? { ...s, ...patch } : s)
     onChange(next)
@@ -172,11 +189,11 @@ export default function SegmentListBuilder({ segments, onChange, paceUnit = 'min
                   <label className="text-[10px] text-gray-500 mb-0.5 block">Distance</label>
                   <div className="flex items-center gap-1">
                     <NumericInput
-                      value={seg.distance_km}
-                      onChange={v => update(idx, { distance_km: v })}
+                      value={toDisplayDist(seg.distance_km) ?? null}
+                      onChange={v => update(idx, { distance_km: fromDisplayDist(v) ?? null })}
                       className="w-16 bg-surface-700 border border-surface-600 rounded px-1.5 py-1 text-xs"
                     />
-                    <span className="text-[10px] text-gray-500">km</span>
+                    <span className="text-[10px] text-gray-500">{distUnit}</span>
                   </div>
                 </div>
 
@@ -211,7 +228,7 @@ export default function SegmentListBuilder({ segments, onChange, paceUnit = 'min
               <div className={clsx('grid gap-2 mt-1.5', compact ? 'grid-cols-2' : 'grid-cols-3')}>
                 <div>
                   <label className="text-[10px] text-gray-500 mb-0.5 block">
-                    {paceUnit === 'min/km' ? 'Fastest' : 'Min speed'} ({paceUnit})
+                    {fastLabel} ({paceUnit})
                   </label>
                   <NumericInput
                     value={seg.target_pace_min}
@@ -221,7 +238,7 @@ export default function SegmentListBuilder({ segments, onChange, paceUnit = 'min
                 </div>
                 <div>
                   <label className="text-[10px] text-gray-500 mb-0.5 block">
-                    {paceUnit === 'min/km' ? 'Slowest' : 'Max speed'} ({paceUnit})
+                    {slowLabel} ({paceUnit})
                   </label>
                   <NumericInput
                     value={seg.target_pace_max}
@@ -260,11 +277,11 @@ export default function SegmentListBuilder({ segments, onChange, paceUnit = 'min
                     <label className="text-[10px] text-gray-500 mb-0.5 block">Recovery dist</label>
                     <div className="flex items-center gap-1">
                       <NumericInput
-                        value={seg.recovery_distance_km}
-                        onChange={v => update(idx, { recovery_distance_km: v })}
+                        value={toDisplayDist(seg.recovery_distance_km) ?? null}
+                        onChange={v => update(idx, { recovery_distance_km: fromDisplayDist(v) ?? null })}
                         className="w-16 bg-surface-700 border border-surface-600 rounded px-1.5 py-1 text-xs"
                       />
-                      <span className="text-[10px] text-gray-500">km</span>
+                      <span className="text-[10px] text-gray-500">{distUnit}</span>
                     </div>
                   </div>
                 </div>

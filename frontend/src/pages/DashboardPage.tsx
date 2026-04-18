@@ -616,13 +616,14 @@ function HeroBlock(props: HeroBlockProps) {
   const { theme } = useTheme()
   const isLight = theme === 'light'
 
-  // Ring state
-  const ringValue = hasGoal
-    ? `${Math.round(todayKm)}`
-    : Math.round(todayKm).toString()
+  // Ring state — swim uses meters, other sports use km
+  const unit = getDistUnit(sport)
+  const isSwim = unit === 'm'
+  const displayDist = (km: number) => isSwim ? Math.round(km * 1000) : Math.round(km)
+  const ringValue = displayDist(todayKm).toLocaleString()
   const ringSubValue = hasGoal
-    ? `of ${(goalTarget ?? 0).toLocaleString()} ${getDistUnit(sport)}`
-    : `${getDistUnit(sport)} · ${sport}`
+    ? `of ${displayDist(goalTarget ?? 0).toLocaleString()} ${unit}`
+    : `${unit} · ${sport}`
   const ringLabel = hasGoal ? `${Math.round(goalProgress * 100)}% of goal` : `Year progress · ${Math.round(yearPace * 100)}%`
   const ringStatus = hasGoal && goalStatus ? { label: goalStatus.label, tone: goalStatus.tone } : undefined
 
@@ -689,7 +690,7 @@ function HeroBlock(props: HeroBlockProps) {
             footnote={isCurrentYear ? `of ${daysInYear}` : undefined}
           />
           <HeroStat
-            label={hasGoal && etaToGoal ? 'ETA at pace' : 'Active days'}
+            label={hasGoal && etaToGoal ? 'Projected finish' : 'Active days'}
             value={
               hasGoal && etaToGoal
                 ? etaToGoal.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
@@ -697,7 +698,7 @@ function HeroBlock(props: HeroBlockProps) {
             }
             footnote={
               hasGoal && etaToGoal
-                ? (etaToGoal.getFullYear() > (new Date()).getFullYear() ? 'past year-end at current pace' : 'to reach goal')
+                ? 'at current pace'
                 : hasGoal ? undefined : `longest · ${longestActivityKm.toFixed(1)} ${getDistUnit(sport)}`
             }
           />
