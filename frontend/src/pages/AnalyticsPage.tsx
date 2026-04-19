@@ -4,6 +4,7 @@ import {
 } from 'recharts'
 import { useRacePredictions, useRacePredictionsHistory } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
+import { formatSpeed } from '../utils/formatSpeed'
 import { useTheme } from '../hooks/useTheme'
 import clsx from 'clsx'
 
@@ -195,6 +196,11 @@ export default function AnalyticsPage() {
                   <div className={clsx('text-xl md:text-2xl font-bold font-mono tabular-nums', isLight ? 'text-gray-900' : 'text-gray-100')}>
                     {formatSec(p.predicted_time_s)}
                   </div>
+                  {p.predicted_time_s != null && p.predicted_time_s > 0 && (
+                    <div className={clsx('text-[11px] font-mono tabular-nums mt-0.5', isLight ? 'text-gray-600' : 'text-gray-300')}>
+                      {formatSpeed(p.distance_m / p.predicted_time_s, sportMeta.sportType)}
+                    </div>
+                  )}
                   {band && (
                     <div className="text-[10px] text-gray-500 font-mono tabular-nums mt-1">
                       {band}

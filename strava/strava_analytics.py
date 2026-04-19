@@ -602,6 +602,9 @@ class StravaAnalytics:
         (400, "400m"),
         (800, "800m"),
         (1500, "1500m"),
+        (1900, "1900m"),   # Half Ironman swim leg
+        (3000, "3000m"),
+        (3800, "3800m"),   # Ironman swim leg
     ]
 
     # Maximum plausible speed per sport (m/s) — used to filter GPS drift / bad data
@@ -1222,11 +1225,11 @@ class StravaAnalytics:
         warnings: list[str] = []
         if n_recent == 0:
             warnings.append(
-                f"No {sport_category} efforts in the last 24 weeks — predictions unavailable"
+                f"No {sport_category} efforts in the last 52 weeks — predictions unavailable"
             )
         elif n_recent < 3:
             warnings.append(
-                f"Only {n_recent} distinct recent best effort(s) in the last 24 weeks — "
+                f"Only {n_recent} distinct recent best effort(s) in the last 52 weeks — "
                 "personalized Riegel not fit; predictions extrapolated from limited inputs"
             )
         if sport_category == "cycling":
@@ -1285,16 +1288,44 @@ class StravaAnalytics:
         # the full distance range.
         MIN_INPUTS = 3
 
+        target_distances = sport_configs[sport_category]
+        empty_predictions = [
+            {
+                "distance_m": dist_m,
+                "label": label,
+                "predicted_time_s": None,
+                "predicted_time_low_s": None,
+                "predicted_time_high_s": None,
+            }
+            for dist_m, label in target_distances
+        ]
+
         now = datetime.now(timezone.utc)
         history: list[dict] = []
+        first_valid_seen = False
         for i in range(weeks - 1, -1, -1):
             step_end = now - timedelta(days=i * step_days)
             recent = self._recent_best_efforts_list(
                 sport_category, within_days=window_days, end_date=step_end
             )
             distinct = len({b["distance_m"] for b in recent if b.get("is_top1")})
+
             if distinct < MIN_INPUTS:
+                # Skip entirely until we've seen our first valid point; after that
+                # emit a null-predictions entry so the chart can render a gap
+                # (break the line) rather than connecting across the missing week.
+                if not first_valid_seen:
+                    continue
+                history.append({
+                    "end_date": step_end.date().isoformat(),
+                    "athlete_vdot": None,
+                    "fitted_exponent": None,
+                    "n_inputs": len(recent),
+                    "predictions": empty_predictions,
+                })
                 continue
+
+            first_valid_seen = True
             core = self._compute_predictions(recent, sport_category, reference_date=step_end)
             history.append(
                 {
