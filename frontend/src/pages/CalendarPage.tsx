@@ -11,7 +11,7 @@ import {
   useRaceEventsByRange, useUpcomingRaces, useCreateRaceEvent, useUpdateRaceEvent, useDeleteRaceEvent,
 } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
-import { getPaceUnit, getSportCategory, formatDist, getDistUnit } from '../utils/formatSpeed'
+import { getPaceUnit, getSportCategory, formatDist, getDistUnit, formatPace, isSpeedSport, parsePaceInput } from '../utils/formatSpeed'
 import SportTypeCombobox from '../components/shared/SportTypeCombobox'
 import StatCard from '../components/shared/StatCard'
 import ExportButton from '../components/shared/ExportButton'
@@ -331,10 +331,12 @@ function SessionModal({
       setPlannedDistanceKm(String(displayDist))
     } else { setPlannedDistanceKm('') }
     if (s.planned_duration_mins != null) { goals.add('duration'); setPlannedDurationMins(String(s.planned_duration_mins)) } else { setPlannedDurationMins('') }
-    if (s.target_avg_pace != null) { goals.add('avg_pace'); setTargetAvgPace(String(s.target_avg_pace)) } else { setTargetAvgPace('') }
+    // User enters M:SS (or decimal) for pace sports, X.X for speed sports — format stored decimal back into M:SS for display
+    const useSpeed = isSpeedSport(s.sport_type as string)
+    if (s.target_avg_pace != null) { goals.add('avg_pace'); setTargetAvgPace(formatPace(s.target_avg_pace as number, useSpeed)) } else { setTargetAvgPace('') }
     if (s.target_pace_min != null || s.target_pace_max != null) { goals.add('pace_range') }
-    setTargetPaceMin(s.target_pace_min != null ? String(s.target_pace_min) : '')
-    setTargetPaceMax(s.target_pace_max != null ? String(s.target_pace_max) : '')
+    setTargetPaceMin(s.target_pace_min != null ? formatPace(s.target_pace_min as number, useSpeed) : '')
+    setTargetPaceMax(s.target_pace_max != null ? formatPace(s.target_pace_max as number, useSpeed) : '')
     if (s.target_hr_zone != null) { goals.add('hr_zone') }
     setTargetHrZone(s.target_hr_zone != null ? String(s.target_hr_zone) : '')
     setTargetZonePct(s.target_zone_pct != null ? String(s.target_zone_pct) : '80')
@@ -389,15 +391,16 @@ function SessionModal({
       data.planned_duration_mins = null
     }
     // Avg Pace
+    const useSpeed = isSpeedSport(sportType)
     if (activeGoals.has('avg_pace') && targetAvgPace) {
-      data.target_avg_pace = parseFloat(targetAvgPace)
+      data.target_avg_pace = parsePaceInput(targetAvgPace, useSpeed)
     } else {
       data.target_avg_pace = null
     }
     // Pace Range
     if (activeGoals.has('pace_range')) {
-      data.target_pace_min = targetPaceMin ? parseFloat(targetPaceMin) : null
-      data.target_pace_max = targetPaceMax ? parseFloat(targetPaceMax) : null
+      data.target_pace_min = targetPaceMin ? parsePaceInput(targetPaceMin, useSpeed) : null
+      data.target_pace_max = targetPaceMax ? parsePaceInput(targetPaceMax, useSpeed) : null
     } else {
       data.target_pace_min = null
       data.target_pace_max = null
@@ -1166,16 +1169,17 @@ function UpcomingPlan({ sessions, todayStr }: { sessions: Record<string, unknown
                   const cardHasSegments = s.segments && Array.isArray(s.segments) && (s.segments as Segment[]).length > 0
                   if (s.planned_distance_km != null && !cardHasSegments) goals.push({ icon: <DistanceIcon size={10} />, color: '#3b82f6', label: formatDist(s.planned_distance_km as number, s.sport_type as string) })
                   if (s.planned_duration_mins != null) goals.push({ icon: <TimerIcon size={10} />, color: '#22c55e', label: `${s.planned_duration_mins} min` })
+                  const cardUseSpeed = isSpeedSport(s.sport_type as string)
                   if (s.target_avg_pace != null) {
                     const pu = getPaceUnit(s.sport_type as string)
-                    goals.push({ icon: <BoltIcon size={10} />, color: '#f97316', label: `${s.target_avg_pace} ${pu}` })
+                    goals.push({ icon: <BoltIcon size={10} />, color: '#f97316', label: `${formatPace(s.target_avg_pace as number, cardUseSpeed)} ${pu}` })
                   }
                   if (s.target_pace_min != null || s.target_pace_max != null) {
                     const pu = getPaceUnit(s.sport_type as string)
                     const isRun = pu === 'min/km'
                     const parts: string[] = []
-                    if (s.target_pace_min != null) parts.push(`${isRun ? 'fastest' : 'min'} ${s.target_pace_min}`)
-                    if (s.target_pace_max != null) parts.push(`${isRun ? 'slowest' : 'max'} ${s.target_pace_max}`)
+                    if (s.target_pace_min != null) parts.push(`${isRun ? 'fastest' : 'min'} ${formatPace(s.target_pace_min as number, cardUseSpeed)}`)
+                    if (s.target_pace_max != null) parts.push(`${isRun ? 'slowest' : 'max'} ${formatPace(s.target_pace_max as number, cardUseSpeed)}`)
                     goals.push({ icon: <RangeIcon size={10} />, color: '#a855f7', label: `${parts.join(' – ')} ${pu}` })
                   }
                   if (s.target_hr_zone != null) {

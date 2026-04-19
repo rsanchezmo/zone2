@@ -6,7 +6,7 @@ import {
   useActivitiesByDateRange,
 } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
-import { getPaceUnit } from '../utils/formatSpeed'
+import { getPaceUnit, getDistUnit, getSportCategory, formatPace, isSpeedSport, parsePaceInput } from '../utils/formatSpeed'
 import SportTypeCombobox from '../components/shared/SportTypeCombobox'
 import DatePicker from '../components/shared/DatePicker'
 import { FlagIcon, CheckIcon, ExternalLinkIcon } from '../components/icons'
@@ -50,8 +50,16 @@ export default function RacesPage() {
     setName(r.name as string)
     setDate(r.date as string)
     setSportType(r.sport_type as string)
-    setDistanceKm(r.distance_km != null ? String(r.distance_km) : '')
-    setTargetPace(r.target_pace != null ? String(r.target_pace) : '')
+    // User enters meters for swimming, km for others — convert km → m for swim display
+    const displayDist = r.distance_km != null
+      ? (getSportCategory(r.sport_type as string) === 'swimming'
+          ? (r.distance_km as number) * 1000
+          : (r.distance_km as number))
+      : ''
+    setDistanceKm(displayDist === '' ? '' : String(displayDist))
+    setTargetPace(r.target_pace != null
+      ? formatPace(r.target_pace as number, isSpeedSport(r.sport_type as string))
+      : '')
     setDescription((r.description as string) || '')
     setLocation((r.location as string) || '')
     setUrl((r.url as string) || '')
@@ -60,12 +68,17 @@ export default function RacesPage() {
 
   function handleSubmit() {
     if (!name.trim() || !date) return
+    // User enters meters for swimming, km for others — always store as km
+    const parsedDist = distanceKm ? parseFloat(distanceKm) : null
+    const distanceKmPayload = parsedDist !== null
+      ? (getSportCategory(sportType) === 'swimming' ? parsedDist / 1000 : parsedDist)
+      : null
     const payload: Record<string, unknown> = {
       name: name.trim(),
       date,
       sport_type: sportType,
-      distance_km: distanceKm ? parseFloat(distanceKm) : null,
-      target_pace: targetPace ? parseFloat(targetPace) : null,
+      distance_km: distanceKmPayload,
+      target_pace: targetPace ? parsePaceInput(targetPace, isSpeedSport(sportType)) : null,
       description: description || null,
       location: location || null,
       url: url || null,
@@ -167,9 +180,10 @@ export default function RacesPage() {
               />
             </div>
             <div>
-              <label className="eyebrow mb-1.5 block">Distance (km)</label>
+              <label className="eyebrow mb-1.5 block">Distance ({getDistUnit(sportType)})</label>
               <input
-                type="text" inputMode="decimal" placeholder="42.195"
+                type="text" inputMode="decimal"
+                placeholder={getSportCategory(sportType) === 'swimming' ? '1500' : '42.195'}
                 value={distanceKm} onChange={e => setDistanceKm(e.target.value)}
                 className="input w-full"
               />
@@ -283,8 +297,14 @@ export default function RacesPage() {
                           </div>
                           <div className="flex items-center gap-3 text-[11px] text-gray-500 flex-wrap font-mono tabular-nums">
                             <span>{format(parseISO(r.date as string), 'EEE · MMM d, yyyy')}</span>
-                            {r.distance_km != null && <span>{r.distance_km as number} km</span>}
-                            {r.target_pace != null && <span>{r.target_pace as number} {getPaceUnit(r.sport_type as string)}</span>}
+                            {r.distance_km != null && (
+                              <span>
+                                {getSportCategory(r.sport_type as string) === 'swimming'
+                                  ? `${Math.round((r.distance_km as number) * 1000)} m`
+                                  : `${r.distance_km as number} km`}
+                              </span>
+                            )}
+                            {r.target_pace != null && <span>{formatPace(r.target_pace as number, isSpeedSport(r.sport_type as string))} {getPaceUnit(r.sport_type as string)}</span>}
                             {r.location != null && <span className="normal-case">{r.location as string}</span>}
                           </div>
                           {r.description != null && (
@@ -350,8 +370,14 @@ export default function RacesPage() {
                           </div>
                           <div className="flex items-center gap-3 text-[11px] text-gray-500 flex-wrap font-mono tabular-nums">
                             <span>{format(parseISO(r.date as string), 'MMM d, yyyy')}</span>
-                            {r.distance_km != null && <span>{r.distance_km as number} km</span>}
-                            {r.target_pace != null && <span>{r.target_pace as number} {getPaceUnit(r.sport_type as string)}</span>}
+                            {r.distance_km != null && (
+                              <span>
+                                {getSportCategory(r.sport_type as string) === 'swimming'
+                                  ? `${Math.round((r.distance_km as number) * 1000)} m`
+                                  : `${r.distance_km as number} km`}
+                              </span>
+                            )}
+                            {r.target_pace != null && <span>{formatPace(r.target_pace as number, isSpeedSport(r.sport_type as string))} {getPaceUnit(r.sport_type as string)}</span>}
                             {r.location != null && <span className="normal-case">{r.location as string}</span>}
                             {r.url != null && (
                               <a href={r.url as string} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1" style={{ color: RACE_ACCENT }} onClick={e => e.stopPropagation()}>

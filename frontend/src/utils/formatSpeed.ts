@@ -57,6 +57,15 @@ export function formatPace(value: number, useSpeed: boolean): string {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
+/** Parse a pace input string. Accepts "M:SS" or decimal for pace sports; decimal only for speed sports. */
+export function parsePaceInput(s: string, useSpeed: boolean): number {
+  if (!useSpeed && s.includes(':')) {
+    const [m, sec] = s.split(':')
+    return (parseInt(m) || 0) + ((parseInt(sec) || 0) / 60)
+  }
+  return parseFloat(s)
+}
+
 /** Format speed in m/s to a full display string based on sport type (e.g. "5:30 /km", "25.3 km/h"). */
 export function formatSpeed(speedMs: number, sportType: string | undefined | null): string {
   if (speedMs <= 0) return 'N/A'

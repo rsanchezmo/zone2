@@ -314,7 +314,7 @@ function computeSplits(streams: StreamPoint[], sportType: string | undefined, ga
 /* Collapsible execution score section */
 function ExecutionScoreCollapsible({
   overall, isSegmented, session, sessionSegments, segmentScores, metrics,
-  sc, metricConfig, formatGoal, formatActual, segTypeLabels, formatSegDist, formatDetected, hasBreakdown,
+  sc, metricConfig, formatGoal, formatActual, segTypeLabels, formatSegDist, formatDetected, hasBreakdown, isSwim,
 }: {
   overall: number
   isSegmented: boolean
@@ -330,6 +330,7 @@ function ExecutionScoreCollapsible({
   formatSegDist: (km: number | null | undefined) => string
   formatDetected: (km: number | null | undefined, mins: number | null | undefined, pace?: number | null, paceUnit?: string) => string | null
   hasBreakdown: boolean
+  isSwim: boolean
 }) {
   const [expanded, setExpanded] = useState(!isSegmented)
   const { theme } = useTheme()
@@ -389,7 +390,9 @@ function ExecutionScoreCollapsible({
                 const startKm = ss.start_km as number | undefined
                 const endKm = ss.end_km as number | undefined
                 const kmRange = startKm != null && endKm != null
-                  ? `${startKm.toFixed(2)} – ${endKm.toFixed(2)} km`
+                  ? (isSwim
+                      ? `${Math.round(startKm * 1000)} – ${Math.round(endKm * 1000)} m`
+                      : `${startKm.toFixed(2)} – ${endKm.toFixed(2)} km`)
                   : null
                 const hasScore = segScore != null
 
@@ -988,25 +991,37 @@ function ActivityDetailPageInner() {
           hr_zone: { label: 'HR Zone', icon: <HeartIcon size={11} />, color: '#ef4444' },
         }
 
+        const formatPaceVal = (pace: number, unit: string) => {
+          if (unit === 'min/km' || unit === 'min/100m') {
+            const mins = Math.floor(pace)
+            const secs = Math.round((pace - mins) * 60)
+            return `${mins}:${secs.toString().padStart(2, '0')} ${unit}`
+          }
+          return `${Math.round(pace * 10) / 10} ${unit}`
+        }
+
+        const isSwim = getSportCategory(activity.sport_type) === 'swimming'
+        const formatDistVal = (km: number) => isSwim ? `${Math.round(km * 1000)} m` : `${km} km`
+
         const formatGoal = (key: string, m: Record<string, unknown>) => {
-          if (key === 'distance') return `${m.target} ${m.unit}`
+          if (key === 'distance') return formatDistVal(m.target as number)
           if (key === 'duration') return `${m.target} ${m.unit}`
-          if (key === 'avg_pace') return `${m.target} ${m.unit}`
+          if (key === 'avg_pace') return formatPaceVal(m.target as number, m.unit as string)
           if (key === 'pace') {
             const parts = []
-            if (m.target_min != null) parts.push(String(m.target_min))
-            if (m.target_max != null) parts.push(String(m.target_max))
-            return `${parts.join(' \u2013 ')} ${m.unit}`
+            if (m.target_min != null) parts.push(formatPaceVal(m.target_min as number, m.unit as string))
+            if (m.target_max != null) parts.push(formatPaceVal(m.target_max as number, m.unit as string))
+            return parts.join(' \u2013 ')
           }
           if (key === 'hr_zone') return `Zone ${(m as any).target_zone} @ ${(m as any).target_pct}%`
           return ''
         }
 
         const formatActual = (key: string, m: Record<string, unknown>) => {
-          if (key === 'distance') return `${m.actual} ${m.unit}`
+          if (key === 'distance') return formatDistVal(m.actual as number)
           if (key === 'duration') return `${m.actual} ${m.unit}`
-          if (key === 'avg_pace') return `${m.actual} ${m.unit}`
-          if (key === 'pace') return `${m.actual} ${m.unit}`
+          if (key === 'avg_pace') return formatPaceVal(m.actual as number, m.unit as string)
+          if (key === 'pace') return formatPaceVal(m.actual as number, m.unit as string)
           if (key === 'hr_zone') return `${(m as any).actual_pct}%`
           return ''
         }
@@ -1017,21 +1032,16 @@ function ActivityDetailPageInner() {
 
         const formatSegDist = (km: number | null | undefined) => {
           if (!km) return ''
+          if (isSwim) return `${Math.round(km * 1000)}m`
           return km >= 1 ? `${km}km` : `${Math.round(km * 1000)}m`
-        }
-
-        const formatPaceVal = (pace: number, unit: string) => {
-          if (unit === 'min/km' || unit === 'min/100m') {
-            const mins = Math.floor(pace)
-            const secs = Math.round((pace - mins) * 60)
-            return `${mins}:${secs.toString().padStart(2, '0')} ${unit}`
-          }
-          return `${Math.round(pace * 10) / 10} ${unit}`
         }
 
         const formatDetected = (km: number | null | undefined, mins: number | null | undefined, pace?: number | null, paceUnit?: string) => {
           const parts: string[] = []
-          if (km && km > 0) parts.push(km >= 1 ? `${Math.round(km * 1000) / 1000}km` : `${Math.round(km * 1000)}m`)
+          if (km && km > 0) {
+            if (isSwim) parts.push(`${Math.round(km * 1000)}m`)
+            else parts.push(km >= 1 ? `${Math.round(km * 1000) / 1000}km` : `${Math.round(km * 1000)}m`)
+          }
           if (mins && mins > 0) parts.push(`${Math.round(mins * 10) / 10}'`)
           if (pace && paceUnit) parts.push(formatPaceVal(pace, paceUnit))
           return parts.length > 0 ? parts.join(' / ') : null
@@ -1057,6 +1067,7 @@ function ActivityDetailPageInner() {
             formatSegDist={formatSegDist}
             formatDetected={formatDetected}
             hasBreakdown={!!hasBreakdown}
+            isSwim={isSwim}
           />
         )
       })()}
