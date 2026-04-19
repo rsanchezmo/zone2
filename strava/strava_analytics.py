@@ -1028,21 +1028,26 @@ class StravaAnalytics:
 
         recency_weights = [_recency_w(b.get("date", "")) for b in recent_bests]
 
-        # VDOT only applies to running. Computed from the per-distance top-1
-        # (race-anchor) efforts only — including slower top-2/top-3 samples
-        # would pull VDOT down since they're typically sub-race-effort runs.
+        # VDOT only applies to running. Each top-1 race anchor yields a VDOT;
+        # these are kept as a triple (value, anchor_distance, recency_weight)
+        # so we can re-weight per target by distance proximity inside the loop.
+        # Global `athlete_vdot` (weighted by recency only) is still returned
+        # for display/debug — the per-target VDOT is used for predictions.
+        vdot_anchors: list[tuple[float, int, float]] = []
         athlete_vdot: float | None = None
         if sport_category == "running":
-            vdot_pairs: list[tuple[float, float]] = []
             for b, rw in zip(recent_bests, recency_weights):
                 if not b.get("is_top1"):
                     continue
                 v = vdot_from_time_distance(b["time_s"], b["distance_m"])
                 if v is not None and rw > 0:
-                    vdot_pairs.append((v, rw))
-            if vdot_pairs:
-                tot = sum(w for _, w in vdot_pairs)
-                athlete_vdot = round(sum(v * w for v, w in vdot_pairs) / tot, 2) if tot > 0 else None
+                    vdot_anchors.append((v, int(b["distance_m"]), rw))
+            if vdot_anchors:
+                tot = sum(rw for _, _, rw in vdot_anchors)
+                athlete_vdot = (
+                    round(sum(v * rw for v, _, rw in vdot_anchors) / tot, 2)
+                    if tot > 0 else None
+                )
 
         # Fit personalized Riegel exponent from the per-distance top-1 efforts
         # only — passing multiple samples per distance would bias the fit
@@ -1050,9 +1055,15 @@ class StravaAnalytics:
         top1_bests = [b for b in recent_bests if b.get("is_top1")]
         fitted_exp = fit_riegel_exponent(top1_bests) if len(top1_bests) >= 3 else None
 
+        # Distance-proximity decay exponent. k=1 is the classical exp(-|log2|);
+        # k=1.5 dampens cross-distance contributions from far-away anchors
+        # (e.g. 5K projecting to 20K) without fully zeroing them out.
+        DIST_DECAY_K = 1.5
+
         def _dist_weight(d_in: float, d_tgt: float) -> float:
-            # exp(-|log2(ratio)|): 1.0 when d_in == d_tgt, 0.5 at 2× mismatch, ~0.25 at 4×.
-            return math.exp(-abs(math.log2(d_in / d_tgt)))
+            # exp(-k·|log2(ratio)|): 1.0 when d_in == d_tgt.
+            # k=1.5 → 2× mismatch yields weight 0.354 (was 0.5), 4× → 0.125 (was 0.25).
+            return math.exp(-DIST_DECAY_K * abs(math.log2(d_in / d_tgt)))
 
         predictions: list[dict] = []
         for dist_m, label in target_distances:
@@ -1109,10 +1120,19 @@ class StravaAnalytics:
                 ]
             pers_sum_w = sum(w for _, w in pers_inputs)
 
-            # VDOT is a single scalar prediction (running only, valid distance range).
+            # Per-target VDOT: re-weight each anchor's VDOT by its distance
+            # proximity to the current target. A 5K anchor still informs
+            # Marathon predictions, but much less than a 20K or Half anchor.
             vdot_pred: float | None = None
-            if athlete_vdot is not None and sport_category == "running":
-                vdot_pred = predicted_time_from_vdot(athlete_vdot, dist_m)
+            if vdot_anchors and sport_category == "running":
+                vdot_pairs = [
+                    (v, rw * _dist_weight(d_anchor, dist_m))
+                    for v, d_anchor, rw in vdot_anchors
+                ]
+                tot_vw = sum(w for _, w in vdot_pairs)
+                if tot_vw > 0:
+                    target_vdot = sum(v * w for v, w in vdot_pairs) / tot_vw
+                    vdot_pred = predicted_time_from_vdot(target_vdot, dist_m)
 
             # Family weights: VDOT gets 50% when present; Riegel family splits
             # the remainder evenly between fixed + personalized.
