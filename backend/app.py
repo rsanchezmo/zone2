@@ -67,6 +67,14 @@ async def lifespan(app: FastAPI):
     set_strava_intelligence(si)
     await init_db()
 
+    # Warm the in-memory activities cache so the first request after a fresh
+    # container (re)deploy doesn't pay the full parquet reload cost. Runs in
+    # a thread since pd.read_parquet is blocking.
+    startup_log = logging.getLogger("backend.startup")
+    startup_log.info("warming activities cache…")
+    await asyncio.to_thread(si.strava_activities_cache._load_to_memory)
+    startup_log.info("activities cache warm")
+
     sync_task: asyncio.Task | None = None
     if settings.auto_sync_hours > 0:
         sync_task = asyncio.create_task(_periodic_sync_loop(si, settings.auto_sync_hours))
