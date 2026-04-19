@@ -15,6 +15,7 @@ A Python toolkit for analyzing and visualizing your Strava activities without pa
   - 🌍 **Aggregations**: Interactive Leaflet map with all your routes, filterable by sport and year, plus heatmap export
   - ⚡ **Dashboard**: Yearly stats with goal ring, monthly charts, records, and sport breakdowns
   - 🏆 **Personal Records**: Best efforts at standard distances with sport-category totals
+  - 📊 **Analytics**: Race-time predictor with per-distance cards (central estimate + IQR band) using a weighted blend of VDOT (target-specific) and the Riegel family (fixed 1.06 + personalized fit), plus an evolution chart of predicted times across 12/16/24/52-week windows
   - 🏋️ **Workouts**: Structured workout templates with segments (warmup / work / recovery / cooldown)
   - ⚑ **Races**: Race calendar with day-countdowns, past-race activity linking, and notes
   - 👤 **Profile**: Athlete profile, HR zones, goals management, cache completeness, and API rate limits
@@ -34,7 +35,7 @@ A Python toolkit for analyzing and visualizing your Strava activities without pa
   - 🗺️ **Street Coverage Map**: Neon-glow visualization of all streets you've traversed in a city
   - 📍 **Activity Match Plot**: Per-activity visualization showing GPS track, matched OSM edges, and snap points
   - 📊 **Coverage Stats**: Track how many km of a city's street network you've covered
-- **Analytics**: WIP
+- **Analytics**: Race-time predictions using a top-K (fastest efforts per standard distance) model with recency decay and per-target VDOT. Exposed at `/analytics` in the web app with an evolution chart so you can track how each predicted race time has moved across the year.
 - **GeoJSON Export**: Export your activities as GeoJSON for use in mapping applications such as QGIS
 - **Telegram Bot**: Automated scheduled delivery of weekly and monthly reports to your Telegram chat
 - **Smart Caching**: Efficient local caching with incremental sync support to avoid redundant API calls
@@ -126,6 +127,13 @@ python run_dev.py
 ```
 
 The app will be available at `http://localhost:5173`. The backend API runs on `http://localhost:8000`.
+
+### Screenshots
+
+| Calendar | Year | Analytics |
+|:---:|:---:|:---:|
+| ![Calendar](readme_data/calendar.png) | ![Year](readme_data/year.png) | ![Analytics](readme_data/analytics.png) |
+| Monthly planning with activity overlay, weekly reports, goal progress, streaks, and race countdowns | Yearly stats with goal ring, monthly charts, records, and sport breakdowns | Race-time predictor with uncertainty bands + evolution chart across 12 / 16 / 24 / 52-week windows |
 
 ### Production deployment
 
