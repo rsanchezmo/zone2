@@ -47,6 +47,11 @@ const NAV_ITEMS: { to: string; label: string; color: string; icon: React.ReactNo
       <path d="M3 2v12M3 2l7 3-7 3" />
     </svg>
   )},
+  { to: '/analytics', label: 'Analytics', color: '#fb923c', icon: (
+    <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 12l3-4 3 2 4-6" /><circle cx="13" cy="3.5" r="1" />
+    </svg>
+  )},
   { to: '/profile', label: 'Profile', color: '#94a3b8', icon: (
     <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="8" cy="5" r="2.5" /><path d="M3 14c0-2.8 2.2-5 5-5s5 2.2 5 5" />

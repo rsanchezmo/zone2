@@ -23,6 +23,25 @@ def _utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _weighted_quantile(values: list[float], weights: list[float], q: float) -> float:
+    """Linear-interpolated weighted quantile. Equivalent to numpy.percentile
+    when weights are uniform. Used by the race-prediction band so the IQR
+    respects the same closer-anchor weighting as the central estimate.
+    """
+    if not values:
+        return 0.0
+    pairs = sorted(zip(values, weights), key=lambda p: p[0])
+    vals = np.array([v for v, _ in pairs], dtype=np.float64)
+    wts = np.array([w for _, w in pairs], dtype=np.float64)
+    total = wts.sum()
+    if total <= 0:
+        return float(np.percentile(vals, q * 100))
+    # Centered staircase: each sample contributes weight at the midpoint of
+    # its cumulative weight interval.
+    cum = (np.cumsum(wts) - 0.5 * wts) / total
+    return float(np.interp(q, cum, vals))
+
+
 class StravaAnalytics:
     def __init__(self, strava_activities_cache: StravaActivitiesCache, strava_user_cache: StravaUserCache):
         self.strava_activities_cache = strava_activities_cache # inmutable data (historical activities)
@@ -34,6 +53,10 @@ class StravaAnalytics:
         self._training_load_cache = None
         self._pmc_cache: dict = {}
         self._fitness_trend_cache: dict = {}
+        # Per-activity best efforts table per sport category — computed once
+        # from the sliding-window scan, reused across windowed queries to
+        # avoid re-scanning streams on every history step.
+        self._per_activity_bests_cache: dict[str, pd.DataFrame] = {}
 
     def _get_prepared_activities(self) -> pd.DataFrame:
         """Return activities DF with parsed dates and pre-parsed streams,
@@ -79,6 +102,7 @@ class StravaAnalytics:
         self._training_load_cache = None
         self._pmc_cache = {}
         self._fitness_trend_cache = {}
+        self._per_activity_bests_cache = {}
 
     def _get_hr_zones_cached(self):
         """Cache HR zones to avoid repeated user cache reads."""
@@ -778,17 +802,117 @@ class StravaAnalytics:
                     }
         return best
 
+    def _get_per_activity_bests_df(self, sport_category: str) -> pd.DataFrame:
+        """Return a table of per-activity best efforts for the given sport:
+            columns = activity_id, activity_name, date (pd.Timestamp UTC),
+                      distance_m, time_s.
+        Computed once from the full activity history and cached; windowed
+        queries filter by date and take a groupby-min, avoiding repeat stream
+        scans. Invalidated on sync via `invalidate_caches`.
+        """
+        cached = self._per_activity_bests_cache.get(sport_category)
+        if cached is not None:
+            return cached
+
+        sport_configs = {
+            "running": self.RUNNING_DISTANCES,
+            "cycling": self.CYCLING_DISTANCES,
+            "swimming": self.SWIMMING_DISTANCES,
+        }
+        if sport_category not in sport_configs:
+            empty = pd.DataFrame(columns=["activity_id", "activity_name", "date", "distance_m", "time_s"])
+            self._per_activity_bests_cache[sport_category] = empty
+            return empty
+        target_distances = sport_configs[sport_category]
+        max_speed = self.MAX_SPEED_MS[sport_category]
+
+        activities = self._get_prepared_activities()
+        if activities.empty:
+            empty = pd.DataFrame(columns=["activity_id", "activity_name", "date", "distance_m", "time_s"])
+            self._per_activity_bests_cache[sport_category] = empty
+            return empty
+
+        cat_mask = activities["sport_type"].apply(lambda st: get_sport_category(st) == sport_category)
+        cat_acts = activities[cat_mask]
+
+        rows: list[dict] = []
+        for _, row in cat_acts.iterrows():
+            streams = row.get("streams")
+            if not isinstance(streams, list) or len(streams) < 2:
+                continue
+            dist_list: list[float] = []
+            time_list: list[float] = []
+            for pt in streams:
+                d = pt.get("distance")
+                t = pt.get("time")
+                if d is not None and t is not None:
+                    dist_list.append(d)
+                    time_list.append(t)
+            if len(dist_list) < 2:
+                continue
+
+            distances = np.asarray(dist_list, dtype=np.float64)
+            times = np.asarray(time_list, dtype=np.float64)
+            n = len(distances)
+            total_d = distances[-1]
+
+            activity_id = row.get("id")
+            activity_name = row.get("name", "")
+            act_date = row.get("start_date_local")
+
+            for target_m, _ in target_distances:
+                if total_d < target_m:
+                    continue
+                thresholds = distances + target_m
+                right_indices = np.searchsorted(distances, thresholds, side="left")
+                valid = right_indices < n
+                left_idx = np.where(valid)[0]
+                right_idx = right_indices[valid]
+                if len(left_idx) == 0:
+                    continue
+                elapsed = times[right_idx] - times[left_idx]
+                speeds = target_m / np.maximum(elapsed, 1e-9)
+                mask = (elapsed > 0) & (speeds <= max_speed)
+                if not np.any(mask):
+                    continue
+                best_time = float(elapsed[mask].min())
+                rows.append({
+                    "activity_id": activity_id,
+                    "activity_name": activity_name,
+                    "date": act_date,
+                    "distance_m": target_m,
+                    "time_s": best_time,
+                })
+
+        df = pd.DataFrame(rows, columns=["activity_id", "activity_name", "date", "distance_m", "time_s"])
+        if not df.empty:
+            df["date"] = pd.to_datetime(df["date"], utc=True, errors="coerce")
+        self._per_activity_bests_cache[sport_category] = df
+        return df
+
     def _recent_best_efforts_list(
         self,
         sport_category: str,
-        within_days: int = 168,
+        within_days: int = 365,
         end_date: datetime | None = None,
+        top_k: int = 3,
     ) -> list[dict]:
-        """Best efforts from activities in the window [end_date - within_days, end_date].
-        Defaults to the trailing 24 weeks ending now. Returns list sorted by distance.
+        """Top-K fastest efforts per standard distance within the window.
+
+        Using multiple anchors per distance (rather than min-per-distance)
+        prevents cliffs: when the single fastest effort ages past the
+        boundary, only 1/K of the anchor weight changes instead of the whole
+        distance's contribution flipping to the next-fastest effort.
+
+        Easy-run "bests" don't pollute the set because they're ranked out by
+        the top-K-fastest filter — fast training/race efforts win the top-K
+        slots.
+
+        Also marks `is_top1=True` on the per-distance fastest, so UI cards
+        can surface it as the displayed PR.
         """
-        activities = self._get_prepared_activities()
-        if activities.empty:
+        df = self._get_per_activity_bests_df(sport_category)
+        if df.empty:
             return []
 
         if end_date is None:
@@ -798,15 +922,35 @@ class StravaAnalytics:
             end_ts = ts.tz_localize("UTC") if ts.tz is None else ts.tz_convert("UTC")
         start_ts = end_ts - pd.Timedelta(days=within_days)
 
-        dates = pd.to_datetime(activities["start_date_local"], errors="coerce", utc=True)
-        cat_mask = activities["sport_type"].apply(lambda st: get_sport_category(st) == sport_category)
-        in_window = (dates >= start_ts) & (dates <= end_ts)
-        filtered = activities[cat_mask & in_window]
-        if filtered.empty:
+        in_window = df[(df["date"] >= start_ts) & (df["date"] <= end_ts)]
+        if in_window.empty:
             return []
 
-        best = self._scan_best_efforts_in(filtered, sport_category)
-        return [best[d] for d in sorted(best.keys())]
+        # Quality filter: within 120% of the per-distance top-1 time. Excludes
+        # easy-run "bests" that happen to rank top-K but aren't race-quality
+        # anchors. Keeps top-1 (trivially), plus any close-to-top-1 attempts.
+        MAX_MULT = 1.20
+        result: list[dict] = []
+        for distance_m, group in in_window.groupby("distance_m"):
+            top_sorted = group.nsmallest(top_k, "time_s")
+            if top_sorted.empty:
+                continue
+            best_time = float(top_sorted["time_s"].iloc[0])
+            rank = 0
+            for _, r in top_sorted.iterrows():
+                rank += 1
+                if float(r["time_s"]) > best_time * MAX_MULT:
+                    continue
+                result.append({
+                    "distance_m": int(distance_m),
+                    "time_s": float(r["time_s"]),
+                    "activity_id": r["activity_id"],
+                    "activity_name": r["activity_name"],
+                    "date": str(r["date"]),
+                    "is_top1": rank == 1,
+                })
+        result.sort(key=lambda b: (b["distance_m"], b["time_s"]))
+        return result
 
     # ── Race Predictions ──────────────────────────────────────────────
 
@@ -827,17 +971,31 @@ class StravaAnalytics:
         import math
         return math.exp(-0.693 * age_days / half_life_days)  # ln(2) ≈ 0.693
 
-    def _compute_predictions(self, recent_bests: list[dict], sport_category: str) -> dict:
+    def _compute_predictions(
+        self,
+        recent_bests: list[dict],
+        sport_category: str,
+        reference_date: datetime | None = None,
+    ) -> dict:
         """Run the race-prediction pipeline over a list of recent best efforts
-        (each: {distance_m, time_s, ...}) for the given sport category.
+        (each: {distance_m, time_s, date, ...}) for the given sport category.
+
+        Each input contributes to the central and band with a combined weight:
+            w = distance_proximity × recency_decay
+        where:
+            distance_proximity = exp(-|log2(d_input / d_target)|)  (anchor closeness)
+            recency_decay      = exp(-ln(2) × age_days / 180)      (6-mo half-life)
+
+        Recency decay replaces the old hard 24-week cutoff with a smooth
+        weighting so predictions don't cliff when a single fast effort ages
+        past the boundary. `reference_date` pins "now" for age calculations —
+        defaults to wall-clock time; history calls pass each step's end_date
+        so past weeks are evaluated as-of then.
 
         - Central estimate per target: Riegel family (fixed 1.06 + personalized
-          exp if fit) projected from inputs with a closer-anchor weight:
-          exp(-|log2(d_input / d_target)|). For running only, blended 50/50
-          with a VDOT prediction (VDOT is a running-specific construct).
-        - Uncertainty band: p25–p75 (IQR) over the projection fan using the
-          canonical Riegel exponent 1.06 (unweighted) — avoids the circularity
-          of using the fitted exponent against the inputs it was fit on.
+          exp if fit). For running, blended 50/50 with a VDOT prediction.
+        - Uncertainty band: weighted p25–p75 of the projection pool, using the
+          same weights as the central (so central stays inside band).
 
         Cycling / swimming note: Riegel's canonical 1.06 is calibrated for
         running; for other sports the fitted exponent matters more. We still
@@ -846,6 +1004,11 @@ class StravaAnalytics:
         Returns {predictions, athlete_vdot, fitted_exponent}. No caching, no
         data_quality — caller wraps as needed.
         """
+        if reference_date is None:
+            reference_date = datetime.now(timezone.utc)
+        ref_ts = pd.Timestamp(reference_date)
+        if ref_ts.tz is None:
+            ref_ts = ref_ts.tz_localize("UTC")
         sport_configs = {
             "running": self.RUNNING_DISTANCES,
             "cycling": self.CYCLING_DISTANCES,
@@ -853,18 +1016,39 @@ class StravaAnalytics:
         }
         target_distances = sport_configs.get(sport_category, [])
 
-        # VDOT only applies to running.
+        # Precompute recency weights per best: exp(-ln(2) × age / 180 days).
+        # A best from today → ~1.0; 6 months old → 0.5; 1 year → 0.25; 2 years → 0.06.
+        def _recency_w(date_str: str) -> float:
+            try:
+                pr_date = pd.to_datetime(date_str, utc=True)
+                age_days = max(0.0, (ref_ts - pr_date).total_seconds() / 86400.0)
+            except Exception:
+                return 0.1
+            return math.exp(-0.693 * age_days / 180.0)
+
+        recency_weights = [_recency_w(b.get("date", "")) for b in recent_bests]
+
+        # VDOT only applies to running. Computed from the per-distance top-1
+        # (race-anchor) efforts only — including slower top-2/top-3 samples
+        # would pull VDOT down since they're typically sub-race-effort runs.
         athlete_vdot: float | None = None
         if sport_category == "running":
-            vdots = []
-            for b in recent_bests:
+            vdot_pairs: list[tuple[float, float]] = []
+            for b, rw in zip(recent_bests, recency_weights):
+                if not b.get("is_top1"):
+                    continue
                 v = vdot_from_time_distance(b["time_s"], b["distance_m"])
-                if v is not None:
-                    vdots.append(v)
-            athlete_vdot = round(float(np.mean(vdots)), 2) if vdots else None
+                if v is not None and rw > 0:
+                    vdot_pairs.append((v, rw))
+            if vdot_pairs:
+                tot = sum(w for _, w in vdot_pairs)
+                athlete_vdot = round(sum(v * w for v, w in vdot_pairs) / tot, 2) if tot > 0 else None
 
-        # Fit personalized Riegel exponent from recent bests (≥3 distinct efforts).
-        fitted_exp = fit_riegel_exponent(recent_bests) if len(recent_bests) >= 3 else None
+        # Fit personalized Riegel exponent from the per-distance top-1 efforts
+        # only — passing multiple samples per distance would bias the fit
+        # toward distances with the most samples.
+        top1_bests = [b for b in recent_bests if b.get("is_top1")]
+        fitted_exp = fit_riegel_exponent(top1_bests) if len(top1_bests) >= 3 else None
 
         def _dist_weight(d_in: float, d_tgt: float) -> float:
             # exp(-|log2(ratio)|): 1.0 when d_in == d_tgt, 0.5 at 2× mismatch, ~0.25 at 4×.
@@ -884,7 +1068,12 @@ class StravaAnalytics:
                 "models": {},
             }
 
-            existing = next((b for b in recent_bests if b["distance_m"] == dist_m), None)
+            # For display: the fastest effort at this distance (top-1 among
+            # the top-K samples loaded above).
+            existing = next(
+                (b for b in recent_bests if b["distance_m"] == dist_m and b.get("is_top1")),
+                None,
+            )
             if existing:
                 entry["pr_time_s"] = existing["time_s"]
                 entry["pr_date"] = existing.get("date")
@@ -894,66 +1083,84 @@ class StravaAnalytics:
                 predictions.append(entry)
                 continue
 
-            # Closer-anchor-weighted Riegel projections (central estimate).
-            riegel_pairs: list[tuple[float, float]] = []
-            personalized_pairs: list[tuple[float, float]] = []
-            for b in recent_bests:
-                w = _dist_weight(b["distance_m"], dist_m)
-                riegel_pairs.append(
-                    (riegel_predict(b["time_s"], b["distance_m"], dist_m, 1.06), w)
-                )
-                if fitted_exp is not None:
-                    personalized_pairs.append(
-                        (riegel_predict(b["time_s"], b["distance_m"], dist_m, fitted_exp), w)
-                    )
+            # Build the sample pool: every raw model value that contributes to
+            # the central, tagged with its effective weight. Weighted mean of
+            # this pool IS the central, and the weighted p25/p75 IS the band —
+            # guarantees the central always sits inside the band regardless of
+            # model-mix or distance-weight skew.
+            samples: list[tuple[float, float]] = []  # (value, weight)
 
-            def _wavg(pairs: list[tuple[float, float]]) -> float | None:
-                if not pairs:
-                    return None
-                tw = sum(w for _, w in pairs)
-                return sum(v * w for v, w in pairs) / tw if tw > 0 else None
-
-            r_avg = _wavg(riegel_pairs)
-            if r_avg is not None:
-                entry["models"]["riegel"] = round(r_avg, 1)
-            if fitted_exp is not None:
-                p_avg = _wavg(personalized_pairs)
-                if p_avg is not None:
-                    entry["models"]["personalized_riegel"] = round(p_avg, 1)
-
-            if athlete_vdot is not None:
-                v_pred = predicted_time_from_vdot(athlete_vdot, dist_m)
-                if v_pred is not None:
-                    entry["models"]["vdot"] = v_pred
-
-            # Central blend: VDOT = 50%, Riegel family (fixed + personalized) splits 50%.
-            vdot_v = entry["models"].get("vdot")
-            riegel_v = entry["models"].get("riegel")
-            pers_v = entry["models"].get("personalized_riegel")
-            weighted: list[tuple[float, float]] = []
-            if vdot_v is not None:
-                weighted.append((vdot_v, 0.5))
-            riegel_family = [v for v in (riegel_v, pers_v) if v is not None]
-            if riegel_family:
-                fw = 0.5 if vdot_v is not None else 1.0
-                per = fw / len(riegel_family)
-                for v in riegel_family:
-                    weighted.append((v, per))
-            total_w = sum(w for _, w in weighted)
-            if total_w > 0:
-                entry["predicted_time_s"] = round(
-                    sum(v * w for v, w in weighted) / total_w, 1
-                )
-
-            # Uncertainty band: IQR over the projection fan using canonical 1.06.
-            fan = [
-                riegel_predict(b["time_s"], b["distance_m"], dist_m, 1.06)
-                for b in recent_bests
+            # Per-input Riegel (fixed 1.06) projections weighted by both
+            # distance proximity AND recency of the underlying best.
+            riegel_inputs = [
+                (riegel_predict(b["time_s"], b["distance_m"], dist_m, 1.06),
+                 _dist_weight(b["distance_m"], dist_m) * rw)
+                for b, rw in zip(recent_bests, recency_weights)
             ]
-            if len(fan) >= 2:
-                entry["predicted_time_low_s"] = round(float(np.percentile(fan, 25)), 1)
-                entry["predicted_time_high_s"] = round(float(np.percentile(fan, 75)), 1)
-            elif len(fan) == 1 and entry["predicted_time_s"] is not None:
+            riegel_sum_w = sum(w for _, w in riegel_inputs)
+
+            # Per-input personalized Riegel projections, if the exponent was fit.
+            pers_inputs: list[tuple[float, float]] = []
+            if fitted_exp is not None:
+                pers_inputs = [
+                    (riegel_predict(b["time_s"], b["distance_m"], dist_m, fitted_exp),
+                     _dist_weight(b["distance_m"], dist_m) * rw)
+                    for b, rw in zip(recent_bests, recency_weights)
+                ]
+            pers_sum_w = sum(w for _, w in pers_inputs)
+
+            # VDOT is a single scalar prediction (running only, valid distance range).
+            vdot_pred: float | None = None
+            if athlete_vdot is not None and sport_category == "running":
+                vdot_pred = predicted_time_from_vdot(athlete_vdot, dist_m)
+
+            # Family weights: VDOT gets 50% when present; Riegel family splits
+            # the remainder evenly between fixed + personalized.
+            has_r = riegel_sum_w > 0
+            has_p = pers_sum_w > 0
+            has_v = vdot_pred is not None
+            vdot_w = 0.5 if has_v else 0.0
+            family_w = 1.0 - vdot_w
+            n_families = (1 if has_r else 0) + (1 if has_p else 0)
+            r_share = family_w / n_families if has_r and n_families else 0.0
+            p_share = family_w / n_families if has_p and n_families else 0.0
+
+            # Distribute each family's total share across its per-input samples
+            # proportionally to each input's distance weight.
+            if has_r:
+                for v, w in riegel_inputs:
+                    samples.append((v, r_share * w / riegel_sum_w))
+            if has_p:
+                for v, w in pers_inputs:
+                    samples.append((v, p_share * w / pers_sum_w))
+            if has_v:
+                samples.append((vdot_pred, vdot_w))  # type: ignore[arg-type]
+
+            # Populate model aggregates (unchanged API).
+            if has_r:
+                entry["models"]["riegel"] = round(
+                    sum(v * w for v, w in riegel_inputs) / riegel_sum_w, 1
+                )
+            if has_p:
+                entry["models"]["personalized_riegel"] = round(
+                    sum(v * w for v, w in pers_inputs) / pers_sum_w, 1
+                )
+            if has_v:
+                entry["models"]["vdot"] = vdot_pred
+
+            # Central = weighted mean of the sample pool.
+            total_w = sum(w for _, w in samples)
+            if total_w > 0:
+                central = sum(v * w for v, w in samples) / total_w
+                entry["predicted_time_s"] = round(central, 1)
+
+            # Uncertainty band = weighted p25/p75 of the same sample pool.
+            if len(samples) >= 2:
+                vals = [v for v, _ in samples]
+                wts = [w for _, w in samples]
+                entry["predicted_time_low_s"] = round(_weighted_quantile(vals, wts, 0.25), 1)
+                entry["predicted_time_high_s"] = round(_weighted_quantile(vals, wts, 0.75), 1)
+            elif len(samples) == 1 and entry["predicted_time_s"] is not None:
                 entry["predicted_time_low_s"] = entry["predicted_time_s"]
                 entry["predicted_time_high_s"] = entry["predicted_time_s"]
 
@@ -981,10 +1188,10 @@ class StravaAnalytics:
         if sport_category in self._race_predictions_cache:
             return self._race_predictions_cache[sport_category]
 
-        recent = self._recent_best_efforts_list(sport_category, within_days=168)
+        recent = self._recent_best_efforts_list(sport_category, within_days=365)
         core = self._compute_predictions(recent, sport_category)
 
-        n_recent = len(recent)
+        n_recent = len({b["distance_m"] for b in recent if b.get("is_top1")})
         confidence = "high" if n_recent >= 5 else "medium" if n_recent >= 3 else "low"
 
         activities = self._get_prepared_activities()
@@ -1031,7 +1238,7 @@ class StravaAnalytics:
         sport_category: str = "running",
         weeks: int = 52,
         step_days: int = 7,
-        window_days: int = 168,
+        window_days: int = 365,
     ) -> list[dict]:
         """Time series of race predictions. For each step (weekly by default),
         recomputes predictions using the recent-bests window ending at that
@@ -1065,9 +1272,10 @@ class StravaAnalytics:
             recent = self._recent_best_efforts_list(
                 sport_category, within_days=window_days, end_date=step_end
             )
-            if len(recent) < MIN_INPUTS:
+            distinct = len({b["distance_m"] for b in recent if b.get("is_top1")})
+            if distinct < MIN_INPUTS:
                 continue
-            core = self._compute_predictions(recent, sport_category)
+            core = self._compute_predictions(recent, sport_category, reference_date=step_end)
             history.append(
                 {
                     "end_date": step_end.date().isoformat(),

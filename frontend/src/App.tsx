@@ -16,6 +16,7 @@ const AggregationsPage = lazy(() => import('./pages/AggregationsPage'))
 const PersonalRecordsPage = lazy(() => import('./pages/PersonalRecordsPage'))
 const WorkoutsPage = lazy(() => import('./pages/WorkoutsPage'))
 const RacesPage = lazy(() => import('./pages/RacesPage'))
+const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'))
 const ProfilePage = lazy(() => import('./pages/ProfilePage'))
 
 function RouteFallback() {
@@ -43,6 +44,7 @@ export default function App() {
                 <Route path="/records" element={<PersonalRecordsPage />} />
                 <Route path="/workouts" element={<WorkoutsPage />} />
                 <Route path="/races" element={<RacesPage />} />
+                <Route path="/analytics" element={<AnalyticsPage />} />
                 <Route path="/profile" element={<ProfilePage />} />
               </Routes>
             </Suspense>

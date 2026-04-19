@@ -190,6 +190,18 @@ export function useRacePredictions(sportCategory: string) {
   });
 }
 
+export function useRacePredictionsHistory(sportCategory: string, weeks = 52) {
+  return useQuery({
+    queryKey: ['race-predictions-history', sportCategory, weeks],
+    queryFn: () =>
+      api.get('/stats/race-predictions/history', {
+        params: { sport_category: sportCategory, weeks },
+      }).then(r => r.data),
+    staleTime: 1000 * 60 * 30,
+    placeholderData: keepPreviousData,
+  });
+}
+
 export function useTrainingLoad(startDate?: string, endDate?: string) {
   return useQuery({
     queryKey: ['training-load', startDate, endDate],
