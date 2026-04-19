@@ -1297,59 +1297,78 @@ function ActivityDetailPageInner() {
       })()}
 
       {/* ── Stream Charts ──────────────────────────── */}
-      {hasElevation && (
-        <StreamChart
-          title="Elevation"
-          data={streamSeries.elevation}
-          color={getSportColor(activity.sport_type)}
-          gradientId="elevGrad"
-          unit="m"
-          yDomain={['dataMin - 10', 'dataMax + 10']}
-          zones={segmentZones.length > 0 ? segmentZones : undefined}
-        />
-      )}
+      {(() => {
+        const isSwimStream = sportCategory === 'swimming'
+        const streamXUnit = isSwimStream ? 'm' : 'km'
+        const streamXFormatter = isSwimStream
+          ? (v: number) => String(Math.round(v * 1000))
+          : undefined
+        return (
+          <>
+            {hasElevation && (
+              <StreamChart
+                title="Elevation"
+                data={streamSeries.elevation}
+                color={getSportColor(activity.sport_type)}
+                gradientId="elevGrad"
+                unit="m"
+                yDomain={['dataMin - 10', 'dataMax + 10']}
+                zones={segmentZones.length > 0 ? segmentZones : undefined}
+                xUnit={streamXUnit}
+                xFormatter={streamXFormatter}
+              />
+            )}
 
-      {hasPace && (
-        <StreamChart
-          title={useSpeedUnit ? 'Speed' : 'Pace'}
-          data={streamSeries.pace}
-          color={getSportColor(activity.sport_type)}
-          gradientId="paceGrad"
-          unit={paceUnit}
-          reversed={!useSpeedUnit}
-          formatValue={useSpeedUnit ? (v => `${v.toFixed(1)}`) : (v => {
-            const m = Math.floor(v)
-            const s = Math.round((v - m) * 60)
-            return `${m}:${s.toString().padStart(2, '0')}`
-          })}
-          secondaryData={hasGap ? streamSeries.gap : undefined}
-          secondaryColor="#f97316"
-          secondaryLabel="GAP"
-          zones={segmentZones.length > 0 ? segmentZones : undefined}
-        />
-      )}
+            {hasPace && (
+              <StreamChart
+                title={useSpeedUnit ? 'Speed' : 'Pace'}
+                data={streamSeries.pace}
+                color={getSportColor(activity.sport_type)}
+                gradientId="paceGrad"
+                unit={paceUnit}
+                reversed={!useSpeedUnit}
+                formatValue={useSpeedUnit ? (v => `${v.toFixed(1)}`) : (v => {
+                  const m = Math.floor(v)
+                  const s = Math.round((v - m) * 60)
+                  return `${m}:${s.toString().padStart(2, '0')}`
+                })}
+                secondaryData={hasGap ? streamSeries.gap : undefined}
+                secondaryColor="#f97316"
+                secondaryLabel="GAP"
+                zones={segmentZones.length > 0 ? segmentZones : undefined}
+                xUnit={streamXUnit}
+                xFormatter={streamXFormatter}
+              />
+            )}
 
-      {hasHR && (
-        <StreamChart
-          title="Heart Rate"
-          data={streamSeries.heartrate}
-          color="#ec4899"
-          gradientId="hrGrad"
-          unit="bpm"
-          zones={segmentZones.length > 0 ? segmentZones : undefined}
-        />
-      )}
+            {hasHR && (
+              <StreamChart
+                title="Heart Rate"
+                data={streamSeries.heartrate}
+                color="#ec4899"
+                gradientId="hrGrad"
+                unit="bpm"
+                zones={segmentZones.length > 0 ? segmentZones : undefined}
+                xUnit={streamXUnit}
+                xFormatter={streamXFormatter}
+              />
+            )}
 
-      {hasCadence && (
-        <StreamChart
-          title="Cadence"
-          data={streamSeries.cadence}
-          color="#34d399"
-          gradientId="cadGrad"
-          unit="spm"
-          zones={segmentZones.length > 0 ? segmentZones : undefined}
-        />
-      )}
+            {hasCadence && (
+              <StreamChart
+                title="Cadence"
+                data={streamSeries.cadence}
+                color="#34d399"
+                gradientId="cadGrad"
+                unit="spm"
+                zones={segmentZones.length > 0 ? segmentZones : undefined}
+                xUnit={streamXUnit}
+                xFormatter={streamXFormatter}
+              />
+            )}
+          </>
+        )
+      })()}
 
       {/* Route Performance (Strava similar_activities) */}
       {activity.similar_activities && activity.similar_activities.effort_count > 1 && (() => {

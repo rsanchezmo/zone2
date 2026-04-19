@@ -25,6 +25,10 @@ interface StreamChartProps {
   secondaryLabel?: string
   /** Colored background zones (e.g. workout segments) */
   zones?: ChartZone[]
+  /** X-axis unit label (defaults to "km"). Pass "m" for swim streams with a matching xFormatter. */
+  xUnit?: string
+  /** Formatter for the X-axis values (stored in km). Defaults to `v.toFixed(1)`. */
+  xFormatter?: (v: number) => string
 }
 
 /** Error boundary to prevent chart crashes from taking down the whole page */
@@ -101,6 +105,8 @@ export default function StreamChart({
   reversed = false, yDomain, formatValue,
   secondaryData, secondaryColor, secondaryLabel,
   zones,
+  xUnit = 'km',
+  xFormatter = (v: number) => v.toFixed(1),
 }: StreamChartProps) {
   const { colors } = useTheme()
   const isMobile = useIsMobile()
@@ -236,10 +242,15 @@ export default function StreamChart({
             </defs>
             <XAxis
               dataKey="distance"
-              type={hasZones ? 'number' : undefined}
-              domain={hasZones ? [0, 'dataMax'] : undefined}
+              type="number"
+              domain={[0, 'dataMax']}
               tick={{ fill: colors.tickFill, fontSize: 10 }}
-              tickFormatter={v => `${Number(v).toFixed(1)}`}
+              tickFormatter={v => xFormatter(Number(v))}
+              tickCount={10}
+              angle={-30}
+              textAnchor="end"
+              height={30}
+              minTickGap={15}
               axisLine={false}
               tickLine={false}
             />
@@ -256,7 +267,7 @@ export default function StreamChart({
               contentStyle={{ background: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8 }}
               labelStyle={{ color: colors.labelColor }}
               itemStyle={{ color: colors.labelColor }}
-              labelFormatter={v => `${Number(v).toFixed(2)} km`}
+              labelFormatter={v => `${xFormatter(Number(v))} ${xUnit}`}
               formatter={((v: number | undefined, name: string) => {
                 const label = name === 'secondary' ? (secondaryLabel ?? 'Secondary') : title
                 return [fmt(v ?? 0) + ` ${unit}`, label]
