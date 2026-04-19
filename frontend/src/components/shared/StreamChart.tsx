@@ -214,6 +214,14 @@ export default function StreamChart({
     )
   }
 
+  // Gym / indoor activities have no GPS, so distance stays at 0 throughout. Hide the axis
+  // and remap each sample's x position to its index so points still spread across the width.
+  const hasDistanceRange = chartData.length > 1
+    && (chartData[chartData.length - 1].distance - chartData[0].distance) > 0.001
+  const plotData = hasDistanceRange
+    ? chartData
+    : chartData.map((pt, i) => ({ ...pt, distance: i }))
+
   return (
     <ChartErrorBoundary title={title}>
       <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
@@ -233,7 +241,7 @@ export default function StreamChart({
           ))}
         </div>
         <ResponsiveContainer width="100%" height={150}>
-          <AreaChart data={chartData} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
+          <AreaChart data={plotData} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
             <defs>
               <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor={color} stopOpacity={0.3} />
@@ -253,6 +261,7 @@ export default function StreamChart({
               minTickGap={15}
               axisLine={false}
               tickLine={false}
+              hide={!hasDistanceRange}
             />
             <YAxis
               tick={{ fill: colors.tickFill, fontSize: 10 }}
@@ -267,7 +276,7 @@ export default function StreamChart({
               contentStyle={{ background: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8 }}
               labelStyle={{ color: colors.labelColor }}
               itemStyle={{ color: colors.labelColor }}
-              labelFormatter={v => `${xFormatter(Number(v))} ${xUnit}`}
+              labelFormatter={v => hasDistanceRange ? `${xFormatter(Number(v))} ${xUnit}` : ''}
               formatter={((v: number | undefined, name: string) => {
                 const label = name === 'secondary' ? (secondaryLabel ?? 'Secondary') : title
                 return [fmt(v ?? 0) + ` ${unit}`, label]
