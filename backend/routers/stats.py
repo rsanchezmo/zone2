@@ -556,6 +556,37 @@ def race_predictions(
     return result
 
 
+@router.get("/race-predictions/history")
+def race_predictions_history(
+    sport_category: str = Query(default="running"),
+    weeks: int = Query(default=52, ge=1, le=260),
+    step_days: int = Query(default=7, ge=1, le=30),
+    si: StravaIntelligence = Depends(get_si),
+):
+    """Time series of race predictions across the last N weeks.
+
+    For each step, recomputes predictions using the recent-bests window
+    ending at that step's date. Used to drive the evolution chart on the
+    Analytics page.
+    """
+    key = (
+        "race_predictions_history",
+        sport_category,
+        weeks,
+        step_days,
+        si.strava_activities_cache.cache_version,
+    )
+    cached = _stats_cache.get(key)
+    if cached is not None:
+        return cached
+    points = si.strava_analytics.get_race_predictions_history(
+        sport_category, weeks=weeks, step_days=step_days
+    )
+    result = {"sport_category": sport_category, "weeks": weeks, "points": points}
+    _stats_cache.set(key, result)
+    return result
+
+
 @router.get("/training-load")
 async def training_load(
     start_date: str | None = None,
