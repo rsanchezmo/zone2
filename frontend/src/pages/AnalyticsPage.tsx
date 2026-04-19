@@ -279,14 +279,16 @@ export default function AnalyticsPage() {
                 }}
                 labelStyle={{ color: colors.tickFillSecondary }}
                 itemStyle={{ color: colors.tickFillSecondary }}
-                formatter={(v: number | number[], name: string) => {
+                formatter={((v: number | number[] | undefined, name: string): [string, string] | undefined => {
+                  if (v == null) return undefined
                   if (name === 'Central') return [formatSec(v as number), 'Predicted']
                   if (name === 'IQR' && Array.isArray(v)) {
                     return [`${formatSec(v[0])} – ${formatSec(v[1])}`, 'IQR band']
                   }
-                  return null
-                }}
-                labelFormatter={(v: string) => new Date(v).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                  return undefined
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                }) as any}
+                labelFormatter={(v) => new Date(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
               />
               {/* Range Area: dataKey returns [low, high] so Recharts draws the
                   filled band between them directly — no stacking hacks. */}
