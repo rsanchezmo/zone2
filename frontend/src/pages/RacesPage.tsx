@@ -127,7 +127,7 @@ export default function RacesPage() {
       {/* ── Breadcrumb header ─────────────────────────── */}
       <header className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-baseline gap-2">
-          <span className="eyebrow" style={{ borderLeftWidth: 2, borderLeftColor: RACE_ACCENT, paddingLeft: 8 }}>Races</span>
+          <span className="eyebrow">Races</span>
         </div>
         <button
           onClick={() => { resetForm(); setShowForm(true); setDate(format(today, 'yyyy-MM-dd')) }}

@@ -6,6 +6,7 @@ import { useRacePredictions, useRacePredictionsHistory } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
 import { formatSpeed } from '../utils/formatSpeed'
 import { useTheme } from '../hooks/useTheme'
+import { useIsMobile } from '../hooks/useIsMobile'
 import clsx from 'clsx'
 
 const SPORTS: { key: string; label: string; sportType: string }[] = [
@@ -37,8 +38,9 @@ function formatSec(s: number | null | undefined): string {
 }
 
 export default function AnalyticsPage() {
-  const { theme } = useTheme()
+  const { theme, colors } = useTheme()
   const isLight = theme === 'light'
+  const isMobile = useIsMobile()
   const [sport, setSport] = useState<string>('running')
   const [weeks, setWeeks] = useState<number>(52)
   const sportMeta = SPORTS.find(s => s.key === sport) ?? SPORTS[0]
@@ -90,22 +92,12 @@ export default function AnalyticsPage() {
     return [Math.max(0, min - pad), max + pad]
   }, [chartData])
 
-  const panelClass = clsx(
-    'panel',
-    isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
-  )
-
   return (
     <div className="max-w-5xl mx-auto space-y-8 pb-12">
       {/* Header */}
       <header className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-baseline gap-2">
-          <span
-            className="eyebrow"
-            style={{ borderLeftWidth: 2, borderLeftColor: accent, paddingLeft: 8 }}
-          >
-            Analytics
-          </span>
+          <span className="eyebrow">Analytics</span>
         </div>
         <div className="flex gap-1.5 flex-wrap">
           {SPORTS.map(s => {
@@ -130,14 +122,11 @@ export default function AnalyticsPage() {
       </header>
 
       {/* Race predictions block */}
-      <section className={clsx(panelClass, 'p-5 md:p-6 space-y-4')}>
-        <div className="flex items-baseline justify-between flex-wrap gap-2">
-          <span
-            className="eyebrow"
-            style={{ borderLeftWidth: 2, borderLeftColor: accent, paddingLeft: 8, color: accent }}
-          >
-            Race predictor
-          </span>
+      <section className="space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="section-head flex-1">
+            <span className="eyebrow">Race predictor</span>
+          </div>
           {preds?.confidence && (
             <span className={clsx(
               'text-[10px] uppercase tracking-[0.15em] font-semibold px-2 py-0.5 rounded-full border',
@@ -227,14 +216,11 @@ export default function AnalyticsPage() {
       </section>
 
       {/* Evolution chart */}
-      <section className={clsx(panelClass, 'p-5 md:p-6 space-y-4')}>
-        <div className="flex items-baseline justify-between flex-wrap gap-2">
-          <span
-            className="eyebrow"
-            style={{ borderLeftWidth: 2, borderLeftColor: accent, paddingLeft: 8, color: accent }}
-          >
-            Evolution — {focusedLabel}
-          </span>
+      <section className="space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="section-head flex-1">
+            <span className="eyebrow">Evolution — {focusedLabel}</span>
+          </div>
           <div className="flex items-center gap-0.5">
             {([12, 16, 24, 52] as const).map(w => (
               <button
@@ -258,10 +244,10 @@ export default function AnalyticsPage() {
         ) : (
           <ResponsiveContainer width="100%" height={280}>
             <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: 4, bottom: 8 }}>
-              <CartesianGrid stroke={isLight ? '#e5e7eb' : '#334155'} strokeDasharray="2 4" vertical={false} />
+              <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
               <XAxis
                 dataKey="date"
-                tick={{ fill: isLight ? '#64748b' : '#94a3b8', fontSize: 10 }}
+                tick={{ fill: colors.tickFill, fontSize: 10 }}
                 tickFormatter={(v: string) => {
                   const d = new Date(v)
                   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })
@@ -275,9 +261,9 @@ export default function AnalyticsPage() {
                 tickLine={false}
               />
               <YAxis
-                tick={{ fill: isLight ? '#64748b' : '#94a3b8', fontSize: 10 }}
+                tick={{ fill: colors.tickFillSecondary, fontSize: 10 }}
                 tickFormatter={(v: number) => formatSec(v)}
-                width={60}
+                width={isMobile ? 42 : 60}
                 axisLine={false}
                 tickLine={false}
                 domain={yDomain}
@@ -286,13 +272,13 @@ export default function AnalyticsPage() {
               />
               <Tooltip
                 contentStyle={{
-                  background: isLight ? '#ffffff' : '#0f172a',
+                  background: colors.tooltipBg,
                   border: `1px solid ${isLight ? '#e5e7eb' : '#334155'}`,
                   borderRadius: 8,
                   fontSize: 12,
                 }}
-                labelStyle={{ color: isLight ? '#334155' : '#e2e8f0' }}
-                itemStyle={{ color: isLight ? '#334155' : '#e2e8f0' }}
+                labelStyle={{ color: colors.tickFillSecondary }}
+                itemStyle={{ color: colors.tickFillSecondary }}
                 formatter={(v: number | number[], name: string) => {
                   if (name === 'Central') return [formatSec(v as number), 'Predicted']
                   if (name === 'IQR' && Array.isArray(v)) {
