@@ -9,6 +9,7 @@ import {
   useCreateSession, useUpdateSession, useDeleteSession, useWeeklyReport, useAthleteZones,
   useStreaks, useGoalProgress, useGoals, useSessionScores, useWorkoutTemplates, useCreateWorkoutTemplate,
   useRaceEventsByRange, useUpcomingRaces, useCreateRaceEvent, useUpdateRaceEvent, useDeleteRaceEvent,
+  useCalendarFeedUrl, useRotateCalendarFeedToken,
 } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
 import { getPaceUnit, getSportCategory, formatDist, getDistUnit, formatPace, isSpeedSport, parsePaceInput } from '../utils/formatSpeed'
@@ -1431,6 +1432,27 @@ export default function CalendarPage() {
   const updateRace = useUpdateRaceEvent()
   const deleteRace = useDeleteRaceEvent()
 
+  // Subscribable iCal feed for Google/Apple Calendar → phone → Garmin watch.
+  const [showSubscribe, setShowSubscribe] = useState(false)
+  const { data: feedUrl } = useCalendarFeedUrl()
+  const rotateFeedToken = useRotateCalendarFeedToken()
+
+  function handleCopyFeedUrl() {
+    if (!feedUrl?.url) return
+    navigator.clipboard.writeText(feedUrl.url).then(
+      () => toast('Feed URL copied', 'success'),
+      () => toast('Could not copy — select the text manually', 'error'),
+    )
+  }
+
+  function handleRotateFeedToken() {
+    if (!window.confirm('Rotate the feed token? Any existing calendar subscription will stop working — you will need to re-add the new URL.')) return
+    rotateFeedToken.mutate(undefined, {
+      onSuccess: () => toast('Token rotated — re-subscribe with the new URL', 'success'),
+      onError: () => toast('Could not rotate token', 'error'),
+    })
+  }
+
   // Weekly report
   const [weekStart, setWeekStart] = useState(() =>
     format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd')
@@ -1663,6 +1685,46 @@ export default function CalendarPage() {
           )
         })()}
       </header>
+
+      {/* Google / Apple Calendar subscription — collapsed by default */}
+      <div className={clsx('rounded-lg border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
+        <button
+          onClick={() => setShowSubscribe(v => !v)}
+          className={clsx('w-full flex items-center justify-between px-4 py-2.5 text-left', isLight ? 'hover:bg-gray-50' : 'hover:bg-surface-700/50')}
+        >
+          <span className="eyebrow">Subscribe in Google Calendar</span>
+          <span className="text-xs text-gray-500 tabular-nums">{showSubscribe ? '−' : '+'}</span>
+        </button>
+        {showSubscribe && (
+          <div className={clsx('px-4 pb-3 pt-1 space-y-2 border-t', isLight ? 'border-gray-200' : 'border-surface-600')}>
+            <div className="flex gap-2 items-center">
+              <input
+                readOnly
+                value={feedUrl?.url ?? 'Loading…'}
+                onFocus={e => e.currentTarget.select()}
+                className={clsx('flex-1 font-mono text-[11px] px-2 py-1.5 rounded border min-w-0', isLight ? 'bg-gray-50 border-gray-200 text-gray-700' : 'bg-surface-900 border-surface-600 text-gray-300')}
+              />
+              <button onClick={handleCopyFeedUrl} className="btn !text-xs" disabled={!feedUrl?.url}>Copy</button>
+              <button
+                onClick={handleRotateFeedToken}
+                className="btn !text-xs"
+                disabled={rotateFeedToken.isPending || feedUrl?.env_managed}
+                title={feedUrl?.env_managed ? 'Token is pinned via STRAVA_WEB_CALENDAR_FEED_TOKEN — rotate it in .env and restart' : undefined}
+              >
+                {rotateFeedToken.isPending ? 'Rotating…' : 'Rotate'}
+              </button>
+            </div>
+            <p className="text-[11px] text-gray-500 leading-relaxed">
+              Paste into Google Calendar → <b>Other calendars</b> → <b>From URL</b>. Events refresh every few hours.
+              Your phone (and paired Garmin watch) pick it up automatically — Android/iOS users may need to toggle
+              Sync on in Google Calendar settings the first time. Keep the URL private: anyone with it can read your plan.
+              {feedUrl?.env_managed && (
+                <> Token is pinned via <code>STRAVA_WEB_CALENDAR_FEED_TOKEN</code> in <code>.env</code>.</>
+              )}
+            </p>
+          </div>
+        )}
+      </div>
 
       {/* Calendar grid — horizontal scroll on mobile so 7 columns stay legible */}
       <div className="-mx-6 md:mx-0 px-6 md:px-0 overflow-x-auto">

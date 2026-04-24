@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     # the scheduler (default) — manual UI sync still works either way.
     auto_sync_hours: int = 0
     log_level: str = "INFO"
+    # Optional: pin the iCal feed token via env. If set, wins over the
+    # DB-stored token and disables UI rotation (rotate by editing .env).
+    calendar_feed_token: str | None = None
 
     model_config = {"env_prefix": "STRAVA_WEB_"}
 
