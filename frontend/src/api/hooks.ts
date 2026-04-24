@@ -384,6 +384,27 @@ export function useDeleteSession() {
   });
 }
 
+export type CalendarFeedUrl = { token: string; url: string; env_managed: boolean };
+
+export function useCalendarFeedUrl() {
+  return useQuery({
+    queryKey: ['calendar-feed-url'],
+    queryFn: () => api.get('/calendar/feed-url').then(r => r.data as CalendarFeedUrl),
+    staleTime: 1000 * 60 * 60,
+  });
+}
+
+export function useRotateCalendarFeedToken() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api.post('/calendar/feed-url/rotate').then(r => r.data as CalendarFeedUrl),
+    onSuccess: (data) => {
+      qc.setQueryData(['calendar-feed-url'], data);
+    },
+  });
+}
+
 export function useSessionScores(dateFrom?: string, dateTo?: string) {
   return useQuery({
     queryKey: ['session-scores', dateFrom, dateTo],

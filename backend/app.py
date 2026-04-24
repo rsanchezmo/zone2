@@ -3,6 +3,7 @@ matplotlib.use("Agg")
 
 import asyncio
 import logging
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -13,10 +14,35 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.config import settings
 from backend.dependencies import set_strava_intelligence
-from backend.routers import activities, stats, exports, calendar, sync, athlete, goals, workouts, races, health
+from backend.routers import activities, stats, exports, calendar, calendar_feed, sync, athlete, goals, workouts, races, health
 from backend.routers.sync import _try_claim_sync, _run_sync
 from backend.db import init_db
 from strava.strava_intelligence import StravaIntelligence
+
+
+_TOKEN_QS_RE = re.compile(r"(token=)[^&\s\"']+")
+
+
+class _RedactTokenFilter(logging.Filter):
+    """Scrub `token=<secret>` from log records.
+
+    The iCal feed's auth lives in the URL query string so Google's poller
+    can subscribe. Uvicorn's access log prints the full request line, which
+    would otherwise persist the token in stdout / container logs.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.args:
+            try:
+                record.args = tuple(
+                    _TOKEN_QS_RE.sub(r"\1REDACTED", a) if isinstance(a, str) else a
+                    for a in record.args
+                )
+            except Exception:
+                pass
+        if isinstance(record.msg, str):
+            record.msg = _TOKEN_QS_RE.sub(r"\1REDACTED", record.msg)
+        return True
 
 
 def _configure_logging() -> None:
@@ -33,6 +59,7 @@ def _configure_logging() -> None:
         datefmt="%H:%M:%S",
         force=True,
     )
+    logging.getLogger("uvicorn.access").addFilter(_RedactTokenFilter())
 
 
 async def _periodic_sync_loop(si: StravaIntelligence, interval_hours: int) -> None:
@@ -104,6 +131,7 @@ app.include_router(activities.router, prefix="/api/activities", tags=["activitie
 app.include_router(stats.router, prefix="/api/stats", tags=["stats"])
 app.include_router(exports.router, prefix="/api/exports", tags=["exports"])
 app.include_router(calendar.router, prefix="/api/calendar", tags=["calendar"])
+app.include_router(calendar_feed.router, prefix="/api", tags=["calendar-feed"])
 app.include_router(sync.router, prefix="/api/sync", tags=["sync"])
 app.include_router(athlete.router, prefix="/api/athlete", tags=["athlete"])
 app.include_router(goals.router, prefix="/api/goals", tags=["goals"])
