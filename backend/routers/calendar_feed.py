@@ -19,8 +19,10 @@ from fastapi.responses import Response
 from backend.db import get_db
 from backend.services.calendar_feed import (
     build_ics,
+    get_last_fetched_at,
     get_or_create_token,
     is_env_managed,
+    record_fetch,
     rotate_token,
 )
 
@@ -71,6 +73,7 @@ async def calendar_feed(
     races = [_row_to_dict(r) for r in await cur.fetchall()]
 
     body = build_ics(sessions, races)
+    await record_fetch(db)
     return Response(
         content=body,
         media_type="text/calendar; charset=utf-8",
@@ -91,6 +94,7 @@ async def get_feed_url(
         "token": token,
         "url": _feed_url(request, token),
         "env_managed": is_env_managed(),
+        "last_fetched_at": await get_last_fetched_at(db),
     }
 
 
@@ -109,4 +113,5 @@ async def rotate_feed_url(
         "token": token,
         "url": _feed_url(request, token),
         "env_managed": False,
+        "last_fetched_at": await get_last_fetched_at(db),
     }

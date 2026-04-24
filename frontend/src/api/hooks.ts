@@ -384,13 +384,14 @@ export function useDeleteSession() {
   });
 }
 
-export type CalendarFeedUrl = { token: string; url: string; env_managed: boolean };
+export type CalendarFeedUrl = { token: string; url: string; env_managed: boolean; last_fetched_at: string | null };
 
 export function useCalendarFeedUrl() {
   return useQuery({
     queryKey: ['calendar-feed-url'],
     queryFn: () => api.get('/calendar/feed-url').then(r => r.data as CalendarFeedUrl),
-    staleTime: 1000 * 60 * 60,
+    staleTime: 1000 * 60 * 5,
+    refetchOnWindowFocus: true,
   });
 }
 
