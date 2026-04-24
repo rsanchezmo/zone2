@@ -19,6 +19,7 @@ from backend.config import settings
 from backend.services.zones import get_setting, set_setting
 
 FEED_TOKEN_KEY = "calendar_feed_token"
+LAST_FETCH_KEY = "calendar_feed_last_fetched_at"
 PRODID = "-//Strava Intelligence//Calendar Feed//EN"
 
 
@@ -47,6 +48,16 @@ async def rotate_token(db: aiosqlite.Connection) -> str:
     token = secrets.token_urlsafe(32)
     await set_setting(db, FEED_TOKEN_KEY, token)
     return token
+
+
+async def record_fetch(db: aiosqlite.Connection) -> None:
+    """Stamp the last successful feed fetch so the UI can show whether a
+    subscriber (usually Google) is actively polling."""
+    await set_setting(db, LAST_FETCH_KEY, datetime.now(timezone.utc).isoformat())
+
+
+async def get_last_fetched_at(db: aiosqlite.Connection) -> str | None:
+    return await get_setting(db, LAST_FETCH_KEY)
 
 
 def _escape_text(value: str) -> str:
