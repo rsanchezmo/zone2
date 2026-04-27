@@ -9,6 +9,7 @@ are day-scoped.
 """
 from __future__ import annotations
 
+import json
 import secrets
 from datetime import date, datetime, timedelta, timezone
 from typing import Iterable
@@ -119,18 +120,103 @@ def _session_summary(session: dict) -> str:
     return " ".join(bits)
 
 
+_SEGMENT_TYPE_LABELS = {
+    "warmup": "Warmup",
+    "work": "Work",
+    "recovery": "Recovery",
+    "cooldown": "Cooldown",
+    "rest": "Rest",
+}
+
+
+def _format_distance_km(km: float) -> str:
+    return f"{km:g} km" if km >= 1 else f"{int(round(km * 1000))} m"
+
+
+def _parse_segments(raw) -> list[dict] | None:
+    if not raw:
+        return None
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        return parsed if isinstance(parsed, list) and parsed else None
+    return None
+
+
+def _format_segment(seg: dict) -> str:
+    type_key = seg.get("type") or ""
+    label = _SEGMENT_TYPE_LABELS.get(type_key, type_key.capitalize() or "Segment")
+
+    qty: str | None = None
+    dist = seg.get("distance_km")
+    dur = seg.get("duration_mins")
+    if dist:
+        qty = _format_distance_km(float(dist))
+    elif dur:
+        qty = f"{float(dur):g} min"
+
+    targets: list[str] = []
+    pmin = seg.get("target_pace_min")
+    pmax = seg.get("target_pace_max")
+    if pmin and pmax:
+        targets.append(f"pace {pmin:.2f}–{pmax:.2f}")
+    elif pmin:
+        targets.append(f"pace {pmin:.2f}")
+    if seg.get("target_hr_zone"):
+        targets.append(f"Z{seg['target_hr_zone']}")
+
+    body = label + (f" {qty}" if qty else "")
+    if targets:
+        body += " @ " + ", ".join(targets)
+
+    reps = seg.get("repetitions") or 1
+    line = f"{int(reps)}× {body}" if reps and reps > 1 else body
+
+    rec_dur = seg.get("recovery_duration_mins")
+    rec_dist = seg.get("recovery_distance_km")
+    if rec_dur:
+        line += f" (recovery {float(rec_dur):g} min)"
+    elif rec_dist:
+        line += f" (recovery {_format_distance_km(float(rec_dist))})"
+
+    if seg.get("label"):
+        line += f" — {seg['label']}"
+
+    return line
+
+
 def _session_description(session: dict) -> str:
     lines: list[str] = []
+
+    title = session.get("title")
+    if title:
+        lines.append(str(title))
+
     if session.get("description"):
         lines.append(str(session["description"]))
 
-    plan_bits: list[str] = []
-    if session.get("planned_distance_km"):
-        plan_bits.append(f"{session['planned_distance_km']:g} km")
-    if session.get("planned_duration_mins"):
-        plan_bits.append(f"{int(session['planned_duration_mins'])} min")
-    if plan_bits:
-        lines.append("Planned: " + " · ".join(plan_bits))
+    segments = _parse_segments(session.get("segments"))
+    if segments:
+        if lines:
+            lines.append("")
+        lines.append("Plan:")
+        for seg in segments:
+            lines.append(f"• {_format_segment(seg)}")
+
+    # Skip the top-level "Planned:" line when segments are present — the
+    # planned distance is auto-derived from segments and would just repeat.
+    if not segments:
+        plan_bits: list[str] = []
+        if session.get("planned_distance_km"):
+            plan_bits.append(f"{session['planned_distance_km']:g} km")
+        if session.get("planned_duration_mins"):
+            plan_bits.append(f"{int(session['planned_duration_mins'])} min")
+        if plan_bits:
+            lines.append("Planned: " + " · ".join(plan_bits))
 
     tgt: list[str] = []
     if session.get("target_avg_pace"):
