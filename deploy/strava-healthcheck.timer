@@ -1,12 +1,12 @@
 [Unit]
-Description=Run Strava Intelligence health probe every 12 hours
+Description=Run Strava Intelligence health probe every 15 min
 
 [Timer]
 # First run shortly after boot — catches immediate post-reboot breakage.
-OnBootSec=5min
-# Then every 12h from the last run. Keep this in sync with the
-# Healthchecks.io check's "period" setting.
-OnUnitActiveSec=12h
+OnBootSec=2min
+# Then every 15 min. Keep this in sync with the Healthchecks.io check's
+# "period" (15 min) and "grace" (5 min) — gives ~20 min detection.
+OnUnitActiveSec=15min
 Unit=strava-healthcheck.service
 Persistent=true
 
