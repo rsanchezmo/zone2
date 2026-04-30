@@ -507,6 +507,7 @@ class StravaAnalytics:
         # HR Zone distribution (vectorized with numpy for speed)
         hr_athlete_zones = hr_zones if hr_zones is not None else self._get_hr_zones_cached()
         hr_zone_distribution = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 5: 0.0}
+        hr_histogram: dict | None = None
 
         if not activities_week.empty and hr_athlete_zones and 'streams' in activities_week.columns:
             # Collect all HR values from streams into a single numpy array
@@ -532,6 +533,15 @@ class StravaAnalytics:
                 for zone_idx in range(5):
                     count = int(np.sum(bins == zone_idx))
                     hr_zone_distribution[zone_idx + 1] = round((count / total) * 100, 1)
+
+                # 1 bpm-resolution histogram for the multi-zone density chart.
+                # Snap range to a small margin around min/max so the curve doesn't
+                # get clipped at the edges by the renderer.
+                lo = int(np.floor(hr_arr.min())) - 2
+                hi = int(np.ceil(hr_arr.max())) + 2
+                if hi > lo:
+                    counts, _ = np.histogram(hr_arr, bins=np.arange(lo, hi + 1))
+                    hr_histogram = {"min_bpm": int(lo), "counts": counts.astype(int).tolist()}
         
         # Most active day
         if not activities_week.empty:
@@ -568,6 +578,7 @@ class StravaAnalytics:
             WeeklyReportFeatures.TIME_PER_SPORT_PER_DAY_MINS: time_per_sport_per_day_mins,
             WeeklyReportFeatures.ACTIVITIES_TITLES_PER_DAY_PER_SPORT: activities_titles_per_day_per_sport,
             WeeklyReportFeatures.HR_ZONE_DISTRIBUTION: hr_zone_distribution,
+            WeeklyReportFeatures.HR_HISTOGRAM: hr_histogram,
             WeeklyReportFeatures.MOST_ACTIVE_DAY: most_active_day,
             WeeklyReportFeatures.LONGEST_ACTIVITY_KM: float(round(longest_activity_km, 2)),
             WeeklyReportFeatures.LONGEST_ACTIVITY_NAME: longest_activity_name,
@@ -1674,6 +1685,7 @@ class WeeklyReportFeatures(StrEnum):
     TIME_PER_SPORT_PER_DAY_MINS = "time_per_sport_per_day_mins"  # dict: sport -> dict: weekday (0-6) -> minutes
     ACTIVITIES_TITLES_PER_DAY_PER_SPORT = "activities_titles_per_day_per_sport"  # dict: sport -> dict: weekday (0-6) -> list of activity titles
     HR_ZONE_DISTRIBUTION = "hr_zone_distribution"  # dict: zone (1-5) -> count of activities
+    HR_HISTOGRAM = "hr_histogram"  # {min_bpm: int, counts: list[int]} 1 bpm bins (or null when no HR samples)
     MOST_ACTIVE_DAY = "most_active_day"  # weekday (0-6)
     LONGEST_ACTIVITY_KM = "longest_activity_km"
     LONGEST_ACTIVITY_NAME = "longest_activity_name"

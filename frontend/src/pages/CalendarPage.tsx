@@ -26,6 +26,7 @@ import {
 import { useTheme } from '../hooks/useTheme'
 import { useToast } from '../hooks/useToast'
 import SegmentListBuilder, { SegmentSummary, type Segment } from '../components/shared/SegmentListBuilder'
+import HrZoneDistributionChart from '../components/shared/HrZoneDistributionChart'
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
@@ -2072,29 +2073,17 @@ export default function CalendarPage() {
             )}
 
             {/* HR Zone Distribution */}
-            {current.hr_zone_distribution && Object.values(current.hr_zone_distribution).some((v: unknown) => (v as number) > 0) && (
+            {current.hr_histogram && hrZoneBounds && hrZoneBounds.length >= 5 && (
               <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
                 <div className="eyebrow mb-3">HR Zone Distribution</div>
-                <div className="flex gap-0.5 h-8 rounded overflow-hidden">
-                  {[1, 2, 3, 4, 5].map(z => {
-                    const pct = current.hr_zone_distribution?.[z] ?? 0
-                    const colors = ['bg-gray-500', 'bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-red-500']
-                    const bounds = hrZoneBounds?.[z - 1]
-                    const tooltip = bounds
-                      ? `Z${z}: ${pct}% (${bounds.min}–${bounds.max} bpm)`
-                      : `Z${z}: ${pct}%`
-                    return pct > 0 ? (
-                      <div
-                        key={z}
-                        className={`${colors[z - 1]} flex items-center justify-center text-[10px] font-bold text-white cursor-default`}
-                        style={{ width: `${pct}%`, minWidth: pct > 0 ? '4px' : 0 }}
-                        title={tooltip}
-                      >
-                        {pct >= 8 ? `Z${z}: ${Math.round(pct)}%` : ''}
-                      </div>
-                    ) : null
-                  })}
-                </div>
+                <HrZoneDistributionChart
+                  histogram={{
+                    minBpm: (current.hr_histogram as { min_bpm: number; counts: number[] }).min_bpm,
+                    counts: (current.hr_histogram as { min_bpm: number; counts: number[] }).counts,
+                  }}
+                  zones={hrZoneBounds}
+                  percentages={[1, 2, 3, 4, 5].map(z => (current.hr_zone_distribution?.[z] ?? 0) as number)}
+                />
               </div>
             )}
 
