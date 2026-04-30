@@ -9,6 +9,7 @@ import type { ChartZone } from '../components/shared/StreamChart'
 import polyline from '@mapbox/polyline'
 import ExportButton from '../components/shared/ExportButton'
 import ChartPanel from '../components/shared/ChartPanel'
+import HrZoneDistributionChart, { buildHrHistogram } from '../components/shared/HrZoneDistributionChart'
 import {
   DeviceIcon, ShoeIcon, ThermometerIcon, ClockIcon, DumbbellIcon, MedalIcon, TrophyIcon,
   DistanceIcon, TimerIcon, BoltIcon, RangeIcon, HeartIcon,
@@ -729,21 +730,10 @@ function ActivityDetailPageInner() {
   }, [activity, positions, splits])
 
   const hrZoneBounds = athleteZones?.heart_rate?.zones as { min: number; max: number }[] | undefined
-  const hrZoneDistribution = useMemo(() => {
-    if (streamSeries.heartrate.length === 0 || !hrZoneBounds || hrZoneBounds.length < 5) return null
-    const boundaries = hrZoneBounds.slice(0, 4).map(z => z.max)
-    const counts = [0, 0, 0, 0, 0]
-    for (const pt of streamSeries.heartrate) {
-      let bin = 4
-      for (let i = 0; i < boundaries.length; i++) {
-        if (pt.value < boundaries[i]) { bin = i; break }
-      }
-      counts[bin]++
-    }
-    const total = counts.reduce((a, b) => a + b, 0)
-    if (total === 0) return null
-    return counts.map(c => Math.round((c / total) * 1000) / 10)
-  }, [hrZoneBounds, streamSeries.heartrate])
+  const hrHistogram = useMemo(() => {
+    if (streamSeries.heartrate.length === 0) return null
+    return buildHrHistogram(streamSeries.heartrate.map(p => p.value))
+  }, [streamSeries.heartrate])
 
   // Build segment zones for charts from execution score data
   // NOTE: must be before early returns to avoid hooks-order violation
@@ -1073,28 +1063,9 @@ function ActivityDetailPageInner() {
       })()}
 
       {/* ── HR Zone Distribution ────────────────────── */}
-      {hrZoneDistribution && hrZoneDistribution.some(v => v > 0) && (
+      {hrHistogram && hrZoneBounds && hrZoneBounds.length >= 5 && (
         <ChartPanel title="HR zone distribution" glow={false}>
-          <div className="flex gap-0.5 h-8 rounded overflow-hidden">
-            {[1, 2, 3, 4, 5].map(z => {
-              const pct = hrZoneDistribution[z - 1]
-              const colors = ['bg-gray-500', 'bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-red-500']
-              const bounds = hrZoneBounds?.[z - 1]
-              const tooltip = bounds
-                ? `Z${z}: ${pct}% (${bounds.min}–${bounds.max} bpm)`
-                : `Z${z}: ${pct}%`
-              return pct > 0 ? (
-                <div
-                  key={z}
-                  className={`${colors[z - 1]} flex items-center justify-center text-[10px] font-bold text-white cursor-default tabular-nums`}
-                  style={{ width: `${pct}%`, minWidth: pct > 0 ? '4px' : 0 }}
-                  title={tooltip}
-                >
-                  {pct >= 8 ? `Z${z} · ${Math.round(pct)}%` : ''}
-                </div>
-              ) : null
-            })}
-          </div>
+          <HrZoneDistributionChart histogram={hrHistogram} zones={hrZoneBounds} />
         </ChartPanel>
       )}
 
