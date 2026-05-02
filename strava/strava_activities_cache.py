@@ -4,7 +4,7 @@ import pandas as pd
 import json
 from datetime import datetime, timedelta
 
-from strava.strava_endpoint import StravaRateLimitError
+from strava.strava_endpoint import StravaRateLimitError, StravaStreamFetchError
 
 logger = logging.getLogger(__name__)
 
@@ -183,12 +183,16 @@ class StravaActivitiesCache:
                 existing_df = pd.read_parquet(month_file)
                 # drop year_month column before saving
                 group = group.drop(columns=['year_month'])
-                # Drop all-NA columns before concat to avoid dtype issues
+                # Drop all-NA columns to avoid dtype issues during merge
                 existing_clean = existing_df.dropna(axis=1, how='all')
-                group_clean = group.dropna(axis=1, how='all')
-                combined = pd.concat([existing_clean, group_clean], ignore_index=True)
-                # deduplicate by activity ID
-                combined = combined.drop_duplicates(subset=['id'], keep='last')
+                group_clean = group.dropna(axis=1, how='all').drop_duplicates(subset=['id'], keep='last')
+                # combine_first preserves existing values (streams, photos, detail_fetched)
+                # for columns the activity-list response doesn't carry, while the new
+                # batch overrides for the columns it does carry (name, distance, etc.).
+                # Without this, the 1-day overlap in incremental sync would wipe streams.
+                existing_indexed = existing_clean.set_index('id')
+                group_indexed = group_clean.set_index('id')
+                combined = group_indexed.combine_first(existing_indexed).reset_index()
                 combined.to_parquet(month_file, index=False)
                 monthly_counts[period_key] = len(combined)
                 logger.info("Updated %s (%d activities)", month_file.name, len(combined))
@@ -506,12 +510,18 @@ class StravaActivitiesCache:
 
                 if needs_streams:
                     logger.info("[%d/%d] Fetching streams for activity %s...", i + 1, len(needs_work), activity_id)
-                    streams = strava_endpoint.get_activity_streams(activity_id)
-                    # Save even empty results as '[]' so we don't retry next time
-                    activity['streams'] = json.dumps(streams)
-                    needs_update = True
-                    if not streams:
-                        logger.info("No streams returned for activity %s", activity_id)
+                    try:
+                        streams = strava_endpoint.get_activity_streams(activity_id)
+                        # 200 OK with empty body = legitimately no streams (manual /
+                        # indoor activity). Cache as '[]' to skip future retries.
+                        activity['streams'] = json.dumps(streams)
+                        needs_update = True
+                        if not streams:
+                            logger.info("No streams returned for activity %s", activity_id)
+                    except StravaStreamFetchError as e:
+                        # Transient (5xx, 404, network). Don't cache; let the next
+                        # backfill retry. Continue to detail/photos for this activity.
+                        logger.warning("Skipping streams for activity %s: %s — will retry next sync", activity_id, e)
 
                 if needs_detail:
                     logger.info("[%d/%d] Fetching detail for activity %s...", i + 1, len(needs_work), activity_id)

@@ -498,8 +498,13 @@ class StravaVisualizer:
         streams = activity.get("streams", None)
         if streams is None:
             # data not pre-fetched, get from API
-            streams = strava_endpoint.get_activity_streams(activity_id)
-        
+            from strava.strava_endpoint import StravaStreamFetchError
+            try:
+                streams = strava_endpoint.get_activity_streams(activity_id)
+            except StravaStreamFetchError as e:
+                logger.warning("Could not fetch streams for activity %s: %s", activity_id, e)
+                return
+
         if not streams:
             logger.warning("Could not fetch streams for activity %s", activity_id)
             return

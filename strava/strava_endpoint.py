@@ -21,6 +21,13 @@ class StravaRateLimitError(Exception):
         super().__init__(message)
         self.usage = usage
 
+
+class StravaStreamFetchError(Exception):
+    """Raised when a stream fetch fails for a non-rate-limit reason (5xx, 404,
+    network). Distinct from a 200 OK with empty body, which is a valid 'no
+    streams' result and is cached as such."""
+
+
 class StravaTokenData(BaseModel):
     """Pydantic model for Strava OAuth tokens"""
     access_token: str
@@ -319,9 +326,11 @@ class StravaEndpoint:
 
             logger.info("Fetching streams for activity %s...", activity_id)
 
-            streams = self.get_activity_streams(activity_id)
-
-            activity['streams'] = streams
+            try:
+                activity['streams'] = self.get_activity_streams(activity_id)
+            except StravaStreamFetchError as e:
+                logger.warning("Skipping streams for activity %s: %s", activity_id, e)
+                activity['streams'] = []
 
         return activities
     
@@ -483,7 +492,9 @@ class StravaEndpoint:
         self._check_rate_limit(response)
         if response.status_code != 200:
             logger.error("Failed to fetch streams for activity %s: %s", activity_id, response.text)
-            return []
+            raise StravaStreamFetchError(
+                f"streams fetch returned HTTP {response.status_code} for activity {activity_id}"
+            )
 
         return self.__merge_streams_into_data_points(response.json())
     
