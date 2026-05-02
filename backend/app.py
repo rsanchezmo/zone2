@@ -72,7 +72,7 @@ async def _periodic_sync_loop(si: StravaIntelligence, interval_hours: int) -> No
             await asyncio.sleep(interval_hours * 3600)
             if _try_claim_sync():
                 log.info("auto-sync starting")
-                await asyncio.to_thread(_run_sync, si, False, False)
+                await asyncio.to_thread(_run_sync, si, False, True)
                 log.info("auto-sync finished")
             else:
                 log.info("auto-sync skipped: another sync already running")
