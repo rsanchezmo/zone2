@@ -304,6 +304,24 @@ export function useTriggerSync() {
   });
 }
 
+export function useResyncActivity() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, includeStreams = false }: { id: number | string; includeStreams?: boolean }) =>
+      api.post(`/sync/activity/${id}`, null, { params: { include_streams: includeStreams } }).then(r => r.data),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['activity', vars.id] });
+      qc.invalidateQueries({ queryKey: ['activities'] });
+      qc.invalidateQueries({ queryKey: ['polylines'] });
+      qc.invalidateQueries({ queryKey: ['similar-activities'] });
+      qc.invalidateQueries({ queryKey: ['personal-records'] });
+      qc.invalidateQueries({ queryKey: ['sport-totals'] });
+      qc.invalidateQueries({ queryKey: ['weekly-report'] });
+      qc.invalidateQueries({ queryKey: ['cache-completeness'] });
+    },
+  });
+}
+
 export function useBackfillStreams() {
   const qc = useQueryClient();
   return useMutation({

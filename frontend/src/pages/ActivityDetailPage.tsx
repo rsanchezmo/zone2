@@ -8,6 +8,7 @@ import StreamChart from '../components/shared/StreamChart'
 import type { ChartZone } from '../components/shared/StreamChart'
 import polyline from '@mapbox/polyline'
 import ExportButton from '../components/shared/ExportButton'
+import ResyncActivityButton from '../components/shared/ResyncActivityButton'
 import ChartPanel from '../components/shared/ChartPanel'
 import HrZoneDistributionChart, { buildHrHistogram } from '../components/shared/HrZoneDistributionChart'
 import {
@@ -820,7 +821,8 @@ function ActivityDetailPageInner() {
               {activity.name}
             </h2>
           </div>
-          <div className="shrink-0">
+          <div className="shrink-0 flex items-center gap-2">
+            <ResyncActivityButton activityId={id ?? ''} />
             <ExportButton
               url={`/api/exports/activity/${id}`}
               label="PNG"
