@@ -1,6 +1,6 @@
 from threading import Lock
 
-from fastapi import APIRouter, Depends, BackgroundTasks, Query
+from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, Query
 
 from backend.dependencies import get_si
 from backend.routers.stats import clear_stats_cache
@@ -80,6 +80,37 @@ def backfill_streams(
         return {"status": "already_running"}
     background_tasks.add_task(_run_backfill_streams, si)
     return {"status": "started"}
+
+
+@router.post("/activity/{activity_id}")
+def resync_activity(
+    activity_id: int,
+    include_streams: bool = Query(default=False),
+    si: StravaIntelligence = Depends(get_si),
+):
+    """Refresh a single activity from Strava (e.g., to pick up a renamed activity)."""
+    if not _try_claim_sync():
+        return {"status": "already_running"}
+    err: str | None = None
+    found = False
+    try:
+        found = si.strava_activities_cache.resync_activity(
+            activity_id=activity_id,
+            strava_endpoint=si.strava_endpoint,
+            include_streams=include_streams,
+        )
+    except Exception as e:
+        err = str(e)
+    finally:
+        si.strava_analytics.invalidate_caches()
+        clear_stats_cache()
+        si.strava_activities_cache._load_to_memory()
+        _release_sync(err)
+    if err:
+        raise HTTPException(status_code=502, detail=err)
+    if not found:
+        raise HTTPException(status_code=404, detail="Activity not found or no detail returned")
+    return {"status": "success"}
 
 
 @router.get("/cache-completeness")

@@ -380,6 +380,42 @@ class StravaActivitiesCache:
         self.save_activities([activity])
         return True
 
+    def resync_activity(self, activity_id: int, strava_endpoint, include_streams: bool = False) -> bool:
+        """Re-fetch a single activity from Strava and overwrite the cached row.
+
+        Pulls the detail endpoint (which carries both summary fields like name/description
+        and detail-only fields), and optionally re-fetches streams + photos. Cached fields
+        not present in the new payload (e.g., streams when include_streams=False) are
+        preserved by save_activities' combine_first merge.
+
+        Returns True if the cache was updated.
+        """
+        if self.get_activity_by_id(activity_id) is None:
+            return False
+
+        detail = strava_endpoint.get_activity_detail(activity_id)
+        if not detail:
+            return False
+
+        activity = dict(detail)
+        activity['detail_fetched'] = True
+
+        if include_streams:
+            try:
+                streams = strava_endpoint.get_activity_streams(activity_id)
+                activity['streams'] = json.dumps(streams)
+            except StravaStreamFetchError as e:
+                logger.warning("Skipping streams refresh for activity %s: %s", activity_id, e)
+
+            photo_count = int(detail.get('total_photo_count', 0) or 0)
+            if photo_count > 0:
+                photos = strava_endpoint.get_activity_photos(activity_id)
+                if photos:
+                    activity['photos'] = json.dumps(photos)
+
+        self.save_activities([activity])
+        return True
+
     def save_activities_df(self, df: pd.DataFrame):
         """Save a DataFrame of activities to the cache."""
         activities = df.to_dict(orient='records')
