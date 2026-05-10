@@ -117,7 +117,13 @@ async def lifespan(app: FastAPI):
                 pass
 
 
-app = FastAPI(title="Strava Intelligence", lifespan=lifespan)
+app = FastAPI(
+    title="Strava Intelligence",
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 
 app.add_middleware(
     CORSMiddleware,
