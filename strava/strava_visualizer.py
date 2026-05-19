@@ -494,10 +494,9 @@ class StravaVisualizer:
         
         activity = activity.iloc[0]
         
-        # Fetch streams for elevation data
-        streams = activity.get("streams", None)
-        if streams is None:
-            # data not pre-fetched, get from API
+        # Fetch streams for elevation data — try the cache first, else hit Strava.
+        streams = self.strava_analytics.strava_activities_cache.get_streams(int(activity_id))
+        if not streams:
             from strava.strava_endpoint import StravaStreamFetchError
             try:
                 streams = strava_endpoint.get_activity_streams(activity_id)
@@ -508,11 +507,15 @@ class StravaVisualizer:
         if not streams:
             logger.warning("Could not fetch streams for activity %s", activity_id)
             return
-        
-        # Extract data from streams
-        latlngs = [(p['lat'], p['lng']) for p in streams if 'lat' in p and 'lng' in p]
-        altitudes = [p.get('altitude', 0) for p in streams if 'altitude' in p]
-        distances = [p.get('distance', 0) / 1000 for p in streams if 'distance' in p]  # Convert to km
+
+        # Extract data from columnar streams (lat/lng list aligned with altitude/distance arrays).
+        latlng_col = streams.get('latlng') or []
+        altitude_col = streams.get('altitude') or []
+        distance_col = streams.get('distance') or []
+        latlngs = [(ll[0], ll[1]) for ll in latlng_col
+                   if ll is not None and len(ll) == 2 and ll[0] is not None and ll[1] is not None]
+        altitudes = [a for a in altitude_col if a is not None] if altitude_col else []
+        distances = [d / 1000 for d in distance_col if d is not None] if distance_col else []  # Convert to km
         
         if not latlngs or not altitudes:
             logger.info("No GPS or altitude data for activity %s", activity_id)

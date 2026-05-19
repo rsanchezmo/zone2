@@ -159,20 +159,29 @@ def get_activities_as_gdf(activities: pd.DataFrame) -> gpd.GeoDataFrame:
     return gpd.GeoDataFrame(activities, geometry='geometry', crs=BASE_CRS)
 
 
-def get_activities_as_gdf_from_streams(activities: pd.DataFrame) -> gpd.GeoDataFrame:
+def get_activities_as_gdf_from_streams(activities: pd.DataFrame, streams_store=None) -> gpd.GeoDataFrame:
     """Convert activities to a GeoDataFrame using high-resolution GPS streams (lat/lng).
 
     Falls back to summary_polyline for activities without cached streams.
+    `streams_store` is a StreamsStore (typically `cache.streams`). If omitted,
+    only summary polylines are used.
     """
     activities = activities.copy()
 
+    streams_map = {}
+    if streams_store is not None and 'id' in activities.columns:
+        streams_map = streams_store.get_many(activities['id'].astype('int64').tolist())
+
     def _parse_streams(row):
-        streams = row.get('streams')
-        if isinstance(streams, list) and len(streams) >= 2:
-            coords = [(pt['lng'], pt['lat']) for pt in streams
-                      if 'lat' in pt and 'lng' in pt]
-            if len(coords) >= 2:
-                return LineString(coords)
+        aid = int(row['id']) if row.get('id') is not None else None
+        streams = streams_map.get(aid) if aid is not None else None
+        if isinstance(streams, dict):
+            latlng = streams.get('latlng')
+            if latlng and len(latlng) >= 2:
+                coords = [(ll[1], ll[0]) for ll in latlng
+                          if ll is not None and len(ll) == 2 and ll[0] is not None and ll[1] is not None]
+                if len(coords) >= 2:
+                    return LineString(coords)
 
         # Fallback to summary polyline
         map_data = row.get('map')

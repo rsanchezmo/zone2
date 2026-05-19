@@ -6,11 +6,12 @@ from backend._serialize import sanitize as _sanitize
 from backend.dependencies import get_si
 from strava.strava_intelligence import StravaIntelligence
 from strava.strava_utils import format_pace_or_speed
+from strava.streams_store import columnar_to_points
 
 router = APIRouter()
 
 # Columns to exclude from list view (heavy data)
-_EXCLUDE_FROM_LIST = {"streams", "map"}
+_EXCLUDE_FROM_LIST = {"map"}
 
 # Columns to serialize for JSON
 _ACTIVITY_FIELDS = [
@@ -25,8 +26,13 @@ _ACTIVITY_FIELDS = [
 ]
 
 
-def _activity_to_dict(row: pd.Series, include_streams: bool = False) -> dict:
-    """Convert a pandas row to a JSON-safe dict."""
+def _activity_to_dict(row: pd.Series, include_streams: bool = False, streams: dict | None = None) -> dict:
+    """Convert a pandas row to a JSON-safe dict.
+
+    Streams (when requested) are loaded separately via the cache's StreamsStore
+    and passed in as a columnar dict; this function reshapes them to the
+    legacy list-of-dicts wire format the frontend consumes.
+    """
     d = {}
     for col in _ACTIVITY_FIELDS:
         if col in row.index:
@@ -68,12 +74,8 @@ def _activity_to_dict(row: pd.Series, include_streams: bool = False) -> dict:
         except (json.JSONDecodeError, TypeError):
             d["summary_polyline"] = None
 
-    if include_streams and "streams" in row.index and row["streams"] is not None:
-        try:
-            streams = row["streams"] if isinstance(row["streams"], (list, dict)) else json.loads(row["streams"])
-            d["streams"] = streams
-        except (json.JSONDecodeError, TypeError):
-            d["streams"] = None
+    if include_streams:
+        d["streams"] = columnar_to_points(streams) if streams else None
 
         # Include detail-only fields when showing full activity
         for field in ("photos", "splits_metric", "best_efforts", "laps", "gear", "segment_efforts", "similar_activities"):
@@ -200,7 +202,8 @@ def get_activity(activity_id: int, si: StravaIntelligence = Depends(get_si)):
     row = si.strava_activities_cache.get_activity_by_id(activity_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Activity not found")
-    return _activity_to_dict(row, include_streams=True)
+    streams = si.strava_activities_cache.get_streams(activity_id)
+    return _activity_to_dict(row, include_streams=True, streams=streams)
 
 
 @router.get("/{activity_id}/similar")
