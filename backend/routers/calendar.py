@@ -103,7 +103,8 @@ async def list_sessions(
 
 
 def _activity_row_to_dict(row: pd.Series) -> dict:
-    """Minimal activity dict for scoring — includes streams."""
+    """Minimal activity dict for scoring. Streams are fetched separately
+    via the cache's StreamsStore — not attached to this dict."""
     d = {}
     for col in ("id", "sport_type", "distance", "moving_time", "average_speed",
                  "start_date_local", "average_heartrate"):
@@ -111,8 +112,6 @@ def _activity_row_to_dict(row: pd.Series) -> dict:
             d[col] = _sanitize(row[col])
     if d.get("distance") is not None:
         d["distance_km"] = round(d["distance"] / 1000, 2)
-    if "streams" in row.index and row["streams"] is not None:
-        d["streams"] = row["streams"] if isinstance(row["streams"], (list, dict)) else None
     return d
 
 
@@ -135,10 +134,8 @@ async def get_session_scores(
     if not sessions_with_targets:
         return {}
 
-    activities_df = si.strava_activities_cache.load_activities()
+    activities_df = si.strava_activities_cache.get_prepared_view()
     if not activities_df.empty:
-        activities_df = activities_df.copy()
-        activities_df["start_date_local"] = pd.to_datetime(activities_df["start_date_local"])
         dt_from = pd.to_datetime(date_from)
         dt_to = pd.to_datetime(date_to) + pd.Timedelta(days=1)  # inclusive
         if activities_df["start_date_local"].dt.tz is not None:
@@ -168,6 +165,8 @@ async def get_session_scores(
     except Exception as e:
         logger.debug("Could not load HR zones for scoring: %s", e)
 
+    # Pre-resolve matches first so we can bulk-load only the matched activities' streams.
+    pending: list[tuple[int, dict, dict]] = []
     result: dict[int, dict | None] = {}
     for session in sessions_with_targets:
         sid = session["id"]
@@ -176,10 +175,14 @@ async def get_session_scores(
         if matched is None:
             result[sid] = None
             continue
+        pending.append((sid, session, matched))
 
-        streams = matched.get("streams") if isinstance(matched.get("streams"), list) else None
-        score = compute_execution_score(session, matched, hr_zones, streams)
-        result[sid] = score
+    matched_ids = [m["id"] for _, _, m in pending if m.get("id") is not None]
+    streams_map = si.strava_activities_cache.get_streams_bulk(matched_ids) if matched_ids else {}
+
+    for sid, session, matched in pending:
+        streams = streams_map.get(int(matched["id"])) if matched.get("id") is not None else None
+        result[sid] = compute_execution_score(session, matched, hr_zones, streams)
 
     return result
 
@@ -191,22 +194,15 @@ async def get_score_by_activity(
     si: StravaIntelligence = Depends(get_si),
 ):
     """Get execution score for a specific Strava activity, if a matching session exists."""
-    # Find the activity to get its date
-    activities_df = si.strava_activities_cache.load_activities()
-    if activities_df.empty:
+    row = si.strava_activities_cache.get_activity_by_id(activity_id)
+    if row is None:
         return None
-
-    match = activities_df[activities_df["id"] == activity_id]
-    if match.empty:
-        return None
-
-    row = match.iloc[0]
     sdt = row.get("start_date_local")
     if sdt is None:
         return None
-    date_str = sdt.strftime("%Y-%m-%d") if hasattr(sdt, "strftime") else str(sdt)[:10]
+    sdt = pd.to_datetime(sdt) if not hasattr(sdt, "strftime") else sdt
+    date_str = sdt.strftime("%Y-%m-%d")
 
-    # Find sessions on that date with targets
     cursor = await db.execute(
         "SELECT * FROM training_sessions WHERE date = ? ORDER BY id", (date_str,),
     )
@@ -216,7 +212,6 @@ async def get_score_by_activity(
     if not sessions_with_targets:
         return None
 
-    # Build activity dict for scoring
     activity_dict = _activity_row_to_dict(row)
 
     hr_zones = None
@@ -225,11 +220,11 @@ async def get_score_by_activity(
     except Exception as e:
         logger.debug("Could not load HR zones for scoring: %s", e)
 
-    # Find the session that matches this activity
+    streams = si.strava_activities_cache.get_streams(activity_id)
+
     for session in sessions_with_targets:
         if session.get("sport_type") != activity_dict.get("sport_type"):
             continue
-        streams = activity_dict.get("streams") if isinstance(activity_dict.get("streams"), list) else None
         score = compute_execution_score(session, activity_dict, hr_zones, streams)
         return {
             "session": session,

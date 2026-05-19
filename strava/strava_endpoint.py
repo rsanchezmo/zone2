@@ -330,39 +330,9 @@ class StravaEndpoint:
                 activity['streams'] = self.get_activity_streams(activity_id)
             except StravaStreamFetchError as e:
                 logger.warning("Skipping streams for activity %s: %s", activity_id, e)
-                activity['streams'] = []
+                activity['streams'] = {}
 
         return activities
-    
-    def __merge_streams_into_data_points(self, streams: dict) -> list[dict]:
-        """
-        Merge all stream data into a list of synchronized data points.
-        Each point contains all metrics at that specific moment.
-        """
-        # Get the length of any stream (they're all the same)
-        if not streams:
-            return []
-        
-        first_stream = next(iter(streams.values()))
-        num_points = len(first_stream['data'])
-        
-        merged_data = []
-        
-        for i in range(num_points):
-            point = {}
-            
-            for stream_type, stream_data in streams.items():
-                if stream_type == 'latlng':
-                    # Handle latlng specially (it's an array [lat, lng])
-                    lat, lng = stream_data['data'][i]
-                    point['lat'] = lat
-                    point['lng'] = lng
-                else:
-                    point[stream_type] = stream_data['data'][i]
-            
-            merged_data.append(point)
-        
-        return merged_data
 
 
     def get_athlete(self) -> dict:
@@ -471,11 +441,16 @@ class StravaEndpoint:
             return []
         return response.json()
 
-    def get_activity_streams(self, activity_id: int | str) -> list[dict]:
+    def get_activity_streams(self, activity_id: int | str) -> dict:
         """
         Fetch streams for a single activity.
-        Returns a list of data points with time, latlng, altitude, velocity, heartrate, etc.
+
+        Returns a columnar dict like
+            {time: [...], distance: [...], heartrate: [...], latlng: [[lat, lng], ...], ...}
+        with all lists aligned. Empty dict when the activity has no streams.
         """
+        from strava.streams_store import from_strava_api
+
         self._ensure_rate_limit_budget()
         headers = self.__get_headers()
 
@@ -488,7 +463,7 @@ class StravaEndpoint:
                 'resolution': 'medium'
             }
         )
-        
+
         self._check_rate_limit(response)
         if response.status_code != 200:
             logger.error("Failed to fetch streams for activity %s: %s", activity_id, response.text)
@@ -496,7 +471,7 @@ class StravaEndpoint:
                 f"streams fetch returned HTTP {response.status_code} for activity {activity_id}"
             )
 
-        return self.__merge_streams_into_data_points(response.json())
+        return from_strava_api(response.json())
     
     def get_activity_zones(self, activity_id: int | str) -> list[dict]:
         """

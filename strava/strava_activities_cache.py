@@ -3,8 +3,15 @@ from pathlib import Path
 import pandas as pd
 import json
 from datetime import datetime, timedelta
+from typing import Iterable
 
 from strava.strava_endpoint import StravaRateLimitError, StravaStreamFetchError
+from strava.streams_store import (
+    StreamsStore,
+    from_strava_api,
+    points_to_columnar,
+    stream_length,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -17,10 +24,13 @@ class StravaActivitiesCache:
         self.activities_dir = self.cache_dir / "activities"
         self.activities_dir.mkdir(parents=True, exist_ok=True)
 
+        self.streams = StreamsStore(self.cache_dir / "streams")
+
         self.metadata_file = self.cache_dir / "metadata.json"
         self.__load_metadata()
 
-        # In-memory cache (lazy-loaded)
+        # In-memory cache (lazy-loaded). Holds activity metadata only —
+        # streams live in the separate StreamsStore.
         self._memory_cache: pd.DataFrame | None = None
         self._cache_loaded_at: datetime | None = None
 
@@ -32,11 +42,6 @@ class StravaActivitiesCache:
         # Prepared view for list/filter hot paths (start_date_local parsed once).
         self._prepared_view: pd.DataFrame | None = None
         self._prepared_view_version: int = -1
-
-        # Prepared view with streams JSON parsed once — used by load_activities
-        # so downstream callers don't repeatedly re-parse the same JSON strings.
-        self._streams_view: pd.DataFrame | None = None
-        self._streams_view_version: int = -1
 
     @property
     def cache_version(self) -> int:
@@ -58,22 +63,19 @@ class StravaActivitiesCache:
         self._prepared_view_version = self._cache_version
         return self._prepared_view
 
-    def _get_streams_view(self) -> pd.DataFrame:
-        """Return the memory cache with the 'streams' column parsed from JSON
-        once, memoized by cache_version. Internal — use load_activities()."""
-        if self._streams_view is not None and self._streams_view_version == self._cache_version:
-            return self._streams_view
-        raw = self._load_to_memory()
-        if raw.empty or 'streams' not in raw.columns:
-            self._streams_view = raw
-        else:
-            view = raw.copy()
-            view['streams'] = view['streams'].apply(
-                lambda x: json.loads(x) if isinstance(x, str) else (None if pd.isna(x) else x)
-            )
-            self._streams_view = view
-        self._streams_view_version = self._cache_version
-        return self._streams_view
+    # ── streams API ──────────────────────────────────────────────────
+    def get_streams(self, activity_id: int) -> dict | None:
+        """Columnar streams for one activity, or None if absent.
+        Shape: {time: [...], distance: [...], heartrate: [...], ...}."""
+        return self.streams.get(int(activity_id))
+
+    def get_streams_bulk(self, activity_ids: Iterable[int]) -> dict[int, dict]:
+        """Columnar streams for many activities, keyed by id. Only ids with
+        cached streams appear in the result."""
+        return self.streams.get_many(activity_ids)
+
+    def has_streams(self, activity_id: int) -> bool:
+        return self.streams.has(int(activity_id))
 
     def __load_metadata(self):
         """Load cache metadata or initialize if missing."""
@@ -82,15 +84,17 @@ class StravaActivitiesCache:
                 self.metadata = json.load(f)
                 if 'last_sync' in self.metadata and self.metadata['last_sync']:
                     self.metadata['last_sync'] = datetime.fromisoformat(self.metadata['last_sync'])
-            # Back-compat: older metadata files don't have monthly_counts
-            self.metadata.setdefault('monthly_counts', {})
+            # Back-compat: pre-migration metadata used 'monthly_counts'. We
+            # ignore stale monthly entries; yearly_counts is rebuilt on next save.
+            self.metadata.setdefault('yearly_counts', {})
+            self.metadata.pop('monthly_counts', None)
         else:
             self.metadata = {
                 'last_sync': None,
                 'total_activities': 0,
                 'earliest_activity': None,
                 'latest_activity': None,
-                'monthly_counts': {},
+                'yearly_counts': {},
             }
 
     def _invalidate_memory_cache(self):
@@ -101,26 +105,33 @@ class StravaActivitiesCache:
 
     def _load_to_memory(self) -> pd.DataFrame:
         """
-        Load all Parquet files into memory once.
-        This is the 'lazy loading' pattern - only loads when needed.
+        Load all Parquet files into memory once. Streams are NOT loaded here —
+        they live in the separate StreamsStore and are fetched lazily per id.
         """
         if self._memory_cache is not None:
             return self._memory_cache
-        
+
         parquet_files = sorted(self.activities_dir.rglob("*.parquet"))
-        
+
         if not parquet_files:
             self._memory_cache = pd.DataFrame()
             self._cache_loaded_at = datetime.now()
             return self._memory_cache
-        
-        # Load all monthly files, skipping corrupt ones
+
+        # Load yearly files, skipping the 'streams' column when present
+        # (legacy parquets before the StreamsStore migration). Each file's
+        # schema may differ, so we drop after read rather than passing a
+        # `columns=` filter that would reject when 'streams' isn't in the file.
         dfs = []
         for f in parquet_files:
             try:
-                dfs.append(pd.read_parquet(f))
+                df = pd.read_parquet(f, engine='pyarrow')
             except Exception as e:
                 logger.warning("Skipping corrupt parquet file %s: %s", f, e)
+                continue
+            if 'streams' in df.columns:
+                df = df.drop(columns=['streams'])
+            dfs.append(df)
         self._memory_cache = pd.concat(dfs, ignore_index=True)
         self._memory_cache['start_date'] = pd.to_datetime(self._memory_cache['start_date_local'])
         self._memory_cache = self._memory_cache.sort_values('start_date')
@@ -147,15 +158,39 @@ class StravaActivitiesCache:
     
 
     def save_activities(self, activities: list[dict]):
-        """Save activities to Parquet files, grouped by month."""
+        """Save activities to Parquet files, grouped by month.
+
+        If incoming activity dicts carry a 'streams' value (Strava API columnar
+        dict, legacy list-of-dicts, or JSON string), it is persisted to the
+        separate StreamsStore — never written into the activities parquet."""
         if not activities:
             return
-        
+
+        # Extract streams BEFORE building the DataFrame so we can route them
+        # to the StreamsStore and strip them from the parquet payload.
+        streams_by_id: dict[int, dict | None] = {}
+        activity_year: dict[int, int] = {}
+        for act in activities:
+            aid = act.get('id')
+            if aid is None:
+                continue
+            aid = int(aid)
+            if 'streams' in act:
+                raw = act.pop('streams')
+                streams_by_id[aid] = _normalize_streams(raw)
+            # Year for streams routing (matches activities parquet bucketing).
+            sdl = act.get('start_date_local')
+            if sdl is not None:
+                try:
+                    activity_year[aid] = pd.Timestamp(sdl).year
+                except Exception:
+                    pass
+
         df = pd.DataFrame(activities)
         df['start_date'] = pd.to_datetime(df['start_date_local'])
-        
-        # Group by year-month
-        df['year_month'] = df['start_date'].dt.tz_localize(None).dt.to_period('M')
+
+        # Group by year (per-year parquets — faster cold load than per-month).
+        df['year_bucket'] = df['start_date'].dt.tz_localize(None).dt.year.astype(int)
 
         def __convert_for_parquet(data):
             """Convert non-parquet-compatible types."""
@@ -169,44 +204,49 @@ class StravaActivitiesCache:
 
         # Convert incompatible types for Parquet and apply to all columns
         df = df.map(__convert_for_parquet)
-        
-        monthly_counts = self.metadata.setdefault('monthly_counts', {})
 
-        for period, group in df.groupby('year_month'):
-            year = period.year
-            month_file = self.activities_dir / str(year) / f"{period}.parquet"
-            month_file.parent.mkdir(parents=True, exist_ok=True)
-            period_key = str(period)
+        yearly_counts = self.metadata.setdefault('yearly_counts', {})
 
-            # Merge with existing data if file exists
-            if month_file.exists():
-                existing_df = pd.read_parquet(month_file)
-                # drop year_month column before saving
-                group = group.drop(columns=['year_month'])
-                # Drop all-NA columns to avoid dtype issues during merge
+        for year, group in df.groupby('year_bucket'):
+            year_file = self.activities_dir / f"{int(year)}.parquet"
+            year_key = str(int(year))
+
+            if year_file.exists():
+                existing_df = pd.read_parquet(year_file, engine='pyarrow')
+                # Defensive: strip a lingering 'streams' column from pre-migration files.
+                if 'streams' in existing_df.columns:
+                    existing_df = existing_df.drop(columns=['streams'])
+                group = group.drop(columns=['year_bucket'])
                 existing_clean = existing_df.dropna(axis=1, how='all')
                 group_clean = group.dropna(axis=1, how='all').drop_duplicates(subset=['id'], keep='last')
-                # combine_first preserves existing values (streams, photos, detail_fetched)
+                # combine_first preserves existing values (photos, detail_fetched)
                 # for columns the activity-list response doesn't carry, while the new
                 # batch overrides for the columns it does carry (name, distance, etc.).
-                # Without this, the 1-day overlap in incremental sync would wipe streams.
                 existing_indexed = existing_clean.set_index('id')
                 group_indexed = group_clean.set_index('id')
                 combined = group_indexed.combine_first(existing_indexed).reset_index()
-                combined.to_parquet(month_file, index=False)
-                monthly_counts[period_key] = len(combined)
-                logger.info("Updated %s (%d activities)", month_file.name, len(combined))
+                combined.to_parquet(year_file, index=False, engine='pyarrow')
+                yearly_counts[year_key] = len(combined)
+                logger.info("Updated %s (%d activities)", year_file.name, len(combined))
             else:
-                # drop year_month column before saving
-                group = group.drop(columns=['year_month'])
-                group.to_parquet(month_file, index=False)
-                monthly_counts[period_key] = len(group)
-                logger.info("Created %s (%d activities)", month_file.name, len(group))
+                group = group.drop(columns=['year_bucket'])
+                group.to_parquet(year_file, index=False, engine='pyarrow')
+                yearly_counts[year_key] = len(group)
+                logger.info("Created %s (%d activities)", year_file.name, len(group))
 
-        # Update metadata — sum from the monthly_counts dict we just maintained,
+        # Persist any extracted streams. Backfill missing years from the
+        # parquet group dates above (rare: incoming activity lacked start_date_local).
+        for aid in streams_by_id:
+            if aid not in activity_year:
+                match = df[df['id'] == aid]
+                if not match.empty:
+                    activity_year[aid] = int(match['start_date'].iloc[0].year)
+        self.streams.save(streams_by_id, activity_year)
+
+        # Update metadata — sum from the yearly_counts dict we just maintained,
         # avoiding a full parquet re-scan on every save.
         self.metadata['last_sync'] = datetime.now()
-        self.metadata['total_activities'] = sum(monthly_counts.values())
+        self.metadata['total_activities'] = sum(yearly_counts.values())
 
         if not df.empty:
             batch_earliest = df['start_date'].min()
@@ -229,24 +269,20 @@ class StravaActivitiesCache:
         force_reload: bool = False,
     ) -> pd.DataFrame:
         """
-        Load cached activities with optional filters.
-        Uses in-memory cache to avoid repeated disk reads.
-        
+        Load cached activities (metadata only — no streams column) with optional filters.
+
+        Streams now live in StreamsStore; use `cache.get_streams(activity_id)` to fetch them.
+
         Args:
             from_date: Filter activities after this date
             to_date: Filter activities before this date
             sports: Filter by sport types
             force_reload: If True, bypass memory cache and reload from disk
         """
-        # Force reload from disk if requested
         if force_reload:
             self._invalidate_memory_cache()
 
-        # Use the streams-parsed view — streams JSON is decoded once and
-        # cached across calls (invalidated by cache_version). Filtering below
-        # produces a fresh DataFrame per call, so callers can freely mutate.
-        base = self._get_streams_view()
-
+        base = self._load_to_memory()
         if base.empty:
             return base.copy() if base is not None else base
 
@@ -257,9 +293,6 @@ class StravaActivitiesCache:
             df = df[df['start_date'] <= to_date]
         if sports:
             df = df[df["sport_type"].isin(sports)]
-        # Boolean-mask indexing returns a copy, so callers get a safe df
-        # when any filter was applied. Otherwise, copy to preserve the
-        # prior contract of returning a mutable df.
         if df is base:
             df = base.copy()
         return df
@@ -279,43 +312,45 @@ class StravaActivitiesCache:
     def count_cached_activities(self) -> int:
         """Count total cached activities.
 
-        Reads from the `monthly_counts` metadata dict (maintained incrementally
+        Reads from the `yearly_counts` metadata dict (maintained incrementally
         by save_activities). Falls back to a one-off parquet scan and persists
-        the result for legacy caches that predate monthly_counts.
+        the result for caches without yearly_counts populated yet.
         """
-        monthly_counts = self.metadata.get('monthly_counts')
-        if monthly_counts:
-            return sum(monthly_counts.values())
+        yearly_counts = self.metadata.get('yearly_counts')
+        if yearly_counts:
+            return sum(yearly_counts.values())
 
-        # Legacy path: rebuild monthly_counts from disk once, then persist.
+        # Legacy / first-run path: rebuild from disk once, then persist.
         parquet_files = list(self.activities_dir.rglob("*.parquet"))
         if not parquet_files:
             return 0
         rebuilt: dict[str, int] = {}
         for f in parquet_files:
             try:
-                rebuilt[f.stem] = len(pd.read_parquet(f))
+                rebuilt[f.stem] = len(pd.read_parquet(f, engine='pyarrow'))
             except Exception as e:
                 logger.warning("Corrupt parquet file %s: %s", f, e)
-        self.metadata['monthly_counts'] = rebuilt
+        self.metadata['yearly_counts'] = rebuilt
         self.metadata['total_activities'] = sum(rebuilt.values())
         self.__save_metadata()
         return self.metadata['total_activities']
     
     def clear_cache(self):
-        """Clear all cached activities and metadata."""
+        """Clear all cached activities, streams, and metadata."""
         for file in self.activities_dir.rglob("*.parquet"):
             file.unlink()
 
+        self.streams.clear()
+
         if self.metadata_file.exists():
             self.metadata_file.unlink()
-            
+
         self.metadata = {
             'last_sync': None,
             'total_activities': 0,
             'earliest_activity': None,
             'latest_activity': None,
-            'monthly_counts': {},
+            'yearly_counts': {},
         }
 
         self.__save_metadata()
@@ -333,22 +368,16 @@ class StravaActivitiesCache:
         return self._load_to_memory()
 
     def get_activity_by_id(self, activity_id: int) -> pd.Series | None:
-        """Look up a single activity by ID from memory cache.
-        Parses streams JSON only for the matched row."""
+        """Look up a single activity by ID from the in-memory metadata cache.
+
+        Streams are NOT attached — fetch them separately via get_streams(activity_id)."""
         df = self._load_to_memory()
         if df.empty:
             return None
         match = df[df["id"] == activity_id]
         if match.empty:
             return None
-        row = match.iloc[0].copy()
-        # Parse streams JSON for this single row
-        if "streams" in row.index and row["streams"] is not None and isinstance(row["streams"], str):
-            try:
-                row["streams"] = json.loads(row["streams"])
-            except (json.JSONDecodeError, TypeError):
-                row["streams"] = None
-        return row
+        return match.iloc[0].copy()
     
     # Fields that come from the detail endpoint (not the list/summary endpoint)
     DETAIL_FIELDS = ['description', 'calories', 'splits_metric', 'best_efforts', 'laps', 'gear',
@@ -403,7 +432,7 @@ class StravaActivitiesCache:
         if include_streams:
             try:
                 streams = strava_endpoint.get_activity_streams(activity_id)
-                activity['streams'] = json.dumps(streams)
+                activity['streams'] = streams or {}
             except StravaStreamFetchError as e:
                 logger.warning("Skipping streams refresh for activity %s: %s", activity_id, e)
 
@@ -439,7 +468,8 @@ class StravaActivitiesCache:
 
         # Streams: only device-recorded activities (upload_id present) can have streams.
         # Manual entries have no upload_id and will never return stream data.
-        has_streams = df['streams'].notna() if 'streams' in df.columns else pd.Series([False] * total, index=df.index)
+        streams_ids = self.streams.all_activity_ids()
+        has_streams = df['id'].astype('int64').isin(streams_ids)
         expects_streams = df['upload_id'].notna() if 'upload_id' in df.columns else pd.Series([True] * total, index=df.index)
         streams_expected = int(expects_streams.sum())
         streams_complete = int((expects_streams & has_streams).sum())
@@ -516,10 +546,11 @@ class StravaActivitiesCache:
 
         # Pre-filter: only iterate activities that actually need work (recent first)
         # Skip manual activities (no upload_id) — they have no device data and will never have streams.
+        cached_stream_ids = self.streams.all_activity_ids()
         needs_work = []
         for idx, activity in df.sort_values('start_date', ascending=False).iterrows():
             is_manual = pd.isna(activity.get('upload_id'))
-            has_streams = 'streams' in activity and isinstance(activity.get('streams'), str)
+            has_streams = int(activity['id']) in cached_stream_ids
             has_photos = 'photos' in activity and isinstance(activity.get('photos'), str)
             has_detail = activity.get('detail_fetched') == True
             photo_count = int(activity.get('total_photo_count', 0) or 0)
@@ -549,8 +580,8 @@ class StravaActivitiesCache:
                     try:
                         streams = strava_endpoint.get_activity_streams(activity_id)
                         # 200 OK with empty body = legitimately no streams (manual /
-                        # indoor activity). Cache as '[]' to skip future retries.
-                        activity['streams'] = json.dumps(streams)
+                        # indoor activity). Cache as empty dict to skip future retries.
+                        activity['streams'] = streams or {}
                         needs_update = True
                         if not streams:
                             logger.info("No streams returned for activity %s", activity_id)
@@ -612,3 +643,34 @@ class StravaActivitiesCache:
             logger.info("Synced %d activities, skipped %d (already had data)", synced_count, skipped_count)
         else:
             logger.info("All %d activities already have the requested data", skipped_count)
+
+
+def _normalize_streams(raw) -> dict | None:
+    """Coerce any of the shapes streams arrive in into the columnar dict
+    persisted by StreamsStore. Returns None for absent / empty streams so
+    StreamsStore can treat them as a delete on save."""
+    if raw is None:
+        return None
+    # JSON string from legacy parquet
+    if isinstance(raw, str):
+        if not raw or raw == 'null':
+            return None
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    if not raw:
+        return None
+    # Strava /streams API: {type: {data: [...]}}
+    if isinstance(raw, dict):
+        first = next(iter(raw.values()), None)
+        if isinstance(first, dict) and 'data' in first:
+            return from_strava_api(raw) or None
+        # Already columnar (list values aligned to a length)
+        if all(isinstance(v, list) for v in raw.values()):
+            return raw if stream_length(raw) > 0 else None
+    # Legacy list-of-dicts shape
+    if isinstance(raw, list):
+        cols = points_to_columnar(raw)
+        return cols if cols else None
+    return None

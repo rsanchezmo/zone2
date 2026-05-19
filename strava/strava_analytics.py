@@ -59,22 +59,18 @@ class StravaAnalytics:
         self._per_activity_bests_cache: dict[str, pd.DataFrame] = {}
 
     def _get_prepared_activities(self) -> pd.DataFrame:
-        """Return activities DF with parsed dates and pre-parsed streams,
-        cached to avoid repeated copy+parse.
+        """Return activities DF with parsed dates and parsed map JSON, cached
+        to avoid repeated copy+parse.
 
-        Reads directly from the cache's memory store to avoid the extra .copy()
-        that load_activities() does on every call. We do a single copy here and
-        cache it with parsed dates. Streams JSON strings are parsed once into
-        Python objects so downstream consumers don't re-parse on every call.
+        Streams are NOT attached to this DataFrame — they live in the cache's
+        StreamsStore. Call `strava_activities_cache.get_streams(activity_id)`
+        when stream data is needed.
         """
-        # Access the internal memory cache directly (triggers lazy load if needed)
         raw = self.strava_activities_cache._load_to_memory()
         current_len = len(raw)
         if self._prepared_activities is None or current_len != self._prepared_activities_len:
             df = raw.copy()
             df['start_date_local'] = pd.to_datetime(df['start_date_local'], utc=True)
-            if 'streams' in df.columns:
-                df['streams'] = df['streams'].apply(self._parse_json_cell)
             if 'map' in df.columns:
                 df['map'] = df['map'].apply(self._parse_json_cell)
             self._prepared_activities = df
@@ -509,19 +505,17 @@ class StravaAnalytics:
         hr_zone_distribution = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 5: 0.0}
         hr_histogram: dict | None = None
 
-        if not activities_week.empty and hr_athlete_zones and 'streams' in activities_week.columns:
-            # Collect all HR values from streams into a single numpy array
-            all_hr = []
-            for streams_raw in activities_week['streams'].dropna():
-                try:
-                    streams_data = streams_raw
-                    if isinstance(streams_data, list):
-                        all_hr.extend(
-                            p['heartrate'] for p in streams_data
-                            if p.get('heartrate') is not None
-                        )
-                except (json.JSONDecodeError, TypeError, KeyError) as e:
-                    logger.debug("Skipping unparseable stream row for HR distribution: %s", e)
+        if not activities_week.empty and hr_athlete_zones:
+            # Collect all HR values from streams into a single numpy array.
+            # Streams are lazy-loaded per-id from the StreamsStore.
+            ids_in_week = activities_week['id'].astype('int64').tolist()
+            streams_map = self.strava_activities_cache.get_streams_bulk(ids_in_week)
+            all_hr: list = []
+            for streams in streams_map.values():
+                hr_arr_col = streams.get('heartrate') if isinstance(streams, dict) else None
+                if not hr_arr_col:
+                    continue
+                all_hr.extend(v for v in hr_arr_col if v is not None)
 
             if all_hr:
                 hr_arr = np.array(all_hr, dtype=np.float64)
@@ -648,31 +642,27 @@ class StravaAnalytics:
         # best[category][distance_m] = {time_s, activity_id, activity_name, date}
         best: dict[str, dict[int, dict]] = {cat: {} for cat in sport_configs}
 
+        # Bulk-load streams for the relevant rows so we hit each year-pickle once.
+        relevant_ids = activities['id'].astype('int64').tolist()
+        streams_map = self.strava_activities_cache.get_streams_bulk(relevant_ids)
+
         for _, row in activities.iterrows():
             sport_type = row.get("sport_type", "")
             category = get_sport_category(sport_type)
             if category not in sport_configs:
                 continue
 
-            streams = row.get("streams")
-            if not isinstance(streams, list) or len(streams) < 2:
+            streams = streams_map.get(int(row.get("id"))) if row.get("id") is not None else None
+            if not streams:
                 continue
 
-            # Extract distance and time as numpy arrays
-            dist_list = []
-            time_list = []
-            for pt in streams:
-                d = pt.get("distance")
-                t = pt.get("time")
-                if d is not None and t is not None:
-                    dist_list.append(d)
-                    time_list.append(t)
-
-            if len(dist_list) < 2:
+            dist_col = streams.get("distance")
+            time_col = streams.get("time")
+            if not dist_col or not time_col or len(dist_col) < 2:
                 continue
 
-            distances = np.asarray(dist_list, dtype=np.float64)
-            times = np.asarray(time_list, dtype=np.float64)
+            distances = np.asarray(dist_col, dtype=np.float64)
+            times = np.asarray(time_col, dtype=np.float64)
             n = len(distances)
 
             activity_id = row.get("id")
@@ -764,24 +754,19 @@ class StravaAnalytics:
         max_speed = self.MAX_SPEED_MS[sport_category]
 
         best: dict[int, dict] = {}
+        relevant_ids = activities_df['id'].astype('int64').tolist() if 'id' in activities_df.columns else []
+        streams_map = self.strava_activities_cache.get_streams_bulk(relevant_ids)
         for _, row in activities_df.iterrows():
-            streams = row.get("streams")
-            if not isinstance(streams, list) or len(streams) < 2:
+            streams = streams_map.get(int(row.get("id"))) if row.get("id") is not None else None
+            if not streams:
+                continue
+            dist_col = streams.get("distance")
+            time_col = streams.get("time")
+            if not dist_col or not time_col or len(dist_col) < 2:
                 continue
 
-            dist_list: list[float] = []
-            time_list: list[float] = []
-            for pt in streams:
-                d = pt.get("distance")
-                t = pt.get("time")
-                if d is not None and t is not None:
-                    dist_list.append(d)
-                    time_list.append(t)
-            if len(dist_list) < 2:
-                continue
-
-            distances = np.asarray(dist_list, dtype=np.float64)
-            times = np.asarray(time_list, dtype=np.float64)
+            distances = np.asarray(dist_col, dtype=np.float64)
+            times = np.asarray(time_col, dtype=np.float64)
             n = len(distances)
             total_d = distances[-1]
 
@@ -849,24 +834,22 @@ class StravaAnalytics:
         cat_mask = activities["sport_type"].apply(lambda st: get_sport_category(st) == sport_category)
         cat_acts = activities[cat_mask]
 
+        # Bulk-load streams for this sport category, then iterate.
+        cat_ids = cat_acts['id'].astype('int64').tolist() if 'id' in cat_acts.columns else []
+        streams_map = self.strava_activities_cache.get_streams_bulk(cat_ids)
+
         rows: list[dict] = []
         for _, row in cat_acts.iterrows():
-            streams = row.get("streams")
-            if not isinstance(streams, list) or len(streams) < 2:
+            streams = streams_map.get(int(row.get("id"))) if row.get("id") is not None else None
+            if not streams:
                 continue
-            dist_list: list[float] = []
-            time_list: list[float] = []
-            for pt in streams:
-                d = pt.get("distance")
-                t = pt.get("time")
-                if d is not None and t is not None:
-                    dist_list.append(d)
-                    time_list.append(t)
-            if len(dist_list) < 2:
+            dist_col = streams.get("distance")
+            time_col = streams.get("time")
+            if not dist_col or not time_col or len(dist_col) < 2:
                 continue
 
-            distances = np.asarray(dist_list, dtype=np.float64)
-            times = np.asarray(time_list, dtype=np.float64)
+            distances = np.asarray(dist_col, dtype=np.float64)
+            times = np.asarray(time_col, dtype=np.float64)
             n = len(distances)
             total_d = distances[-1]
 
@@ -1412,13 +1395,19 @@ class StravaAnalytics:
         # stays per-row because stream length varies per activity, but it
         # only runs for activities that actually have streams — a huge win
         # when most of the cache is stream-less.
-        if hr_zones and 'streams' in valid.columns:
+        if hr_zones:
             boundaries = [z['max'] for z in hr_zones[:4]]
-            streams_col = valid['streams'].to_list()
-            for idx, streams in enumerate(streams_col):
-                if not isinstance(streams, list) or len(streams) < 2:
+            valid_ids = valid['id'].astype('int64').tolist() if 'id' in valid.columns else []
+            streams_map = self.strava_activities_cache.get_streams_bulk(valid_ids)
+            id_list = valid['id'].astype('int64').to_numpy() if 'id' in valid.columns else np.array([], dtype=np.int64)
+            for idx in range(len(valid)):
+                streams = streams_map.get(int(id_list[idx])) if idx < len(id_list) else None
+                if not streams:
                     continue
-                hr_vals = [p.get('heartrate') for p in streams if p.get('heartrate') is not None]
+                hr_col = streams.get('heartrate')
+                if not hr_col:
+                    continue
+                hr_vals = [v for v in hr_col if v is not None]
                 if len(hr_vals) <= 10:
                     continue
                 hr_arr = np.asarray(hr_vals, dtype=np.float64)
@@ -1509,7 +1498,7 @@ class StravaAnalytics:
         activities = self._get_prepared_activities()
         total = len(activities)
         with_hr = int(activities['average_heartrate'].dropna().count()) if 'average_heartrate' in activities.columns else 0
-        with_streams = int(activities['streams'].dropna().count()) if 'streams' in activities.columns else 0
+        with_streams = len(self.strava_activities_cache.streams.all_activity_ids())
 
         result = {
             "data": data,
