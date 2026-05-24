@@ -16,6 +16,22 @@ from strava.streams_store import (
 logger = logging.getLogger(__name__)
 
 
+def _has_full_photo_list(raw) -> bool:
+    """True when the cached photos column holds a real photo list.
+
+    The detail endpoint returns a thumbnail summary dict (primary + count) under
+    the same 'photos' key; if that ever lands in the cache it would look like a
+    valid string here. Parse it and require a non-empty list to distinguish.
+    """
+    if not isinstance(raw, str):
+        return False
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return False
+    return isinstance(parsed, list) and len(parsed) > 0
+
+
 class StravaActivitiesCache:
     def __init__(self, cache_dir: Path = Path("./.strava")):
         self.cache_dir = cache_dir
@@ -410,12 +426,14 @@ class StravaActivitiesCache:
         return True
 
     def resync_activity(self, activity_id: int, strava_endpoint, include_streams: bool = False) -> bool:
-        """Re-fetch a single activity from Strava and overwrite the cached row.
+        """Re-fetch a single activity from Strava and merge updates into the cached row.
 
         Pulls the detail endpoint (which carries both summary fields like name/description
-        and detail-only fields), and optionally re-fetches streams + photos. Cached fields
-        not present in the new payload (e.g., streams when include_streams=False) are
-        preserved by save_activities' combine_first merge.
+        and detail-only fields), refetches the full photo list when the activity has any,
+        and optionally re-fetches streams. The detail endpoint also returns a 'photos'
+        field, but it's a thumbnail summary (primary + count) — caching that would clobber
+        the full photo list, so it's dropped before the merge and photos are refreshed via
+        the dedicated /photos endpoint instead.
 
         Returns True if the cache was updated.
         """
@@ -426,8 +444,14 @@ class StravaActivitiesCache:
         if not detail:
             return False
 
-        activity = dict(detail)
+        activity = {k: v for k, v in detail.items() if k != 'photos'}
         activity['detail_fetched'] = True
+
+        photo_count = int(detail.get('total_photo_count', 0) or 0)
+        if photo_count > 0:
+            photos = strava_endpoint.get_activity_photos(activity_id)
+            if photos:
+                activity['photos'] = json.dumps(photos)
 
         if include_streams:
             try:
@@ -435,12 +459,6 @@ class StravaActivitiesCache:
                 activity['streams'] = streams or {}
             except StravaStreamFetchError as e:
                 logger.warning("Skipping streams refresh for activity %s: %s", activity_id, e)
-
-            photo_count = int(detail.get('total_photo_count', 0) or 0)
-            if photo_count > 0:
-                photos = strava_endpoint.get_activity_photos(activity_id)
-                if photos:
-                    activity['photos'] = json.dumps(photos)
 
         self.save_activities([activity])
         return True
@@ -478,7 +496,7 @@ class StravaActivitiesCache:
         # Photos: only activities with total_photo_count > 0 are expected to have photos
         photo_count_col = df['total_photo_count'].fillna(0).astype(int) if 'total_photo_count' in df.columns else pd.Series([0] * total)
         expects_photos = photo_count_col > 0
-        has_photos = df['photos'].notna() if 'photos' in df.columns else pd.Series([False] * total)
+        has_photos = df['photos'].apply(_has_full_photo_list) if 'photos' in df.columns else pd.Series([False] * total, index=df.index)
         photos_complete = int((expects_photos & has_photos).sum())
         photos_expected = int(expects_photos.sum())
         photos_missing = photos_expected - photos_complete
@@ -551,7 +569,7 @@ class StravaActivitiesCache:
         for idx, activity in df.sort_values('start_date', ascending=False).iterrows():
             is_manual = pd.isna(activity.get('upload_id'))
             has_streams = int(activity['id']) in cached_stream_ids
-            has_photos = 'photos' in activity and isinstance(activity.get('photos'), str)
+            has_photos = _has_full_photo_list(activity.get('photos'))
             has_detail = activity.get('detail_fetched') == True
             photo_count = int(activity.get('total_photo_count', 0) or 0)
             needs_photos = not has_photos and photo_count > 0
