@@ -3,6 +3,7 @@ matplotlib.use("Agg")
 
 import asyncio
 import logging
+import os
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -14,7 +15,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.config import settings
 from backend.dependencies import set_strava_intelligence
-from backend.routers import activities, stats, exports, calendar, calendar_feed, sync, athlete, goals, workouts, races, health
+from backend.routers import activities, stats, exports, calendar, calendar_feed, sync, athlete, goals, workouts, races, health, garmin
 from backend.routers.sync import _try_claim_sync, _run_sync
 from backend.db import init_db
 from strava.strava_intelligence import StravaIntelligence
@@ -86,11 +87,17 @@ async def _periodic_sync_loop(si: StravaIntelligence, interval_hours: int) -> No
 async def lifespan(app: FastAPI):
     # Startup: initialize StravaIntelligence singleton
     _configure_logging()
+    # Anchor Garmin's token cache under .strava/ alongside the Strava token,
+    # before StravaIntelligence reads the env var to build its GarminClient.
+    os.environ.setdefault("GARMINTOKENS", str(Path(".strava") / "garmin"))
     si = StravaIntelligence(
         workdir=settings.workdir,
         auto_sync=False,
         sync_max_age_hours=settings.sync_max_age_hours,
     )
+    # Best-effort Garmin login at startup. Doesn't raise if it fails.
+    if si.garmin_client.email:
+        await asyncio.to_thread(si.garmin_client.ensure_logged_in)
     set_strava_intelligence(si)
     await init_db()
 
@@ -143,6 +150,7 @@ app.include_router(athlete.router, prefix="/api/athlete", tags=["athlete"])
 app.include_router(goals.router, prefix="/api/goals", tags=["goals"])
 app.include_router(workouts.router, prefix="/api/workouts", tags=["workouts"])
 app.include_router(races.router, prefix="/api/races", tags=["races"])
+app.include_router(garmin.router, prefix="/api/garmin", tags=["garmin"])
 
 # Serve frontend build if it exists
 class _SPAStaticFiles(StaticFiles):

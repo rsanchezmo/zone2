@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 from strava.strava_analytics import StravaAnalytics, YearInSportFeatures
 from strava.strava_user_cache import StravaUserCache
@@ -6,6 +7,8 @@ from strava.strava_activities_cache import StravaActivitiesCache
 from strava.strava_endpoint import StravaEndpoint
 from strava.strava_utils import *
 from strava.strava_visualizer import StravaVisualizer
+from strava.garmin_client import GarminClient
+from strava.garmin_cache import GarminDailyStatsCache
 from datetime import timedelta
 
 logger = logging.getLogger(__name__)
@@ -21,6 +24,16 @@ class StravaIntelligence:
         self.strava_user_cache = StravaUserCache(self.strava_endpoint)
         self.strava_analytics = StravaAnalytics(self.strava_activities_cache, self.strava_user_cache)
         self.strava_visualizer = StravaVisualizer(self.strava_analytics, workdir)
+
+        # Optional Garmin Connect integration — disabled if env vars missing
+        # or login fails. Never raises during construction.
+        garmin_token_dir = Path(os.environ.get("GARMINTOKENS", ".strava/garmin"))
+        self.garmin_client = GarminClient(
+            email=os.environ.get("GARMIN_EMAIL"),
+            password=os.environ.get("GARMIN_PASSWORD"),
+            token_dir=garmin_token_dir,
+        )
+        self.garmin_cache = GarminDailyStatsCache(self.garmin_client)
 
         if auto_sync and self.strava_activities_cache.needs_sync(max_age_hours=sync_max_age_hours):
             # only enable include_streams on full sync to avoid long sync times on incremental syncs

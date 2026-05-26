@@ -18,6 +18,7 @@ A Python toolkit for analyzing and visualizing your Strava activities without pa
   - 📊 **Analytics**: Race-time predictor with per-distance cards (central estimate + IQR band) using a weighted blend of VDOT (target-specific) and the Riegel family (fixed 1.06 + personalized fit), plus an evolution chart of predicted times across 12/16/24/52-week windows
   - 🏋️ **Workouts**: Structured workout templates with segments (warmup / work / recovery / cooldown)
   - ⚑ **Races**: Race calendar with day-countdowns, past-race activity linking, and notes
+  - ⌚ **Garmin** *(optional)*: Watch-level wellness data Strava doesn't expose — sleep score & stages, HRV status, training readiness, body battery, stress, VO2max, resting HR, steps, SpO2, respiration. Configured separately via `GARMIN_EMAIL` / `GARMIN_PASSWORD`.
   - 👤 **Profile**: Athlete profile, HR zones, goals management, cache completeness, and API rate limits
   - 📸 **PNG Exports**: Preview-first export dialog for every visualization (quality, color, filename)
   - 🌗 **Dark/Light Mode**: Full theme toggle with persistent preference
@@ -112,6 +113,37 @@ python telegram_bot.py
 The bot supports manual commands:
 - `/weekly` - Generate and send current week's report
 - `/monthly` - Generate and send current year's report
+
+## ⌚ Garmin Connect Setup (Optional)
+
+Surfaces watch-level wellness data Strava doesn't carry: sleep score & stages,
+HRV status, training readiness, body battery, stress, VO2max, resting HR,
+steps, SpO2 and respiration. Lives under a separate **Garmin** tab in the
+web dashboard — Strava remains the source of truth for activities.
+
+1. Add your Garmin Connect credentials to `.env`:
+
+```env
+GARMIN_EMAIL=your.email@example.com
+GARMIN_PASSWORD=your_password
+```
+
+2. Start the backend (`python run_dev.py`). The first login may need an MFA
+   code — Garmin caches the OAuth token afterwards at `.strava/garmin/`, so
+   restarts won't re-prompt.
+
+3. Open the **Garmin** tab and click **Sync recent** (refreshes the last
+   14 days) or **Backfill all** (walks history backwards until the watch's
+   earliest recorded day — can take 20–60 minutes in the background).
+
+The integration is fully optional: with no credentials, the tab shows a
+configuration hint and the rest of the app is unaffected. If Garmin asks
+for MFA again later (rare — only on token expiry or new device), run the
+provisioning helper from a terminal:
+
+```bash
+poetry run python scripts/garmin_poc.py
+```
 
 ## 🌐 Web Dashboard
 

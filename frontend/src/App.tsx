@@ -18,6 +18,7 @@ const WorkoutsPage = lazy(() => import('./pages/WorkoutsPage'))
 const RacesPage = lazy(() => import('./pages/RacesPage'))
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'))
 const ProfilePage = lazy(() => import('./pages/ProfilePage'))
+const GarminPage = lazy(() => import('./pages/GarminPage'))
 
 function RouteFallback() {
   return (
@@ -45,6 +46,7 @@ export default function App() {
                 <Route path="/workouts" element={<WorkoutsPage />} />
                 <Route path="/races" element={<RacesPage />} />
                 <Route path="/analytics" element={<AnalyticsPage />} />
+                <Route path="/garmin" element={<GarminPage />} />
                 <Route path="/profile" element={<ProfilePage />} />
               </Routes>
             </Suspense>

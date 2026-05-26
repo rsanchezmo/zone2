@@ -601,3 +601,53 @@ export function useDeleteWorkoutTemplate() {
     },
   });
 }
+
+// Garmin Connect (watch-level daily stats)
+export function useGarminStatus() {
+  return useQuery({
+    queryKey: ['garmin-status'],
+    queryFn: () => api.get('/garmin/status').then(r => r.data),
+    refetchInterval: (q) => (q.state.data?.syncing ? 2000 : false),
+  });
+}
+
+export function useGarminLatest() {
+  return useQuery({
+    queryKey: ['garmin-latest'],
+    queryFn: () => api.get('/garmin/latest').then(r => r.data),
+    staleTime: 1000 * 60 * 5,
+  });
+}
+
+export function useGarminTrends(days: number = 30) {
+  return useQuery({
+    queryKey: ['garmin-trends', days],
+    queryFn: () => api.get('/garmin/trends', { params: { days } }).then(r => r.data),
+    staleTime: 1000 * 60 * 5,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useGarminDailyStats(metric: string, startDate?: string, endDate?: string) {
+  return useQuery({
+    queryKey: ['garmin-daily-stats', metric, startDate, endDate],
+    queryFn: () =>
+      api.get('/garmin/daily-stats', {
+        params: { metric, start_date: startDate, end_date: endDate },
+      }).then(r => r.data),
+    enabled: !!metric && !!startDate && !!endDate,
+  });
+}
+
+export function useTriggerGarminSync() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (params: { full?: boolean } = {}) =>
+      api.post('/garmin/sync', null, { params }).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['garmin-status'] });
+      qc.invalidateQueries({ queryKey: ['garmin-latest'] });
+      qc.invalidateQueries({ queryKey: ['garmin-trends'] });
+    },
+  });
+}

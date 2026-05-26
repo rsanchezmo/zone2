@@ -32,6 +32,8 @@ uvicorn = {extras = ["standard"], version = "^0.41.0"}
 aiosqlite = ">=0.20.0"
 pydantic-settings = ">=2.7.0"
 pyarrow = "^24.0.0"
+garminconnect = "^0.3.3"
+curl-cffi = "^0.15.0"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

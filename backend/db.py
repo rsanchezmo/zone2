@@ -60,6 +60,16 @@ CREATE TABLE IF NOT EXISTS user_settings (
     value TEXT NOT NULL,
     updated_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS garmin_daily_stats (
+    date TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    fetched_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (date, metric)
+);
+CREATE INDEX IF NOT EXISTS idx_garmin_date ON garmin_daily_stats(date);
+CREATE INDEX IF NOT EXISTS idx_garmin_metric_date ON garmin_daily_stats(metric, date);
 """
 
 

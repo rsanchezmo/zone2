@@ -52,6 +52,11 @@ const NAV_ITEMS: { to: string; label: string; color: string; icon: React.ReactNo
       <path d="M2 12l3-4 3 2 4-6" /><circle cx="13" cy="3.5" r="1" />
     </svg>
   )},
+  { to: '/garmin', label: 'Garmin', color: '#06b6d4', icon: (
+    <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="4" y="3" width="8" height="10" rx="2" /><path d="M6 1.5h4M6 14.5h4" /><circle cx="8" cy="8" r="2.2" />
+    </svg>
+  )},
   { to: '/profile', label: 'Profile', color: '#94a3b8', icon: (
     <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="8" cy="5" r="2.5" /><path d="M3 14c0-2.8 2.2-5 5-5s5 2.2 5 5" />
