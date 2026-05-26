@@ -83,6 +83,30 @@ async def _periodic_sync_loop(si: StravaIntelligence, interval_hours: int) -> No
             log.exception("auto-sync errored, will retry next interval")
 
 
+async def _periodic_garmin_sync_loop(si: StravaIntelligence, interval_hours: int) -> None:
+    """Refresh Garmin wellness data every interval_hours via sync_recent(days=14).
+    Independent of the Strava lock — both can run concurrently — but shares the
+    Garmin /api/garmin/sync claim so a manual sync isn't trampled."""
+    # Inline import keeps `routers.garmin` off the module-import path during
+    # cold start until it's actually needed.
+    from backend.routers.garmin import _try_claim as _try_claim_garmin, _run_garmin_sync
+    log = logging.getLogger("backend.garmin_autosync")
+    log.info("Garmin auto-sync scheduler enabled (every %dh)", interval_hours)
+    while True:
+        try:
+            await asyncio.sleep(interval_hours * 3600)
+            if _try_claim_garmin():
+                log.info("Garmin auto-sync starting")
+                await asyncio.to_thread(_run_garmin_sync, si, False)
+                log.info("Garmin auto-sync finished")
+            else:
+                log.info("Garmin auto-sync skipped: another Garmin sync running")
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            log.exception("Garmin auto-sync errored, will retry next interval")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: initialize StravaIntelligence singleton
@@ -113,15 +137,22 @@ async def lifespan(app: FastAPI):
     if settings.auto_sync_hours > 0:
         sync_task = asyncio.create_task(_periodic_sync_loop(si, settings.auto_sync_hours))
 
+    garmin_sync_task: asyncio.Task | None = None
+    if settings.auto_garmin_sync_hours > 0 and si.garmin_client.email:
+        garmin_sync_task = asyncio.create_task(
+            _periodic_garmin_sync_loop(si, settings.auto_garmin_sync_hours)
+        )
+
     try:
         yield
     finally:
-        if sync_task is not None:
-            sync_task.cancel()
-            try:
-                await sync_task
-            except asyncio.CancelledError:
-                pass
+        for task in (sync_task, garmin_sync_task):
+            if task is not None:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
 
 app = FastAPI(

@@ -16,9 +16,7 @@ import ChartPanel, { LegendSwatch } from '../components/shared/ChartPanel'
 // Single accent for the whole page. Variations come from opacity / tints
 // within the same cyan family, never from switching hues.
 const ACCENT = '#06b6d4'           // cyan-500 (brand)
-const ACCENT_DARK = '#0e7490'      // cyan-700 (deep)
 const ACCENT_LIGHT = '#67e8f9'     // cyan-300 (light)
-const ACCENT_PALE = '#cffafe'      // cyan-100 (palest)
 const MUTED = '#94a3b8'            // slate-400 — only for "not garmin" series
 // Semantic tones — used for qualitative status (qualifier pills, factor dots,
 // ACWR readout, sleep/HRV/readiness verdicts). Cyan stays the page accent;
@@ -126,7 +124,8 @@ type TrendsResp = {
 function num(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null
 }
-function fmtDate(iso: string): string {
+function fmtDate(iso: any): string {
+  if (typeof iso !== 'string') return ''
   const d = new Date(iso + 'T00:00:00')
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
@@ -640,7 +639,7 @@ export default function GarminPage() {
                     <YAxis yAxisId="score" orientation="right" {...yAxisProps} domain={[0, 100]}
                       tickFormatter={(v) => `${v}`} />
                     <Tooltip {...tooltipProps}
-                      formatter={(v: number, name) => name === 'score' ? [`${v}/100`, 'Score'] : [`${Math.round(v)} min`, name]} />
+                      formatter={(v: any, name) => name === 'score' ? [`${v}/100`, 'Score'] : [`${Math.round(v)} min`, name]} />
                     <Bar yAxisId="dur" dataKey="deep"  stackId="s"
                       fill="url(#sleepDeep)" stroke="none"
                       isAnimationActive={false} />
@@ -679,7 +678,7 @@ export default function GarminPage() {
                   <XAxis {...xAxisProps} />
                   <YAxis {...yAxisProps} domain={['dataMin - 3', 'dataMax + 3']} />
                   <Tooltip {...tooltipProps}
-                    formatter={(v: number, name) => [`${v} bpm`, name === 'resting' ? 'Resting' : 'Min']} />
+                    formatter={(v: any, name) => [`${v} bpm`, name === 'resting' ? 'Resting' : 'Min']} />
                   <Line type="monotone" dataKey="min"
                     stroke={ACCENT_LIGHT} strokeWidth={1.5} strokeDasharray="4 3"
                     dot={false} isAnimationActive={false} />
@@ -707,7 +706,7 @@ export default function GarminPage() {
                   <XAxis {...xAxisProps} />
                   <YAxis {...yAxisProps} domain={['dataMin - 5', 'dataMax + 5']} />
                   <Tooltip {...tooltipProps}
-                    formatter={(v: number) => [`${v} bpm`, 'Max']} />
+                    formatter={(v: any) => [`${v} bpm`, 'Max']} />
                   <Area type="monotone" dataKey="max"
                     stroke={ACCENT} strokeWidth={2}
                     fill="url(#hrMax)"
@@ -741,7 +740,7 @@ export default function GarminPage() {
                   <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
                   <XAxis {...xAxisProps} />
                   <YAxis {...yAxisProps} domain={['dataMin - 3', 'dataMax + 3']} />
-                  <Tooltip {...tooltipProps} formatter={(v: number) => `${v} ms`} />
+                  <Tooltip {...tooltipProps} formatter={(v: any) => `${v} ms`} />
                   <Line type="monotone" dataKey="weekly"
                     stroke={ACCENT_LIGHT} strokeWidth={1.5} strokeDasharray="4 3"
                     dot={false} isAnimationActive={false} />
@@ -763,7 +762,7 @@ export default function GarminPage() {
                   <XAxis {...xAxisProps} />
                   <YAxis {...yAxisProps} domain={['dataMin - 3', 'dataMax + 3']}
                     tickFormatter={(v) => `${Math.round(v)}`} />
-                  <Tooltip {...tooltipProps} formatter={(v: number) => `${v} bpm`} />
+                  <Tooltip {...tooltipProps} formatter={(v: any) => `${v} bpm`} />
                   <Line type="monotone" dataKey="sleep_hr"
                     stroke={ACCENT} strokeWidth={2}
                     dot={{ r: 2.5, fill: ACCENT, stroke: ACCENT }}
@@ -788,7 +787,7 @@ export default function GarminPage() {
                     <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
                     <XAxis {...xAxisProps} />
                     <YAxis {...yAxisProps} domain={[0, 100]} />
-                    <Tooltip {...tooltipProps} formatter={(v: number) => [`${v}/100`, 'Readiness']} />
+                    <Tooltip {...tooltipProps} formatter={(v: any) => [`${v}/100`, 'Readiness']} />
                     <ReferenceArea y1={0}  y2={25}  fill={NEG}    fillOpacity={0.10} />
                     <ReferenceArea y1={25} y2={50}  fill={AMBER}  fillOpacity={0.08} />
                     <ReferenceArea y1={50} y2={75}  fill={ACCENT} fillOpacity={0.06} />
@@ -835,7 +834,7 @@ export default function GarminPage() {
                     <YAxis {...yAxisProps} domain={[0, 'dataMax + 0.3']}
                       tickFormatter={(v) => v.toFixed(1)} />
                     <Tooltip {...tooltipProps}
-                      formatter={(v: number) => [v.toFixed(2), 'ACWR']} />
+                      formatter={(v: any) => [v.toFixed(2), 'ACWR']} />
                     {/* ACWR risk bands */}
                     <ReferenceArea y1={0}    y2={0.5} fill={NEG}   fillOpacity={0.10} />
                     <ReferenceArea y1={0.5}  y2={0.8} fill={AMBER} fillOpacity={0.08} />
@@ -878,7 +877,7 @@ export default function GarminPage() {
                   <XAxis {...xAxisProps} />
                   <YAxis {...yAxisProps} tickFormatter={(v) => `${Math.round(v)}h`} />
                   <Tooltip {...tooltipProps}
-                    formatter={(v: number) => [`${v.toFixed(1)}h`, 'Recovery time']} />
+                    formatter={(v: any) => [`${v.toFixed(1)}h`, 'Recovery time']} />
                   <ReferenceArea y1={0}  y2={12} fill={POS}    fillOpacity={0.08} />
                   <ReferenceArea y1={12} y2={24} fill={ACCENT} fillOpacity={0.06} />
                   <ReferenceArea y1={24} y2={48} fill={AMBER}  fillOpacity={0.08} />
@@ -963,7 +962,7 @@ export default function GarminPage() {
                   <YAxis {...yAxisProps}
                     tickFormatter={(v) => v === 0 ? '0' : Math.abs(v).toString()} />
                   <Tooltip {...tooltipProps}
-                    formatter={(v: number, name) => [Math.abs(v), name === 'charged' ? 'Charged' : 'Drained']} />
+                    formatter={(v: any, name) => [Math.abs(v), name === 'charged' ? 'Charged' : 'Drained']} />
                   <ReferenceLine y={0} stroke={colors.tickFillSecondary} strokeOpacity={0.35} />
                   <Bar dataKey="charged" fill="url(#bbCharged)" isAnimationActive={false} />
                   <Bar dataKey="drained" fill="url(#bbDrained)" isAnimationActive={false} />
@@ -989,7 +988,7 @@ export default function GarminPage() {
                 <YAxis yAxisId="resp" orientation="right" {...yAxisProps} domain={[8, 22]}
                   tickFormatter={(v) => `${v}`} />
                 <Tooltip {...tooltipProps}
-                  formatter={(v: number, name) => name === 'spo2' ? [`${v}%`, 'SpO2'] : [`${v} brpm`, 'Respiration']} />
+                  formatter={(v: any, name) => name === 'spo2' ? [`${v}%`, 'SpO2'] : [`${v} brpm`, 'Respiration']} />
                 <Line yAxisId="spo2" type="monotone" dataKey="spo2"
                   stroke={ACCENT} strokeWidth={2}
                   dot={{ r: 2, fill: ACCENT, stroke: ACCENT }}
@@ -1016,7 +1015,7 @@ export default function GarminPage() {
                 <XAxis {...xAxisProps} />
                 <YAxis {...yAxisProps}
                   tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)} />
-                <Tooltip {...tooltipProps} formatter={(v: number) => v.toLocaleString()} />
+                <Tooltip {...tooltipProps} formatter={(v: any) => v.toLocaleString()} />
                 {goalRef != null && (
                   <ReferenceLine y={goalRef} stroke={MUTED} strokeOpacity={0.5} strokeDasharray="4 3" />
                 )}
@@ -1041,7 +1040,7 @@ export default function GarminPage() {
                   <XAxis {...xAxisProps} />
                   <YAxis {...yAxisProps} tickFormatter={(v) => `${v}`} />
                   <Tooltip {...tooltipProps}
-                    formatter={(v: number) => [`${v.toFixed(2)} km`, 'Distance']} />
+                    formatter={(v: any) => [`${v.toFixed(2)} km`, 'Distance']} />
                   <Bar dataKey="km" fill={ACCENT} isAnimationActive={false} />
                 </BarChart>
               </ResponsiveContainer>
@@ -1056,7 +1055,7 @@ export default function GarminPage() {
                   <XAxis {...xAxisProps} />
                   <YAxis {...yAxisProps} tickFormatter={(v) => `${Math.round(v)}`} />
                   <Tooltip {...tooltipProps}
-                    formatter={(v: number) => [`${Math.round(v)} floors`, 'Climbed']} />
+                    formatter={(v: any) => [`${Math.round(v)} floors`, 'Climbed']} />
                   <Bar dataKey="floors" fill={ACCENT} isAnimationActive={false} />
                 </BarChart>
               </ResponsiveContainer>
@@ -1084,7 +1083,7 @@ export default function GarminPage() {
                   <XAxis {...xAxisProps} />
                   <YAxis {...yAxisProps} tickFormatter={(v) => v >= 1000 ? `${(v/1000).toFixed(1)}k` : `${v}`} />
                   <Tooltip {...tooltipProps}
-                    formatter={(v: number, name) => [`${Math.round(v).toLocaleString()} kcal`, name === 'bmr' ? 'BMR' : 'Active']} />
+                    formatter={(v: any, name) => [`${Math.round(v).toLocaleString()} kcal`, name === 'bmr' ? 'BMR' : 'Active']} />
                   <Bar dataKey="bmr" stackId="kcal" fill="url(#kcalBmr)" isAnimationActive={false} />
                   <Bar dataKey="active" stackId="kcal" fill="url(#kcalActive)" isAnimationActive={false} />
                 </BarChart>
@@ -1106,7 +1105,7 @@ export default function GarminPage() {
                 <XAxis {...xAxisProps} />
                 <YAxis {...yAxisProps} tickFormatter={(v) => `${v}`} />
                 <Tooltip {...tooltipProps}
-                  formatter={(v: number, name) => [`${v} min`, name === 'vigorous' ? 'Vigorous' : 'Moderate']} />
+                  formatter={(v: any, name) => [`${v} min`, name === 'vigorous' ? 'Vigorous' : 'Moderate']} />
                 <Bar dataKey="moderate" stackId="im" fill={ACCENT_LIGHT} isAnimationActive={false} />
                 <Bar dataKey="vigorous" stackId="im" fill={ACCENT} isAnimationActive={false} />
               </BarChart>
@@ -1139,7 +1138,7 @@ export default function GarminPage() {
                     (max: number) => Math.max(max + 1, 60),
                   ]} />
                   <Tooltip {...tooltipProps}
-                    formatter={(v: number) => `${v.toFixed(1)} ml/kg/min`} />
+                    formatter={(v: any) => `${v.toFixed(1)} ml/kg/min`} />
                   <ReferenceArea y1={0}  y2={39} fill={VO2.poor}      fillOpacity={0.10} />
                   <ReferenceArea y1={39} y2={44} fill={VO2.fair}      fillOpacity={0.10} />
                   <ReferenceArea y1={44} y2={49} fill={VO2.good}      fillOpacity={0.08} />

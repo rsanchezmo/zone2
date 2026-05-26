@@ -9,6 +9,11 @@ class Settings(BaseSettings):
     # If > 0, the backend runs an incremental sync every N hours. 0 disables
     # the scheduler (default) — manual UI sync still works either way.
     auto_sync_hours: int = 0
+    # Garmin auto-sync — independent of Strava. Default 6h: wellness data
+    # mostly refreshes once per night, but stress / body battery / steps
+    # update through the day, so a few daytime checkpoints are worth it.
+    # Only starts when GARMIN_EMAIL is set; otherwise the loop is skipped.
+    auto_garmin_sync_hours: int = 6
     log_level: str = "INFO"
     # Optional: pin the iCal feed token via env. If set, wins over the
     # DB-stored token and disables UI rotation (rotate by editing .env).
