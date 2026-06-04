@@ -63,14 +63,21 @@ def _configure_logging() -> None:
     logging.getLogger("uvicorn.access").addFilter(_RedactTokenFilter())
 
 
-async def _periodic_sync_loop(si: StravaIntelligence, interval_hours: int) -> None:
-    """Fire an incremental sync every interval_hours. Skips if a manual sync
-    is already running (shares the _sync_lock with the /api/sync endpoint)."""
+async def _periodic_sync_loop(
+    si: StravaIntelligence, interval_hours: int, initial_delay_s: int = 30
+) -> None:
+    """Fire an incremental sync every interval_hours. Runs an initial catch-up
+    shortly after startup (initial_delay_s) so a restart/redeploy doesn't leave
+    a full interval-long blind window. Skips if a manual sync is already running
+    (shares the _sync_lock with the /api/sync endpoint)."""
     log = logging.getLogger("backend.autosync")
-    log.info("auto-sync scheduler enabled (every %dh)", interval_hours)
+    log.info("auto-sync scheduler enabled (every %dh, first run in %ds)",
+             interval_hours, initial_delay_s)
+    delay = initial_delay_s
     while True:
         try:
-            await asyncio.sleep(interval_hours * 3600)
+            await asyncio.sleep(delay)
+            delay = interval_hours * 3600  # subsequent runs at the full interval
             if _try_claim_sync():
                 log.info("auto-sync starting")
                 await asyncio.to_thread(_run_sync, si, False, True)
@@ -83,18 +90,25 @@ async def _periodic_sync_loop(si: StravaIntelligence, interval_hours: int) -> No
             log.exception("auto-sync errored, will retry next interval")
 
 
-async def _periodic_garmin_sync_loop(si: StravaIntelligence, interval_hours: int) -> None:
+async def _periodic_garmin_sync_loop(
+    si: StravaIntelligence, interval_hours: int, initial_delay_s: int = 30
+) -> None:
     """Refresh Garmin wellness data every interval_hours via sync_recent(days=14).
-    Independent of the Strava lock — both can run concurrently — but shares the
-    Garmin /api/garmin/sync claim so a manual sync isn't trampled."""
+    Runs an initial catch-up shortly after startup (initial_delay_s) so a
+    restart doesn't leave a full interval-long blind window. Independent of the
+    Strava lock — both can run concurrently — but shares the Garmin
+    /api/garmin/sync claim so a manual sync isn't trampled."""
     # Inline import keeps `routers.garmin` off the module-import path during
     # cold start until it's actually needed.
     from backend.routers.garmin import _try_claim as _try_claim_garmin, _run_garmin_sync
     log = logging.getLogger("backend.garmin_autosync")
-    log.info("Garmin auto-sync scheduler enabled (every %dh)", interval_hours)
+    log.info("Garmin auto-sync scheduler enabled (every %dh, first run in %ds)",
+             interval_hours, initial_delay_s)
+    delay = initial_delay_s
     while True:
         try:
-            await asyncio.sleep(interval_hours * 3600)
+            await asyncio.sleep(delay)
+            delay = interval_hours * 3600  # subsequent runs at the full interval
             if _try_claim_garmin():
                 log.info("Garmin auto-sync starting")
                 await asyncio.to_thread(_run_garmin_sync, si, False)
@@ -124,6 +138,14 @@ async def lifespan(app: FastAPI):
         await asyncio.to_thread(si.garmin_client.ensure_logged_in)
     set_strava_intelligence(si)
     await init_db()
+
+    # One-time: derive slim per-day chart summaries for any cached Garmin
+    # payloads that predate the summary table. Idempotent (no-op once filled),
+    # threaded since the first pass parses every stored payload.
+    try:
+        await asyncio.to_thread(si.garmin_cache.backfill_missing_summaries)
+    except Exception:
+        logging.getLogger("backend.startup").exception("Garmin summary backfill failed")
 
     # Warm the in-memory activities cache so the first request after a fresh
     # container (re)deploy doesn't pay the full parquet reload cost. Runs in

@@ -651,3 +651,11 @@ export function useTriggerGarminSync() {
     },
   });
 }
+
+export function useCancelGarminSync() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post('/garmin/sync/cancel').then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['garmin-status'] }),
+  });
+}

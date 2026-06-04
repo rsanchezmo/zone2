@@ -70,12 +70,28 @@ CREATE TABLE IF NOT EXISTS garmin_daily_stats (
 );
 CREATE INDEX IF NOT EXISTS idx_garmin_date ON garmin_daily_stats(date);
 CREATE INDEX IF NOT EXISTS idx_garmin_metric_date ON garmin_daily_stats(metric, date);
+
+-- Slim per-day chart projections derived from garmin_daily_stats payloads at
+-- sync time, so /trends reads a few hundred bytes/day instead of deserializing
+-- the full payloads (a year of `sleep` alone is ~95MB of JSON).
+CREATE TABLE IF NOT EXISTS garmin_daily_summary (
+    date TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    PRIMARY KEY (date, metric)
+);
+CREATE INDEX IF NOT EXISTS idx_garmin_summary_metric_date ON garmin_daily_summary(metric, date);
 """
 
 
 async def init_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
+        # WAL (persisted file property, set once here) lets readers run
+        # concurrently with the long Garmin backfill's writes; busy_timeout
+        # makes contention wait rather than raise "database is locked".
+        await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute("PRAGMA busy_timeout=5000")
         await db.executescript(_SCHEMA)
         # Migration: add scoring target columns to training_sessions
         cursor = await db.execute("PRAGMA table_info(training_sessions)")
@@ -115,4 +131,7 @@ async def init_db():
 async def get_db():
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
+        # busy_timeout is per-connection — wait out a backfill's brief write
+        # locks instead of erroring (WAL is already on from init_db).
+        await db.execute("PRAGMA busy_timeout=5000")
         yield db

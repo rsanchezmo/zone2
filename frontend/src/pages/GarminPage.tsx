@@ -8,7 +8,7 @@ import {
 import { useTheme } from '../hooks/useTheme'
 import { useIsMobile } from '../hooks/useIsMobile'
 import {
-  useGarminStatus, useGarminLatest, useGarminTrends, useTriggerGarminSync,
+  useGarminStatus, useGarminLatest, useGarminTrends, useTriggerGarminSync, useCancelGarminSync,
 } from '../api/hooks'
 import StatCard from '../components/shared/StatCard'
 import ChartPanel, { LegendSwatch } from '../components/shared/ChartPanel'
@@ -202,6 +202,7 @@ export default function GarminPage() {
   const { data: latest, isLoading: latestLoading } = useGarminLatest()
   const { data: trends, isLoading: trendsLoading } = useGarminTrends(days)
   const triggerSync = useTriggerGarminSync()
+  const cancelSync = useCancelGarminSync()
 
   const enabled = status?.enabled === true
   const syncing = status?.syncing === true
@@ -451,6 +452,14 @@ export default function GarminPage() {
             title="Walk history backwards until empty days">
             Backfill all
           </button>
+          {syncing && (
+            <button className="btn"
+              disabled={cancelSync.isPending}
+              onClick={() => cancelSync.mutate()}
+              title="Stop the running sync — progress so far is saved">
+              {cancelSync.isPending ? 'Cancelling…' : 'Cancel'}
+            </button>
+          )}
         </div>
       </header>
 
