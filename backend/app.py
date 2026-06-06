@@ -1,12 +1,27 @@
+import os
+from pathlib import Path
+
+_mpl_config_dir = Path(os.environ.get(
+    "MPLCONFIGDIR",
+    Path(__file__).resolve().parent.parent / ".strava" / "matplotlib",
+))
+_mpl_config_dir.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("MPLCONFIGDIR", str(_mpl_config_dir))
+
+_xdg_cache_home = Path(os.environ.get(
+    "XDG_CACHE_HOME",
+    Path(__file__).resolve().parent.parent / ".strava" / "cache",
+))
+(_xdg_cache_home / "fontconfig").mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("XDG_CACHE_HOME", str(_xdg_cache_home))
+
 import matplotlib
 matplotlib.use("Agg")
 
 import asyncio
 import logging
-import os
 import re
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

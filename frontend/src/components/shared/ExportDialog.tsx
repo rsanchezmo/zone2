@@ -322,13 +322,13 @@ export default function ExportDialog({
 
           {/* Color picker */}
           {colorOption && (
-            <Section label="Color" isLight={isLight}>
+            <Section label="Color">
               <ColorPicker value={neonColor} onChange={setNeonColor} />
             </Section>
           )}
 
           {/* Quality */}
-          <Section label="Quality" isLight={isLight}>
+          <Section label="Quality">
             <div className="flex gap-1">
               {QUALITY_OPTIONS.map(opt => (
                 <button
@@ -344,7 +344,7 @@ export default function ExportDialog({
           </Section>
 
           {/* Filename */}
-          <Section label="Filename" isLight={isLight}>
+          <Section label="Filename">
             <input
               type="text"
               value={filename}
@@ -355,7 +355,7 @@ export default function ExportDialog({
 
           {/* Per-export: Title (activity) */}
           {exportType === 'activity' && (
-            <Section label="Title" isLight={isLight}>
+            <Section label="Title">
               <input
                 type="text"
                 value={title}
@@ -369,7 +369,7 @@ export default function ExportDialog({
           {/* Per-export: Heatmap settings */}
           {exportType === 'thunderstorm-heatmap' && (
             <>
-              <Section label="Radius (km)" isLight={isLight}>
+              <Section label="Radius (km)">
                 <input
                   type="number"
                   value={radiusKm}
@@ -447,7 +447,7 @@ function hasColorOption(exportType: ExportType) {
   return !['efficiency-factor', 'performance-frontier'].includes(exportType)
 }
 
-function Section({ label, isLight: _isLight, children }: { label: string; isLight: boolean; children: React.ReactNode }) {
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
       <label className="eyebrow">

@@ -332,14 +332,18 @@ def get_region_coordinates(region_name: str) -> dict | None:
     import requests
 
     url = "https://nominatim.openstreetmap.org/search"
-    headers = {'User-Agent': 'agent'}
+    headers = {'User-Agent': 'strava-intelligence/0.1'}
     params = {
         'q': region_name,
         'format': 'json',
         'limit': 1
     }
 
-    response = requests.get(url, headers=headers, params=params)
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=(5, 15))
+        response.raise_for_status()
+    except requests.RequestException:
+        return None
     data = response.json()
     if data:
         lat = float(data[0]['lat'])

@@ -118,13 +118,42 @@ type TrendsResp = {
   days: number
   metrics: Record<string, TrendRow[]>
 }
+type LooseRecord = Record<string, unknown>
+type ChartDotProps = { cx: number; cy: number; payload: LooseRecord }
 
 // ─────────────────────────────────────────── helpers
 
 function num(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null
 }
-function fmtDate(iso: any): string {
+function displayNum(v: unknown): number {
+  if (typeof v === 'number' && Number.isFinite(v)) return v
+  if (typeof v === 'string' && v.trim() !== '') {
+    const parsed = Number(v)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return 0
+}
+function text(v: unknown): string | undefined {
+  return typeof v === 'string' ? v : undefined
+}
+function asRecord(v: unknown): LooseRecord | null {
+  return typeof v === 'object' && v !== null ? v as LooseRecord : null
+}
+function firstRecordValue(v: unknown): LooseRecord | null {
+  const record = asRecord(v)
+  if (!record) return null
+  return asRecord(Object.values(record)[0])
+}
+function dotProps(props: unknown): ChartDotProps | null {
+  const p = asRecord(props)
+  const cx = num(p?.cx)
+  const cy = num(p?.cy)
+  const payload = asRecord(p?.payload)
+  if (cx == null || cy == null || !payload) return null
+  return { cx, cy, payload }
+}
+function fmtDate(iso: unknown): string {
   if (typeof iso !== 'string') return ''
   const d = new Date(iso + 'T00:00:00')
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
@@ -216,10 +245,10 @@ export default function GarminPage() {
     const tsPayload = latest?.training_status?.payload ?? null
     const tsGeneric = tsPayload?.mostRecentVO2Max?.generic ?? null
     const tsLoadDev = tsPayload?.mostRecentTrainingLoadBalance?.metricsTrainingLoadBalanceDTOMap
-    const loadDev = tsLoadDev ? Object.values<any>(tsLoadDev)[0] : null
+    const loadDev = firstRecordValue(tsLoadDev)
     const tsStatusDev = tsPayload?.mostRecentTrainingStatus?.latestTrainingStatusData
-    const statusDev = tsStatusDev ? Object.values<any>(tsStatusDev)[0] : null
-    const acute = statusDev?.acuteTrainingLoadDTO ?? null
+    const statusDev = firstRecordValue(tsStatusDev)
+    const acute = asRecord(statusDev?.acuteTrainingLoadDTO)
     const hr  = latest?.heart_rates?.payload ?? null
     const stress = latest?.stress?.payload ?? null
     const bb  = latest?.body_battery?.payload ?? null
@@ -261,10 +290,10 @@ export default function GarminPage() {
       imModerate: num(im?.moderateMinutes),
       imVigorous: num(im?.vigorousMinutes),
       // Training-status hero strip
-      statusPhrase: cleanPhrase(statusDev?.trainingStatusFeedbackPhrase),
-      statusSport: statusDev?.sport as string | undefined,
+      statusPhrase: cleanPhrase(text(statusDev?.trainingStatusFeedbackPhrase)),
+      statusSport: text(statusDev?.sport),
       acwrRatio: num(acute?.dailyAcuteChronicWorkloadRatio),
-      acwrStatus: acute?.acwrStatus as string | undefined,
+      acwrStatus: text(acute?.acwrStatus),
       // Readiness factor bars
       readinessFactors: tr ? [
         { label: 'Sleep',         value: num(tr.sleepScoreFactorPercent) },
@@ -284,7 +313,7 @@ export default function GarminPage() {
           aerobic_high: [num(loadDev.monthlyLoadAerobicHighTargetMin), num(loadDev.monthlyLoadAerobicHighTargetMax)],
           anaerobic: [num(loadDev.monthlyLoadAnaerobicTargetMin), num(loadDev.monthlyLoadAnaerobicTargetMax)],
         },
-        feedback: cleanPhrase(loadDev.trainingBalanceFeedbackPhrase),
+        feedback: cleanPhrase(text(loadDev.trainingBalanceFeedbackPhrase)),
       } : null,
     }
   }, [latest])
@@ -299,16 +328,16 @@ export default function GarminPage() {
     light: num(r.light_seconds) ? (r.light_seconds as number) / 60 : null,
     awake: num(r.awake_seconds) ? (r.awake_seconds as number) / 60 : null,
     score: num(r.score),
-    sleep_hr: num((r as any).avg_hr),
+    sleep_hr: num(r.avg_hr),
   })), [t])
 
-  const recoveryData = useMemo(() => (t?.metrics.training_readiness ?? []).map(r => ({
-    date: r.date,
-    recovery_h: num((r as any).recovery_time_min) ? ((r as any).recovery_time_min as number) / 60 : null,
-  })), [t])
+  const recoveryData = useMemo(() => (t?.metrics.training_readiness ?? []).map(r => {
+    const recoveryMins = num(r.recovery_time_min)
+    return { date: r.date, recovery_h: recoveryMins != null ? recoveryMins / 60 : null }
+  }), [t])
 
   const acwrData = useMemo(() => (t?.metrics.training_status ?? [])
-    .map(r => ({ date: r.date, ratio: num((r as any).acwr_ratio) }))
+    .map(r => ({ date: r.date, ratio: num(r.acwr_ratio) }))
     .filter(r => r.ratio !== null), [t])
 
   const caloriesData = useMemo(() => (t?.metrics.user_summary ?? []).map(r => ({
@@ -377,8 +406,8 @@ export default function GarminPage() {
     const sleep = t?.metrics.sleep ?? []
     return sleep.map(r => ({
       date: r.date,
-      spo2: num((r as any).avg_spo2),
-      respiration: num((r as any).avg_respiration),
+      spo2: num(r.avg_spo2),
+      respiration: num(r.avg_respiration),
     }))
   }, [t])
 
@@ -648,7 +677,9 @@ export default function GarminPage() {
                     <YAxis yAxisId="score" orientation="right" {...yAxisProps} domain={[0, 100]}
                       tickFormatter={(v) => `${v}`} />
                     <Tooltip {...tooltipProps}
-                      formatter={(v: any, name) => name === 'score' ? [`${v}/100`, 'Score'] : [`${Math.round(v)} min`, name]} />
+                      formatter={(v: unknown, name) => name === 'score'
+                        ? [`${displayNum(v)}/100`, 'Score']
+                        : [`${Math.round(displayNum(v))} min`, name]} />
                     <Bar yAxisId="dur" dataKey="deep"  stackId="s"
                       fill="url(#sleepDeep)" stroke="none"
                       isAnimationActive={false} />
@@ -687,7 +718,7 @@ export default function GarminPage() {
                   <XAxis {...xAxisProps} />
                   <YAxis {...yAxisProps} domain={['dataMin - 3', 'dataMax + 3']} />
                   <Tooltip {...tooltipProps}
-                    formatter={(v: any, name) => [`${v} bpm`, name === 'resting' ? 'Resting' : 'Min']} />
+                    formatter={(v: unknown, name) => [`${displayNum(v)} bpm`, name === 'resting' ? 'Resting' : 'Min']} />
                   <Line type="monotone" dataKey="min"
                     stroke={ACCENT_LIGHT} strokeWidth={1.5} strokeDasharray="4 3"
                     dot={false} isAnimationActive={false} />
@@ -715,7 +746,7 @@ export default function GarminPage() {
                   <XAxis {...xAxisProps} />
                   <YAxis {...yAxisProps} domain={['dataMin - 5', 'dataMax + 5']} />
                   <Tooltip {...tooltipProps}
-                    formatter={(v: any) => [`${v} bpm`, 'Max']} />
+                    formatter={(v: unknown) => [`${displayNum(v)} bpm`, 'Max']} />
                   <Area type="monotone" dataKey="max"
                     stroke={ACCENT} strokeWidth={2}
                     fill="url(#hrMax)"
@@ -749,7 +780,7 @@ export default function GarminPage() {
                   <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
                   <XAxis {...xAxisProps} />
                   <YAxis {...yAxisProps} domain={['dataMin - 3', 'dataMax + 3']} />
-                  <Tooltip {...tooltipProps} formatter={(v: any) => `${v} ms`} />
+                  <Tooltip {...tooltipProps} formatter={(v: unknown) => `${displayNum(v)} ms`} />
                   <Line type="monotone" dataKey="weekly"
                     stroke={ACCENT_LIGHT} strokeWidth={1.5} strokeDasharray="4 3"
                     dot={false} isAnimationActive={false} />
@@ -771,7 +802,7 @@ export default function GarminPage() {
                   <XAxis {...xAxisProps} />
                   <YAxis {...yAxisProps} domain={['dataMin - 3', 'dataMax + 3']}
                     tickFormatter={(v) => `${Math.round(v)}`} />
-                  <Tooltip {...tooltipProps} formatter={(v: any) => `${v} bpm`} />
+                  <Tooltip {...tooltipProps} formatter={(v: unknown) => `${displayNum(v)} bpm`} />
                   <Line type="monotone" dataKey="sleep_hr"
                     stroke={ACCENT} strokeWidth={2}
                     dot={{ r: 2.5, fill: ACCENT, stroke: ACCENT }}
@@ -796,7 +827,7 @@ export default function GarminPage() {
                     <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
                     <XAxis {...xAxisProps} />
                     <YAxis {...yAxisProps} domain={[0, 100]} />
-                    <Tooltip {...tooltipProps} formatter={(v: any) => [`${v}/100`, 'Readiness']} />
+                    <Tooltip {...tooltipProps} formatter={(v: unknown) => [`${displayNum(v)}/100`, 'Readiness']} />
                     <ReferenceArea y1={0}  y2={25}  fill={NEG}    fillOpacity={0.10} />
                     <ReferenceArea y1={25} y2={50}  fill={AMBER}  fillOpacity={0.08} />
                     <ReferenceArea y1={50} y2={75}  fill={ACCENT} fillOpacity={0.06} />
@@ -805,17 +836,20 @@ export default function GarminPage() {
                       stroke={isLight ? '#475569' : '#cbd5e1'} strokeOpacity={0.55}
                       strokeWidth={1.5}
                       isAnimationActive={false}
-                      dot={(props: any) => {
-                        const v = props.payload?.score
+                      dot={(props: unknown) => {
+                        const dot = dotProps(props)
+                        if (!dot) return <g />
+                        const v = num(dot.payload.score)
                         if (v == null) return <g />
                         const c = readinessZoneColor(v)
-                        return <circle cx={props.cx} cy={props.cy} r={3.5}
+                        return <circle cx={dot.cx} cy={dot.cy} r={3.5}
                           fill={c} stroke={c} strokeWidth={1.5} />
                       }}
-                      activeDot={(props: any) => {
-                        const v = props.payload?.score ?? 0
+                      activeDot={(props: unknown) => {
+                        const dot = dotProps(props)
+                        const v = num(dot?.payload.score) ?? 0
                         const c = readinessZoneColor(v)
-                        return <circle cx={props.cx} cy={props.cy} r={5} fill={c} stroke={c} />
+                        return dot ? <circle cx={dot.cx} cy={dot.cy} r={5} fill={c} stroke={c} /> : <g />
                       }} />
                   </LineChart>
                 </ResponsiveContainer>
@@ -843,7 +877,7 @@ export default function GarminPage() {
                     <YAxis {...yAxisProps} domain={[0, 'dataMax + 0.3']}
                       tickFormatter={(v) => v.toFixed(1)} />
                     <Tooltip {...tooltipProps}
-                      formatter={(v: any) => [v.toFixed(2), 'ACWR']} />
+                      formatter={(v: unknown) => [displayNum(v).toFixed(2), 'ACWR']} />
                     {/* ACWR risk bands */}
                     <ReferenceArea y1={0}    y2={0.5} fill={NEG}   fillOpacity={0.10} />
                     <ReferenceArea y1={0.5}  y2={0.8} fill={AMBER} fillOpacity={0.08} />
@@ -854,17 +888,20 @@ export default function GarminPage() {
                       stroke={isLight ? '#475569' : '#cbd5e1'} strokeOpacity={0.55}
                       strokeWidth={1.5}
                       isAnimationActive={false}
-                      dot={(props: any) => {
-                        const v = props.payload?.ratio
+                      dot={(props: unknown) => {
+                        const dot = dotProps(props)
+                        if (!dot) return <g />
+                        const v = num(dot.payload.ratio)
                         if (v == null) return <g />
                         const c = acwrZoneColor(v)
-                        return <circle cx={props.cx} cy={props.cy} r={3.5}
+                        return <circle cx={dot.cx} cy={dot.cy} r={3.5}
                           fill={c} stroke={c} strokeWidth={1.5} />
                       }}
-                      activeDot={(props: any) => {
-                        const v = props.payload?.ratio ?? 0
+                      activeDot={(props: unknown) => {
+                        const dot = dotProps(props)
+                        const v = num(dot?.payload.ratio) ?? 0
                         const c = acwrZoneColor(v)
-                        return <circle cx={props.cx} cy={props.cy} r={5} fill={c} stroke={c} />
+                        return dot ? <circle cx={dot.cx} cy={dot.cy} r={5} fill={c} stroke={c} /> : <g />
                       }} />
                   </LineChart>
                 </ResponsiveContainer>
@@ -886,7 +923,7 @@ export default function GarminPage() {
                   <XAxis {...xAxisProps} />
                   <YAxis {...yAxisProps} tickFormatter={(v) => `${Math.round(v)}h`} />
                   <Tooltip {...tooltipProps}
-                    formatter={(v: any) => [`${v.toFixed(1)}h`, 'Recovery time']} />
+                    formatter={(v: unknown) => [`${displayNum(v).toFixed(1)}h`, 'Recovery time']} />
                   <ReferenceArea y1={0}  y2={12} fill={POS}    fillOpacity={0.08} />
                   <ReferenceArea y1={12} y2={24} fill={ACCENT} fillOpacity={0.06} />
                   <ReferenceArea y1={24} y2={48} fill={AMBER}  fillOpacity={0.08} />
@@ -930,19 +967,22 @@ export default function GarminPage() {
                     stroke={isLight ? '#475569' : '#cbd5e1'} strokeOpacity={0.55}
                     strokeWidth={1.5}
                     isAnimationActive={false} name="Avg"
-                    dot={(props: any) => {
-                      const v = props.payload?.avg
+                    dot={(props: unknown) => {
+                      const dot = dotProps(props)
+                      if (!dot) return <g />
+                      const v = num(dot.payload.avg)
                       if (v == null) return <g />
                       const c = stressZoneColor(v)
                       return (
-                        <circle cx={props.cx} cy={props.cy} r={3.5}
+                        <circle cx={dot.cx} cy={dot.cy} r={3.5}
                           fill={c} stroke={c} strokeWidth={1.5} />
                       )
                     }}
-                    activeDot={(props: any) => {
-                      const v = props.payload?.avg ?? 0
+                    activeDot={(props: unknown) => {
+                      const dot = dotProps(props)
+                      const v = num(dot?.payload.avg) ?? 0
                       const c = stressZoneColor(v)
-                      return <circle cx={props.cx} cy={props.cy} r={5} fill={c} stroke={c} />
+                      return dot ? <circle cx={dot.cx} cy={dot.cy} r={5} fill={c} stroke={c} /> : <g />
                     }} />
                 </LineChart>
               </ResponsiveContainer>
@@ -971,7 +1011,7 @@ export default function GarminPage() {
                   <YAxis {...yAxisProps}
                     tickFormatter={(v) => v === 0 ? '0' : Math.abs(v).toString()} />
                   <Tooltip {...tooltipProps}
-                    formatter={(v: any, name) => [Math.abs(v), name === 'charged' ? 'Charged' : 'Drained']} />
+                    formatter={(v: unknown, name) => [Math.abs(displayNum(v)), name === 'charged' ? 'Charged' : 'Drained']} />
                   <ReferenceLine y={0} stroke={colors.tickFillSecondary} strokeOpacity={0.35} />
                   <Bar dataKey="charged" fill="url(#bbCharged)" isAnimationActive={false} />
                   <Bar dataKey="drained" fill="url(#bbDrained)" isAnimationActive={false} />
@@ -997,7 +1037,9 @@ export default function GarminPage() {
                 <YAxis yAxisId="resp" orientation="right" {...yAxisProps} domain={[8, 22]}
                   tickFormatter={(v) => `${v}`} />
                 <Tooltip {...tooltipProps}
-                  formatter={(v: any, name) => name === 'spo2' ? [`${v}%`, 'SpO2'] : [`${v} brpm`, 'Respiration']} />
+                  formatter={(v: unknown, name) => name === 'spo2'
+                    ? [`${displayNum(v)}%`, 'SpO2']
+                    : [`${displayNum(v)} brpm`, 'Respiration']} />
                 <Line yAxisId="spo2" type="monotone" dataKey="spo2"
                   stroke={ACCENT} strokeWidth={2}
                   dot={{ r: 2, fill: ACCENT, stroke: ACCENT }}
@@ -1024,7 +1066,7 @@ export default function GarminPage() {
                 <XAxis {...xAxisProps} />
                 <YAxis {...yAxisProps}
                   tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)} />
-                <Tooltip {...tooltipProps} formatter={(v: any) => v.toLocaleString()} />
+                <Tooltip {...tooltipProps} formatter={(v: unknown) => displayNum(v).toLocaleString()} />
                 {goalRef != null && (
                   <ReferenceLine y={goalRef} stroke={MUTED} strokeOpacity={0.5} strokeDasharray="4 3" />
                 )}
@@ -1049,7 +1091,7 @@ export default function GarminPage() {
                   <XAxis {...xAxisProps} />
                   <YAxis {...yAxisProps} tickFormatter={(v) => `${v}`} />
                   <Tooltip {...tooltipProps}
-                    formatter={(v: any) => [`${v.toFixed(2)} km`, 'Distance']} />
+                    formatter={(v: unknown) => [`${displayNum(v).toFixed(2)} km`, 'Distance']} />
                   <Bar dataKey="km" fill={ACCENT} isAnimationActive={false} />
                 </BarChart>
               </ResponsiveContainer>
@@ -1064,7 +1106,7 @@ export default function GarminPage() {
                   <XAxis {...xAxisProps} />
                   <YAxis {...yAxisProps} tickFormatter={(v) => `${Math.round(v)}`} />
                   <Tooltip {...tooltipProps}
-                    formatter={(v: any) => [`${Math.round(v)} floors`, 'Climbed']} />
+                    formatter={(v: unknown) => [`${Math.round(displayNum(v))} floors`, 'Climbed']} />
                   <Bar dataKey="floors" fill={ACCENT} isAnimationActive={false} />
                 </BarChart>
               </ResponsiveContainer>
@@ -1092,7 +1134,7 @@ export default function GarminPage() {
                   <XAxis {...xAxisProps} />
                   <YAxis {...yAxisProps} tickFormatter={(v) => v >= 1000 ? `${(v/1000).toFixed(1)}k` : `${v}`} />
                   <Tooltip {...tooltipProps}
-                    formatter={(v: any, name) => [`${Math.round(v).toLocaleString()} kcal`, name === 'bmr' ? 'BMR' : 'Active']} />
+                    formatter={(v: unknown, name) => [`${Math.round(displayNum(v)).toLocaleString()} kcal`, name === 'bmr' ? 'BMR' : 'Active']} />
                   <Bar dataKey="bmr" stackId="kcal" fill="url(#kcalBmr)" isAnimationActive={false} />
                   <Bar dataKey="active" stackId="kcal" fill="url(#kcalActive)" isAnimationActive={false} />
                 </BarChart>
@@ -1114,7 +1156,7 @@ export default function GarminPage() {
                 <XAxis {...xAxisProps} />
                 <YAxis {...yAxisProps} tickFormatter={(v) => `${v}`} />
                 <Tooltip {...tooltipProps}
-                  formatter={(v: any, name) => [`${v} min`, name === 'vigorous' ? 'Vigorous' : 'Moderate']} />
+                  formatter={(v: unknown, name) => [`${displayNum(v)} min`, name === 'vigorous' ? 'Vigorous' : 'Moderate']} />
                 <Bar dataKey="moderate" stackId="im" fill={ACCENT_LIGHT} isAnimationActive={false} />
                 <Bar dataKey="vigorous" stackId="im" fill={ACCENT} isAnimationActive={false} />
               </BarChart>
@@ -1147,7 +1189,7 @@ export default function GarminPage() {
                     (max: number) => Math.max(max + 1, 60),
                   ]} />
                   <Tooltip {...tooltipProps}
-                    formatter={(v: any) => `${v.toFixed(1)} ml/kg/min`} />
+                    formatter={(v: unknown) => `${displayNum(v).toFixed(1)} ml/kg/min`} />
                   <ReferenceArea y1={0}  y2={39} fill={VO2.poor}      fillOpacity={0.10} />
                   <ReferenceArea y1={39} y2={44} fill={VO2.fair}      fillOpacity={0.10} />
                   <ReferenceArea y1={44} y2={49} fill={VO2.good}      fillOpacity={0.08} />
@@ -1157,17 +1199,20 @@ export default function GarminPage() {
                     stroke={isLight ? '#475569' : '#cbd5e1'} strokeOpacity={0.55}
                     strokeWidth={1.5}
                     isAnimationActive={false}
-                    dot={(props: any) => {
-                      const v = props.payload?.vo2max
+                    dot={(props: unknown) => {
+                      const dot = dotProps(props)
+                      if (!dot) return <g />
+                      const v = num(dot.payload.vo2max)
                       if (v == null) return <g />
                       const c = vo2ZoneColor(v)
-                      return <circle cx={props.cx} cy={props.cy} r={3.5}
+                      return <circle cx={dot.cx} cy={dot.cy} r={3.5}
                         fill={c} stroke={c} strokeWidth={1.5} />
                     }}
-                    activeDot={(props: any) => {
-                      const v = props.payload?.vo2max ?? 0
+                    activeDot={(props: unknown) => {
+                      const dot = dotProps(props)
+                      const v = num(dot?.payload.vo2max) ?? 0
                       const c = vo2ZoneColor(v)
-                      return <circle cx={props.cx} cy={props.cy} r={5} fill={c} stroke={c} />
+                      return dot ? <circle cx={dot.cx} cy={dot.cy} r={5} fill={c} stroke={c} /> : <g />
                     }} />
                 </LineChart>
               </ResponsiveContainer>

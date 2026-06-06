@@ -969,6 +969,7 @@ function InfoTile({ label, value, unit, compact }: { label: string; value: strin
 // FeedStatusPill — shows whether the ICS feed has been polled recently
 // ────────────────────────────────────────────────────────
 function FeedStatusPill({ lastFetchedAt }: { lastFetchedAt: string | null }) {
+  const [now] = useState(() => Date.now())
   if (!lastFetchedAt) {
     return (
       <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded border bg-amber-500/10 border-amber-500/30 text-amber-600">
@@ -978,7 +979,7 @@ function FeedStatusPill({ lastFetchedAt }: { lastFetchedAt: string | null }) {
   }
 
   const last = new Date(lastFetchedAt)
-  const ageMs = Date.now() - last.getTime()
+  const ageMs = now - last.getTime()
   const ageHours = ageMs / (1000 * 60 * 60)
   // Google typically polls subscribed ICS every few hours. 25h gives headroom
   // for the occasional slower refresh before we flag it as stale.

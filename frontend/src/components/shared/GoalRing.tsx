@@ -57,8 +57,10 @@ export default function GoalRing({
   useEffect(() => {
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     if (reduce) {
-      setAnimated(progress)
-      return
+      rafRef.current = requestAnimationFrame(() => setAnimated(progress))
+      return () => {
+        if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
+      }
     }
     const start = performance.now()
     const DURATION = 900

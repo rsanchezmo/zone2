@@ -267,9 +267,6 @@ function MobileNav({ isLight, location }: { isLight: boolean; location: { pathna
   const [open, setOpen] = useState(false)
   const { toggleTheme } = useTheme()
 
-  // Close drawer whenever the route changes
-  useEffect(() => { setOpen(false) }, [location.pathname])
-
   // Escape to close
   useEffect(() => {
     if (!open) return
@@ -399,7 +396,7 @@ function getInitialDockPosition(): DockPosition {
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const { data: syncStatus } = useSyncStatus()
-  const triggerSync = useTriggerSync()
+  const { mutate: triggerSync, isPending: syncTriggerPending } = useTriggerSync()
   const { theme, toggleTheme } = useTheme()
   const isLight = theme === 'light'
   const location = useLocation()
@@ -451,10 +448,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   // Auto-sync on session start when data is stale
   useEffect(() => {
-    if (syncStatus?.needs_sync && !syncStatus?.syncing && !triggerSync.isPending) {
-      triggerSync.mutate({ include_streams: true })
+    if (syncStatus?.needs_sync && !syncStatus?.syncing && !syncTriggerPending) {
+      triggerSync({ include_streams: true })
     }
-  }, [syncStatus?.needs_sync])
+  }, [syncStatus?.needs_sync, syncStatus?.syncing, syncTriggerPending, triggerSync])
 
   // Invalidate only activity-dependent queries on sync completion. Hitting
   // qc.invalidateQueries() with no filter refetches everything (theme,
@@ -477,7 +474,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       toast(`Synced ${syncStatus.total_activities ?? ''} activities`, 'success')
     }
     wasSyncing.current = syncStatus?.syncing ?? false
-  }, [syncStatus?.syncing])
+  }, [qc, syncStatus?.syncing, syncStatus?.total_activities, toast])
 
   // Derive active color for ambient effects
   const activeItem = NAV_ITEMS.find(item => location.pathname.startsWith(item.to))
@@ -503,7 +500,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       </main>
 
       {/* Mobile nav: hamburger + slide-in drawer */}
-      <MobileNav isLight={isLight} location={location} />
+      <MobileNav key={location.pathname} isLight={isLight} location={location} />
 
       {/* Desktop/tablet floating dock — hidden on mobile */}
       <div className={clsx(

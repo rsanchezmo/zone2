@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useSyncExternalStore } from 'react'
 
 /**
  * Reports whether the viewport is below the Tailwind `md` breakpoint (768px).
@@ -6,18 +6,18 @@ import { useEffect, useState } from 'react'
  * e.g. Recharts axis widths, JS-driven layout decisions.
  */
 export function useIsMobile(breakpoint = 768): boolean {
-  const [isMobile, setIsMobile] = useState(() => {
+  const getSnapshot = useCallback(() => {
     if (typeof window === 'undefined') return false
-    return window.innerWidth < breakpoint
-  })
+    return window.matchMedia(`(max-width: ${breakpoint - 1}px)`).matches
+  }, [breakpoint])
 
-  useEffect(() => {
+  const subscribe = useCallback((onStoreChange: () => void) => {
+    if (typeof window === 'undefined') return () => {}
     const mql = window.matchMedia(`(max-width: ${breakpoint - 1}px)`)
-    const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches)
-    setIsMobile(mql.matches)
+    const onChange = () => onStoreChange()
     mql.addEventListener('change', onChange)
     return () => mql.removeEventListener('change', onChange)
   }, [breakpoint])
 
-  return isMobile
+  return useSyncExternalStore(subscribe, getSnapshot, () => false)
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useLayoutEffect } from 'react'
+import { useState, useEffect, useMemo, useLayoutEffect } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useActivities, useSportTypes, useYears, useAthleteProfile } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
@@ -198,8 +198,11 @@ export default function ActivitiesPage() {
   useEffect(() => {
     if (!defaultsApplied && years && years.length > 0) {
       const earliestYear = years[years.length - 1]
-      setDateFrom(`${earliestYear}-01-01`)
-      setDefaultsApplied(true)
+      const frame = requestAnimationFrame(() => {
+        setDateFrom(`${earliestYear}-01-01`)
+        setDefaultsApplied(true)
+      })
+      return () => cancelAnimationFrame(frame)
     }
   }, [years, defaultsApplied])
 
@@ -223,21 +226,6 @@ export default function ActivitiesPage() {
   }, [data])
 
   const totalPages = data ? Math.ceil(data.total / data.per_page) : 0
-
-  // Reset page when any filter changes
-  const prevFilters = useRef({ sportType, year, debouncedSearch, dateFrom, dateTo, sortBy, sortDir, gearId })
-  useEffect(() => {
-    const prev = prevFilters.current
-    if (
-      prev.sportType !== sportType || prev.year !== year ||
-      prev.debouncedSearch !== debouncedSearch || prev.dateFrom !== dateFrom ||
-      prev.dateTo !== dateTo || prev.sortBy !== sortBy || prev.sortDir !== sortDir ||
-      prev.gearId !== gearId
-    ) {
-      setPage(1)
-      prevFilters.current = { sportType, year, debouncedSearch, dateFrom, dateTo, sortBy, sortDir, gearId }
-    }
-  }, [sportType, year, debouncedSearch, dateFrom, dateTo, sortBy, sortDir, gearId])
 
   const activeFilterCount = [
     sportType,
@@ -320,7 +308,10 @@ export default function ActivitiesPage() {
           <span className={isLight ? 'text-gray-400' : 'text-gray-500'}>Gear</span>
           <span className={isLight ? 'text-gray-900' : 'text-gray-100'}>{gearName ?? gearId}</span>
           <button
-            onClick={() => setGearId('')}
+            onClick={() => {
+              setGearId('')
+              setPage(1)
+            }}
             aria-label="Clear gear filter"
             className={clsx('ml-1', isLight ? 'text-gray-400 hover:text-gray-700' : 'text-gray-500 hover:text-gray-200')}
           >
@@ -345,12 +336,18 @@ export default function ActivitiesPage() {
             type="text"
             placeholder="Search by activity name..."
             value={searchInput}
-            onChange={e => setSearchInput(e.target.value)}
+            onChange={e => {
+              setSearchInput(e.target.value)
+              setPage(1)
+            }}
             className="input w-full !pl-9 !pr-3"
           />
           {searchInput && (
             <button
-              onClick={() => setSearchInput('')}
+              onClick={() => {
+                setSearchInput('')
+                setPage(1)
+              }}
               className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -362,14 +359,23 @@ export default function ActivitiesPage() {
 
         {/* Row 2: Filters */}
         <div className="flex flex-wrap items-center gap-2">
-          <DatePicker value={dateFrom} onChange={setDateFrom} label="From" />
-          <DatePicker value={dateTo} onChange={setDateTo} label="To" />
+          <DatePicker value={dateFrom} onChange={v => {
+            setDateFrom(v)
+            setPage(1)
+          }} label="From" />
+          <DatePicker value={dateTo} onChange={v => {
+            setDateTo(v)
+            setPage(1)
+          }} label="To" />
 
           <div className="w-px h-6 bg-surface-600 mx-1 hidden sm:block" />
 
           <select
             value={sportType}
-            onChange={e => setSportType(e.target.value)}
+            onChange={e => {
+              setSportType(e.target.value)
+              setPage(1)
+            }}
             className={selectClass}
           >
             <option value="">All Sports</option>
@@ -380,7 +386,10 @@ export default function ActivitiesPage() {
 
           <select
             value={year ?? ''}
-            onChange={e => setYear(e.target.value ? Number(e.target.value) : undefined)}
+            onChange={e => {
+              setYear(e.target.value ? Number(e.target.value) : undefined)
+              setPage(1)
+            }}
             className={selectClass}
           >
             <option value="">All Years</option>
@@ -396,7 +405,10 @@ export default function ActivitiesPage() {
             <span className="eyebrow text-[9px] shrink-0">Sort</span>
             <select
               value={sortBy}
-              onChange={e => setSortBy(e.target.value)}
+              onChange={e => {
+                setSortBy(e.target.value)
+                setPage(1)
+              }}
               className={selectClass}
             >
               {SORT_OPTIONS.map(o => (
@@ -404,7 +416,10 @@ export default function ActivitiesPage() {
               ))}
             </select>
             <button
-              onClick={() => setSortDir(d => d === 'desc' ? 'asc' : 'desc')}
+              onClick={() => {
+                setSortDir(d => d === 'desc' ? 'asc' : 'desc')
+                setPage(1)
+              }}
               className="btn flex items-center justify-center !px-2"
               title={sortDir === 'desc' ? 'Descending — click for ascending' : 'Ascending — click for descending'}
               aria-label={sortDir === 'desc' ? 'Sort ascending' : 'Sort descending'}

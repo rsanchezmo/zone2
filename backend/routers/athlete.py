@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from backend.db import get_db
 from backend.dependencies import get_si
+from backend.routers.exports import clear_export_cache
 from backend.routers.stats import clear_stats_cache
 from backend.services.zones import (
     DEFAULT_SOURCE,
@@ -27,8 +28,8 @@ def get_athlete_profile(si: StravaIntelligence = Depends(get_si)):
 
 
 @router.get("/rate-limits")
-def get_rate_limits(si: StravaIntelligence = Depends(get_si)):
-    return si.strava_endpoint.get_rate_limits()
+def get_rate_limits(refresh: bool = False, si: StravaIntelligence = Depends(get_si)):
+    return si.strava_endpoint.get_rate_limits(refresh=refresh)
 
 
 @router.get("/zones")
@@ -112,5 +113,6 @@ async def update_zones_settings(
     si.strava_analytics._hr_zones_cache = None
     si.strava_analytics._training_load_cache = None
     clear_stats_cache()
+    clear_export_cache()
 
     return {"source": payload.source}

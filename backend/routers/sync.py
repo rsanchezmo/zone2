@@ -1,12 +1,15 @@
+import logging
 from threading import Lock
 
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, Query
 
 from backend.dependencies import get_si
+from backend.routers.exports import clear_export_cache
 from backend.routers.stats import clear_stats_cache
 from strava.strava_intelligence import StravaIntelligence
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # BackgroundTasks run in a thread pool while the status/trigger handlers run
 # on the event loop. A threading.Lock works for both.
@@ -30,6 +33,24 @@ def _release_sync(error: str | None) -> None:
         _sync_status["last_error"] = error
 
 
+def _finalize_sync(si: StravaIntelligence, error: str | None) -> str | None:
+    """Invalidate/warm dependent caches and always release the sync slot."""
+    try:
+        si.strava_analytics.invalidate_caches()
+        clear_stats_cache()
+        clear_export_cache()
+        # Eagerly warm the in-memory cache so the first post-sync read doesn't
+        # pay the full parquet reload cost on the user's request.
+        si.strava_activities_cache._load_to_memory()
+    except Exception as e:
+        logger.exception("Sync cleanup failed")
+        cleanup_error = f"cleanup failed: {type(e).__name__}: {e}"
+        error = f"{error}; {cleanup_error}" if error else cleanup_error
+    finally:
+        _release_sync(error)
+    return error
+
+
 def _run_sync(si: StravaIntelligence, full_sync: bool, include_streams: bool):
     err: str | None = None
     try:
@@ -37,12 +58,7 @@ def _run_sync(si: StravaIntelligence, full_sync: bool, include_streams: bool):
     except Exception as e:
         err = str(e)
     finally:
-        si.strava_analytics.invalidate_caches()
-        clear_stats_cache()
-        # Eagerly warm the in-memory cache so the first post-sync read doesn't
-        # pay the full parquet reload cost on the user's request.
-        si.strava_activities_cache._load_to_memory()
-        _release_sync(err)
+        _finalize_sync(si, err)
 
 
 @router.post("")
@@ -65,10 +81,7 @@ def _run_backfill_streams(si: StravaIntelligence):
     except Exception as e:
         err = str(e)
     finally:
-        si.strava_analytics.invalidate_caches()
-        clear_stats_cache()
-        si.strava_activities_cache._load_to_memory()
-        _release_sync(err)
+        _finalize_sync(si, err)
 
 
 @router.post("/backfill-streams")
@@ -102,10 +115,7 @@ def resync_activity(
     except Exception as e:
         err = str(e)
     finally:
-        si.strava_analytics.invalidate_caches()
-        clear_stats_cache()
-        si.strava_activities_cache._load_to_memory()
-        _release_sync(err)
+        err = _finalize_sync(si, err)
     if err:
         raise HTTPException(status_code=502, detail=err)
     if not found:

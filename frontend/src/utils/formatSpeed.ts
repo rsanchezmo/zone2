@@ -52,7 +52,7 @@ export function convertSpeed(speedMs: number, sportType: string | undefined | nu
 export function formatPace(value: number, useSpeed: boolean): string {
   if (useSpeed) return value.toFixed(1)
   const m = Math.floor(value)
-  let s = Math.round((value - m) * 60)
+  const s = Math.round((value - m) * 60)
   if (s === 60) return `${m + 1}:00`
   return `${m}:${s.toString().padStart(2, '0')}`
 }
@@ -76,7 +76,7 @@ export function formatSpeed(speedMs: number, sportType: string | undefined | nul
   }
   // Pace-based: format as M:SS /unit
   const m = Math.floor(value)
-  let s = Math.round((value - m) * 60)
+  const s = Math.round((value - m) * 60)
   if (s === 60) return `${m + 1}:00 /${unit.replace('min/', '')}`
   return `${m}:${s.toString().padStart(2, '0')} /${unit.replace('min/', '')}`
 }

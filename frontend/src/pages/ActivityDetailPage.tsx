@@ -10,14 +10,16 @@ import polyline from '@mapbox/polyline'
 import ExportButton from '../components/shared/ExportButton'
 import ResyncActivityButton from '../components/shared/ResyncActivityButton'
 import ChartPanel from '../components/shared/ChartPanel'
-import HrZoneDistributionChart, { buildHrHistogram } from '../components/shared/HrZoneDistributionChart'
+import HrZoneDistributionChart from '../components/shared/HrZoneDistributionChart'
+import { buildHrHistogram } from '../components/shared/hrHistogram'
 import {
   DeviceIcon, ShoeIcon, ThermometerIcon, ClockIcon, DumbbellIcon, MedalIcon, TrophyIcon,
   DistanceIcon, TimerIcon, BoltIcon, RangeIcon, HeartIcon,
 } from '../components/icons'
 import { getSportColor } from '../constants/sportColors'
 import { getSportCategory, convertSpeed, formatPace } from '../utils/formatSpeed'
-import { SegmentSummary, getSegmentColor, type Segment } from '../components/shared/SegmentListBuilder'
+import { SegmentSummary, type Segment } from '../components/shared/SegmentListBuilder'
+import { getSegmentColor } from '../components/shared/segmentUtils'
 import { useTheme } from '../hooks/useTheme'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import clsx from 'clsx'
@@ -728,7 +730,7 @@ function ActivityDetailPageInner() {
       markers.push({ position: pos, km: split.km, tooltip })
     }
     return markers
-  }, [activity, positions, splits])
+  }, [activity, positions, splits, sportCategory])
 
   const hrZoneBounds = athleteZones?.heart_rate?.zones as { min: number; max: number }[] | undefined
   const hrHistogram = useMemo(() => {
@@ -1005,7 +1007,7 @@ function ActivityDetailPageInner() {
             if (m.target_max != null) parts.push(formatPaceVal(m.target_max as number, m.unit as string))
             return parts.join(' \u2013 ')
           }
-          if (key === 'hr_zone') return `Zone ${(m as any).target_zone} @ ${(m as any).target_pct}%`
+          if (key === 'hr_zone') return `Zone ${m.target_zone} @ ${m.target_pct}%`
           return ''
         }
 
@@ -1014,7 +1016,7 @@ function ActivityDetailPageInner() {
           if (key === 'duration') return `${m.actual} ${m.unit}`
           if (key === 'avg_pace') return formatPaceVal(m.actual as number, m.unit as string)
           if (key === 'pace') return formatPaceVal(m.actual as number, m.unit as string)
-          if (key === 'hr_zone') return `${(m as any).actual_pct}%`
+          if (key === 'hr_zone') return `${m.actual_pct}%`
           return ''
         }
 
@@ -1476,14 +1478,22 @@ function ActivityDetailPageInner() {
                           />
                         )
                       }}
-                      label={((props: unknown) => {
-                        const { x, y, index, value } = props as { x: number; y: number; index: number; value: number }
+                      label={(props: unknown) => {
+                        const { x = 0, y = 0, index = 0, value = 0 } = props as {
+                          x?: number | string
+                          y?: number | string
+                          index?: number
+                          value?: number | string
+                        }
+                        const xNum = Number(x)
+                        const yNum = Number(y)
+                        const valueNum = Number(value)
                         const isCurrent = index != null ? chartData[index]?.isCurrent : false
                         return (
                           <text
                             key={index}
-                            x={x}
-                            y={y - 8}
+                            x={xNum}
+                            y={yNum - 8}
                             textAnchor="middle"
                             fontSize={9}
                             fontFamily="ui-monospace, monospace"
@@ -1492,10 +1502,10 @@ function ActivityDetailPageInner() {
                               ? (sa.pr_rank === 1 ? '#f59e0b' : sportColor)
                               : colors.tickFill}
                           >
-                            {fmtPaceValue(value)}
+                            {fmtPaceValue(valueNum)}
                           </text>
                         )
-                      }) as any}
+                      }}
                       activeDot={false}
                     />
                   </AreaChart>

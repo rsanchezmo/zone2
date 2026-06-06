@@ -1,16 +1,27 @@
+import asyncio
+from datetime import date, datetime, timedelta
+
 import matplotlib.pyplot as plt
+import aiosqlite
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import StreamingResponse
 
+from backend.db import get_db
 from backend.dependencies import get_si
 from backend.export_cache import ExportCache
 from backend.routers.stats import _get_weekly_report_cached
+from backend.services.zones import resolve_hr_zones
 from strava.strava_intelligence import StravaIntelligence
 from strava.strava_visualizer import StravaVisualizer
 
 router = APIRouter()
 
 _cache = ExportCache()
+
+
+def clear_export_cache():
+    """Drop cached PNG exports after activity data changes."""
+    _cache.invalidate_all()
 
 
 def _clamp_dpi(dpi: int) -> int:
@@ -51,48 +62,67 @@ def _safe_export(fn):
 
 
 @router.get("/weekly-report")
-def export_weekly_report(
+async def export_weekly_report(
     week_start: str | None = None,
     neon_color: str = "#fc0101",
     dpi: int = 300,
     si: StravaIntelligence = Depends(get_si),
+    db: aiosqlite.Connection = Depends(get_db),
 ):
     dpi = _clamp_dpi(dpi)
-    params = {"week_start": week_start, "neon_color": neon_color, "dpi": dpi}
+    resolved = await resolve_hr_zones(si, db)
+    hr_zones = resolved["zones"]
+    params = {
+        "week_start": week_start,
+        "neon_color": neon_color,
+        "dpi": dpi,
+        "cache_version": si.strava_activities_cache.cache_version,
+        "hr_zones": hr_zones,
+    }
     cached = _cache.get("weekly-report", params)
     if cached:
         return _png_response(cached)
 
-    # Reuse the stats router's TTL cache — same analytics call, same underlying
-    # data, so serving this from the shared cache avoids a duplicate compute
-    # whenever the UI has already hit /api/stats/weekly-report.
-    report = _get_weekly_report_cached(si, week_start)
-    from datetime import datetime, timedelta
-    week_start_str = report.get("week_start")
-    prev_report = None
-    if week_start_str:
-        prev_monday = datetime.strptime(week_start_str, "%Y-%m-%d") - timedelta(days=7)
-        prev_report = _get_weekly_report_cached(si, prev_monday.strftime("%Y-%m-%d"))
+    def render():
+        # Reuse the stats router's TTL cache — same analytics call, same underlying
+        # data, so serving this from the shared cache avoids a duplicate compute
+        # whenever the UI has already hit /api/stats/weekly-report.
+        report = _get_weekly_report_cached(si, week_start, hr_zones=hr_zones)
+        week_start_str = report.get("week_start")
+        prev_report = None
+        if week_start_str:
+            prev_monday = datetime.strptime(week_start_str, "%Y-%m-%d") - timedelta(days=7)
+            prev_report = _get_weekly_report_cached(si, prev_monday.strftime("%Y-%m-%d"), hr_zones=hr_zones)
 
-    buf = _safe_export(lambda: si.strava_visualizer.plot_weekly_report(
-        weekly_report=report, neon_color=neon_color,
-        last_week_report=prev_report, return_buffer=True, dpi=dpi,
-    ))
+        return _safe_export(lambda: si.strava_visualizer.plot_weekly_report(
+            weekly_report=report, neon_color=neon_color,
+            last_week_report=prev_report, return_buffer=True, dpi=dpi,
+        ))
+
+    buf = await asyncio.to_thread(render)
     _cache.put("weekly-report", params, buf)
     return _png_response(buf)
 
 
 @router.get("/year-in-sport")
 def export_year_in_sport(
-    year: int = Query(default=2026),
+    year: int | None = None,
     main_sport: str = Query(default="Run"),
     variant: str = Query(default="main"),
     neon_color: str = "#fc0101",
     dpi: int = 300,
     si: StravaIntelligence = Depends(get_si),
 ):
+    year = year or date.today().year
     dpi = _clamp_dpi(dpi)
-    params = {"year": year, "main_sport": main_sport, "variant": variant, "neon_color": neon_color, "dpi": dpi}
+    params = {
+        "year": year,
+        "main_sport": main_sport,
+        "variant": variant,
+        "neon_color": neon_color,
+        "dpi": dpi,
+        "cache_version": si.strava_activities_cache.cache_version,
+    }
     cached = _cache.get("year-in-sport", params)
     if cached:
         return _png_response(cached)
@@ -124,7 +154,13 @@ def export_activity(
     si: StravaIntelligence = Depends(get_si),
 ):
     dpi = _clamp_dpi(dpi)
-    params = {"activity_id": activity_id, "neon_color": neon_color, "title": title, "dpi": dpi}
+    params = {
+        "activity_id": activity_id,
+        "neon_color": neon_color,
+        "title": title,
+        "dpi": dpi,
+        "cache_version": si.strava_activities_cache.cache_version,
+    }
     cached = _cache.get("activity", params)
     if cached:
         return _png_response(cached)
@@ -150,7 +186,8 @@ def export_thunderstorm_heatmap(
 ):
     dpi = _clamp_dpi(dpi)
     params = {"location": location, "sport_types": sport_types, "year": year,
-              "radius_km": radius_km, "neon_color": neon_color, "show_title": show_title, "dpi": dpi}
+              "radius_km": radius_km, "neon_color": neon_color, "show_title": show_title, "dpi": dpi,
+              "cache_version": si.strava_activities_cache.cache_version}
     cached = _cache.get("thunderstorm-heatmap", params)
     if cached:
         return _png_response(cached)
@@ -171,7 +208,7 @@ def export_efficiency_factor(
     si: StravaIntelligence = Depends(get_si),
 ):
     dpi = _clamp_dpi(dpi)
-    params = {"sport_type": sport_type, "dpi": dpi}
+    params = {"sport_type": sport_type, "dpi": dpi, "cache_version": si.strava_activities_cache.cache_version}
     cached = _cache.get("efficiency-factor", params)
     if cached:
         return _png_response(cached)
@@ -191,7 +228,7 @@ def export_performance_frontier(
 ):
     dpi = _clamp_dpi(dpi)
     sports = [s.strip() for s in sport_types.split(",")]
-    params = {"sport_types": sport_types, "dpi": dpi}
+    params = {"sport_types": sport_types, "dpi": dpi, "cache_version": si.strava_activities_cache.cache_version}
     cached = _cache.get("performance-frontier", params)
     if cached:
         return _png_response(cached)
@@ -210,7 +247,7 @@ def export_activity_clock(
     si: StravaIntelligence = Depends(get_si),
 ):
     dpi = _clamp_dpi(dpi)
-    params = {"sport_types": sport_types, "dpi": dpi}
+    params = {"sport_types": sport_types, "dpi": dpi, "cache_version": si.strava_activities_cache.cache_version}
     cached = _cache.get("activity-clock", params)
     if cached:
         return _png_response(cached)

@@ -1,6 +1,14 @@
 import { useCallback, useState, useEffect } from 'react'
 import clsx from 'clsx'
 import { getDistUnit } from '../../utils/formatSpeed'
+import {
+  SEGMENT_TYPES,
+  getSegmentColor,
+  getSegmentLabel,
+  type Segment,
+} from './segmentUtils'
+
+export type { Segment } from './segmentUtils'
 
 /* Numeric input that keeps a local string buffer so users can type decimals freely */
 function NumericInput({ value, onChange, className, placeholder = '--' }: {
@@ -14,12 +22,13 @@ function NumericInput({ value, onChange, className, placeholder = '--' }: {
   // Sync from parent when the external value changes (e.g. template pick)
   useEffect(() => {
     const ext = value != null ? String(value) : ''
-    setRaw(prev => {
+    const frame = requestAnimationFrame(() => setRaw(prev => {
       // Don't overwrite if the user is mid-edit and the parsed value matches
       const parsed = prev === '' ? null : parseFloat(prev)
       if (parsed === value) return prev
       return ext
-    })
+    }))
+    return () => cancelAnimationFrame(frame)
   }, [value])
 
   return (
@@ -50,36 +59,6 @@ function NumericInput({ value, onChange, className, placeholder = '--' }: {
       className={className}
     />
   )
-}
-
-export interface Segment {
-  type: 'warmup' | 'work' | 'recovery' | 'cooldown' | 'rest'
-  distance_km?: number | null
-  duration_mins?: number | null
-  target_pace_min?: number | null
-  target_pace_max?: number | null
-  target_hr_zone?: number | null
-  target_zone_pct?: number | null
-  repetitions?: number | null
-  recovery_duration_mins?: number | null
-  recovery_distance_km?: number | null
-  label?: string | null
-}
-
-const SEGMENT_TYPES = [
-  { value: 'warmup', label: 'Warmup', color: '#22d3ee' },
-  { value: 'work', label: 'Work', color: '#f97316' },
-  { value: 'recovery', label: 'Recovery', color: '#6b7280' },
-  { value: 'cooldown', label: 'Cooldown', color: '#22d3ee' },
-  { value: 'rest', label: 'Rest', color: '#4b5563' },
-] as const
-
-export function getSegmentColor(type: string): string {
-  return SEGMENT_TYPES.find(t => t.value === type)?.color ?? '#6b7280'
-}
-
-function getSegmentLabel(type: string): string {
-  return SEGMENT_TYPES.find(t => t.value === type)?.label ?? type
 }
 
 function emptySegment(type: Segment['type'] = 'work'): Segment {

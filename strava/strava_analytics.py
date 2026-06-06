@@ -47,7 +47,7 @@ class StravaAnalytics:
         self.strava_activities_cache = strava_activities_cache # inmutable data (historical activities)
         self.strava_user_cache = strava_user_cache # mutable data (user profile, stats, zones)
         self._prepared_activities = None
-        self._prepared_activities_len = -1
+        self._prepared_activities_version = -1
         self._hr_zones_cache = None
         self._race_predictions_cache: dict = {}
         self._training_load_cache = None
@@ -67,14 +67,14 @@ class StravaAnalytics:
         when stream data is needed.
         """
         raw = self.strava_activities_cache._load_to_memory()
-        current_len = len(raw)
-        if self._prepared_activities is None or current_len != self._prepared_activities_len:
+        current_version = self.strava_activities_cache.cache_version
+        if self._prepared_activities is None or current_version != self._prepared_activities_version:
             df = raw.copy()
             df['start_date_local'] = pd.to_datetime(df['start_date_local'], utc=True)
             if 'map' in df.columns:
                 df['map'] = df['map'].apply(self._parse_json_cell)
             self._prepared_activities = df
-            self._prepared_activities_len = current_len
+            self._prepared_activities_version = current_version
         return self._prepared_activities
 
     @staticmethod
@@ -92,7 +92,7 @@ class StravaAnalytics:
     def invalidate_caches(self):
         """Clear all analytics-level caches. Call after sync."""
         self._prepared_activities = None
-        self._prepared_activities_len = -1
+        self._prepared_activities_version = -1
         self._hr_zones_cache = None
         self._race_predictions_cache = {}
         self._training_load_cache = None

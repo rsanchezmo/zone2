@@ -104,12 +104,13 @@ def _get_year_in_sport_cached(si: StravaIntelligence, year: int, main_sport: str
 
 @router.get("/year-in-sport")
 def year_in_sport(
-    year: int = Query(default=2026),
+    year: int | None = None,
     main_sport: str = Query(default="Run"),
     comparison_year: int | None = None,
     si: StravaIntelligence = Depends(get_si),
 ):
     today = date.today()
+    year = year or today.year
     is_current_year = year == today.year
 
     # Only apply cutoff when viewing the current (incomplete) year
@@ -281,7 +282,7 @@ def activity_clock(
 
 @router.get("/cumulative-distance")
 def cumulative_distance(
-    year: int = Query(default=2026),
+    year: int | None = None,
     main_sport: str = Query(default="Run"),
     comparison_year: int | None = None,
     yearly_target_km: float | None = None,
@@ -290,6 +291,7 @@ def cumulative_distance(
     """Daily cumulative distance for a year (optionally with comparison year and target)."""
     import calendar as cal
 
+    year = year or date.today().year
     activities = si.strava_activities_cache.activities_raw.copy()
     activities["start_date_local"] = pd.to_datetime(activities["start_date_local"])
 

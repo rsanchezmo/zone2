@@ -52,7 +52,15 @@ function SportPieChart({ title, data, formatValue, colorMap }: {
 
   if (pieData.length === 0) return null
 
-  const renderLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, value }: any) => {
+  const renderLabel = (props: unknown) => {
+    const { cx, cy, midAngle, innerRadius, outerRadius, value } = props as {
+      cx: number
+      cy: number
+      midAngle: number
+      innerRadius: number
+      outerRadius: number
+      value: number
+    }
     const RADIAN = Math.PI / 180
     const radius = innerRadius + (outerRadius - innerRadius) * 0.4
     const x = cx + radius * Math.cos(-midAngle * RADIAN)
@@ -96,7 +104,7 @@ function SportPieChart({ title, data, formatValue, colorMap }: {
           <Tooltip
             contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
             itemStyle={{ color: colors.labelColor }}
-            formatter={((value: number, name: string) => [formatValue(value, name), name]) as any}
+            formatter={(value, name) => [formatValue(Number(value), String(name)), String(name)]}
           />
         </PieChart>
       </ResponsiveContainer>
@@ -145,12 +153,12 @@ function AccumulatedChart({ data, titles, colorMap }: AccumulatedChartProps) {
     })
 
     return { chartData, sports, sportColorMap, activeDays }
-  }, [data])
+  }, [data, colorMap])
 
   if (sports.length === 0) return null
 
   function makeActiveDot(sport: string, color: string) {
-    return (props: Record<string, unknown>) => {
+    return (props: unknown) => {
       const { cx, cy, index } = props as { cx: number; cy: number; index: number }
       if (!activeDays[sport]?.has(index)) return <g />
       return <circle cx={cx} cy={cy} r={3} fill={color} fillOpacity={0.8} stroke={isLight ? '#e5e5e5' : '#1a1a1a'} strokeWidth={1} />
@@ -158,7 +166,7 @@ function AccumulatedChart({ data, titles, colorMap }: AccumulatedChartProps) {
   }
 
   function makeLabel(sport: string, color: string) {
-    return (props: Record<string, unknown>) => {
+    return (props: unknown) => {
       const { x, y, index } = props as { x: number; y: number; index: number }
       if (!activeDays[sport]?.has(index)) return <g />
       const dayTitles = titles?.[sport]?.[index] ?? []
@@ -192,7 +200,7 @@ function AccumulatedChart({ data, titles, colorMap }: AccumulatedChartProps) {
             contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
             labelStyle={{ color: colors.labelColor }}
             itemStyle={{ color: colors.labelColor }}
-            formatter={((value: number, name: string) => [`${value} min`, name]) as any}
+            formatter={(value, name) => [`${Number(value)} min`, String(name)]}
           />
           {sports.map(sport => (
             <Area
@@ -204,8 +212,8 @@ function AccumulatedChart({ data, titles, colorMap }: AccumulatedChartProps) {
               fill={sportColorMap[sport]}
               fillOpacity={0.08}
               strokeWidth={1.5}
-              dot={makeActiveDot(sport, sportColorMap[sport]) as any}
-              label={makeLabel(sport, sportColorMap[sport]) as any}
+              dot={makeActiveDot(sport, sportColorMap[sport])}
+              label={makeLabel(sport, sportColorMap[sport])}
             />
           ))}
         </AreaChart>

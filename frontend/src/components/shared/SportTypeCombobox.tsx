@@ -43,11 +43,6 @@ export default function SportTypeCombobox({ value, onChange, className, isLight 
     }
   }, [highlightIndex, open])
 
-  // Reset highlight when filter changes
-  useEffect(() => {
-    setHighlightIndex(0)
-  }, [filtered.length])
-
   const handleSelect = (sport: string) => {
     onChange(sport)
     setOpen(false)
@@ -89,6 +84,7 @@ export default function SportTypeCombobox({ value, onChange, className, isLight 
         style={{ color: getSportColor(value) }}
         onClick={() => {
           setOpen(true)
+          setHighlightIndex(0)
           setTimeout(() => inputRef.current?.focus(), 0)
         }}
       >
@@ -96,7 +92,10 @@ export default function SportTypeCombobox({ value, onChange, className, isLight 
           <input
             ref={inputRef}
             value={search}
-            onChange={e => setSearch(e.target.value)}
+            onChange={e => {
+              setSearch(e.target.value)
+              setHighlightIndex(0)
+            }}
             onKeyDown={handleKeyDown}
             placeholder="Type to search..."
             className="w-full bg-transparent outline-none placeholder-gray-500 text-sm"
