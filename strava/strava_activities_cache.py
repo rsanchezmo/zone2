@@ -171,6 +171,10 @@ class StravaActivitiesCache:
             return True
         age = datetime.now() - self.metadata['last_sync']
         return age > timedelta(hours=max_age_hours)
+
+    def get_last_sync_time(self) -> datetime | None:
+        """Return when activity metadata was last successfully synced."""
+        return self.metadata.get('last_sync')
     
 
     def save_activities(self, activities: list[dict]):

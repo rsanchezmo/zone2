@@ -226,7 +226,8 @@ class GarminDailyStatsCache:
             row = c.execute(
                 """SELECT MIN(date) AS earliest, MAX(date) AS latest,
                           COUNT(DISTINCT date) AS days,
-                          COUNT(*) AS rows
+                          COUNT(*) AS rows,
+                          strftime('%Y-%m-%dT%H:%M:%SZ', MAX(fetched_at)) AS last_sync_at
                    FROM garmin_daily_stats"""
             ).fetchone()
             by_metric = c.execute(
@@ -237,6 +238,7 @@ class GarminDailyStatsCache:
             return {
                 "earliest_date": row["earliest"],
                 "latest_date": row["latest"],
+                "last_sync_at": row["last_sync_at"],
                 "total_days": row["days"] or 0,
                 "total_rows": row["rows"] or 0,
                 "per_metric": [dict(r) for r in by_metric],

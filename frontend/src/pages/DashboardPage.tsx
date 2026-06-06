@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useYearInSport, useYears, useSportTypes, useCumulativeDistance, useGoals, useWeeklyTotals } from '../api/hooks'
+import { useYearInSport, useYears, useSportTypes, useCumulativeDistance, useGoals, useWeeklyTotals, useSyncStatus } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
 import { formatSpeed, formatDist, formatDistAxis, distValue, getDistUnit } from '../utils/formatSpeed'
 import StatCard from '../components/shared/StatCard'
 import ExportButton from '../components/shared/ExportButton'
 import ChartPanel, { LegendSwatch } from '../components/shared/ChartPanel'
 import GoalRing from '../components/shared/GoalRing'
+import PageHeader from '../components/shared/PageHeader'
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   AreaChart, Area, LineChart, ReferenceLine, ReferenceArea,
@@ -49,6 +50,7 @@ export default function DashboardPage() {
   const { data: yearData, isLoading: yearLoading, isFetching: yearFetching } = useYearInSport(year, mainSport, year - 1)
   const { data: weeklyTotalsData } = useWeeklyTotals(weeklyTotalsWeeks, mainSport)
   const { data: cumulativeData } = useCumulativeDistance(year, mainSport, year - 1, yearlyDistanceGoal)
+  const { data: syncStatus } = useSyncStatus()
 
   const comp = yearData?.comparison
   const sportColor = getSportColor(mainSport)
@@ -104,6 +106,12 @@ export default function DashboardPage() {
     if (pct > 0) return { label: 'Above target', tone: 'positive' as const, pct }
     return { label: 'Below target', tone: 'negative' as const, pct }
   }, [cumulativeData, yearlyDistanceGoal, today])
+
+  const headerDescription = useMemo(() => {
+    const scope = `${year} ${mainSport}`
+    if (isCurrentYear) return `${scope} · day ${daysElapsed} of ${daysInYear} · ${daysRemaining} days left`
+    return `${scope} · complete year · ${daysInYear} days`
+  }, [year, mainSport, isCurrentYear, daysElapsed, daysInYear, daysRemaining])
 
   // ETA to goal at current pace
   const etaToGoal = useMemo(() => {
@@ -182,11 +190,12 @@ export default function DashboardPage() {
         yearFetching && !yearLoading && 'opacity-60',
       )}
     >
-      {/* ── Top bar ───────────────────────────────────── */}
-      <header className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-baseline gap-2 min-w-0 flex-wrap">
-          <span className="eyebrow shrink-0">Dashboard</span>
-          <span className={clsx('hidden sm:inline text-[11px]', isLight ? 'text-gray-300' : 'text-gray-700')}>/</span>
+      <PageHeader
+        title="Dashboard"
+        description={headerDescription}
+        lastSyncedAt={syncStatus?.last_sync_at}
+        controls={
+          <>
           <select
             value={year}
             onChange={e => setYear(Number(e.target.value))}
@@ -197,7 +206,6 @@ export default function DashboardPage() {
               <option key={y} value={y}>{y}</option>
             ))}
           </select>
-          <span className={clsx('hidden sm:inline text-[11px]', isLight ? 'text-gray-300' : 'text-gray-700')}>/</span>
           <select
             value={mainSport}
             onChange={e => setMainSport(e.target.value)}
@@ -209,8 +217,10 @@ export default function DashboardPage() {
               <option key={s} value={s}>{s}</option>
             ))}
           </select>
-        </div>
-        <div className="hidden sm:flex items-center gap-2">
+          </>
+        }
+        actions={
+          <div className="hidden sm:flex items-center gap-2">
           <ExportButton
             url={`/api/exports/year-in-sport?year=${year}&main_sport=${mainSport}`}
             label="PNG · Sport"
@@ -223,8 +233,9 @@ export default function DashboardPage() {
             filename={`year_in_sport_${year}_totals.png`}
             exportType="year-in-sport"
           />
-        </div>
-      </header>
+          </div>
+        }
+      />
 
       {/* ── Hero ──────────────────────────────────────── */}
       <HeroBlock
@@ -252,7 +263,7 @@ export default function DashboardPage() {
       {!yearLoading && yearData && (
         <section>
           <div className="section-head mb-4">
-            <span className="eyebrow">{mainSport} · Primary</span>
+            <span className="eyebrow">{mainSport} · key metrics</span>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 stagger-children">
             <StatCard label="Activities" value={yearData.main_sport.total_activities} delta={yearDelta('main_sport', 'total_activities')} accent={sportColor} />
@@ -268,7 +279,7 @@ export default function DashboardPage() {
       {!yearLoading && yearData && (
         <section>
           <div className="section-head mb-4">
-            <span className="eyebrow">All Sports</span>
+            <span className="eyebrow">All-sport totals</span>
           </div>
           <div className={clsx(
             'panel px-5 py-4 grid grid-cols-2 md:grid-cols-4 divide-y md:divide-y-0 md:divide-x',
@@ -302,80 +313,85 @@ export default function DashboardPage() {
 
       {/* ── Cumulative distance (hero chart) ──────────── */}
       {cumulativeChartData.length > 0 && (
-        <ChartPanel
-          title="Cumulative distance"
-          sublabel={mainSport}
-          accent={sportColor}
-          status={goalStatus ? (
-            <span
-              className="inline-flex items-center gap-1.5 text-[10px] uppercase font-semibold tracking-[0.15em] px-2 py-0.5 rounded-full border"
-              style={{
-                backgroundColor: goalStatus.tone === 'positive' ? 'rgba(34, 197, 94, 0.12)'
-                  : goalStatus.tone === 'negative' ? 'rgba(239, 68, 68, 0.12)'
-                  : `${sportColor}22`,
-                color: goalStatus.tone === 'positive' ? '#4ade80'
-                  : goalStatus.tone === 'negative' ? '#f87171'
-                  : sportColor,
-                borderColor: goalStatus.tone === 'positive' ? 'rgba(34, 197, 94, 0.3)'
-                  : goalStatus.tone === 'negative' ? 'rgba(239, 68, 68, 0.3)'
-                  : `${sportColor}55`,
-              }}
-            >
+        <section className="space-y-4">
+          <div className="section-head">
+            <span className="eyebrow">Progress</span>
+          </div>
+          <ChartPanel
+            title="Cumulative distance"
+            sublabel={mainSport}
+            accent={sportColor}
+            status={goalStatus ? (
               <span
-                className="inline-block w-1.5 h-1.5 rounded-full"
+                className="inline-flex items-center gap-1.5 text-[10px] uppercase font-semibold tracking-[0.15em] px-2 py-0.5 rounded-full border"
                 style={{
-                  backgroundColor: goalStatus.tone === 'positive' ? '#4ade80'
+                  backgroundColor: goalStatus.tone === 'positive' ? 'rgba(34, 197, 94, 0.12)'
+                    : goalStatus.tone === 'negative' ? 'rgba(239, 68, 68, 0.12)'
+                    : `${sportColor}22`,
+                  color: goalStatus.tone === 'positive' ? '#4ade80'
                     : goalStatus.tone === 'negative' ? '#f87171'
                     : sportColor,
+                  borderColor: goalStatus.tone === 'positive' ? 'rgba(34, 197, 94, 0.3)'
+                    : goalStatus.tone === 'negative' ? 'rgba(239, 68, 68, 0.3)'
+                    : `${sportColor}55`,
                 }}
-              />
-              {goalStatus.label}{goalStatus.pct !== 0 && ` · ${goalStatus.pct > 0 ? '+' : ''}${goalStatus.pct.toFixed(1)}%`}
-            </span>
-          ) : undefined}
-          legend={
-            <>
-              <LegendSwatch color={sportColor} label={`${year}`} variant="solid" />
-              {comp && <LegendSwatch color={sportColor} label={`${year - 1}`} variant="dashed" />}
-              {yearlyDistanceGoal && <LegendSwatch color={isLight ? '#6b7280' : '#9ca3af'} label={`Target · ${formatDist(yearlyDistanceGoal, mainSport)}`} variant="dashed" />}
-            </>
-          }
-        >
-          <ResponsiveContainer width="100%" height={280}>
-            <AreaChart data={cumulativeChartData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id="cumulGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={sportColor} stopOpacity={0.3} />
-                  <stop offset="100%" stopColor={sportColor} stopOpacity={0.02} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke={colors.gridStroke} />
-              <XAxis dataKey="label" tick={{ fill: colors.tickFill, fontSize: 10 }} axisLine={false} tickLine={false} interval="equidistantPreserveStart" />
-              <YAxis tick={{ fill: colors.tickFillSecondary, fontSize: 10 }} axisLine={false} tickLine={false} width={isMobile ? 32 : 55} tickFormatter={(v: number) => formatDistAxis(v, mainSport)} />
-              <Tooltip
-                contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
-                labelStyle={{ color: colors.labelColor }}
-                itemStyle={{ color: colors.labelColor }}
-                formatter={(value: unknown, name: unknown) => [
-                  formatDist(Number(value ?? 0), mainSport),
-                  name === 'prev' ? `${year - 1}` : name === 'target' ? 'Target' : `${year}`,
-                ]}
-              />
-              {comp && (
-                <Area type="monotone" dataKey="prev" stroke={sportColor} strokeWidth={1.5} strokeDasharray="6 3" strokeOpacity={0.4} fill="none" dot={false} connectNulls />
-              )}
-              <Area type="monotone" dataKey="current" stroke={sportColor} strokeWidth={2.5} fill="url(#cumulGrad)" dot={false} />
-              {yearlyDistanceGoal && (
-                <Line type="monotone" dataKey="target" stroke={isLight ? '#6b7280' : '#9ca3af'} strokeWidth={1.5} strokeDasharray="6 4" dot={false} connectNulls />
-              )}
-              {todayLabel && isCurrentYear && (
-                <>
-                  <ReferenceArea x1={todayLabel} x2={cumulativeChartData[cumulativeChartData.length - 1]?.label} fill={isLight ? '#000' : '#fff'} fillOpacity={0.03} />
-                  <ReferenceLine x={todayLabel} stroke={sportColor} strokeWidth={1.5} strokeDasharray="4 3" strokeOpacity={0.6} label={{ value: 'Today', position: 'insideTopRight', fill: sportColor, fontSize: 11, fontWeight: 600, dy: 10 }} />
-                </>
-              )}
-            </AreaChart>
-          </ResponsiveContainer>
-        </ChartPanel>
+              >
+                <span
+                  className="inline-block w-1.5 h-1.5 rounded-full"
+                  style={{
+                    backgroundColor: goalStatus.tone === 'positive' ? '#4ade80'
+                      : goalStatus.tone === 'negative' ? '#f87171'
+                      : sportColor,
+                  }}
+                />
+                {goalStatus.label}{goalStatus.pct !== 0 && ` · ${goalStatus.pct > 0 ? '+' : ''}${goalStatus.pct.toFixed(1)}%`}
+              </span>
+            ) : undefined}
+            legend={
+              <>
+                <LegendSwatch color={sportColor} label={`${year}`} variant="solid" />
+                {comp && <LegendSwatch color={sportColor} label={`${year - 1}`} variant="dashed" />}
+                {yearlyDistanceGoal && <LegendSwatch color={isLight ? '#6b7280' : '#9ca3af'} label={`Target · ${formatDist(yearlyDistanceGoal, mainSport)}`} variant="dashed" />}
+              </>
+            }
+          >
+            <ResponsiveContainer width="100%" height={280}>
+              <AreaChart data={cumulativeChartData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="cumulGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={sportColor} stopOpacity={0.3} />
+                    <stop offset="100%" stopColor={sportColor} stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke={colors.gridStroke} />
+                <XAxis dataKey="label" tick={{ fill: colors.tickFill, fontSize: 10 }} axisLine={false} tickLine={false} interval="equidistantPreserveStart" />
+                <YAxis tick={{ fill: colors.tickFillSecondary, fontSize: 10 }} axisLine={false} tickLine={false} width={isMobile ? 32 : 55} tickFormatter={(v: number) => formatDistAxis(v, mainSport)} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
+                  labelStyle={{ color: colors.labelColor }}
+                  itemStyle={{ color: colors.labelColor }}
+                  formatter={(value: unknown, name: unknown) => [
+                    formatDist(Number(value ?? 0), mainSport),
+                    name === 'prev' ? `${year - 1}` : name === 'target' ? 'Target' : `${year}`,
+                  ]}
+                />
+                {comp && (
+                  <Area type="monotone" dataKey="prev" stroke={sportColor} strokeWidth={1.5} strokeDasharray="6 3" strokeOpacity={0.4} fill="none" dot={false} connectNulls />
+                )}
+                <Area type="monotone" dataKey="current" stroke={sportColor} strokeWidth={2.5} fill="url(#cumulGrad)" dot={false} />
+                {yearlyDistanceGoal && (
+                  <Line type="monotone" dataKey="target" stroke={isLight ? '#6b7280' : '#9ca3af'} strokeWidth={1.5} strokeDasharray="6 4" dot={false} connectNulls />
+                )}
+                {todayLabel && isCurrentYear && (
+                  <>
+                    <ReferenceArea x1={todayLabel} x2={cumulativeChartData[cumulativeChartData.length - 1]?.label} fill={isLight ? '#000' : '#fff'} fillOpacity={0.03} />
+                    <ReferenceLine x={todayLabel} stroke={sportColor} strokeWidth={1.5} strokeDasharray="4 3" strokeOpacity={0.6} label={{ value: 'Today', position: 'insideTopRight', fill: sportColor, fontSize: 11, fontWeight: 600, dy: 10 }} />
+                  </>
+                )}
+              </AreaChart>
+            </ResponsiveContainer>
+          </ChartPanel>
+        </section>
       )}
 
       {/* ── Monthly — merged with metric toggle ─────────── */}

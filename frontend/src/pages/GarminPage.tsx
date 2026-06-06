@@ -12,6 +12,7 @@ import {
 } from '../api/hooks'
 import StatCard from '../components/shared/StatCard'
 import ChartPanel, { LegendSwatch } from '../components/shared/ChartPanel'
+import PageHeader from '../components/shared/PageHeader'
 
 // Single accent for the whole page. Variations come from opacity / tints
 // within the same cyan family, never from switching hues.
@@ -158,6 +159,9 @@ function fmtDate(iso: unknown): string {
   const d = new Date(iso + 'T00:00:00')
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
+function fmtSigned(v: number): string {
+  return v > 0 ? `+${v}` : String(v)
+}
 function fmtKm(meters: number | null): string {
   if (meters == null) return '–'
   const km = meters / 1000
@@ -235,6 +239,12 @@ export default function GarminPage() {
 
   const enabled = status?.enabled === true
   const syncing = status?.syncing === true
+  const dataWindow = status?.earliest_date && status?.latest_date
+    ? `${fmtDate(status.earliest_date)} to ${fmtDate(status.latest_date)}`
+    : 'no stored data yet'
+  const headerDescription = enabled
+    ? `wellness dashboard · ${status?.total_days ?? 0} days · ${dataWindow}`
+    : 'Garmin Connect is not configured'
 
   // ── Latest card values ───────────────────────────────────────────
   const card = useMemo(() => {
@@ -317,6 +327,9 @@ export default function GarminPage() {
       } : null,
     }
   }, [latest])
+  const bodyBatteryNet = card.bbCharged != null && card.bbDrained != null
+    ? card.bbCharged - card.bbDrained
+    : null
 
   // ── Chart shaping ────────────────────────────────────────────────
   const t = trends as TrendsResp | undefined
@@ -445,17 +458,11 @@ export default function GarminPage() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-10 pb-12">
-      {/* ── Header (eyebrow breadcrumb + range/sync controls) ────── */}
-      <header className="flex items-end justify-between gap-4 flex-wrap">
-        <div className="flex items-baseline gap-2">
-          <span className="eyebrow">Garmin</span>
-          <span className={clsx('text-[11px]', isLight ? 'text-gray-300' : 'text-gray-700')}>·</span>
-          <span className={clsx('text-[11px] normal-case tracking-normal', isLight ? 'text-gray-500' : 'text-gray-500')}>
-            watch-level wellness
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap">
+      <PageHeader
+        title="Garmin"
+        description={headerDescription}
+        lastSyncedAt={status?.last_sync_at}
+        controls={
           <div className="flex items-center gap-0.5" role="tablist">
             {RANGE_OPTIONS.map(opt => (
               <button key={opt.days} className="chip"
@@ -465,6 +472,9 @@ export default function GarminPage() {
               </button>
             ))}
           </div>
+        }
+        actions={
+          <>
           <button className="btn"
             disabled={!enabled || syncing || triggerSync.isPending}
             onClick={() => triggerSync.mutate({ full: false })}
@@ -489,12 +499,17 @@ export default function GarminPage() {
               {cancelSync.isPending ? 'Cancelling…' : 'Cancel'}
             </button>
           )}
-        </div>
-      </header>
+          </>
+        }
+      />
 
       {/* ── TODAY hero ──────────────────────────────────────────── */}
       {enabled && (
-        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+        <section className="space-y-4">
+          <div className="section-head">
+            <span className="eyebrow">Today</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           <HeroTile
             label="Readiness"
             value={card.readinessScore}
@@ -515,13 +530,14 @@ export default function GarminPage() {
           />
           <HeroTile
             label="Body Battery"
-            value={card.bbCharged != null && card.bbDrained != null
-              ? `+${card.bbCharged}/−${card.bbDrained}` : null}
-            qualifier={card.bbCharged != null && card.bbDrained != null
-              ? (card.bbCharged - card.bbDrained > 0 ? 'Net charged' : 'Net drained')
+            value={bodyBatteryNet != null ? fmtSigned(bodyBatteryNet) : null}
+            qualifier={bodyBatteryNet != null
+              ? (bodyBatteryNet > 0 ? 'Net charged' : 'Net drained')
               : undefined}
             tone={bbTone(card.bbCharged, card.bbDrained)}
-            detail="charged · drained today"
+            detail={card.bbCharged != null && card.bbDrained != null
+              ? `${card.bbCharged} charged · ${card.bbDrained} drained`
+              : undefined}
             isLight={isLight}
           />
           <HeroTile
@@ -541,18 +557,8 @@ export default function GarminPage() {
             detail="acute / chronic load"
             isLight={isLight}
           />
+          </div>
         </section>
-      )}
-
-      {/* ── Readiness factor breakdown (today snapshot) ──────────── */}
-      {enabled && card.readinessFactors.length > 0 && (
-        <ChartPanel
-          title="Readiness factors"
-          sublabel="today · contributors to your readiness score"
-          accent={ACCENT}
-        >
-          <FactorBars factors={card.readinessFactors} isLight={isLight} />
-        </ChartPanel>
       )}
 
       {/* ── Status banners ───────────────────────────────────────── */}
@@ -582,7 +588,10 @@ export default function GarminPage() {
       )}
 
       {/* ── Secondary stats: body (row 1) + activity (row 2) ────── */}
-      <section className="space-y-3">
+      <section className="space-y-4">
+        <div className="section-head">
+          <span className="eyebrow">Vitals & activity</span>
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatCard label="Resting HR" value={card.restingHR ?? '–'} unit="bpm"
             sublabel={card.hr7dAvg != null ? `7d avg ${card.hr7dAvg}` : undefined}
@@ -629,9 +638,162 @@ export default function GarminPage() {
 
       {enabled && (
         <>
-          {/* ── Section divider before the evolution plots ─────── */}
+          {/* ── Readiness factor breakdown (today snapshot) ──────────── */}
           <div className="section-head pt-2">
-            <span className="eyebrow">Evolution</span>
+            <span className="eyebrow">Readiness & load</span>
+          </div>
+
+          {card.readinessFactors.length > 0 && (
+            <ChartPanel
+              title="Readiness factors"
+              sublabel="today · contributors to your readiness score"
+              accent={ACCENT}
+            >
+              <FactorBars factors={card.readinessFactors} isLight={isLight} />
+            </ChartPanel>
+          )}
+
+          {/* ── Training readiness (full width) ─────────────────── */}
+          <ChartPanel
+            title="Training readiness"
+            sublabel={`last ${days}d`}
+            accent={ACCENT}
+            legend={<>
+              <LegendSwatch color={POS}    label="High ≥75" />
+              <LegendSwatch color={ACCENT} label="Moderate 50–75" />
+              <LegendSwatch color={AMBER}  label="Low 25–50" />
+              <LegendSwatch color={NEG}    label="Poor <25" />
+            </>}
+          >
+                <ResponsiveContainer width="100%" height={220}>
+                  <LineChart data={readinessData} margin={chartMargin}>
+                    <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
+                    <XAxis {...xAxisProps} />
+                    <YAxis {...yAxisProps} domain={[0, 100]} />
+                    <Tooltip {...tooltipProps} formatter={(v: unknown) => [`${displayNum(v)}/100`, 'Readiness']} />
+                    <ReferenceArea y1={0}  y2={25}  fill={NEG}    fillOpacity={0.10} />
+                    <ReferenceArea y1={25} y2={50}  fill={AMBER}  fillOpacity={0.08} />
+                    <ReferenceArea y1={50} y2={75}  fill={ACCENT} fillOpacity={0.06} />
+                    <ReferenceArea y1={75} y2={100} fill={POS}    fillOpacity={0.10} />
+                    <Line type="monotone" dataKey="score"
+                      stroke={isLight ? '#475569' : '#cbd5e1'} strokeOpacity={0.55}
+                      strokeWidth={1.5}
+                      isAnimationActive={false}
+                      dot={(props: unknown) => {
+                        const dot = dotProps(props)
+                        if (!dot) return <g />
+                        const v = num(dot.payload.score)
+                        if (v == null) return <g />
+                        const c = readinessZoneColor(v)
+                        return <circle cx={dot.cx} cy={dot.cy} r={3.5}
+                          fill={c} stroke={c} strokeWidth={1.5} />
+                      }}
+                      activeDot={(props: unknown) => {
+                        const dot = dotProps(props)
+                        const v = num(dot?.payload.score) ?? 0
+                        const c = readinessZoneColor(v)
+                        return dot ? <circle cx={dot.cx} cy={dot.cy} r={5} fill={c} stroke={c} /> : <g />
+                      }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </ChartPanel>
+
+          {/* ── ACWR + Recovery time ─────────────────────────────── */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <ChartPanel
+              title="ACWR (acute / chronic load)" sublabel={`last ${days}d`} accent={ACCENT}
+              legend={<>
+                <LegendSwatch color={POS}    label="Sweet 0.8–1.3" />
+                <LegendSwatch color={AMBER}  label="Caution" />
+                <LegendSwatch color={NEG}    label="Risk" />
+              </>}
+            >
+              {acwrData.length === 0 ? (
+                <div className={clsx('flex items-center justify-center h-[200px] text-xs', isLight ? 'text-gray-400' : 'text-gray-500')}>
+                  No ACWR readings in this window
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={200}>
+                  <LineChart data={acwrData} margin={chartMargin}>
+                    <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
+                    <XAxis {...xAxisProps} />
+                    <YAxis {...yAxisProps} domain={[0, 'dataMax + 0.3']}
+                      tickFormatter={(v) => v.toFixed(1)} />
+                    <Tooltip {...tooltipProps}
+                      formatter={(v: unknown) => [displayNum(v).toFixed(2), 'ACWR']} />
+                    {/* ACWR risk bands */}
+                    <ReferenceArea y1={0}    y2={0.5} fill={NEG}   fillOpacity={0.10} />
+                    <ReferenceArea y1={0.5}  y2={0.8} fill={AMBER} fillOpacity={0.08} />
+                    <ReferenceArea y1={0.8}  y2={1.3} fill={POS}   fillOpacity={0.10} />
+                    <ReferenceArea y1={1.3}  y2={1.5} fill={AMBER} fillOpacity={0.08} />
+                    <ReferenceArea y1={1.5}  y2={99}  fill={NEG}   fillOpacity={0.12} />
+                    <Line type="monotone" dataKey="ratio"
+                      stroke={isLight ? '#475569' : '#cbd5e1'} strokeOpacity={0.55}
+                      strokeWidth={1.5}
+                      isAnimationActive={false}
+                      dot={(props: unknown) => {
+                        const dot = dotProps(props)
+                        if (!dot) return <g />
+                        const v = num(dot.payload.ratio)
+                        if (v == null) return <g />
+                        const c = acwrZoneColor(v)
+                        return <circle cx={dot.cx} cy={dot.cy} r={3.5}
+                          fill={c} stroke={c} strokeWidth={1.5} />
+                      }}
+                      activeDot={(props: unknown) => {
+                        const dot = dotProps(props)
+                        const v = num(dot?.payload.ratio) ?? 0
+                        const c = acwrZoneColor(v)
+                        return dot ? <circle cx={dot.cx} cy={dot.cy} r={5} fill={c} stroke={c} /> : <g />
+                      }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </ChartPanel>
+
+            <ChartPanel
+              title="Recovery time needed" sublabel={`last ${days}d`} accent={ACCENT}
+              legend={<>
+                <LegendSwatch color={POS}    label="≤12h" />
+                <LegendSwatch color={ACCENT} label="12–24h" />
+                <LegendSwatch color={AMBER}  label="24–48h" />
+                <LegendSwatch color={NEG}    label=">48h" />
+              </>}
+            >
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={recoveryData} margin={chartMargin}>
+                  <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
+                  <XAxis {...xAxisProps} />
+                  <YAxis {...yAxisProps} tickFormatter={(v) => `${Math.round(v)}h`} />
+                  <Tooltip {...tooltipProps}
+                    formatter={(v: unknown) => [`${displayNum(v).toFixed(1)}h`, 'Recovery time']} />
+                  <ReferenceArea y1={0}  y2={12} fill={POS}    fillOpacity={0.08} />
+                  <ReferenceArea y1={12} y2={24} fill={ACCENT} fillOpacity={0.06} />
+                  <ReferenceArea y1={24} y2={48} fill={AMBER}  fillOpacity={0.08} />
+                  <ReferenceArea y1={48} y2={9999} fill={NEG}  fillOpacity={0.10} />
+                  <Bar dataKey="recovery_h" isAnimationActive={false}>
+                    {recoveryData.map((entry, i) => (
+                      <Cell key={i} fill={entry.recovery_h != null ? recoveryZoneColor(entry.recovery_h) : ACCENT} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartPanel>
+          </div>
+
+          {/* ── Monthly training load (full width, own line) ─────── */}
+          <ChartPanel
+            title="Monthly training load"
+            sublabel={card.load?.feedback || 'current month'}
+            accent={ACCENT}
+          >
+            <div className="min-h-[220px]">
+              <LoadBalanceBars load={card.load} isLight={isLight} />
+            </div>
+          </ChartPanel>
+
+          <div className="section-head pt-2">
+            <span className="eyebrow">Sleep & overnight</span>
           </div>
 
           {/* ── Sleep stages + score line overlay ───────────────── */}
@@ -812,133 +974,10 @@ export default function GarminPage() {
             </ChartPanel>
           </div>
 
-          {/* ── Training readiness (full width) ─────────────────── */}
-          <ChartPanel
-            title="Training readiness" sublabel={`last ${days}d`} accent={ACCENT}
-            legend={<>
-              <LegendSwatch color={POS}    label="High ≥75" />
-              <LegendSwatch color={ACCENT} label="Moderate 50–75" />
-              <LegendSwatch color={AMBER}  label="Low 25–50" />
-              <LegendSwatch color={NEG}    label="Poor <25" />
-            </>}
-          >
-                <ResponsiveContainer width="100%" height={220}>
-                  <LineChart data={readinessData} margin={chartMargin}>
-                    <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
-                    <XAxis {...xAxisProps} />
-                    <YAxis {...yAxisProps} domain={[0, 100]} />
-                    <Tooltip {...tooltipProps} formatter={(v: unknown) => [`${displayNum(v)}/100`, 'Readiness']} />
-                    <ReferenceArea y1={0}  y2={25}  fill={NEG}    fillOpacity={0.10} />
-                    <ReferenceArea y1={25} y2={50}  fill={AMBER}  fillOpacity={0.08} />
-                    <ReferenceArea y1={50} y2={75}  fill={ACCENT} fillOpacity={0.06} />
-                    <ReferenceArea y1={75} y2={100} fill={POS}    fillOpacity={0.10} />
-                    <Line type="monotone" dataKey="score"
-                      stroke={isLight ? '#475569' : '#cbd5e1'} strokeOpacity={0.55}
-                      strokeWidth={1.5}
-                      isAnimationActive={false}
-                      dot={(props: unknown) => {
-                        const dot = dotProps(props)
-                        if (!dot) return <g />
-                        const v = num(dot.payload.score)
-                        if (v == null) return <g />
-                        const c = readinessZoneColor(v)
-                        return <circle cx={dot.cx} cy={dot.cy} r={3.5}
-                          fill={c} stroke={c} strokeWidth={1.5} />
-                      }}
-                      activeDot={(props: unknown) => {
-                        const dot = dotProps(props)
-                        const v = num(dot?.payload.score) ?? 0
-                        const c = readinessZoneColor(v)
-                        return dot ? <circle cx={dot.cx} cy={dot.cy} r={5} fill={c} stroke={c} /> : <g />
-                      }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </ChartPanel>
-
-          {/* ── ACWR + Recovery time ─────────────────────────────── */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <ChartPanel
-              title="ACWR (acute / chronic load)" sublabel={`last ${days}d`} accent={ACCENT}
-              legend={<>
-                <LegendSwatch color={POS}    label="Sweet 0.8–1.3" />
-                <LegendSwatch color={AMBER}  label="Caution" />
-                <LegendSwatch color={NEG}    label="Risk" />
-              </>}
-            >
-              {acwrData.length === 0 ? (
-                <div className={clsx('flex items-center justify-center h-[200px] text-xs', isLight ? 'text-gray-400' : 'text-gray-500')}>
-                  No ACWR readings in this window
-                </div>
-              ) : (
-                <ResponsiveContainer width="100%" height={200}>
-                  <LineChart data={acwrData} margin={chartMargin}>
-                    <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
-                    <XAxis {...xAxisProps} />
-                    <YAxis {...yAxisProps} domain={[0, 'dataMax + 0.3']}
-                      tickFormatter={(v) => v.toFixed(1)} />
-                    <Tooltip {...tooltipProps}
-                      formatter={(v: unknown) => [displayNum(v).toFixed(2), 'ACWR']} />
-                    {/* ACWR risk bands */}
-                    <ReferenceArea y1={0}    y2={0.5} fill={NEG}   fillOpacity={0.10} />
-                    <ReferenceArea y1={0.5}  y2={0.8} fill={AMBER} fillOpacity={0.08} />
-                    <ReferenceArea y1={0.8}  y2={1.3} fill={POS}   fillOpacity={0.10} />
-                    <ReferenceArea y1={1.3}  y2={1.5} fill={AMBER} fillOpacity={0.08} />
-                    <ReferenceArea y1={1.5}  y2={99}  fill={NEG}   fillOpacity={0.12} />
-                    <Line type="monotone" dataKey="ratio"
-                      stroke={isLight ? '#475569' : '#cbd5e1'} strokeOpacity={0.55}
-                      strokeWidth={1.5}
-                      isAnimationActive={false}
-                      dot={(props: unknown) => {
-                        const dot = dotProps(props)
-                        if (!dot) return <g />
-                        const v = num(dot.payload.ratio)
-                        if (v == null) return <g />
-                        const c = acwrZoneColor(v)
-                        return <circle cx={dot.cx} cy={dot.cy} r={3.5}
-                          fill={c} stroke={c} strokeWidth={1.5} />
-                      }}
-                      activeDot={(props: unknown) => {
-                        const dot = dotProps(props)
-                        const v = num(dot?.payload.ratio) ?? 0
-                        const c = acwrZoneColor(v)
-                        return dot ? <circle cx={dot.cx} cy={dot.cy} r={5} fill={c} stroke={c} /> : <g />
-                      }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              )}
-            </ChartPanel>
-
-            <ChartPanel
-              title="Recovery time needed" sublabel={`last ${days}d`} accent={ACCENT}
-              legend={<>
-                <LegendSwatch color={POS}    label="≤12h" />
-                <LegendSwatch color={ACCENT} label="12–24h" />
-                <LegendSwatch color={AMBER}  label="24–48h" />
-                <LegendSwatch color={NEG}    label=">48h" />
-              </>}
-            >
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={recoveryData} margin={chartMargin}>
-                  <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
-                  <XAxis {...xAxisProps} />
-                  <YAxis {...yAxisProps} tickFormatter={(v) => `${Math.round(v)}h`} />
-                  <Tooltip {...tooltipProps}
-                    formatter={(v: unknown) => [`${displayNum(v).toFixed(1)}h`, 'Recovery time']} />
-                  <ReferenceArea y1={0}  y2={12} fill={POS}    fillOpacity={0.08} />
-                  <ReferenceArea y1={12} y2={24} fill={ACCENT} fillOpacity={0.06} />
-                  <ReferenceArea y1={24} y2={48} fill={AMBER}  fillOpacity={0.08} />
-                  <ReferenceArea y1={48} y2={9999} fill={NEG}  fillOpacity={0.10} />
-                  <Bar dataKey="recovery_h" isAnimationActive={false}>
-                    {recoveryData.map((entry, i) => (
-                      <Cell key={i} fill={entry.recovery_h != null ? recoveryZoneColor(entry.recovery_h) : ACCENT} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </ChartPanel>
-          </div>
-
           {/* ── Stress + Body battery ────────────────────────────── */}
+          <div className="section-head pt-2">
+            <span className="eyebrow">Stress & energy</span>
+          </div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <ChartPanel title="Stress" sublabel={`last ${days}d`} accent={ACCENT}
               legend={<>
@@ -1052,6 +1091,9 @@ export default function GarminPage() {
           </ChartPanel>
 
           {/* ── Steps ─────────────────────────────────────────────── */}
+          <div className="section-head pt-2">
+            <span className="eyebrow">Movement</span>
+          </div>
           <ChartPanel
             title="Daily steps" sublabel={`last ${days}d`} accent={ACCENT}
             legend={<>
@@ -1219,16 +1261,6 @@ export default function GarminPage() {
             )}
           </ChartPanel>
 
-          {/* ── Monthly training load (full width, own line) ─────── */}
-          <ChartPanel
-            title="Monthly training load"
-            sublabel={card.load?.feedback || 'current month'}
-            accent={ACCENT}
-          >
-            <div className="min-h-[220px]">
-              <LoadBalanceBars load={card.load} isLight={isLight} />
-            </div>
-          </ChartPanel>
         </>
       )}
     </div>

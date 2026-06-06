@@ -142,6 +142,7 @@ def sync_status(si: StravaIntelligence = Depends(get_si)):
     return {
         "syncing": syncing,
         "last_error": last_error,
+        "last_sync_at": cache.get_last_sync_time().isoformat() if cache.get_last_sync_time() else None,
         "total_activities": cache.count_cached_activities(),
         "needs_sync": cache.needs_sync(),
         "last_activity_date": str(cache.get_last_activity_date()) if cache.get_last_activity_date() else None,
