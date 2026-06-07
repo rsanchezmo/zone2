@@ -232,3 +232,24 @@ def extract(metric: str, payload: Any) -> dict[str, Any] | None:
         logger.warning("Garmin summary extract failed for %s: %s: %s",
                        metric, type(e).__name__, e)
         return None
+
+
+def is_finalized(metric: str, payload: Any) -> bool:
+    """Has a stable overnight metric (sleep/hrv) been scored for the night yet?
+
+    The morning auto-sync can fetch sleep/hrv before Garmin finishes processing
+    the night and persist an empty placeholder — sleep with no `sleepScores`,
+    hrv with no `hrvSummary`. Stable metrics are normally never re-fetched once
+    cached (GarminClient.STABLE_METRICS), so without this check that placeholder
+    sticks for good and the score never arrives. sync_day uses this to re-fetch a
+    present-but-unscored placeholder on a later same-day sync, then leaves it
+    alone once finalized. Non-stable metrics accumulate through the day rather
+    than landing as one nightly result, so they're always considered finalized."""
+    if metric == "sleep":
+        dto = (payload or {}).get("dailySleepDTO") or {}
+        return ((dto.get("sleepScores") or {}).get("overall") or {}).get("value") is not None
+    if metric == "hrv":
+        # A scored night always carries an hrvSummary object (some sub-values may
+        # be null on a genuine no-reading night); an early placeholder has none.
+        return bool((payload or {}).get("hrvSummary"))
+    return True

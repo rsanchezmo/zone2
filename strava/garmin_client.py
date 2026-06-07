@@ -91,8 +91,11 @@ class GarminClient:
     ALL_METRICS: tuple[str, ...] = METRICS_PER_DAY + METRICS_RANGE
 
     # Per-day metrics derived from a completed overnight sleep session: once
-    # they land in the morning they don't change for the rest of the day, so
-    # the sync fetches them once and never force-refreshes them. Everything
+    # they land *scored* in the morning they don't change for the rest of the
+    # day, so the sync fetches them once and never force-refreshes them. (An
+    # early sync can land before Garmin scores the night, writing an empty
+    # placeholder; sync_day re-pulls that until it finalizes — see is_finalized.)
+    # Everything
     # else in METRICS_PER_DAY accumulates through the day (steps, stress, HR,
     # intensity minutes, readiness) and is refreshed for recent days.
     #

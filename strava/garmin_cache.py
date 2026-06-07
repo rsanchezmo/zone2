@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from strava.garmin_client import GarminClient
-from strava.garmin_extractors import SUMMARY_METRICS, extract
+from strava.garmin_extractors import SUMMARY_METRICS, extract, is_finalized
 
 logger = logging.getLogger(__name__)
 
@@ -256,7 +256,9 @@ class GarminDailyStatsCache:
         watch uploads, so an idle watch means nothing changed; we detect that
         with a single user_summary read (it carries lastSyncTimestampGMT and is
         a metric we'd refresh anyway). The stable overnight metrics (sleep, hrv)
-        are never re-fetched once cached.
+        are never re-fetched once cached — except an unfinalized placeholder
+        fetched before Garmin scored the night, which is re-pulled on a later
+        same-day sync until it finalizes (see is_finalized).
         """
         if not self.client.enabled:
             return 0
@@ -280,6 +282,14 @@ class GarminDailyStatsCache:
                     m for m in self.client.METRICS_PER_DAY
                     if m in existing and m not in stable
                 ]
+            # A stable overnight metric cached before Garmin scored the night is
+            # an empty placeholder (see is_finalized). Re-fetch it until it
+            # finalizes; once scored it's never re-pulled again, since older days
+            # don't reach this refresh_intraday branch.
+            refresh_present += [
+                m for m in stable
+                if m in existing and not is_finalized(m, self.get(d, m))
+            ]
 
         to_fetch = [
             m for m in self.client.METRICS_PER_DAY
