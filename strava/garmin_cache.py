@@ -42,6 +42,7 @@ _BACKFILL_MAX_RUNTIME_S = 2 * 3600  # wall-clock backstop for a full backfill (r
 _STEPS_CHUNK_DAYS = 365
 _BODY_BATTERY_CHUNK_DAYS = 28
 _BODY_COMPOSITION_CHUNK_DAYS = 90
+_RACE_PREDICTIONS_CHUNK_DAYS = 28
 
 # Backfill floor detection scans body_battery (watch-only — ignores phone-step
 # history) backwards until this many consecutive days have no data, so a
@@ -344,6 +345,7 @@ class GarminDailyStatsCache:
             self._sync_chunked(start, end, self._sync_body_battery, _BODY_BATTERY_CHUNK_DAYS)
             + self._sync_chunked(start, end, self._sync_daily_steps, _STEPS_CHUNK_DAYS)
             + self._sync_chunked(start, end, self._sync_body_composition, _BODY_COMPOSITION_CHUNK_DAYS)
+            + self._sync_chunked(start, end, self._sync_race_predictions, _RACE_PREDICTIONS_CHUNK_DAYS)
         )
 
     def _sync_chunked(self, start: date_t, end: date_t, fn, chunk_days: int) -> int:
@@ -376,6 +378,17 @@ class GarminDailyStatsCache:
             d = entry.get("calendarDate")
             if d:
                 rows.append((str(d), "daily_steps", entry))
+        self.upsert_many(rows)
+        return len(rows)
+
+    def _sync_race_predictions(self, start: date_t, end: date_t) -> int:
+        data = self.client.fetch_race_predictions(start, end)
+        time.sleep(_PER_CALL_DELAY_S)
+        rows = []
+        for entry in data or []:
+            d = entry.get("calendarDate")
+            if d:
+                rows.append((str(d), "race_predictions", entry))
         self.upsert_many(rows)
         return len(rows)
 

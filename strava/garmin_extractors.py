@@ -180,6 +180,15 @@ def _extract_training_status(p: dict) -> dict[str, Any]:
     }
 
 
+def _extract_race_predictions(p: dict) -> dict[str, Any]:
+    return {
+        "time_5k_s": p.get("time5K"),
+        "time_10k_s": p.get("time10K"),
+        "time_half_s": p.get("timeHalfMarathon"),
+        "time_marathon_s": p.get("timeMarathon"),
+    }
+
+
 def _extract_spo2(p: dict) -> dict[str, Any]:
     return {
         "avg": p.get("averageSpO2"),
@@ -210,6 +219,7 @@ EXTRACTORS: dict[str, Any] = {
     "body_battery": _extract_body_battery,
     "daily_steps": _extract_daily_steps,
     "intensity_minutes": _extract_intensity_minutes,
+    "race_predictions": _extract_race_predictions,
     "user_summary": _extract_user_summary,
     "spo2": _extract_spo2,
     "respiration": _extract_respiration,

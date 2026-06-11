@@ -87,6 +87,7 @@ class GarminClient:
         "body_battery",
         "daily_steps",
         "body_composition",
+        "race_predictions",
     )
     ALL_METRICS: tuple[str, ...] = METRICS_PER_DAY + METRICS_RANGE
 
@@ -230,6 +231,11 @@ class GarminClient:
     def fetch_body_composition(self, start, end):
         """Returns dict with `dateWeightList`. Empty for users without an Index scale."""
         return self._call("get_body_composition", self._iso(start), self._iso(end))
+
+    def fetch_race_predictions(self, start, end):
+        """Returns list[dict] — Garmin's race predictor (time5K/time10K/
+        timeHalfMarathon/timeMarathon, seconds), one entry per day."""
+        return self._call("get_race_predictions", self._iso(start), self._iso(end), "daily") or []
 
     # ------------------------------------------------------------------ orchestration
 

@@ -561,23 +561,24 @@ def race_predictions(
 @router.get("/race-predictions/window-inputs")
 def race_predictions_window_inputs(
     sport_category: str = Query(default="running"),
-    end_date: str = Query(..., description="ISO date (YYYY-MM-DD); window is 168d ending at this date"),
+    end_date: str = Query(..., description="ISO date (YYYY-MM-DD); window is 365d ending at this date"),
     si: StravaIntelligence = Depends(get_si),
 ):
     """Debug: return the raw per-distance bests that feed the race-prediction
-    model for the 24-week window ending at `end_date`. Useful to explain
+    model for the 52-week window ending at `end_date`. Useful to explain
     visible features in the evolution chart (spikes, plateaus, etc.)."""
     import pandas as pd
     end_ts = pd.Timestamp(end_date, tz="UTC") if "T" not in end_date else pd.Timestamp(end_date)
     if end_ts.tz is None:
         end_ts = end_ts.tz_localize("UTC")
+    window_days = si.strava_analytics.PREDICTIONS_WINDOW_DAYS
     bests = si.strava_analytics._recent_best_efforts_list(
-        sport_category, within_days=365, end_date=end_ts.to_pydatetime()
+        sport_category, within_days=window_days, end_date=end_ts.to_pydatetime()
     )
     return {
         "sport_category": sport_category,
         "end_date": str(end_ts.date()),
-        "window_days": 365,
+        "window_days": window_days,
         "bests": bests,
     }
 

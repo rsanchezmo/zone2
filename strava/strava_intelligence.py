@@ -22,11 +22,10 @@ class StravaIntelligence:
         self.strava_endpoint = StravaEndpoint()
         self.strava_activities_cache = StravaActivitiesCache()
         self.strava_user_cache = StravaUserCache(self.strava_endpoint)
-        self.strava_analytics = StravaAnalytics(self.strava_activities_cache, self.strava_user_cache)
-        self.strava_visualizer = StravaVisualizer(self.strava_analytics, workdir)
 
         # Optional Garmin Connect integration — disabled if env vars missing
-        # or login fails. Never raises during construction.
+        # or login fails. Never raises during construction. Built before
+        # analytics so measured resting HR / VO2max can feed the estimates.
         garmin_token_dir = Path(os.environ.get("GARMINTOKENS", ".strava/garmin"))
         self.garmin_client = GarminClient(
             email=os.environ.get("GARMIN_EMAIL"),
@@ -34,6 +33,12 @@ class StravaIntelligence:
             token_dir=garmin_token_dir,
         )
         self.garmin_cache = GarminDailyStatsCache(self.garmin_client)
+
+        self.strava_analytics = StravaAnalytics(
+            self.strava_activities_cache, self.strava_user_cache,
+            garmin_cache=self.garmin_cache,
+        )
+        self.strava_visualizer = StravaVisualizer(self.strava_analytics, workdir)
 
         if auto_sync and self.strava_activities_cache.needs_sync(max_age_hours=sync_max_age_hours):
             # only enable include_streams on full sync to avoid long sync times on incremental syncs
