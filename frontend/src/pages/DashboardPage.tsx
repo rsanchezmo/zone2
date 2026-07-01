@@ -6,6 +6,7 @@ import { formatSpeed, formatDist, formatDistAxis, distValue, getDistUnit } from 
 import StatCard from '../components/shared/StatCard'
 import ExportButton from '../components/shared/ExportButton'
 import ChartPanel, { LegendSwatch } from '../components/shared/ChartPanel'
+import RelativeEffortChart from '../components/shared/RelativeEffortChart'
 import GoalRing from '../components/shared/GoalRing'
 import PageHeader from '../components/shared/PageHeader'
 import {
@@ -545,6 +546,9 @@ export default function DashboardPage() {
           })()}
         </ChartPanel>
       )}
+
+      {/* ── Relative effort — run/swim only; hides itself for other sports ── */}
+      <RelativeEffortChart sportType={mainSport} />
 
       {/* ── Sport breakdown + Records ──────────────────── */}
       {!yearLoading && yearData && (

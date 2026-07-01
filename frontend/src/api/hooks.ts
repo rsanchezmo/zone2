@@ -212,6 +212,16 @@ export function useTrainingLoad(startDate?: string, endDate?: string) {
   });
 }
 
+export function useWeeklyRelativeEffort(sportType?: string) {
+  return useQuery({
+    queryKey: ['relative-effort-weekly', sportType],
+    queryFn: () =>
+      api.get('/stats/relative-effort/weekly', { params: { sport_type: sportType } }).then(r => r.data),
+    staleTime: 1000 * 60 * 15,
+    placeholderData: keepPreviousData,
+  });
+}
+
 export function useFitnessChart(startDate?: string, endDate?: string) {
   return useQuery({
     queryKey: ['fitness-chart', startDate, endDate],

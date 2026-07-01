@@ -9,6 +9,7 @@ from backend._ttl_cache import TTLCache
 from backend.db import get_db
 from backend.dependencies import get_si
 from backend.services.zones import resolve_hr_zones
+from backend.services.resting_hr import resolve_resting_hr
 from strava.strava_intelligence import StravaIntelligence
 from strava.strava_utils import convert_speed, get_sport_category
 
@@ -631,6 +632,45 @@ async def training_load(
             filtered = [d for d in filtered if d["date"] <= end_date]
         return {"data": filtered}
     return {"data": data}
+
+
+@router.get("/relative-effort/weekly")
+async def relative_effort_weekly(
+    sport_type: str | None = None,
+    si: StravaIntelligence = Depends(get_si),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Weekly Relative Effort with a personalized expected-range band, using the
+    user-resolved HR zones and resting HR.
+
+    Relative Effort is only meaningful for running/swimming. With no sport_type
+    the two are combined; with a sport_type its category is used when it's run or
+    swim, otherwise an empty series is returned (so the UI can hide the chart)."""
+    if sport_type:
+        cat = get_sport_category(sport_type)
+        sports = (cat,) if cat in si.strava_analytics.RE_SPORTS else ()
+    else:
+        sports = si.strava_analytics.RE_SPORTS
+
+    resolved_zones = await resolve_hr_zones(si, db)
+    resolved_rhr = await resolve_resting_hr(si, db)
+    key = (
+        "relative_effort_weekly",
+        sport_type or "",
+        _zones_signature(resolved_zones["zones"]),
+        round(resolved_rhr["value"], 1),
+        si.strava_activities_cache.cache_version,
+    )
+    cached = _stats_cache.get(key)
+    if cached is not None:
+        return cached
+    result = si.strava_analytics.get_weekly_relative_effort(
+        hr_zones=resolved_zones["zones"],
+        hr_rest=resolved_rhr["value"],
+        sports=sports,
+    )
+    _stats_cache.set(key, result)
+    return result
 
 
 @router.get("/fitness-chart")

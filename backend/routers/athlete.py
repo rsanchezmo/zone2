@@ -16,6 +16,11 @@ from backend.services.zones import (
     resolve_hr_zones,
     set_setting,
 )
+from backend.services.resting_hr import (
+    DEFAULT_SOURCE as RHR_DEFAULT_SOURCE,
+    Source as RestingHrSource,
+    resolve_resting_hr,
+)
 from strava.strava_intelligence import StravaIntelligence
 
 logger = logging.getLogger(__name__)
@@ -111,7 +116,60 @@ async def update_zones_settings(
 
     # Drop caches so downstream analytics rebuild against the new source.
     si.strava_analytics._hr_zones_cache = None
-    si.strava_analytics._training_load_cache = None
+    si.strava_analytics._training_load_cache = {}
+    clear_stats_cache()
+    clear_export_cache()
+
+    return {"source": payload.source}
+
+
+@router.get("/resting-hr")
+async def get_resting_hr(
+    si: StravaIntelligence = Depends(get_si),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Return the resting HR using the user-selected source (garmin / manual / estimated)."""
+    resolved = await resolve_resting_hr(si, db)
+    return {
+        "value": resolved["value"],
+        "source": resolved["source"],
+        "requested_source": resolved["requested_source"],
+        "fallback_reason": resolved["fallback_reason"],
+    }
+
+
+class RestingHrSettings(BaseModel):
+    source: RestingHrSource
+    manual_resting_hr: float | None = Field(default=None, ge=25, le=120)
+
+
+@router.get("/resting-hr-settings")
+async def get_resting_hr_settings(db: aiosqlite.Connection = Depends(get_db)):
+    source = (await get_setting(db, "resting_hr_source")) or RHR_DEFAULT_SOURCE
+    raw = await get_setting(db, "manual_resting_hr")
+    manual = None
+    if raw:
+        try:
+            manual = float(raw)
+        except (TypeError, ValueError):
+            manual = None
+    return {"source": source, "manual_resting_hr": manual}
+
+
+@router.put("/resting-hr-settings")
+async def update_resting_hr_settings(
+    payload: RestingHrSettings,
+    db: aiosqlite.Connection = Depends(get_db),
+    si: StravaIntelligence = Depends(get_si),
+):
+    if payload.manual_resting_hr is not None:
+        await set_setting(db, "manual_resting_hr", str(payload.manual_resting_hr))
+    await set_setting(db, "resting_hr_source", payload.source)
+
+    # Resting HR feeds daily TRIMP → PMC / fitness trend / relative effort.
+    si.strava_analytics._training_load_cache = {}
+    si.strava_analytics._pmc_cache = {}
+    si.strava_analytics._fitness_trend_cache = {}
     clear_stats_cache()
     clear_export_cache()
 

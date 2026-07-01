@@ -53,7 +53,7 @@ class StravaAnalytics:
         self._hr_zones_cache = None
         self._race_predictions_cache: dict = {}
         self._race_residuals_cache: dict[str, list] = {}
-        self._training_load_cache = None
+        self._training_load_cache: dict = {}
         self._pmc_cache: dict = {}
         self._fitness_trend_cache: dict = {}
         # Per-activity best efforts table per sport category — computed once
@@ -99,7 +99,7 @@ class StravaAnalytics:
         self._hr_zones_cache = None
         self._race_predictions_cache = {}
         self._race_residuals_cache = {}
-        self._training_load_cache = None
+        self._training_load_cache = {}
         self._pmc_cache = {}
         self._fitness_trend_cache = {}
         self._per_activity_bests_cache = {}
@@ -1643,26 +1643,35 @@ class StravaAnalytics:
 
     # ── Training Load & PMC ───────────────────────────────────────────
 
-    def get_daily_training_load(self, hr_zones: list | None = None) -> list[dict]:
+    def get_daily_training_load(self, hr_zones: list | None = None, hr_rest: float | None = None) -> list[dict]:
         """Compute daily TRIMP values from all activities.
 
         hr_zones: optional zones override (e.g. resolved from user settings).
-                  When provided, bypasses the in-memory cache so callers can
-                  force a recompute against different zone definitions.
-        """
-        use_cache = hr_zones is None
-        if use_cache and self._training_load_cache is not None:
-            return self._training_load_cache
+        hr_rest:  optional resting-HR override (e.g. resolved from user settings).
 
+        Results are memoized per distinct (resting HR, max HR, zones) key, so
+        every caller — PMC, /training-load, weekly Relative Effort, any sport —
+        reuses one full-cache scan instead of recomputing the stream-heavy TRIMP.
+        Cleared by invalidate_caches() after a sync.
+        """
         hr_max = self.get_max_heart_rate()
-        hr_rest = self.get_rest_heart_rate()
+        if hr_rest is None:
+            hr_rest = self.get_rest_heart_rate()
         if hr_zones is None:
             hr_zones = self._get_hr_zones_cached()
 
+        cache_key = (
+            round(float(hr_rest), 1),
+            round(float(hr_max), 1),
+            tuple((z.get('min'), z.get('max')) for z in (hr_zones or [])),
+        )
+        cached = self._training_load_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         activities = self._get_prepared_activities()
         if activities.empty:
-            if use_cache:
-                self._training_load_cache = []
+            self._training_load_cache[cache_key] = []
             return []
 
         # Drop rows that can't contribute a TRIMP value up-front so we only do
@@ -1672,8 +1681,7 @@ class StravaAnalytics:
         mask = hr.notna() & (hr > 0) & mt.notna() & (mt > 0)
         valid = activities[mask]
         if valid.empty:
-            if use_cache:
-                self._training_load_cache = []
+            self._training_load_cache[cache_key] = []
             return []
 
         # Vectorized Banister TRIMP across all valid rows — replaces the
@@ -1739,9 +1747,68 @@ class StravaAnalytics:
             })
 
         result = sorted(daily.values(), key=lambda d: d["date"])
-        if use_cache:
-            self._training_load_cache = result
+        self._training_load_cache[cache_key] = result
         return result
+
+    # Cosmetic multiplier so weekly Relative Effort reads in a Strava-like
+    # range. The band is derived from the same scaled series, so status
+    # (below / in / above range) is invariant to this constant.
+    RE_DISPLAY_SCALE = 1.4
+    RE_SPORTS: tuple[str, ...] = ("running", "swimming")
+
+    def get_weekly_relative_effort(
+        self,
+        hr_zones: list | None = None,
+        hr_rest: float | None = None,
+        sports: tuple[str, ...] | None = None,
+        band_span: int = 6,
+        band_k: float = 0.6,
+    ) -> dict:
+        """Weekly Relative Effort with a personalized expected-range band.
+
+        Reuses per-activity TRIMP from get_daily_training_load (HR-zone-weighted
+        where streams exist, Banister avg-HR otherwise), keeps only `sports`,
+        sums per ISO week, and derives the band as EWMA ± band_k·rolling-std over
+        `band_span` weeks. Gap weeks are filled with 0 so rest weeks read as dips.
+        """
+        if sports is None:
+            sports = self.RE_SPORTS
+        daily = self.get_daily_training_load(hr_zones=hr_zones, hr_rest=hr_rest)
+        rows = [
+            (day["date"], act.get("trimp", 0.0))
+            for day in daily
+            for act in day.get("activities", [])
+            if get_sport_category(act.get("sport_type")) in sports
+        ]
+        if not rows:
+            return {"weeks": [], "scale": self.RE_DISPLAY_SCALE, "sports": list(sports)}
+
+        df = pd.DataFrame(rows, columns=["date", "trimp"])
+        df["date"] = pd.to_datetime(df["date"])
+        # Monday-anchored weeks: the start_time of a Sunday-ending period is Monday.
+        df["week"] = df["date"].dt.to_period("W-SUN").dt.start_time
+        weekly = df.groupby("week")["trimp"].sum() * self.RE_DISPLAY_SCALE
+        full_idx = pd.date_range(weekly.index.min(), weekly.index.max(), freq="W-MON")
+        weekly = weekly.reindex(full_idx, fill_value=0.0)
+
+        center = weekly.ewm(span=band_span).mean()
+        std = weekly.rolling(band_span, min_periods=2).std().fillna(0.0)
+        band_low = (center - band_k * std).clip(lower=0.0)
+        band_high = center + band_k * std
+
+        weeks = [
+            {
+                "week_start": ts.strftime("%Y-%m-%d"),
+                "relative_effort": float(round(re_val)),
+                "band_low": float(round(lo)),
+                "band_high": float(round(hi)),
+                "status": "below" if re_val < lo else ("above" if re_val > hi else "in_range"),
+            }
+            for ts, re_val, lo, hi in zip(
+                weekly.index, weekly.to_numpy(), band_low.to_numpy(), band_high.to_numpy()
+            )
+        ]
+        return {"weeks": weeks, "scale": self.RE_DISPLAY_SCALE, "sports": list(sports)}
 
     def get_pmc_chart(self, start_date: str | None = None, end_date: str | None = None) -> dict:
         """Compute Performance Management Chart (CTL/ATL/TSB) from daily TRIMP."""
