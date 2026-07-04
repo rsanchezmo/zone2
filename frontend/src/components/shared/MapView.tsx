@@ -5,6 +5,7 @@ import 'leaflet/dist/leaflet.css'
 import type { LatLngBoundsExpression } from 'leaflet'
 import { useTheme } from '../../hooks/useTheme'
 import clsx from 'clsx'
+import { MapStyleToggle, SATELLITE_ACCENT, SATELLITE_ATTR, SATELLITE_TILES, type MapStyle } from './MapStyleToggle'
 
 function FitBounds({ positions }: { positions: [number, number][] }) {
   const map = useMap()
@@ -105,6 +106,7 @@ export default function MapView({ positions, color = '#ef4444', showMarkers = tr
   const isLight = theme === 'light'
   const [expanded, setExpanded] = useState(false)
   const [gradientMode, setGradientMode] = useState(false)
+  const [mapStyle, setMapStyle] = useState<MapStyle>('street')
   const hasVelocities = velocities && velocities.length === positions.length
 
   const startIcon = useMemo(() => createStartIcon(), [])
@@ -172,9 +174,13 @@ export default function MapView({ positions, color = '#ef4444', showMarkers = tr
   const center = positions[Math.floor(positions.length / 2)]
   const startPos = positions[0]
   const endPos = positions[positions.length - 1]
-  const tileUrl = theme === 'light'
-    ? 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
-    : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+  const tileUrl = mapStyle === 'satellite'
+    ? SATELLITE_TILES
+    : theme === 'light'
+      ? 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
+      : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+  const attribution = mapStyle === 'satellite' ? SATELLITE_ATTR : '&copy; CartoDB'
+  const routeColor = mapStyle === 'satellite' ? SATELLITE_ACCENT : color
 
   return (
     <div className={expanded ? 'fixed inset-0 z-50 w-screen h-screen' : 'relative h-full w-full'}>
@@ -185,8 +191,10 @@ export default function MapView({ positions, color = '#ef4444', showMarkers = tr
         zoomControl={false}
       >
         <TileLayer
-          attribution='&copy; CartoDB'
+          key={tileUrl}
+          attribution={attribution}
           url={tileUrl}
+          className={mapStyle === 'satellite' ? 'satellite-tiles' : undefined}
         />
         {gradientMode && gradientSegments.length > 0 ? (
           <>
@@ -216,7 +224,7 @@ export default function MapView({ positions, color = '#ef4444', showMarkers = tr
             <Polyline
               positions={positions}
               pathOptions={{
-                color,
+                color: routeColor,
                 weight: 3,
                 opacity: 0.9,
               }}
@@ -225,7 +233,7 @@ export default function MapView({ positions, color = '#ef4444', showMarkers = tr
             <Polyline
               positions={positions}
               pathOptions={{
-                color,
+                color: routeColor,
                 weight: 8,
                 opacity: 0.2,
               }}
@@ -284,6 +292,16 @@ export default function MapView({ positions, color = '#ef4444', showMarkers = tr
 
       {/* Map controls */}
       <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2">
+        {/* Street/satellite toggle */}
+        <MapStyleToggle
+          mapStyle={mapStyle}
+          onToggle={() => setMapStyle(s => (s === 'satellite' ? 'street' : 'satellite'))}
+          className={clsx(
+            'bg-surface-800/90 border border-surface-600 rounded-lg p-2 text-gray-400 hover:bg-surface-700 transition-colors backdrop-blur-sm',
+            isLight ? 'hover:text-gray-900' : 'hover:text-white'
+          )}
+        />
+
         {/* Gradient toggle */}
         {hasVelocities && (
           <button

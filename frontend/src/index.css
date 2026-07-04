@@ -37,6 +37,12 @@ body::before {
   font-variant-numeric: tabular-nums;
 }
 
+/* Satellite basemap dimming — raw imagery is bright enough that overlays
+   disappear into terrain. Light mode dims less since overlays already
+   contrast against the imagery's brightness. */
+.leaflet-tile-pane .satellite-tiles { filter: brightness(0.55) saturate(0.6) contrast(1.1); }
+.light .leaflet-tile-pane .satellite-tiles { filter: brightness(0.7) saturate(0.7); }
+
 /* Light mode overrides */
 .light {
   --color-surface-900: #fafafa;

@@ -10,6 +10,7 @@ import type { LatLngBoundsExpression } from 'leaflet'
 import ExportButton from '../components/shared/ExportButton'
 import { useTheme } from '../hooks/useTheme'
 import clsx from 'clsx'
+import { MapStyleToggle, SATELLITE_ATTR, SATELLITE_TILES, type MapStyle } from '../components/shared/MapStyleToggle'
 
 function FitAll({ bounds }: { bounds: [number, number][] }) {
   const map = useMap()
@@ -65,7 +66,14 @@ export default function AggregationsPage() {
   const [flyTarget, setFlyTarget] = useState<{ lat: number; lon: number; bbox: [number, number, number, number] } | null>(null)
   const [isGeocoding, setIsGeocoding] = useState(false)
   const [expanded, setExpanded] = useState(false)
+  const [mapStyle, setMapStyle] = useState<MapStyle>('street')
   const navigate = useNavigate()
+
+  const tileUrl = mapStyle === 'satellite'
+    ? SATELLITE_TILES
+    : isLight
+      ? 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
+      : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
 
   const { data: rawPolylines, isLoading } = usePolylines(
     sport || undefined,
@@ -186,10 +194,10 @@ export default function AggregationsPage() {
             zoomControl={false}
           >
             <TileLayer
-              attribution="&copy; CartoDB"
-              url={isLight
-                ? 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
-                : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'}
+              key={tileUrl}
+              attribution={mapStyle === 'satellite' ? SATELLITE_ATTR : '&copy; CartoDB'}
+              url={tileUrl}
+              className={mapStyle === 'satellite' ? 'satellite-tiles' : undefined}
             />
             {activities.map(a => {
               const color = getSportColor(a.sport_type)
@@ -296,27 +304,38 @@ export default function AggregationsPage() {
           />
         </div>
 
-        {/* ── Fullscreen toggle — top right ─────────── */}
-        <button
-          onClick={() => setExpanded(e => !e)}
-          className={clsx(
-            'absolute top-3 right-3 z-[1000] rounded-lg p-2 transition-colors',
-            overlayClass,
-            isLight ? 'text-gray-500 hover:text-gray-900' : 'text-gray-400 hover:text-gray-100',
-          )}
-          title={expanded ? 'Exit fullscreen' : 'Fullscreen'}
-          aria-label={expanded ? 'Exit fullscreen' : 'Enter fullscreen'}
-        >
-          {expanded ? (
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M6 2v4H2M10 14v-4h4M14 2l-4 4M2 14l4-4" />
-            </svg>
-          ) : (
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M2 6V2h4M14 10v4h-4M2 2l4 4M14 14l-4-4" />
-            </svg>
-          )}
-        </button>
+        {/* ── Map controls — top right ─────────────── */}
+        <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2">
+          <button
+            onClick={() => setExpanded(e => !e)}
+            className={clsx(
+              'rounded-lg p-2 transition-colors',
+              overlayClass,
+              isLight ? 'text-gray-500 hover:text-gray-900' : 'text-gray-400 hover:text-gray-100',
+            )}
+            title={expanded ? 'Exit fullscreen' : 'Fullscreen'}
+            aria-label={expanded ? 'Exit fullscreen' : 'Enter fullscreen'}
+          >
+            {expanded ? (
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M6 2v4H2M10 14v-4h4M14 2l-4 4M2 14l4-4" />
+              </svg>
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M2 6V2h4M14 10v4h-4M2 2l4 4M14 14l-4-4" />
+              </svg>
+            )}
+          </button>
+          <MapStyleToggle
+            mapStyle={mapStyle}
+            onToggle={() => setMapStyle(s => (s === 'satellite' ? 'street' : 'satellite'))}
+            className={clsx(
+              'rounded-lg p-2 transition-colors',
+              overlayClass,
+              isLight ? 'text-gray-500 hover:text-gray-900' : 'text-gray-400 hover:text-gray-100',
+            )}
+          />
+        </div>
       </div>
     </div>
   )
