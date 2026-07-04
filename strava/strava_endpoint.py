@@ -66,6 +66,7 @@ class StravaEndpoint:
     __ACTIVITY_URL = 'https://www.strava.com/api/v3/activities'
     __ATHLETE_URL = 'https://www.strava.com/api/v3/athlete'
     __ATHLETES_URL = 'https://www.strava.com/api/v3/athletes'
+    __GEAR_URL = 'https://www.strava.com/api/v3/gear'
     __OAUTH_TOKEN_URL = 'https://www.strava.com/oauth/token'
     __OAUTH_AUTHORIZE_URL = 'https://www.strava.com/oauth/authorize'
     __TOKEN_FILENAME = 'token.json'
@@ -461,6 +462,24 @@ class StravaEndpoint:
         self._check_rate_limit(response)
         if response.status_code != 200:
             logger.error("Failed to fetch detail for activity %s: %s", activity_id, response.text)
+            return None
+        return response.json()
+
+    def get_gear(self, gear_id: str) -> dict | None:
+        """
+        Fetch detailed info for a single gear item. Unlike /athlete, this also
+        works for retired gear, which Strava omits from the profile response.
+        """
+        self._ensure_rate_limit_budget()
+        headers = self.__get_headers()
+        response = self.__session.get(
+            f"{StravaEndpoint.__GEAR_URL}/{gear_id}",
+            headers=headers,
+            timeout=self.__REQUEST_TIMEOUT,
+        )
+        self._check_rate_limit(response)
+        if response.status_code != 200:
+            logger.error("Failed to fetch gear %s: %s", gear_id, response.text)
             return None
         return response.json()
 

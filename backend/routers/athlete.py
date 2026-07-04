@@ -29,7 +29,22 @@ router = APIRouter()
 
 @router.get("/profile")
 def get_athlete_profile(si: StravaIntelligence = Depends(get_si)):
-    return si.strava_user_cache.get_athlete_profile()
+    profile = dict(si.strava_user_cache.get_athlete_profile())
+
+    # Strava omits retired gear from /athlete, but activities still carry the
+    # gear_id — recover retired items via /gear/{id} and merge them in.
+    activities = si.strava_activities_cache.activities
+    if not activities.empty and "gear_id" in activities.columns:
+        shoes = list(profile.get("shoes") or [])
+        bikes = list(profile.get("bikes") or [])
+        known = {g["id"] for g in shoes + bikes}
+        missing = sorted(set(activities["gear_id"].dropna()) - known)
+        for gear in si.strava_user_cache.get_gear_details(missing).values():
+            (bikes if gear["id"].startswith("b") else shoes).append(gear)
+        profile["shoes"] = shoes
+        profile["bikes"] = bikes
+
+    return profile
 
 
 @router.get("/rate-limits")
