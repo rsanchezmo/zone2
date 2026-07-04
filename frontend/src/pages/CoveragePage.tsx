@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MapContainer, TileLayer, GeoJSON, Rectangle, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -6,7 +6,7 @@ import clsx from 'clsx'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   useCoverageCities, useCoverageEdges, useCoverageDistricts, useCoverageArea,
-  useCoverageSyncStatus, useTriggerCoverageSync,
+  useCoverageSyncStatus, useTriggerCoverageSync, useUncoveredEdges,
   type AreaCoverage, type DistrictCoverage,
 } from '../api/hooks'
 import { useTheme } from '../hooks/useTheme'
@@ -35,6 +35,26 @@ function FlyToBbox({ bbox }: { bbox: [number, number, number, number] | null }) 
     if (!bbox) return
     map.flyToBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: [30, 30], duration: 1.0 })
   }, [map, bbox])
+  return null
+}
+
+/** Report the viewport bbox (south,west,north,east) when zoomed in enough for
+ *  the uncovered-streets layer; payloads at city zoom would be the whole map. */
+const MISSING_MIN_ZOOM = 14
+
+function ViewportTracker({ onChange }: { onChange: (bbox: string | undefined) => void }) {
+  const map = useMap()
+  const report = useCallback(() => {
+    if (map.getZoom() < MISSING_MIN_ZOOM) {
+      onChange(undefined)
+      return
+    }
+    const b = map.getBounds()
+    const r = (x: number) => x.toFixed(4)
+    onChange(`${r(b.getSouth())},${r(b.getWest())},${r(b.getNorth())},${r(b.getEast())}`)
+  }, [map, onChange])
+  useMapEvents({ moveend: report, zoomend: report })
+  useEffect(report, [report])
   return null
 }
 
@@ -116,6 +136,10 @@ export default function CoveragePage() {
   const [areaRect, setAreaRect] = useState<L.LatLngBounds | null>(null)
   const [areaStats, setAreaStats] = useState<AreaCoverage | null>(null)
   const areaMutation = useCoverageArea(activeSlug)
+
+  const [showMissing, setShowMissing] = useState(false)
+  const [viewportBbox, setViewportBbox] = useState<string | undefined>(undefined)
+  const { data: uncovered } = useUncoveredEdges(activeSlug, showMissing ? viewportBbox : undefined)
 
   const syncMutation = useTriggerCoverageSync(activeSlug)
   const { data: syncStatus } = useCoverageSyncStatus(activeSlug, syncMutation.isSuccess)
@@ -217,6 +241,18 @@ export default function CoveragePage() {
             url={tileUrl}
             className={mapStyle === 'satellite' ? 'satellite-tiles' : undefined}
           />
+          {showMissing && uncovered && viewportBbox && (
+            <GeoJSON
+              key={`missing-${activeSlug}-${viewportBbox}`}
+              data={uncovered}
+              style={{
+                color: mapStyle === 'satellite' ? '#cbd5e1' : isLight ? '#94a3b8' : '#64748b',
+                weight: 1.2,
+                opacity: 0.55,
+                dashArray: '3 4',
+              }}
+            />
+          )}
           {edges && (
             <>
               {/* Glow underlay + bright core */}
@@ -225,6 +261,7 @@ export default function CoveragePage() {
               <FitToLayer data={edges} />
             </>
           )}
+          <ViewportTracker onChange={setViewportBbox} />
           {areaRect && (
             <Rectangle bounds={areaRect} pathOptions={{ color: '#22d3ee', weight: 1.5, fillOpacity: 0.06 }} />
           )}
@@ -309,6 +346,16 @@ export default function CoveragePage() {
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <rect x="3" y="3" width="10" height="10" rx="1" strokeDasharray="3 2" />
               <path d="M8 6v4M6 8h4" />
+            </svg>
+          </button>
+          <button
+            onClick={() => setShowMissing(m => !m)}
+            className={clsx(buttonClass, showMissing && '!text-slate-300 !border-slate-400/50')}
+            title={showMissing ? 'Hide missing streets' : 'Show missing streets (zoom in)'}
+            aria-label="Toggle missing streets"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M2 12c2-6 4 2 6-4s4 2 6-4" strokeDasharray="2.5 2" />
             </svg>
           </button>
           <button
@@ -398,10 +445,15 @@ export default function CoveragePage() {
           </div>
         )}
 
-        {/* ── Hint while selecting ─────────────────── */}
+        {/* ── Hints ────────────────────────────────── */}
         {selectMode && (
           <div className={clsx('absolute bottom-3 left-1/2 -translate-x-1/2 z-[1000] px-3 py-1.5 text-[11px]', overlayClass, isLight ? 'text-gray-600' : 'text-gray-300')}>
             Drag to select an area
+          </div>
+        )}
+        {showMissing && !viewportBbox && !selectMode && (
+          <div className={clsx('absolute bottom-3 left-1/2 -translate-x-1/2 z-[1000] px-3 py-1.5 text-[11px]', overlayClass, isLight ? 'text-gray-600' : 'text-gray-300')}>
+            Zoom in to reveal missing streets
           </div>
         )}
 

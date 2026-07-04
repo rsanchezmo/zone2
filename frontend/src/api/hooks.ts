@@ -757,3 +757,14 @@ export function useTriggerCoverageSync(slug?: string) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['coverage-sync-status', slug] }),
   });
 }
+
+export function useUncoveredEdges(slug?: string, bbox?: string) {
+  return useQuery({
+    queryKey: ['coverage-uncovered', slug, bbox],
+    queryFn: () =>
+      api.get(`/coverage/${slug}/edges`, { params: { covered: false, bbox } }).then(r => r.data),
+    enabled: !!slug && !!bbox,
+    staleTime: 5 * 60 * 1000,
+    placeholderData: keepPreviousData,
+  });
+}
