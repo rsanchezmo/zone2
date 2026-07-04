@@ -2,6 +2,7 @@ import logging
 import osmnx as ox
 from leuvenmapmatching.matcher.distance import DistanceMatcher
 from leuvenmapmatching.map.inmem import InMemMap
+from leuvenmapmatching.util import dist_euclidean as _dist_euclidean
 import geopandas as gpd
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -11,9 +12,77 @@ from shapely.geometry import LineString, MultiLineString, Point
 from shapely.ops import linemerge
 from shapely.prepared import prep
 import numpy as np
+from collections import defaultdict
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
+
+
+def _project(s1, s2, p, delta=0.0):
+    if abs(s1[0] - s2[0]) <= 1e-08 and abs(s1[1] - s2[1]) <= 1e-08:
+        return s1, 0.0
+    l2 = (s1[0] - s2[0]) ** 2 + (s1[1] - s2[1]) ** 2
+    t = max(delta, min(1 - delta,
+                       ((p[0] - s1[0]) * (s2[0] - s1[0]) + (p[1] - s1[1]) * (s2[1] - s1[1])) / l2))
+    return (s1[0] + t * (s2[0] - s1[0]), s1[1] + t * (s2[1] - s1[1])), t
+
+
+def _distance_segment_to_segment(f1, f2, t1, t2):
+    x1, y1 = f1
+    x2, y2 = f2
+    x3, y3 = t1
+    x4, y4 = t2
+    n = ((y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1))
+    if abs(n) <= 1e-08:
+        n = 0.0001  # parallel — simulates a point far away
+    u_f = ((x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)) / n
+    u_t = ((x2 - x1) * (y1 - y3) - (y2 - y1) * (x1 - x3)) / n
+    xi = x1 + u_f * (x2 - x1)
+    yi = y1 + u_f * (y2 - y1)
+    changed_f = False
+    changed_t = False
+    if u_t > 1:
+        u_t = 1
+        changed_t = True
+    elif u_t < 0:
+        u_t = 0
+        changed_t = True
+    if u_f > 1:
+        u_f = 1
+        changed_f = True
+    elif u_f < 0:
+        u_f = 0
+        changed_f = True
+    if not changed_t and not changed_f:
+        return 0, (xi, yi), (xi, yi), u_f, u_t
+    xf = x1 + u_f * (x2 - x1)
+    yf = y1 + u_f * (y2 - y1)
+    xt = x3 + u_t * (x4 - x3)
+    yt = y3 + u_t * (y4 - y3)
+    if changed_t and changed_f:
+        df = (xf - xi) ** 2 + (yf - yi) ** 2
+        dt = (xt - xi) ** 2 + (yt - yi) ** 2
+        if df > dt:
+            changed_t = False
+        else:
+            changed_f = False
+    if changed_t:
+        pt = (xt, yt)
+        pf, u_f = _project(f1, f2, pt)
+    else:
+        pf = (xf, yf)
+        pt, u_t = _project(t1, t2, pf)
+    d = _dist_euclidean.distance(pf, pt)
+    return d, pf, pt, u_f, u_t
+
+
+# leuvenmapmatching spends most of its matching time in np.isclose/np.allclose
+# called on scalars inside these two functions (~15µs of numpy dispatch per
+# call, >100k calls per activity). These drop-ins keep identical semantics
+# (atol=1e-8, rtol=0) with plain math. Must be installed before any map object
+# is built — the library binds them onto map instances at construction.
+_dist_euclidean.project = _project
+_dist_euclidean.distance_segment_to_segment = _distance_segment_to_segment
 
 
 @dataclass
@@ -180,22 +249,54 @@ class StravaMapMatcher:
             self.city_name, len(self._edges_gdf), len(self._nodes_gdf),
         )
 
+    def _matcher_map_name(self) -> str:
+        return f"{self.city_name.replace(', ', '_').lower()}_inmem"
+
     def _build_matcher_map(self):
         """
-        Build the InMemMap required for the DistanceMatcher from the loaded OSMnx graph.
-        Explicitly adds bidirectional edges to allow matching against traffic.
+        Build the InMemMap required for the DistanceMatcher, cached on disk.
+
+        The graph dict is built vectorized and handed to InMemMap whole so the
+        rtree is bulk-loaded from a generator instead of one insert per edge,
+        then persisted (pickle + file-based rtree) for fast reloads. Edges are
+        bidirectional to allow matching against traffic.
         """
-        map_con = InMemMap("osm_map", use_latlon=False, index_edges=True, use_rtree=True)
+        map_name = self._matcher_map_name()
+        pkl_path = self.workdir / f"{map_name}.pkl"
+        # setup_index() only reuses the on-disk rtree if this marker exists
+        # (the rtree itself lives in <map_name>.idx/.dat).
+        rtree_marker = self.workdir / map_name
 
-        for nid, row in self._nodes_gdf[['x', 'y']].iterrows():
-            map_con.add_node(nid, (row['x'], row['y']))
+        if pkl_path.exists() and rtree_marker.exists():
+            self._map_con = InMemMap.from_pickle(pkl_path)
+            logger.info("Loaded matcher map from %s", pkl_path)
+            return
 
-        for eid, row in self._edges_gdf.iterrows():
-            u, v = eid[0], eid[1]
-            map_con.add_edge(u, v)
-            map_con.add_edge(v, u)  # Bidirectional for running/walking/cycling
+        neighbors: dict[int, set[int]] = defaultdict(set)
+        us = self._edges_gdf.index.get_level_values(0).to_numpy().tolist()
+        vs = self._edges_gdf.index.get_level_values(1).to_numpy().tolist()
+        for u, v in zip(us, vs):
+            neighbors[u].add(v)
+            neighbors[v].add(u)
 
+        node_ids = self._nodes_gdf.index.to_numpy().tolist()
+        xs = self._nodes_gdf['x'].to_numpy().tolist()
+        ys = self._nodes_gdf['y'].to_numpy().tolist()
+        graph = {
+            nid: ((x, y), sorted(neighbors[nid]))
+            for nid, x, y in zip(node_ids, xs, ys)
+        }
+
+        # Stale rtree files would otherwise be reopened by the bulk loader
+        for suffix in ('.dat', '.idx'):
+            (self.workdir / (map_name + suffix)).unlink(missing_ok=True)
+
+        map_con = InMemMap(map_name, use_latlon=False, index_edges=True,
+                           use_rtree=True, dir=self.workdir, graph=graph)
+        map_con.dump()
+        rtree_marker.touch()
         self._map_con = map_con
+        logger.info("Built matcher map and cached to %s", pkl_path)
 
     def _load_map(self, force_reload: bool = False):
         """
@@ -231,6 +332,11 @@ class StravaMapMatcher:
             self._edges_gdf = edges_gdf
             self._nodes_gdf = nodes_gdf
             self._city_boundary = city_boundary_gdf
+
+            # Invalidate the cached matcher map — it derives from this graph
+            map_name = self._matcher_map_name()
+            for suffix in ('.pkl', '.dat', '.idx', ''):
+                (self.workdir / (map_name + suffix)).unlink(missing_ok=True)
 
     def _get_edge_geometry(self, u: int, v: int) -> LineString | None:
         """Look up the real OSM edge geometry for (u, v), trying reverse direction too."""
