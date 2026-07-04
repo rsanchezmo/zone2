@@ -220,6 +220,19 @@ class MatchResult:
 
 
 class StravaMapMatcher:
+    # Street classes that count as runnable — the matching target and the
+    # coverage denominator.
+    RUNNABLE_HIGHWAYS = {
+        'residential', 'living_street', 'pedestrian',
+        'primary', 'secondary', 'tertiary',
+        'primary_link', 'secondary_link', 'tertiary_link',
+        'unclassified', 'path', 'track', 'cycleway',
+    }
+    # Footway subtypes mapped as separate ways alongside a street; running
+    # the street covers them implicitly.
+    EXCLUDED_FOOTWAY_TYPES = {'sidewalk', 'crossing', 'traffic_island', 'access_aisle'}
+    EXCLUDED_ACCESS = {'private', 'no'}
+
     def __init__(self, city_name: str, workdir: Path, force_reload: bool = False):
         """
         Initialize the StravaMapMatcher with a specified city name.
@@ -250,7 +263,7 @@ class StravaMapMatcher:
         )
 
     def _matcher_map_name(self) -> str:
-        return f"{self.city_name.replace(', ', '_').lower()}_inmem"
+        return f"{self._slug()}_inmem"
 
     def _build_matcher_map(self):
         """
@@ -298,45 +311,110 @@ class StravaMapMatcher:
         self._map_con = map_con
         logger.info("Built matcher map and cached to %s", pkl_path)
 
+    def _slug(self) -> str:
+        return self.city_name.replace(', ', '_').lower()
+
+    @staticmethod
+    def _as_tags(val) -> set[str]:
+        """Normalize an OSM tag value (str, list, or gpkg-roundtripped
+        '[a, b]' string, or NaN) to a set of strings."""
+        if isinstance(val, (list, tuple)):
+            return {str(v) for v in val}
+        if val is None or (isinstance(val, float) and np.isnan(val)):
+            return set()
+        s = str(val)
+        if s.startswith('['):
+            return {c.strip(" '\"") for c in s.strip('[]').split(',')}
+        return {s}
+
+    def _filter_runnable(self, edges_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        """Reduce the raw OSM network to runnable streets.
+
+        This subset is both the matching target and the coverage denominator:
+        matching directly against it makes a sidewalk run snap to (and credit)
+        the street itself. Excluded: sidewalks and crossings mapped as
+        separate ways, motorways, service roads (parking aisles, driveways),
+        steps, and private-access ways.
+        """
+        def keep(highway, footway, access) -> bool:
+            if self._as_tags(access) & self.EXCLUDED_ACCESS:
+                return False
+            hw = self._as_tags(highway)
+            if hw & self.RUNNABLE_HIGHWAYS:
+                return True
+            if 'footway' in hw:
+                return not (self._as_tags(footway) & self.EXCLUDED_FOOTWAY_TYPES)
+            return False
+
+        footway_col = edges_gdf['footway'] if 'footway' in edges_gdf.columns else pd.Series(None, index=edges_gdf.index)
+        access_col = edges_gdf['access'] if 'access' in edges_gdf.columns else pd.Series(None, index=edges_gdf.index)
+        mask = [
+            keep(h, f, a)
+            for h, f, a in zip(edges_gdf['highway'], footway_col, access_col)
+        ]
+        return edges_gdf[mask]
+
     def _load_map(self, force_reload: bool = False):
+        """Load the runnable street network, downloading and slimming on first use.
+
+        The durable per-city artifacts are three small parquets (nodes with
+        coordinates, runnable edges with simplified geometry, city boundary)
+        instead of the full raw OSM dump — ~15 MB per city.
         """
-        Load the street network for the specified city using OSMnx.
-        """
-        filename = f"{self.city_name.replace(', ', '_').lower()}.gpkg"
-        filepath = self.workdir / filename
+        slug = self._slug()
+        nodes_fp = self.workdir / f"{slug}_nodes.parquet"
+        edges_fp = self.workdir / f"{slug}_edges.parquet"
+        boundary_fp = self.workdir / f"{slug}_boundary.parquet"
 
-        if filepath.exists() and not force_reload:
-            self._edges_gdf = gpd.read_file(filepath, layer='edges')
-            self._nodes_gdf = gpd.read_file(filepath, layer='nodes')
-            self._city_boundary = gpd.read_file(filepath, layer='city_boundary')
+        if not force_reload and nodes_fp.exists() and edges_fp.exists() and boundary_fp.exists():
+            self._edges_gdf = gpd.read_parquet(edges_fp).set_index(['u', 'v', 'key'])
+            nodes = pd.read_parquet(nodes_fp).set_index('osmid')
+            self._nodes_gdf = nodes  # type: ignore[assignment]
+            self._city_boundary = gpd.read_parquet(boundary_fp)
+            return
 
-            if 'u' in self._edges_gdf.columns and 'v' in self._edges_gdf.columns:
-                if 'key' in self._edges_gdf.columns:
-                    self._edges_gdf = self._edges_gdf.set_index(['u', 'v', 'key'])
-                else:
-                    self._edges_gdf = self._edges_gdf.set_index(['u', 'v'])
+        logger.info("Downloading map for %s from OSM...", self.city_name)
+        # The footway subtag distinguishes sidewalks/crossings (excluded)
+        # from real park paths (kept); it is not in osmnx defaults.
+        if 'footway' not in ox.settings.useful_tags_way:
+            ox.settings.useful_tags_way = list(ox.settings.useful_tags_way) + ['footway']
+        graph = ox.graph_from_place(self.city_name, network_type='all')
+        city_boundary = ox.geocode_to_gdf(self.city_name)
+        graph_proj = ox.project_graph(graph)
+        nodes_gdf, edges_gdf = ox.graph_to_gdfs(graph_proj, edges=True, nodes=True)
+        city_boundary_gdf = city_boundary.to_crs(edges_gdf.crs)
 
-            if 'osmid' in self._nodes_gdf.columns:
-                self._nodes_gdf = self._nodes_gdf.set_index('osmid')
-        else:
-            logger.info("Downloading map for %s from OSM...", self.city_name)
-            graph = ox.graph_from_place(self.city_name, network_type='all')
-            city_boundary = ox.geocode_to_gdf(self.city_name)
-            graph_proj = ox.project_graph(graph)
-            nodes_gdf, edges_gdf = ox.graph_to_gdfs(graph_proj, edges=True, nodes=True)
-            city_boundary_gdf = city_boundary.to_crs(edges_gdf.crs)
-            edges_gdf.to_file(filepath, layer='edges', driver='GPKG')
-            nodes_gdf.to_file(filepath, layer='nodes', driver='GPKG')
-            city_boundary_gdf.to_file(filepath, layer='city_boundary', driver='GPKG')
-            logger.info("Map for %s saved to %s", self.city_name, filepath)
-            self._edges_gdf = edges_gdf
-            self._nodes_gdf = nodes_gdf
-            self._city_boundary = city_boundary_gdf
+        edges_gdf = self._filter_runnable(edges_gdf)
+        used_nodes = set(edges_gdf.index.get_level_values(0)) | set(edges_gdf.index.get_level_values(1))
+        nodes_gdf = nodes_gdf[nodes_gdf.index.isin(used_nodes)]
 
-            # Invalidate the cached matcher map — it derives from this graph
-            map_name = self._matcher_map_name()
-            for suffix in ('.pkl', '.dat', '.idx', ''):
-                (self.workdir / (map_name + suffix)).unlink(missing_ok=True)
+        # Slim to what matching/coverage needs; 2m geometry tolerance is well
+        # below GPS accuracy.
+        slim_edges = edges_gdf.reset_index()[
+            [c for c in ('u', 'v', 'key', 'highway', 'name', 'footway', 'length', 'geometry')
+             if c in edges_gdf.reset_index().columns]
+        ].copy()
+        slim_edges['geometry'] = slim_edges['geometry'].simplify(2.0)
+        for col in ('highway', 'name', 'footway'):
+            if col in slim_edges.columns:
+                slim_edges[col] = slim_edges[col].apply(
+                    lambda v: str(v) if isinstance(v, (list, tuple)) else v)
+        slim_nodes = nodes_gdf.reset_index()[['osmid', 'x', 'y']]
+
+        slim_edges.to_parquet(edges_fp)
+        slim_nodes.to_parquet(nodes_fp)
+        city_boundary_gdf.to_parquet(boundary_fp)
+        logger.info("Runnable map for %s saved to %s (%d edges, %d nodes)",
+                    self.city_name, self.workdir, len(slim_edges), len(slim_nodes))
+
+        self._edges_gdf = slim_edges.set_index(['u', 'v', 'key'])
+        self._nodes_gdf = slim_nodes.set_index('osmid')  # type: ignore[assignment]
+        self._city_boundary = city_boundary_gdf
+
+        # Invalidate the cached matcher map — it derives from this graph
+        map_name = self._matcher_map_name()
+        for suffix in ('.pkl', '.dat', '.idx', ''):
+            (self.workdir / (map_name + suffix)).unlink(missing_ok=True)
 
     def _get_edge_geometry(self, u: int, v: int) -> LineString | None:
         """Look up the real OSM edge geometry for (u, v), trying reverse direction too."""
@@ -706,50 +784,115 @@ class StravaMapMatcher:
         return result_gdf, match_results
 
     # ------------------------------------------------------------------
-    # Coverage analysis
+    # Coverage analysis & incremental state
     # ------------------------------------------------------------------
 
-    def coverage_stats(
-        self, match_results: dict[int | str, MatchResult]
-    ) -> dict:
-        """Compute city-wide street coverage statistics.
+    def _state_paths(self) -> tuple[Path, Path]:
+        slug = self._slug()
+        return (self.workdir / f"{slug}_covered_edges.parquet",
+                self.workdir / f"{slug}_matched_activities.parquet")
 
-        Deduplicates edges across all matched activities (an edge traversed
-        ten times still counts as one) and computes the fraction of the
-        full network covered.
+    def matched_activity_ids(self) -> set:
+        """Ids of activities already matched (or attempted) against this city."""
+        _, meta_fp = self._state_paths()
+        if not meta_fp.exists():
+            return set()
+        return set(pd.read_parquet(meta_fp)['activity_id'])
 
-        Returns a dict with:
-            total_network_km   – total length of the OSM network in km
-            traversed_km       – unique edge length traversed in km
-            coverage_pct       – traversed / total * 100
-            num_unique_streets – number of unique undirected edges matched
-            _traversed_edge_set – set of (min(u,v), max(u,v)) for plot_coverage
+    def covered_edge_set(self) -> set[tuple[int, int]]:
+        """Unique undirected edges covered so far, from the persisted state."""
+        edges_fp, _ = self._state_paths()
+        if not edges_fp.exists():
+            return set()
+        df = pd.read_parquet(edges_fp)
+        return set(zip(df['u'].tolist(), df['v'].tolist()))
+
+    def save_match_state(
+        self,
+        match_results: dict[int | str, MatchResult],
+        attempted_ids: list | None = None,
+    ) -> None:
+        """Append per-activity covered edges to the persisted state.
+
+        Activities attempted but not matched are recorded with zero edges so
+        incremental runs don't retry them forever.
         """
-        # Collect unique undirected edges across all activities
-        traversed: set[tuple[int, int]] = set()
-        for result in match_results.values():
-            if result.matched_edges_gdf is None or result.matched_edges_gdf.empty:
-                continue
-            for _, row in result.matched_edges_gdf.iterrows():
-                u, v = int(row['edge_u']), int(row['edge_v'])
-                traversed.add((min(u, v), max(u, v)))
+        edges_fp, meta_fp = self._state_paths()
 
-        # Sum traversed edge lengths
-        traversed_length_m = 0.0
-        for u, v in traversed:
-            edge_row = self._get_edge_row(u, v)
-            if edge_row is not None and 'length' in edge_row.index:
-                traversed_length_m += float(edge_row['length'])
+        edge_rows = []
+        meta_rows = []
+        for aid, result in match_results.items():
+            keys: set[tuple[int, int]] = set()
+            if result.matched_edges_gdf is not None and not result.matched_edges_gdf.empty:
+                us = result.matched_edges_gdf['edge_u'].astype('int64')
+                vs = result.matched_edges_gdf['edge_v'].astype('int64')
+                keys = {(min(u, v), max(u, v)) for u, v in zip(us.tolist(), vs.tolist())}
+            edge_rows.extend({'activity_id': aid, 'u': u, 'v': v} for u, v in keys)
+            meta_rows.append({
+                'activity_id': aid,
+                'matched_at': pd.Timestamp.utcnow().isoformat(),
+                'num_edges': len(keys),
+                'coverage_pct': result.quality.get('coverage_pct'),
+            })
+        matched_ids = set(match_results.keys())
+        for aid in (attempted_ids or []):
+            if aid not in matched_ids:
+                meta_rows.append({
+                    'activity_id': aid,
+                    'matched_at': pd.Timestamp.utcnow().isoformat(),
+                    'num_edges': 0,
+                    'coverage_pct': 0.0,
+                })
 
-        # Total network length (undirected)
-        total_length_m = 0.0
-        seen: set[tuple[int, int]] = set()
-        for idx_tuple in self._edges_gdf.index:
-            u, v = idx_tuple[0], idx_tuple[1]
-            key = (min(u, v), max(u, v))
-            if key not in seen:
-                seen.add(key)
-                total_length_m += float(self._edges_gdf.loc[idx_tuple, 'length'])
+        if edge_rows:
+            new_edges = pd.DataFrame(edge_rows)
+            if edges_fp.exists():
+                new_edges = pd.concat([pd.read_parquet(edges_fp), new_edges], ignore_index=True)
+            new_edges.drop_duplicates(['activity_id', 'u', 'v']).to_parquet(edges_fp)
+        if meta_rows:
+            new_meta = pd.DataFrame(meta_rows)
+            if meta_fp.exists():
+                new_meta = pd.concat([pd.read_parquet(meta_fp), new_meta], ignore_index=True)
+            new_meta.drop_duplicates('activity_id', keep='last').to_parquet(meta_fp)
+
+    def match_incremental(self, activities: gpd.GeoDataFrame) -> dict:
+        """Match only activities not yet in the persisted state, then return
+        the updated coverage stats. This is the entry point for sync flows:
+        the backfill cost is paid once, each new activity costs one match.
+        """
+        done = self.matched_activity_ids()
+        todo = activities[~activities['id'].isin(done)] if 'id' in activities.columns else activities
+        if not todo.empty:
+            # Only attempt activities that touch this city at all
+            in_city = gpd.sjoin(
+                todo.to_crs(self._city_boundary.crs), self._city_boundary,
+                predicate='intersects', how='inner',
+            )
+            todo = todo[todo['id'].isin(set(in_city['id']))]
+        if not todo.empty:
+            logger.info("Matching %d new activities for %s", len(todo), self.city_name)
+            _, results = self.match(todo)
+            self.save_match_state(results, attempted_ids=list(todo['id']))
+        return self.coverage_stats_from_state()
+
+    def _undirected_edges(self) -> pd.DataFrame:
+        idx = self._edges_gdf.index
+        u = idx.get_level_values(0).to_numpy()
+        v = idx.get_level_values(1).to_numpy()
+        df = pd.DataFrame({
+            'u': np.minimum(u, v),
+            'v': np.maximum(u, v),
+            'length': self._edges_gdf['length'].to_numpy(),
+        })
+        return df.drop_duplicates(['u', 'v'])
+
+    def _coverage_from_edges(self, traversed: set[tuple[int, int]]) -> dict:
+        und = self._undirected_edges()
+        total_length_m = float(und['length'].sum())
+        covered_mask = [
+            (u, v) in traversed for u, v in zip(und['u'].tolist(), und['v'].tolist())
+        ]
+        traversed_length_m = float(und.loc[covered_mask, 'length'].sum())
 
         stats = {
             'total_network_km': round(total_length_m / 1000, 2),
@@ -758,18 +901,36 @@ class StravaMapMatcher:
             'num_unique_streets': len(traversed),
             '_traversed_edge_set': traversed,
         }
-
         logger.info(
             "Coverage: %s km / %s km (%s%%) — %d unique edges",
             stats['traversed_km'], stats['total_network_km'], stats['coverage_pct'],
             stats['num_unique_streets'],
         )
-
         return stats
+
+    def coverage_stats(self, match_results: dict[int | str, MatchResult]) -> dict:
+        """Compute city-wide street coverage statistics from match results.
+
+        Deduplicates edges across all matched activities (an edge traversed
+        ten times still counts as one) and computes the fraction of the
+        runnable network covered.
+        """
+        traversed: set[tuple[int, int]] = set()
+        for result in match_results.values():
+            if result.matched_edges_gdf is None or result.matched_edges_gdf.empty:
+                continue
+            us = result.matched_edges_gdf['edge_u'].astype('int64')
+            vs = result.matched_edges_gdf['edge_v'].astype('int64')
+            traversed.update((min(u, v), max(u, v)) for u, v in zip(us.tolist(), vs.tolist()))
+        return self._coverage_from_edges(traversed)
+
+    def coverage_stats_from_state(self) -> dict:
+        """Coverage stats from the persisted per-activity state (no matching)."""
+        return self._coverage_from_edges(self.covered_edge_set())
 
     def plot_coverage(
         self,
-        match_results: dict[int | str, MatchResult],
+        match_results: dict[int | str, MatchResult] | None = None,
         save_path: Path | str | None = None,
         neon_color: str = '#fc0101',
         figsize: tuple[float, float] = (20, 20),
@@ -780,7 +941,8 @@ class StravaMapMatcher:
         Traversed edges glow in neon (3-layer: atmosphere, glow, core).
 
         Args:
-            match_results: dict returned by match().
+            match_results: dict returned by match(). When None, the persisted
+                incremental state is used instead.
             save_path: Optional path to save the figure.
             neon_color: Colour for the neon glow.
             figsize: Figure size in inches.
@@ -788,26 +950,23 @@ class StravaMapMatcher:
         Returns:
             The matplotlib Figure.
         """
-        stats = self.coverage_stats(match_results)
+        stats = (self.coverage_stats(match_results) if match_results is not None
+                 else self.coverage_stats_from_state())
         traversed_set: set[tuple[int, int]] = stats['_traversed_edge_set']
 
         # Partition edges into traversed / untraversed GeoDataFrames
-        trav_rows = []
-        untrav_rows = []
-        for idx_tuple in self._edges_gdf.index:
-            u, v = idx_tuple[0], idx_tuple[1]
-            key = (min(u, v), max(u, v))
-            geom = self._edges_gdf.loc[idx_tuple, 'geometry']
-            if geom is None or geom.is_empty:
-                continue
-            if key in traversed_set:
-                trav_rows.append({'geometry': geom})
-            else:
-                untrav_rows.append({'geometry': geom})
-
+        idx = self._edges_gdf.index
+        us = idx.get_level_values(0).to_numpy()
+        vs = idx.get_level_values(1).to_numpy()
+        mask = np.fromiter(
+            ((u, v) in traversed_set for u, v in zip(np.minimum(us, vs).tolist(), np.maximum(us, vs).tolist())),
+            dtype=bool, count=len(us),
+        )
+        geoms = self._edges_gdf.geometry
+        valid = geoms.notna().to_numpy() & ~geoms.is_empty.to_numpy()
         crs = self._edges_gdf.crs
-        untrav_gdf = gpd.GeoDataFrame(untrav_rows, geometry='geometry', crs=crs) if untrav_rows else gpd.GeoDataFrame()
-        trav_gdf = gpd.GeoDataFrame(trav_rows, geometry='geometry', crs=crs) if trav_rows else gpd.GeoDataFrame()
+        trav_gdf = gpd.GeoDataFrame(geometry=geoms[mask & valid].values, crs=crs)
+        untrav_gdf = gpd.GeoDataFrame(geometry=geoms[~mask & valid].values, crs=crs)
 
         # --- Plot ---
         fig, ax = plt.subplots(figsize=figsize, facecolor='black')
