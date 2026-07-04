@@ -55,6 +55,15 @@ export function useActivitiesByDateRange(dateFrom?: string, dateTo?: string) {
   });
 }
 
+export function useActivitiesOnDates(dates: string[]) {
+  return useQuery({
+    queryKey: ['activities-on-dates', dates],
+    queryFn: () =>
+      api.get('/activities/on-dates', { params: { dates: dates.join(',') } }).then(r => r.data),
+    enabled: dates.length > 0,
+  });
+}
+
 export function useActivity(id: number | string) {
   return useQuery({
     queryKey: ['activity', id],

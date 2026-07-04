@@ -166,6 +166,21 @@ def get_years(si: StravaIntelligence = Depends(get_si)):
     return sorted(activities["start_date_local"].dt.year.unique().tolist(), reverse=True)
 
 
+@router.get("/on-dates")
+def activities_on_dates(
+    dates: str = Query(..., description="Comma-separated YYYY-MM-DD local dates"),
+    si: StravaIntelligence = Depends(get_si),
+):
+    activities = si.strava_activities_cache.get_prepared_view()
+    if activities.empty:
+        return {"items": []}
+    wanted = {d.strip() for d in dates.split(",") if d.strip()}
+    day = activities["start_date_local"].dt.strftime("%Y-%m-%d")
+    subset = activities[day.isin(wanted)]
+    items = [_activity_to_dict(row) for _, row in subset.iterrows()]
+    return {"items": items}
+
+
 @router.get("/polylines")
 def get_polylines(
     sport_type: str | None = None,

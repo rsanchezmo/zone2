@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { format, parseISO, differenceInDays } from 'date-fns'
 import {
   useRaceEvents, useCreateRaceEvent, useUpdateRaceEvent, useDeleteRaceEvent,
-  useActivitiesByDateRange,
+  useActivitiesOnDates,
 } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
 import { getPaceUnit, getDistUnit, getSportCategory, formatPace, isSpeedSport, parsePaceInput } from '../utils/formatSpeed'
@@ -98,11 +98,9 @@ export default function RacesPage() {
   const upcoming = (allRaces || []).filter((r: Record<string, unknown>) => (r.date as string) >= format(today, 'yyyy-MM-dd'))
   const past = (allRaces || []).filter((r: Record<string, unknown>) => (r.date as string) < format(today, 'yyyy-MM-dd')).reverse()
 
-  // Fetch activities only across the span of past races, for "View activity" matching.
+  // Fetch only the activities on past race days, for "View activity" matching.
   const pastDates = past.map((r: Record<string, unknown>) => r.date as string)
-  const dateFrom = pastDates.length > 0 ? pastDates[pastDates.length - 1] : undefined
-  const dateTo = pastDates.length > 0 ? pastDates[0] : undefined
-  const { data: activitiesData } = useActivitiesByDateRange(dateFrom, dateTo)
+  const { data: activitiesData } = useActivitiesOnDates(pastDates)
 
   const activityByDate: Record<string, Array<{ id: number; name: string; sport_type: string; distance_km: number }>> = {}
   if (activitiesData?.items) {
@@ -348,7 +346,14 @@ export default function RacesPage() {
                 {past.map((r: Record<string, unknown>) => {
                   const sportColor = getSportColor(r.sport_type as string)
                   const dayActivities = activityByDate[r.date as string] || []
-                  const matchedActivity = dayActivities.find(a => a.sport_type === r.sport_type)
+                  // Among same-sport activities that day, prefer the one closest to
+                  // the race distance (falls back to the longest) so warm-ups don't win.
+                  const raceKm = r.distance_km as number | null
+                  const matchedActivity = dayActivities
+                    .filter(a => a.sport_type === r.sport_type)
+                    .sort((a, b) => raceKm != null
+                      ? Math.abs(a.distance_km - raceKm) - Math.abs(b.distance_km - raceKm)
+                      : b.distance_km - a.distance_km)[0]
                   const isConfirming = confirmDeleteId === (r.id as number)
                   return (
                     <article key={r.id as number} className={clsx(panelClass, 'p-4 transition-colors')}>
