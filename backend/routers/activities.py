@@ -44,9 +44,10 @@ def _activity_to_dict(row: pd.Series, include_streams: bool = False, streams: di
     if row.get("average_speed") and not pd.isna(row.get("average_speed")):
         d["formatted_pace"] = format_pace_or_speed(row["average_speed"], row.get("sport_type"))
 
-    # Distance in km
+    # Distance in km, meter precision — swims render this back as meters,
+    # so 2 decimals would drift (3125 m → 3.12 km → 3120 m).
     if d.get("distance") is not None:
-        d["distance_km"] = round(d["distance"] / 1000, 2)
+        d["distance_km"] = round(d["distance"] / 1000, 3)
 
     # Moving time formatted
     if d.get("moving_time") is not None:

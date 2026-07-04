@@ -111,7 +111,7 @@ def _activity_row_to_dict(row: pd.Series) -> dict:
         if col in row.index:
             d[col] = _sanitize(row[col])
     if d.get("distance") is not None:
-        d["distance_km"] = round(d["distance"] / 1000, 2)
+        d["distance_km"] = round(d["distance"] / 1000, 3)
     return d
 
 
