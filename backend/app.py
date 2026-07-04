@@ -30,7 +30,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.config import settings
 from backend.dependencies import set_strava_intelligence
-from backend.routers import activities, stats, exports, calendar, calendar_feed, sync, athlete, goals, workouts, races, health, garmin
+from backend.routers import activities, stats, exports, calendar, calendar_feed, sync, athlete, goals, workouts, races, health, garmin, coverage
 from backend.routers.sync import _try_claim_sync, _run_sync
 from backend.db import init_db
 from strava.strava_intelligence import StravaIntelligence
@@ -219,6 +219,7 @@ app.include_router(goals.router, prefix="/api/goals", tags=["goals"])
 app.include_router(workouts.router, prefix="/api/workouts", tags=["workouts"])
 app.include_router(races.router, prefix="/api/races", tags=["races"])
 app.include_router(garmin.router, prefix="/api/garmin", tags=["garmin"])
+app.include_router(coverage.router, prefix="/api/coverage", tags=["coverage"])
 
 # Serve frontend build if it exists
 class _SPAStaticFiles(StaticFiles):

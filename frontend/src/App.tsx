@@ -19,6 +19,7 @@ const RacesPage = lazy(() => import('./pages/RacesPage'))
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'))
 const ProfilePage = lazy(() => import('./pages/ProfilePage'))
 const GarminPage = lazy(() => import('./pages/GarminPage'))
+const CoveragePage = lazy(() => import('./pages/CoveragePage'))
 
 function RouteFallback() {
   return (
@@ -41,6 +42,7 @@ export default function App() {
                 <Route path="/activities" element={<ActivitiesPage />} />
                 <Route path="/activities/:id" element={<ActivityDetailPage />} />
                 <Route path="/aggregations" element={<AggregationsPage />} />
+                <Route path="/coverage" element={<CoveragePage />} />
                 <Route path="/calendar" element={<CalendarPage />} />
                 <Route path="/records" element={<PersonalRecordsPage />} />
                 <Route path="/workouts" element={<WorkoutsPage />} />

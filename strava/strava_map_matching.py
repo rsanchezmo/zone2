@@ -1,3 +1,4 @@
+import json
 import logging
 import osmnx as ox
 from leuvenmapmatching.matcher.distance import DistanceMatcher
@@ -8,7 +9,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
 from pathlib import Path
-from shapely.geometry import LineString, MultiLineString, Point
+from shapely.geometry import LineString, MultiLineString, Point, Polygon as ShapelyPolygon
 from shapely.ops import linemerge
 from shapely.prepared import prep
 import numpy as np
@@ -247,6 +248,7 @@ class StravaMapMatcher:
         self._edges_gdf: gpd.GeoDataFrame = None  # type: ignore[assignment]
         self._map_con: InMemMap | None = None
         self._city_boundary: gpd.GeoDataFrame = None  # type: ignore[assignment]
+        self._und_gdf: gpd.GeoDataFrame | None = None
 
         self._load_map(force_reload=force_reload)
 
@@ -365,6 +367,10 @@ class StravaMapMatcher:
         nodes_fp = self.workdir / f"{slug}_nodes.parquet"
         edges_fp = self.workdir / f"{slug}_edges.parquet"
         boundary_fp = self.workdir / f"{slug}_boundary.parquet"
+
+        meta_fp = self.workdir / f"{slug}_meta.json"
+        if not meta_fp.exists():
+            meta_fp.write_text(json.dumps({'city_name': self.city_name}))
 
         if not force_reload and nodes_fp.exists() and edges_fp.exists() and boundary_fp.exists():
             self._edges_gdf = gpd.read_parquet(edges_fp).set_index(['u', 'v', 'key'])
@@ -927,6 +933,115 @@ class StravaMapMatcher:
     def coverage_stats_from_state(self) -> dict:
         """Coverage stats from the persisted per-activity state (no matching)."""
         return self._coverage_from_edges(self.covered_edge_set())
+
+    # ------------------------------------------------------------------
+    # Scoped coverage: districts & arbitrary areas
+    # ------------------------------------------------------------------
+
+    def _undirected_gdf(self) -> gpd.GeoDataFrame:
+        """Unique undirected edges with geometry — the serving/aggregation view."""
+        if self._und_gdf is None:
+            idx = self._edges_gdf.index
+            u = idx.get_level_values(0).to_numpy()
+            v = idx.get_level_values(1).to_numpy()
+            gdf = gpd.GeoDataFrame(
+                {
+                    'u': np.minimum(u, v),
+                    'v': np.maximum(u, v),
+                    'length': self._edges_gdf['length'].to_numpy(),
+                    'name': (self._edges_gdf['name'].to_numpy()
+                             if 'name' in self._edges_gdf.columns else None),
+                },
+                geometry=self._edges_gdf.geometry.values,
+                crs=self._edges_gdf.crs,
+            )
+            self._und_gdf = gdf.drop_duplicates(['u', 'v']).reset_index(drop=True)
+        return self._und_gdf
+
+    def undirected_with_covered(self) -> gpd.GeoDataFrame:
+        """Undirected edges flagged with whether the persisted state covers them."""
+        und = self._undirected_gdf()
+        covered = self.covered_edge_set()
+        out = und.copy()
+        out['covered'] = [
+            (u, v) in covered for u, v in zip(und['u'].tolist(), und['v'].tolist())
+        ]
+        return out
+
+    def load_districts(self, admin_level: int = 9, force_reload: bool = False) -> gpd.GeoDataFrame:
+        """Administrative districts of the city (cached parquet).
+
+        admin_level 9 = districts, 10 = neighborhoods (OSM convention for ES;
+        varies by country).
+        """
+        fp = self.workdir / f"{self._slug()}_districts_{admin_level}.parquet"
+        if fp.exists() and not force_reload:
+            return gpd.read_parquet(fp)
+
+        logger.info("Downloading admin_level=%d boundaries for %s...", admin_level, self.city_name)
+        # osmnx ORs the tags dict, so admin_level must be filtered afterwards
+        feats = ox.features_from_place(
+            self.city_name,
+            tags={'boundary': 'administrative', 'admin_level': str(admin_level)},
+        )
+        if 'admin_level' in feats.columns:
+            feats = feats[feats['admin_level'] == str(admin_level)]
+        polys = feats[feats.geometry.geom_type.isin(['Polygon', 'MultiPolygon'])]
+        polys = polys.dropna(subset=['name'])[['name', 'geometry']].reset_index(drop=True)
+        polys = polys.to_crs(self._edges_gdf.crs)
+        # features_from_place can return boundaries that merely touch the city
+        polys = polys[polys.representative_point().within(self._city_boundary.union_all())]
+        polys = polys.drop_duplicates('name').reset_index(drop=True)
+        polys.to_parquet(fp)
+        logger.info("Saved %d districts to %s", len(polys), fp)
+        return polys
+
+    @staticmethod
+    def _scoped_stats(scoped: gpd.GeoDataFrame) -> dict:
+        total_m = float(scoped['length'].sum())
+        covered_m = float(scoped.loc[scoped['covered'], 'length'].sum())
+        return {
+            'total_km': round(total_m / 1000, 2),
+            'covered_km': round(covered_m / 1000, 2),
+            'coverage_pct': round(100 * covered_m / total_m, 2) if total_m > 0 else 0.0,
+            'num_streets': int(len(scoped)),
+            'num_covered_streets': int(scoped['covered'].sum()),
+        }
+
+    def coverage_by_district(self, admin_level: int = 9) -> list[dict]:
+        """Coverage stats per administrative district, best-covered first.
+
+        Edges are assigned to the district containing their representative
+        point, so border streets count exactly once.
+        """
+        districts = self.load_districts(admin_level)
+        und = self.undirected_with_covered()
+        pts = und.copy()
+        pts['geometry'] = und.representative_point()
+        joined = gpd.sjoin(pts, districts[['name', 'geometry']],
+                           predicate='within', how='inner')
+
+        results = []
+        for name, group in joined.groupby('name_right' if 'name_right' in joined.columns else 'name'):
+            stats = self._scoped_stats(group)
+            geom = districts.loc[districts['name'] == name, 'geometry']
+            bounds = gpd.GeoSeries(geom, crs=districts.crs).to_crs('EPSG:4326').total_bounds
+            results.append({
+                'name': name,
+                **stats,
+                # [south, west, north, east] for map fitBounds
+                'bbox': [round(bounds[1], 5), round(bounds[0], 5),
+                         round(bounds[3], 5), round(bounds[2], 5)],
+            })
+        return sorted(results, key=lambda r: r['coverage_pct'], reverse=True)
+
+    def coverage_in_polygon(self, latlon_coords: list[tuple[float, float]]) -> dict:
+        """Coverage stats within an arbitrary polygon of (lat, lon) vertices."""
+        poly = ShapelyPolygon([(lon, lat) for lat, lon in latlon_coords])
+        poly_proj = gpd.GeoSeries([poly], crs='EPSG:4326').to_crs(self._edges_gdf.crs).iloc[0]
+        und = self.undirected_with_covered()
+        inside = und[und.representative_point().within(poly_proj)]
+        return self._scoped_stats(inside)
 
     def plot_coverage(
         self,

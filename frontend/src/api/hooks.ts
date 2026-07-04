@@ -678,3 +678,82 @@ export function useCancelGarminSync() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['garmin-status'] }),
   });
 }
+
+// Coverage (street map matching)
+export interface CoverageSummary {
+  slug: string;
+  city_name: string;
+  num_matched_activities: number;
+  total_network_km: number;
+  traversed_km: number;
+  coverage_pct: number;
+  num_unique_streets: number;
+}
+
+export interface DistrictCoverage {
+  name: string;
+  total_km: number;
+  covered_km: number;
+  coverage_pct: number;
+  num_streets: number;
+  num_covered_streets: number;
+  bbox: [number, number, number, number]; // south, west, north, east
+}
+
+export interface AreaCoverage {
+  total_km: number;
+  covered_km: number;
+  coverage_pct: number;
+  num_streets: number;
+  num_covered_streets: number;
+}
+
+export function useCoverageCities() {
+  return useQuery<CoverageSummary[]>({
+    queryKey: ['coverage-cities'],
+    queryFn: () => api.get('/coverage/cities').then(r => r.data),
+  });
+}
+
+export function useCoverageEdges(slug?: string) {
+  return useQuery({
+    queryKey: ['coverage-edges', slug],
+    queryFn: () => api.get(`/coverage/${slug}/edges`, { params: { covered: true } }).then(r => r.data),
+    enabled: !!slug,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useCoverageDistricts(slug?: string, adminLevel = 9) {
+  return useQuery<DistrictCoverage[]>({
+    queryKey: ['coverage-districts', slug, adminLevel],
+    queryFn: () =>
+      api.get(`/coverage/${slug}/districts`, { params: { admin_level: adminLevel } }).then(r => r.data),
+    enabled: !!slug,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useCoverageArea(slug?: string) {
+  return useMutation<AreaCoverage, unknown, [number, number][]>({
+    mutationFn: (points) =>
+      api.post(`/coverage/${slug}/area`, { points }).then(r => r.data),
+  });
+}
+
+export function useCoverageSyncStatus(slug?: string, polling = false) {
+  return useQuery<{ running: boolean; last_error: string | null }>({
+    queryKey: ['coverage-sync-status', slug],
+    queryFn: () => api.get(`/coverage/${slug}/sync/status`).then(r => r.data),
+    enabled: !!slug,
+    refetchInterval: polling ? 3000 : false,
+  });
+}
+
+export function useTriggerCoverageSync(slug?: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post(`/coverage/${slug}/sync`).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['coverage-sync-status', slug] }),
+  });
+}

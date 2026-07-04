@@ -22,6 +22,11 @@ const NAV_ITEMS: { to: string; label: string; color: string; icon: React.ReactNo
       <circle cx="8" cy="8" r="6" /><path d="M2 8h12M8 2c-2 2-2 10 0 12M8 2c2 2 2 10 0 12" />
     </svg>
   )},
+  { to: '/coverage', label: 'Coverage', color: '#fb2c36', icon: (
+    <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 5l4-3 4 3 4-3v9l-4 3-4-3-4 3z" /><path d="M6 2v9M10 5v9" strokeDasharray="2 1.6" />
+    </svg>
+  )},
   { to: '/dashboard', label: 'Year', color: '#fbbf24', icon: (
     <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M8 1.5l2.5 5 5.5.8-4 3.9.9 5.3L8 13.8l-4.9 2.7.9-5.3-4-3.9 5.5-.8z" />
