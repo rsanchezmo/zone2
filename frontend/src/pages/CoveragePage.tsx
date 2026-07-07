@@ -7,6 +7,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import {
   useCoverageCities, useCoverageEdges, useCoverageDistricts, useCoverageArea,
   useCoverageSyncStatus, useTriggerCoverageSync, useUncoveredEdges,
+  useAddCity, useAddCityStatus, useGeocodeCity, useDeleteCity,
   type AreaCoverage, type DistrictCoverage,
 } from '../api/hooks'
 import { useTheme } from '../hooks/useTheme'
@@ -114,6 +115,115 @@ function AreaSelect({
   return null
 }
 
+/** Map control button with an instant hover tip to its left. */
+function TipButton({ tip, onClick, className, isLight, children }: {
+  tip: string
+  onClick: () => void
+  className: string
+  isLight: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <div className="relative group">
+      <button onClick={onClick} className={className} aria-label={tip} type="button">
+        {children}
+      </button>
+      <span
+        className={clsx(
+          'absolute right-full mr-2 top-1/2 -translate-y-1/2 px-2 py-1 rounded-md text-[10px] whitespace-nowrap',
+          'opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity',
+          isLight ? 'bg-white/95 text-gray-700 border border-gray-200 shadow-sm' : 'bg-surface-800/95 text-gray-200 border border-surface-600',
+        )}
+      >
+        {tip}
+      </span>
+    </div>
+  )
+}
+
+/** "+ City" button → inline input → geocode preview to confirm the resolved
+ *  place → background download with status polling. The preview matters:
+ *  bare "Amsterdam" resolves to New York City (née New Amsterdam). */
+function AddCityForm({ onAdded }: { onAdded: (slug: string) => void }) {
+  const qc = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [value, setValue] = useState('')
+  const [resolved, setResolved] = useState<string | null>(null)
+  const geocodeMutation = useGeocodeCity()
+  const addMutation = useAddCity()
+  const { data: status } = useAddCityStatus(open || addMutation.isPending)
+  const running = !!status?.running
+  const prevRunning = useRef(false)
+
+  useEffect(() => {
+    if (prevRunning.current && !running) {
+      qc.invalidateQueries({ queryKey: ['coverage-cities'] })
+      if (status?.slug && !status.error) {
+        onAdded(status.slug)
+        setOpen(false)
+        setValue('')
+      }
+    }
+    prevRunning.current = running
+  }, [running, status, qc, onAdded])
+
+  if (running) {
+    const elapsed = status?.started_at ? Math.max(0, Math.round(Date.now() / 1000 - status.started_at)) : null
+    const elapsedTxt = elapsed === null ? '' : elapsed >= 60 ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : `${elapsed}s`
+    return (
+      <span className="text-[11px] text-gray-500 animate-pulse whitespace-nowrap" title="Downloads the street network from OSM — takes a few minutes for a big city">
+        adding {status?.city_name} — {status?.progress ?? 'working'}
+        {elapsedTxt && <span className="font-mono tabular-nums"> · {elapsedTxt}</span>}
+      </span>
+    )
+  }
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} className="btn !text-[11px] !py-1 !px-2.5" title="Download a new city's street network">
+        + City
+      </button>
+    )
+  }
+  return (
+    <form
+      className="flex items-center gap-1.5"
+      onSubmit={e => {
+        e.preventDefault()
+        const name = value.trim()
+        if (!name) return
+        if (resolved) addMutation.mutate(name)
+        else geocodeMutation.mutate(name, { onSuccess: d => setResolved(d.display_name) })
+      }}
+    >
+      <input
+        autoFocus
+        value={value}
+        onChange={e => { setValue(e.target.value); setResolved(null) }}
+        onKeyDown={e => { if (e.key === 'Escape') setOpen(false) }}
+        placeholder="Paris, France"
+        className="input !text-xs !py-1 !px-2 w-44"
+        aria-label="City name"
+      />
+      <button
+        type="submit"
+        disabled={!value.trim() || geocodeMutation.isPending}
+        className={clsx('btn !text-[11px] !py-1 !px-2', resolved && '!text-emerald-400 !border-emerald-500/50')}
+      >
+        {geocodeMutation.isPending ? 'Resolving…' : resolved ? 'Confirm' : 'Add'}
+      </button>
+      {resolved && (
+        <span className="text-[10px] text-gray-400 max-w-52 truncate" title={resolved}>→ {resolved}</span>
+      )}
+      {geocodeMutation.isError && !resolved && (
+        <span className="text-[10px] text-red-400">place not found</span>
+      )}
+      {status?.error && (
+        <span className="text-[10px] text-red-400 max-w-44 truncate" title={status.error}>{status.error}</span>
+      )}
+    </form>
+  )
+}
+
 export default function CoveragePage() {
   const { theme, colors } = useTheme()
   const isLight = theme === 'light'
@@ -125,10 +235,19 @@ export default function CoveragePage() {
   const city = cities?.find(c => c.slug === activeSlug)
 
   const { data: edges, isLoading: edgesLoading } = useCoverageEdges(activeSlug)
-  const [adminLevel, setAdminLevel] = useState(9)
-  const { data: districts } = useCoverageDistricts(activeSlug, adminLevel)
+  const { data: districts } = useCoverageDistricts(activeSlug)
   const [showDistricts, setShowDistricts] = useState(true)
   const [flyBbox, setFlyBbox] = useState<[number, number, number, number] | null>(null)
+
+  // Fly to a city when it becomes active. On first load the covered-edges
+  // fit handles it, unless the city has nothing matched yet.
+  const flownSlug = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    if (!activeSlug || !city?.bbox || flownSlug.current === activeSlug) return
+    const first = flownSlug.current === undefined
+    flownSlug.current = activeSlug
+    if (!first || city.num_matched_activities === 0) setFlyBbox([...city.bbox])
+  }, [activeSlug, city])
 
   const [expanded, setExpanded] = useState(false)
   const [mapStyle, setMapStyle] = useState<MapStyle>('street')
@@ -141,6 +260,9 @@ export default function CoveragePage() {
   const [viewportBbox, setViewportBbox] = useState<string | undefined>(undefined)
   const { data: uncovered } = useUncoveredEdges(activeSlug, showMissing ? viewportBbox : undefined)
 
+  const deleteMutation = useDeleteCity()
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  useEffect(() => setConfirmingDelete(false), [activeSlug])
   const syncMutation = useTriggerCoverageSync(activeSlug)
   const { data: syncStatus } = useCoverageSyncStatus(activeSlug, syncMutation.isSuccess)
   const syncRunning = !!syncStatus?.running
@@ -163,6 +285,52 @@ export default function CoveragePage() {
   }, [expanded])
 
   const accent = mapStyle === 'satellite' ? SATELLITE_ACCENT : COVERED_ACCENT
+  const districtColor = mapStyle === 'satellite' ? '#c4b5fd' : isLight ? '#7c3aed' : '#8b5cf6'
+
+  const districtFC = useMemo(() => {
+    const features = (districts ?? [])
+      .filter((d: DistrictCoverage) => d.geometry)
+      .map((d: DistrictCoverage) => ({
+        type: 'Feature' as const,
+        geometry: d.geometry!,
+        properties: {
+          name: d.name, pct: d.coverage_pct,
+          covered_km: d.covered_km, total_km: d.total_km, bbox: d.bbox,
+        },
+      }))
+    return features.length ? { type: 'FeatureCollection' as const, features } : null
+  }, [districts])
+
+  const districtStyle = useCallback((feature?: GeoJSON.Feature): L.PathOptions => {
+    const pct = (feature?.properties as { pct?: number } | null)?.pct ?? 0
+    return {
+      color: districtColor,
+      weight: 1,
+      opacity: 0.35,
+      fillColor: districtColor,
+      fillOpacity: 0.04 + 0.4 * Math.min(1, pct / 100),
+    }
+  }, [districtColor])
+
+  const onDistrictFeature = useCallback((feature: GeoJSON.Feature, layer: L.Layer) => {
+    const p = feature.properties as {
+      name: string; pct: number; covered_km: number; total_km: number
+      bbox: [number, number, number, number]
+    }
+    const path = layer as L.Path
+    path.bindTooltip(
+      `<span class="district-tip-name">${p.name}</span>` +
+      `<span class="district-tip-pct" style="color:${districtColor}">${p.pct.toFixed(1)}%</span>` +
+      `<span class="district-tip-km">${p.covered_km.toFixed(1)} / ${p.total_km.toFixed(1)} km</span>`,
+      { sticky: true, className: 'district-tip', direction: 'top', opacity: 1 },
+    )
+    path.on({
+      mouseover: () => path.setStyle({ weight: 2, opacity: 0.9, fillOpacity: (districtStyle(feature).fillOpacity ?? 0) + 0.12 }),
+      mouseout: () => path.setStyle(districtStyle(feature)),
+      click: () => setFlyBbox([...p.bbox]),
+    })
+  }, [districtColor, districtStyle])
+
   const tileUrl = mapStyle === 'satellite'
     ? SATELLITE_TILES
     : isLight
@@ -179,15 +347,16 @@ export default function CoveragePage() {
     isLight ? 'text-gray-500 hover:text-gray-900' : 'text-gray-400 hover:text-gray-100',
   )
 
+  const rectPoints = (bounds: L.LatLngBounds): [number, number][] => {
+    const sw = bounds.getSouthWest()
+    const ne = bounds.getNorthEast()
+    return [[sw.lat, sw.lng], [sw.lat, ne.lng], [ne.lat, ne.lng], [ne.lat, sw.lng]]
+  }
+
   const handleAreaSelect = (bounds: L.LatLngBounds) => {
     setAreaRect(bounds)
     setSelectMode(false)
-    const sw = bounds.getSouthWest()
-    const ne = bounds.getNorthEast()
-    const points: [number, number][] = [
-      [sw.lat, sw.lng], [sw.lat, ne.lng], [ne.lat, ne.lng], [ne.lat, sw.lng],
-    ]
-    areaMutation.mutate(points, { onSuccess: setAreaStats })
+    areaMutation.mutate(rectPoints(bounds), { onSuccess: setAreaStats })
   }
 
   const clearArea = () => {
@@ -206,8 +375,11 @@ export default function CoveragePage() {
         <header className="flex items-baseline gap-2">
           <span className="eyebrow">Coverage</span>
         </header>
-        <div className={clsx('panel p-10 text-center text-sm', isLight ? 'text-gray-500' : 'text-gray-400')}>
-          No coverage maps yet. Build one with <code className="font-mono text-xs">StravaMapMatcher(city_name=..., workdir=...)</code> — it downloads and stores the runnable street network, then sync your activities here.
+        <div className={clsx('panel p-10 text-center text-sm space-y-4', isLight ? 'text-gray-500' : 'text-gray-400')}>
+          <p>No coverage maps yet. Add a city to download its runnable street network, then sync your activities against it.</p>
+          <div className="flex justify-center">
+            <AddCityForm onAdded={setSlug} />
+          </div>
         </div>
       </div>
     )
@@ -241,6 +413,15 @@ export default function CoveragePage() {
             url={tileUrl}
             className={mapStyle === 'satellite' ? 'satellite-tiles' : undefined}
           />
+          {showDistricts && districtFC && (
+            <GeoJSON
+              key={`districts-${activeSlug}-${districtColor}-${selectMode}`}
+              data={districtFC}
+              interactive={!selectMode}
+              style={districtStyle}
+              onEachFeature={onDistrictFeature}
+            />
+          )}
           {showMissing && uncovered && viewportBbox && (
             <GeoJSON
               key={`missing-${activeSlug}-${viewportBbox}`}
@@ -285,6 +466,35 @@ export default function CoveragePage() {
           {(cities?.length ?? 0) === 1 && (
             <span className={clsx('text-xs font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>{city?.city_name}</span>
           )}
+          {city && !confirmingDelete && (
+            <button
+              onClick={() => setConfirmingDelete(true)}
+              className={clsx('transition-colors', isLight ? 'text-gray-300 hover:text-red-500' : 'text-gray-600 hover:text-red-400')}
+              title={`Delete ${city.city_name}`}
+              aria-label={`Delete ${city.city_name}`}
+            >
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M2.5 4.5h11M6.5 4.5v-2h3v2M4 4.5l.8 9h6.4l.8-9M6.7 7.5v3.5M9.3 7.5v3.5" />
+              </svg>
+            </button>
+          )}
+          {city && confirmingDelete && (
+            <span className="flex items-center gap-1.5">
+              <span className="text-[11px] text-red-400">delete {city.city_name} and its matched state?</span>
+              <button
+                onClick={() => deleteMutation.mutate(city.slug, {
+                  onSuccess: () => { setSlug(undefined); clearArea(); setConfirmingDelete(false) },
+                })}
+                disabled={deleteMutation.isPending}
+                className="btn !text-[10px] !py-0.5 !px-2 !text-red-400 !border-red-500/50"
+              >
+                {deleteMutation.isPending ? 'Deleting…' : 'Delete'}
+              </button>
+              <button onClick={() => setConfirmingDelete(false)} className="btn !text-[10px] !py-0.5 !px-2">
+                Cancel
+              </button>
+            </span>
+          )}
           <div className="flex flex-col gap-0.5">
             <span className="eyebrow text-[9px]">Covered</span>
             <span className={clsx('text-sm font-mono tabular-nums font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>
@@ -312,15 +522,16 @@ export default function CoveragePage() {
           >
             {syncRunning ? 'Matching…' : 'Sync'}
           </button>
+          <AddCityForm onAdded={setSlug} />
         </div>
 
         {/* ── Controls — top right ─────────────────── */}
-        <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2">
-          <button
+        <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2 items-end">
+          <TipButton
+            tip={expanded ? 'Exit fullscreen' : 'Fullscreen'}
             onClick={() => setExpanded(e => !e)}
             className={buttonClass}
-            title={expanded ? 'Exit fullscreen' : 'Fullscreen'}
-            aria-label={expanded ? 'Exit fullscreen' : 'Enter fullscreen'}
+            isLight={isLight}
           >
             {expanded ? (
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -331,94 +542,56 @@ export default function CoveragePage() {
                 <path d="M2 6V2h4M14 10v4h-4M2 2l4 4M14 14l-4-4" />
               </svg>
             )}
-          </button>
-          <MapStyleToggle
-            mapStyle={mapStyle}
-            onToggle={() => setMapStyle(s => (s === 'satellite' ? 'street' : 'satellite'))}
-            className={buttonClass}
-          />
-          <button
+          </TipButton>
+          <div className="relative group">
+            <MapStyleToggle
+              mapStyle={mapStyle}
+              onToggle={() => setMapStyle(s => (s === 'satellite' ? 'street' : 'satellite'))}
+              className={buttonClass}
+              hideTitle
+            />
+            <span
+              className={clsx(
+                'absolute right-full mr-2 top-1/2 -translate-y-1/2 px-2 py-1 rounded-md text-[10px] whitespace-nowrap',
+                'opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity',
+                isLight ? 'bg-white/95 text-gray-700 border border-gray-200 shadow-sm' : 'bg-surface-800/95 text-gray-200 border border-surface-600',
+              )}
+            >
+              {mapStyle === 'satellite' ? 'Switch to street map' : 'Switch to satellite imagery'}
+            </span>
+          </div>
+          <TipButton
+            tip={selectMode ? 'Cancel area selection' : 'Measure an area — drag a rectangle to get its coverage'}
             onClick={() => { setSelectMode(m => !m); if (areaRect) clearArea() }}
             className={clsx(buttonClass, selectMode && '!text-cyan-400 !border-cyan-500/50')}
-            title={selectMode ? 'Cancel area selection' : 'Select an area to compute coverage'}
-            aria-label="Select area"
+            isLight={isLight}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <rect x="3" y="3" width="10" height="10" rx="1" strokeDasharray="3 2" />
               <path d="M8 6v4M6 8h4" />
             </svg>
-          </button>
-          <button
+          </TipButton>
+          <TipButton
+            tip={showMissing ? 'Hide missing streets' : 'Missing streets — streets you haven’t run yet, zoom in to see them'}
             onClick={() => setShowMissing(m => !m)}
             className={clsx(buttonClass, showMissing && '!text-slate-300 !border-slate-400/50')}
-            title={showMissing ? 'Hide missing streets' : 'Show missing streets (zoom in)'}
-            aria-label="Toggle missing streets"
+            isLight={isLight}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M2 12c2-6 4 2 6-4s4 2 6-4" strokeDasharray="2.5 2" />
             </svg>
-          </button>
-          <button
+          </TipButton>
+          <TipButton
+            tip={showDistricts ? 'Hide district overlay' : 'District overlay — hover a district for its coverage'}
             onClick={() => setShowDistricts(s => !s)}
-            className={clsx(buttonClass, showDistricts && (isLight ? '!text-gray-900' : '!text-gray-100'))}
-            title={showDistricts ? 'Hide districts' : 'Show districts'}
-            aria-label="Toggle district panel"
+            className={clsx(buttonClass, showDistricts && '!text-violet-400 !border-violet-500/50')}
+            isLight={isLight}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M2 3h12M2 8h12M2 13h8" />
+              <path d="M8 2.2 13.5 6l-2 7H4.5l-2-7z" />
             </svg>
-          </button>
+          </TipButton>
         </div>
-
-        {/* ── Districts panel — right ──────────────── */}
-        {showDistricts && (districts?.length ?? 0) > 0 && (
-          <div className={clsx('absolute top-[13rem] md:top-16 right-3 bottom-3 z-[1000] w-60 flex flex-col overflow-hidden', overlayClass)}>
-            <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5">
-              <span className="eyebrow text-[9px]">By district</span>
-              <div className="flex gap-1">
-                {[[9, 'Districts'], [10, 'Barrios']].map(([lvl, label]) => (
-                  <button
-                    key={lvl}
-                    onClick={() => setAdminLevel(lvl as number)}
-                    className={clsx(
-                      'text-[9px] uppercase tracking-[0.1em] px-1.5 py-0.5 rounded border transition-colors',
-                      adminLevel === lvl
-                        ? 'border-current text-cyan-400'
-                        : isLight ? 'border-gray-200 text-gray-400 hover:text-gray-600' : 'border-surface-600 text-gray-500 hover:text-gray-300',
-                    )}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-1.5">
-              {districts?.map((d: DistrictCoverage) => (
-                <button
-                  key={d.name}
-                  onClick={() => setFlyBbox([...d.bbox])}
-                  className={clsx(
-                    'w-full text-left rounded-md px-2 py-1.5 transition-colors',
-                    isLight ? 'hover:bg-gray-50' : 'hover:bg-surface-700',
-                  )}
-                >
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className={clsx('text-[11px] font-medium truncate', isLight ? 'text-gray-800' : 'text-gray-200')}>{d.name}</span>
-                    <span className="text-[11px] font-mono tabular-nums shrink-0" style={{ color: d.coverage_pct > 0 ? COVERED_ACCENT : undefined }}>
-                      {d.coverage_pct.toFixed(0)}%
-                    </span>
-                  </div>
-                  <div className={clsx('h-1 rounded-full mt-1 overflow-hidden', isLight ? 'bg-gray-100' : 'bg-surface-700')}>
-                    <div
-                      className="h-full rounded-full"
-                      style={{ width: `${Math.min(100, d.coverage_pct)}%`, backgroundColor: COVERED_ACCENT }}
-                    />
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* ── Area result — bottom left ────────────── */}
         {(areaStats || areaMutation.isPending) && (
@@ -454,6 +627,11 @@ export default function CoveragePage() {
         {showMissing && !viewportBbox && !selectMode && (
           <div className={clsx('absolute bottom-3 left-1/2 -translate-x-1/2 z-[1000] px-3 py-1.5 text-[11px]', overlayClass, isLight ? 'text-gray-600' : 'text-gray-300')}>
             Zoom in to reveal missing streets
+          </div>
+        )}
+        {city && city.num_matched_activities === 0 && !syncRunning && !selectMode && !showMissing && (
+          <div className={clsx('absolute bottom-3 left-1/2 -translate-x-1/2 z-[1000] px-3 py-1.5 text-[11px]', overlayClass, isLight ? 'text-gray-600' : 'text-gray-300')}>
+            Nothing matched yet for {city.city_name} — press Sync to match your activities
           </div>
         )}
 

@@ -11,15 +11,17 @@ interface Props {
   mapStyle: MapStyle
   onToggle: () => void
   className: string
+  /** Suppress the native title when the caller renders its own tooltip. */
+  hideTitle?: boolean
 }
 
 /** Street/satellite toggle button. Place inside the map wrapper div, NOT
  *  inside `<MapContainer>` (which mounts to a Leaflet pane and would
  *  capture pointer events differently). */
-export function MapStyleToggle({ mapStyle, onToggle, className }: Props) {
+export function MapStyleToggle({ mapStyle, onToggle, className, hideTitle = false }: Props) {
   const label = mapStyle === 'satellite' ? 'Switch to street map' : 'Switch to satellite'
   return (
-    <button onClick={onToggle} className={className} title={label} aria-label={label} type="button">
+    <button onClick={onToggle} className={className} title={hideTitle ? undefined : label} aria-label={label} type="button">
       {mapStyle === 'satellite' ? (
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M2 4l4-2 4 2 4-2v10l-4 2-4-2-4 2z" />

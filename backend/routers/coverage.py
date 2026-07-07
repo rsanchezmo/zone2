@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from pathlib import Path
 from threading import Lock
 
@@ -58,55 +59,138 @@ def _get_matcher(slug: str) -> StravaMapMatcher:
 
 
 @router.get("/cities")
-def list_cities():
+def list_cities(streets_only: bool = Query(False)):
     out = []
     for slug, city_name in _known_cities().items():
         matcher = _get_matcher(slug)
-        stats = matcher.coverage_stats_from_state()
+        stats = matcher.coverage_stats_from_state(streets_only=streets_only)
         out.append({
             "slug": slug,
             "city_name": city_name,
             "num_matched_activities": len(matcher.matched_activity_ids()),
+            "bbox": matcher.city_bbox(),
             **{k: v for k, v in stats.items() if not k.startswith("_")},
         })
     return out
 
 
+# City download runs in a BackgroundTasks thread; single global slot.
+_add_status: dict = {
+    "running": False, "city_name": None, "slug": None, "error": None,
+    "progress": None, "started_at": None,
+}
+_add_lock = Lock()
+
+
+def _run_add_city(city_name: str):
+    def report(stage: str):
+        with _add_lock:
+            _add_status["progress"] = stage
+
+    err, slug = None, None
+    try:
+        matcher = StravaMapMatcher(
+            city_name=city_name, workdir=Path(settings.workdir), on_progress=report
+        )
+        slug = matcher._slug()
+        with _matchers_lock:
+            _matchers[slug] = matcher
+        logger.info("City map for %s ready (%s)", city_name, slug)
+    except Exception as e:
+        logger.exception("Adding city %s failed", city_name)
+        err = f"{type(e).__name__}: {e}"
+    finally:
+        with _add_lock:
+            _add_status.update({"running": False, "slug": slug, "error": err, "progress": None})
+
+
+@router.post("/add")
+def add_city(background_tasks: BackgroundTasks, city_name: str = Query(min_length=3)):
+    """Download and store the runnable street network for a new city."""
+    slug = city_name.replace(", ", "_").lower()
+    if slug in _known_cities():
+        raise HTTPException(status_code=409, detail=f"'{city_name}' is already added")
+    with _add_lock:
+        if _add_status["running"]:
+            raise HTTPException(status_code=409, detail="A city download is already running")
+        _add_status.update({
+            "running": True, "city_name": city_name, "slug": None, "error": None,
+            "progress": "starting", "started_at": time.time(),
+        })
+    background_tasks.add_task(_run_add_city, city_name)
+    return {"status": "started"}
+
+
+@router.get("/add/status")
+def add_city_status():
+    with _add_lock:
+        return dict(_add_status)
+
+
+@router.get("/geocode")
+def geocode_city(q: str = Query(min_length=3)):
+    """Preview what a city query resolves to before downloading it.
+    Guards against Nominatim surprises (bare 'Amsterdam' → New York City,
+    whose historical name is New Amsterdam)."""
+    import osmnx as ox
+
+    try:
+        gdf = ox.geocode_to_gdf(q)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"{type(e).__name__}: {e}")
+    return {"query": q, "display_name": str(gdf.iloc[0].get("display_name", q))}
+
+
+@router.delete("/{slug}")
+def delete_city(slug: str):
+    """Remove a city's map and all its matched state from disk."""
+    if slug not in _known_cities():
+        raise HTTPException(status_code=404, detail=f"No coverage map for '{slug}'")
+    with _sync_lock:
+        if _sync_status.get(slug, {}).get("running"):
+            raise HTTPException(status_code=409, detail="A sync is running for this city")
+    with _matchers_lock:
+        _matchers.pop(slug, None)
+    # Explicit artifact names — a bare glob on the slug prefix could match
+    # another city whose slug extends this one.
+    suffixes = [
+        "nodes.parquet", "edges.parquet", "boundary.parquet", "meta.json",
+        "covered_edges.parquet", "matched_activities.parquet",
+        "inmem", "inmem.pkl", "inmem.dat", "inmem.idx",
+    ]
+    paths = [_osm_dir() / f"{slug}_{s}" for s in suffixes]
+    paths += _osm_dir().glob(f"{slug}_districts_*.parquet")
+    removed = 0
+    for fp in paths:
+        if fp.exists():
+            fp.unlink()
+            removed += 1
+    logger.info("Deleted city %s (%d files)", slug, removed)
+    return {"status": "deleted", "files_removed": removed}
+
+
 @router.get("/{slug}/summary")
-def coverage_summary(slug: str):
+def coverage_summary(slug: str, streets_only: bool = Query(False)):
     matcher = _get_matcher(slug)
-    stats = matcher.coverage_stats_from_state()
+    stats = matcher.coverage_stats_from_state(streets_only=streets_only)
     return {
         "slug": slug,
         "city_name": matcher.city_name,
         "num_matched_activities": len(matcher.matched_activity_ids()),
+        "bbox": matcher.city_bbox(),
         **{k: v for k, v in stats.items() if not k.startswith("_")},
     }
 
 
-@router.get("/{slug}/edges")
-def coverage_edges(
-    slug: str,
-    covered: bool = Query(True),
-    bbox: str | None = Query(None, description="south,west,north,east — required for covered=false"),
-):
-    """Runnable edges as GeoJSON. Covered edges are few; uncovered edges are
-    the whole city, so they must be bounded by a bbox."""
-    if not covered and not bbox:
-        raise HTTPException(status_code=400, detail="bbox is required for covered=false")
+def _clip_to_bbox(gdf, bbox: str):
+    try:
+        south, west, north, east = (float(x) for x in bbox.split(","))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="bbox must be south,west,north,east")
+    return gdf.cx[west:east, south:north]
 
-    matcher = _get_matcher(slug)
-    und = matcher.undirected_with_covered()
-    subset = und[und["covered"] == covered]
 
-    subset = subset.to_crs("EPSG:4326")
-    if bbox:
-        try:
-            south, west, north, east = (float(x) for x in bbox.split(","))
-        except ValueError:
-            raise HTTPException(status_code=400, detail="bbox must be south,west,north,east")
-        subset = subset.cx[west:east, south:north]
-
+def _edges_to_geojson(subset) -> dict:
     features = []
     for geom, name in zip(subset.geometry, subset["name"]):
         if geom is None or geom.is_empty:
@@ -120,21 +204,49 @@ def coverage_edges(
     return {"type": "FeatureCollection", "features": features}
 
 
-@router.get("/{slug}/districts")
-def coverage_districts(slug: str, admin_level: int = Query(9, ge=4, le=11)):
+@router.get("/{slug}/edges")
+def coverage_edges(
+    slug: str,
+    covered: bool = Query(True),
+    bbox: str | None = Query(None, description="south,west,north,east — required for covered=false"),
+    streets_only: bool = Query(False),
+):
+    """Runnable edges as GeoJSON. Covered edges are few; uncovered edges are
+    the whole city, so they must be bounded by a bbox."""
+    if not covered and not bbox:
+        raise HTTPException(status_code=400, detail="bbox is required for covered=false")
+
     matcher = _get_matcher(slug)
-    return matcher.coverage_by_district(admin_level=admin_level)
+    und = matcher.undirected_with_covered(streets_only=streets_only)
+    subset = und[und["covered"] == covered].to_crs("EPSG:4326")
+    if bbox:
+        subset = _clip_to_bbox(subset, bbox)
+    return _edges_to_geojson(subset)
+
+
+@router.get("/{slug}/districts")
+def coverage_districts(
+    slug: str,
+    admin_level: int = Query(9, ge=4, le=11),
+    geometry: bool = Query(False),
+    streets_only: bool = Query(False),
+):
+    matcher = _get_matcher(slug)
+    return matcher.coverage_by_district(
+        admin_level=admin_level, include_geometry=geometry, streets_only=streets_only
+    )
 
 
 class AreaRequest(BaseModel):
     # Polygon vertices as [lat, lon]
     points: list[tuple[float, float]] = Field(min_length=3)
+    streets_only: bool = False
 
 
 @router.post("/{slug}/area")
 def coverage_area(slug: str, payload: AreaRequest):
     matcher = _get_matcher(slug)
-    return matcher.coverage_in_polygon(payload.points)
+    return matcher.coverage_in_polygon(payload.points, streets_only=payload.streets_only)
 
 
 def _run_coverage_sync(slug: str, si: StravaIntelligence, sport_types: list[str]):

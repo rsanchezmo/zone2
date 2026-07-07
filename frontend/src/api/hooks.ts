@@ -684,6 +684,7 @@ export interface CoverageSummary {
   slug: string;
   city_name: string;
   num_matched_activities: number;
+  bbox: [number, number, number, number]; // south, west, north, east
   total_network_km: number;
   traversed_km: number;
   coverage_pct: number;
@@ -698,6 +699,7 @@ export interface DistrictCoverage {
   num_streets: number;
   num_covered_streets: number;
   bbox: [number, number, number, number]; // south, west, north, east
+  geometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon;
 }
 
 export interface AreaCoverage {
@@ -712,6 +714,7 @@ export function useCoverageCities() {
   return useQuery<CoverageSummary[]>({
     queryKey: ['coverage-cities'],
     queryFn: () => api.get('/coverage/cities').then(r => r.data),
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -721,6 +724,7 @@ export function useCoverageEdges(slug?: string) {
     queryFn: () => api.get(`/coverage/${slug}/edges`, { params: { covered: true } }).then(r => r.data),
     enabled: !!slug,
     staleTime: 5 * 60 * 1000,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -728,9 +732,12 @@ export function useCoverageDistricts(slug?: string, adminLevel = 9) {
   return useQuery<DistrictCoverage[]>({
     queryKey: ['coverage-districts', slug, adminLevel],
     queryFn: () =>
-      api.get(`/coverage/${slug}/districts`, { params: { admin_level: adminLevel } }).then(r => r.data),
+      api.get(`/coverage/${slug}/districts`, {
+        params: { admin_level: adminLevel, geometry: true },
+      }).then(r => r.data),
     enabled: !!slug,
     staleTime: 5 * 60 * 1000,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -738,6 +745,49 @@ export function useCoverageArea(slug?: string) {
   return useMutation<AreaCoverage, unknown, [number, number][]>({
     mutationFn: (points) =>
       api.post(`/coverage/${slug}/area`, { points }).then(r => r.data),
+  });
+}
+
+export interface AddCityStatus {
+  running: boolean;
+  city_name: string | null;
+  slug: string | null;
+  error: string | null;
+  progress: string | null;
+  started_at: number | null;
+}
+
+export function useAddCity() {
+  const qc = useQueryClient();
+  return useMutation<{ status: string }, unknown, string>({
+    mutationFn: (cityName) =>
+      api.post('/coverage/add', null, { params: { city_name: cityName } }).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['coverage-add-status'] }),
+  });
+}
+
+/** Resolve a city query to its OSM display name before downloading it. */
+export function useGeocodeCity() {
+  return useMutation<{ query: string; display_name: string }, unknown, string>({
+    mutationFn: (q) => api.get('/coverage/geocode', { params: { q } }).then(r => r.data),
+  });
+}
+
+export function useDeleteCity() {
+  const qc = useQueryClient();
+  return useMutation<{ status: string }, unknown, string>({
+    mutationFn: (slug) => api.delete(`/coverage/${slug}`).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['coverage-cities'] }),
+  });
+}
+
+export function useAddCityStatus(polling = false) {
+  return useQuery<AddCityStatus>({
+    queryKey: ['coverage-add-status'],
+    queryFn: () => api.get('/coverage/add/status').then(r => r.data),
+    // Poll while the caller is interested or a download is in flight
+    // (so a page reload mid-download keeps tracking it).
+    refetchInterval: (query) => (polling || query.state.data?.running ? 3000 : false),
   });
 }
 

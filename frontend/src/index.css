@@ -43,6 +43,32 @@ body::before {
 .leaflet-tile-pane .satellite-tiles { filter: brightness(0.55) saturate(0.6) contrast(1.1); }
 .light .leaflet-tile-pane .satellite-tiles { filter: brightness(0.7) saturate(0.7); }
 
+/* District hover tooltip on the coverage map */
+.district-tip {
+  background: rgba(12, 12, 12, 0.92);
+  border: 1px solid var(--color-surface-600);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  color: #f3f4f6;
+  padding: 5px 9px;
+  font-family: 'Geist', system-ui, sans-serif;
+}
+.district-tip::before { display: none; }
+.district-tip-name { font-size: 11px; font-weight: 600; display: block; }
+.district-tip-pct {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  font-weight: 600;
+}
+.district-tip-km { font-size: 10px; color: #9ca3af; margin-left: 6px; }
+.light .district-tip {
+  background: rgba(255, 255, 255, 0.94);
+  color: #1f2937;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+.light .district-tip-km { color: #6b7280; }
+
 /* Light mode overrides */
 .light {
   --color-surface-900: #fafafa;

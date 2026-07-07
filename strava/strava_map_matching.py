@@ -9,11 +9,12 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
 from pathlib import Path
-from shapely.geometry import LineString, MultiLineString, Point, Polygon as ShapelyPolygon
+from shapely.geometry import LineString, MultiLineString, Point, Polygon as ShapelyPolygon, mapping as shapely_mapping
 from shapely.ops import linemerge
 from shapely.prepared import prep
 import numpy as np
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -233,16 +234,24 @@ class StravaMapMatcher:
     # the street covers them implicitly.
     EXCLUDED_FOOTWAY_TYPES = {'sidewalk', 'crossing', 'traffic_island', 'access_aisle'}
     EXCLUDED_ACCESS = {'private', 'no'}
+    # Runnable classes that are paths/trails rather than streets. Still part
+    # of the matching target (running them is recorded), but excluded from
+    # the denominator in the streets-only coverage view.
+    PATH_HIGHWAYS = {'footway', 'path', 'track', 'steps', 'cycleway', 'bridleway'}
 
-    def __init__(self, city_name: str, workdir: Path, force_reload: bool = False):
+    def __init__(self, city_name: str, workdir: Path, force_reload: bool = False,
+                 on_progress: Callable[[str], None] | None = None):
         """
         Initialize the StravaMapMatcher with a specified city name.
 
         :param city_name: Name of the city to load the street network for.
+        :param on_progress: Called with a human-readable stage description at
+            each phase of a first-time city download.
         """
         self.city_name = city_name
         self.workdir = workdir / "osm_maps"
         self.workdir.mkdir(parents=True, exist_ok=True)
+        self._on_progress = on_progress or (lambda stage: None)
 
         self._nodes_gdf: gpd.GeoDataFrame = None  # type: ignore[assignment]
         self._edges_gdf: gpd.GeoDataFrame = None  # type: ignore[assignment]
@@ -369,14 +378,14 @@ class StravaMapMatcher:
         boundary_fp = self.workdir / f"{slug}_boundary.parquet"
 
         meta_fp = self.workdir / f"{slug}_meta.json"
-        if not meta_fp.exists():
-            meta_fp.write_text(json.dumps({'city_name': self.city_name}))
 
         if not force_reload and nodes_fp.exists() and edges_fp.exists() and boundary_fp.exists():
             self._edges_gdf = gpd.read_parquet(edges_fp).set_index(['u', 'v', 'key'])
             nodes = pd.read_parquet(nodes_fp).set_index('osmid')
             self._nodes_gdf = nodes  # type: ignore[assignment]
             self._city_boundary = gpd.read_parquet(boundary_fp)
+            if not meta_fp.exists():
+                meta_fp.write_text(json.dumps({'city_name': self.city_name}))
             return
 
         logger.info("Downloading map for %s from OSM...", self.city_name)
@@ -384,12 +393,24 @@ class StravaMapMatcher:
         # from real park paths (kept); it is not in osmnx defaults.
         if 'footway' not in ox.settings.useful_tags_way:
             ox.settings.useful_tags_way = list(ox.settings.useful_tags_way) + ['footway']
-        graph = ox.graph_from_place(self.city_name, network_type='all')
+        # Geocode once and download within that polygon, so the graph and the
+        # boundary can never come from different geocoder results.
+        self._on_progress('resolving the city with OSM')
         city_boundary = ox.geocode_to_gdf(self.city_name)
+        display_name = str(city_boundary.iloc[0].get('display_name', self.city_name))
+        logger.info("Geocoded %s to %s", self.city_name, display_name)
+        self._on_progress(f'downloading the street network of {display_name}')
+        # retain_all: exclaves (e.g. a detached district) connect to the rest
+        # of the city only through roads outside the polygon, so they are not
+        # part of the largest component and would be silently dropped.
+        graph = ox.graph_from_polygon(city_boundary.union_all(), network_type='all',
+                                      retain_all=True)
+        self._on_progress('projecting and building the graph')
         graph_proj = ox.project_graph(graph)
         nodes_gdf, edges_gdf = ox.graph_to_gdfs(graph_proj, edges=True, nodes=True)
         city_boundary_gdf = city_boundary.to_crs(edges_gdf.crs)
 
+        self._on_progress('filtering to runnable streets')
         edges_gdf = self._filter_runnable(edges_gdf)
         used_nodes = set(edges_gdf.index.get_level_values(0)) | set(edges_gdf.index.get_level_values(1))
         nodes_gdf = nodes_gdf[nodes_gdf.index.isin(used_nodes)]
@@ -407,9 +428,14 @@ class StravaMapMatcher:
                     lambda v: str(v) if isinstance(v, (list, tuple)) else v)
         slim_nodes = nodes_gdf.reset_index()[['osmid', 'x', 'y']]
 
+        self._on_progress('saving the city map')
         slim_edges.to_parquet(edges_fp)
         slim_nodes.to_parquet(nodes_fp)
         city_boundary_gdf.to_parquet(boundary_fp)
+        # Only after a successful download — a failed add must leave no trace
+        # that _known_cities could mistake for a real city.
+        if not meta_fp.exists():
+            meta_fp.write_text(json.dumps({'city_name': self.city_name}))
         logger.info("Runnable map for %s saved to %s (%d edges, %d nodes)",
                     self.city_name, self.workdir, len(slim_edges), len(slim_nodes))
 
@@ -881,19 +907,11 @@ class StravaMapMatcher:
             self.save_match_state(results, attempted_ids=list(todo['id']))
         return self.coverage_stats_from_state()
 
-    def _undirected_edges(self) -> pd.DataFrame:
-        idx = self._edges_gdf.index
-        u = idx.get_level_values(0).to_numpy()
-        v = idx.get_level_values(1).to_numpy()
-        df = pd.DataFrame({
-            'u': np.minimum(u, v),
-            'v': np.maximum(u, v),
-            'length': self._edges_gdf['length'].to_numpy(),
-        })
-        return df.drop_duplicates(['u', 'v'])
-
-    def _coverage_from_edges(self, traversed: set[tuple[int, int]]) -> dict:
-        und = self._undirected_edges()
+    def _coverage_from_edges(self, traversed: set[tuple[int, int]],
+                             streets_only: bool = False) -> dict:
+        und = self._undirected_gdf()
+        if streets_only:
+            und = und[und['street']]
         total_length_m = float(und['length'].sum())
         covered_mask = [
             (u, v) in traversed for u, v in zip(und['u'].tolist(), und['v'].tolist())
@@ -904,7 +922,7 @@ class StravaMapMatcher:
             'total_network_km': round(total_length_m / 1000, 2),
             'traversed_km': round(traversed_length_m / 1000, 2),
             'coverage_pct': round(100 * traversed_length_m / total_length_m, 2) if total_length_m > 0 else 0,
-            'num_unique_streets': len(traversed),
+            'num_unique_streets': int(np.count_nonzero(covered_mask)),
             '_traversed_edge_set': traversed,
         }
         logger.info(
@@ -930,13 +948,22 @@ class StravaMapMatcher:
             traversed.update((min(u, v), max(u, v)) for u, v in zip(us.tolist(), vs.tolist()))
         return self._coverage_from_edges(traversed)
 
-    def coverage_stats_from_state(self) -> dict:
+    def coverage_stats_from_state(self, streets_only: bool = False) -> dict:
         """Coverage stats from the persisted per-activity state (no matching)."""
-        return self._coverage_from_edges(self.covered_edge_set())
+        return self._coverage_from_edges(self.covered_edge_set(), streets_only=streets_only)
 
     # ------------------------------------------------------------------
     # Scoped coverage: districts & arbitrary areas
     # ------------------------------------------------------------------
+
+    def city_bbox(self) -> list[float]:
+        """City bounds as [south, west, north, east] in EPSG:4326."""
+        b = self._city_boundary.to_crs('EPSG:4326').total_bounds
+        return [round(b[1], 5), round(b[0], 5), round(b[3], 5), round(b[2], 5)]
+
+    def _is_street(self, highway) -> bool:
+        """Whether an edge is a street (has a runnable class beyond paths/trails)."""
+        return bool(self._as_tags(highway) - self.PATH_HIGHWAYS)
 
     def _undirected_gdf(self) -> gpd.GeoDataFrame:
         """Unique undirected edges with geometry — the serving/aggregation view."""
@@ -951,6 +978,8 @@ class StravaMapMatcher:
                     'length': self._edges_gdf['length'].to_numpy(),
                     'name': (self._edges_gdf['name'].to_numpy()
                              if 'name' in self._edges_gdf.columns else None),
+                    'street': ([self._is_street(h) for h in self._edges_gdf['highway']]
+                               if 'highway' in self._edges_gdf.columns else True),
                 },
                 geometry=self._edges_gdf.geometry.values,
                 crs=self._edges_gdf.crs,
@@ -958,9 +987,11 @@ class StravaMapMatcher:
             self._und_gdf = gdf.drop_duplicates(['u', 'v']).reset_index(drop=True)
         return self._und_gdf
 
-    def undirected_with_covered(self) -> gpd.GeoDataFrame:
+    def undirected_with_covered(self, streets_only: bool = False) -> gpd.GeoDataFrame:
         """Undirected edges flagged with whether the persisted state covers them."""
         und = self._undirected_gdf()
+        if streets_only:
+            und = und[und['street']]
         covered = self.covered_edge_set()
         out = und.copy()
         out['covered'] = [
@@ -968,28 +999,55 @@ class StravaMapMatcher:
         ]
         return out
 
-    def load_districts(self, admin_level: int = 9, force_reload: bool = False) -> gpd.GeoDataFrame:
-        """Administrative districts of the city (cached parquet).
+    @staticmethod
+    def _named_polygons(feats: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        polys = feats[feats.geometry.geom_type.isin(['Polygon', 'MultiPolygon'])]
+        if 'name' not in polys.columns:
+            return polys.iloc[0:0]
+        return polys.dropna(subset=['name'])
 
-        admin_level 9 = districts, 10 = neighborhoods (OSM convention for ES;
-        varies by country).
+    def load_districts(self, admin_level: int = 9, force_reload: bool = False) -> gpd.GeoDataFrame:
+        """District polygons of the city (cached parquet).
+
+        Tries administrative boundaries at admin_level (9 = districts,
+        10 = neighborhoods — the convention in ES). Cities that don't map
+        districts administratively (e.g. NL, where Amsterdam's stadsdelen are
+        place=suburb) fall back to place polygons.
         """
         fp = self.workdir / f"{self._slug()}_districts_{admin_level}.parquet"
         if fp.exists() and not force_reload:
-            return gpd.read_parquet(fp)
+            cached = gpd.read_parquet(fp)
+            if len(cached):
+                return cached
 
         logger.info("Downloading admin_level=%d boundaries for %s...", admin_level, self.city_name)
-        # osmnx ORs the tags dict, so admin_level must be filtered afterwards
-        feats = ox.features_from_place(
-            self.city_name,
-            tags={'boundary': 'administrative', 'admin_level': str(admin_level)},
-        )
-        if 'admin_level' in feats.columns:
-            feats = feats[feats['admin_level'] == str(admin_level)]
-        polys = feats[feats.geometry.geom_type.isin(['Polygon', 'MultiPolygon'])]
-        polys = polys.dropna(subset=['name'])[['name', 'geometry']].reset_index(drop=True)
+        boundary_4326 = self._city_boundary.to_crs('EPSG:4326').union_all()
+        try:
+            # osmnx ORs the tags dict, so admin_level must be filtered afterwards
+            feats = ox.features_from_polygon(
+                boundary_4326,
+                tags={'boundary': 'administrative', 'admin_level': str(admin_level)},
+            )
+            if 'admin_level' in feats.columns:
+                feats = feats[feats['admin_level'] == str(admin_level)]
+            polys = self._named_polygons(feats)
+        except ox._errors.InsufficientResponseError:
+            polys = None
+
+        if polys is None or len(polys) < 2:
+            place_values = (['borough', 'suburb', 'city_district'] if admin_level <= 9
+                            else ['quarter', 'neighbourhood'])
+            logger.info("No admin boundaries at level %d for %s; falling back to place=%s",
+                        admin_level, self.city_name, place_values)
+            try:
+                feats = ox.features_from_polygon(boundary_4326, tags={'place': place_values})
+                polys = self._named_polygons(feats)
+            except ox._errors.InsufficientResponseError:
+                polys = gpd.GeoDataFrame({'name': []}, geometry=[], crs='EPSG:4326')
+
+        polys = polys[['name', 'geometry']].reset_index(drop=True)
         polys = polys.to_crs(self._edges_gdf.crs)
-        # features_from_place can return boundaries that merely touch the city
+        # The query polygon is a bbox-ish hull; drop polygons merely touching it
         polys = polys[polys.representative_point().within(self._city_boundary.union_all())]
         polys = polys.drop_duplicates('name').reset_index(drop=True)
         polys.to_parquet(fp)
@@ -1008,38 +1066,58 @@ class StravaMapMatcher:
             'num_covered_streets': int(scoped['covered'].sum()),
         }
 
-    def coverage_by_district(self, admin_level: int = 9) -> list[dict]:
+    @staticmethod
+    def _round_coords(obj: list | float) -> list | float:
+        if isinstance(obj, (list, tuple)):
+            return [StravaMapMatcher._round_coords(x) for x in obj]
+        return round(obj, 5)
+
+    def coverage_by_district(self, admin_level: int = 9, include_geometry: bool = False,
+                             streets_only: bool = False) -> list[dict]:
         """Coverage stats per administrative district, best-covered first.
 
         Edges are assigned to the district containing their representative
-        point, so border streets count exactly once.
+        point, so border streets count exactly once. With include_geometry,
+        each district carries its simplified boundary as a GeoJSON geometry.
         """
         districts = self.load_districts(admin_level)
-        und = self.undirected_with_covered()
+        und = self.undirected_with_covered(streets_only=streets_only)
         pts = und.copy()
         pts['geometry'] = und.representative_point()
         joined = gpd.sjoin(pts, districts[['name', 'geometry']],
                            predicate='within', how='inner')
+
+        geoms_4326 = None
+        if include_geometry:
+            geoms_4326 = districts.set_index('name').geometry.simplify(20).to_crs('EPSG:4326')
 
         results = []
         for name, group in joined.groupby('name_right' if 'name_right' in joined.columns else 'name'):
             stats = self._scoped_stats(group)
             geom = districts.loc[districts['name'] == name, 'geometry']
             bounds = gpd.GeoSeries(geom, crs=districts.crs).to_crs('EPSG:4326').total_bounds
-            results.append({
+            entry = {
                 'name': name,
                 **stats,
                 # [south, west, north, east] for map fitBounds
                 'bbox': [round(bounds[1], 5), round(bounds[0], 5),
                          round(bounds[3], 5), round(bounds[2], 5)],
-            })
+            }
+            if geoms_4326 is not None and name in geoms_4326.index:
+                gj = shapely_mapping(geoms_4326[name])
+                entry['geometry'] = {
+                    'type': gj['type'],
+                    'coordinates': self._round_coords(gj['coordinates']),
+                }
+            results.append(entry)
         return sorted(results, key=lambda r: r['coverage_pct'], reverse=True)
 
-    def coverage_in_polygon(self, latlon_coords: list[tuple[float, float]]) -> dict:
+    def coverage_in_polygon(self, latlon_coords: list[tuple[float, float]],
+                            streets_only: bool = False) -> dict:
         """Coverage stats within an arbitrary polygon of (lat, lon) vertices."""
         poly = ShapelyPolygon([(lon, lat) for lat, lon in latlon_coords])
         poly_proj = gpd.GeoSeries([poly], crs='EPSG:4326').to_crs(self._edges_gdf.crs).iloc[0]
-        und = self.undirected_with_covered()
+        und = self.undirected_with_covered(streets_only=streets_only)
         inside = und[und.representative_point().within(poly_proj)]
         return self._scoped_stats(inside)
 
