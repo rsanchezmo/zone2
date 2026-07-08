@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Auto-deploy: fetch the configured branch, rebuild Docker services only when
-# new commits are detected.
+# Auto-deploy: fetch the configured branch, rebuild Docker services when
+# origin has commits newer than the last deployed SHA (.git/last-deployed-sha).
 #
 # Designed for systemd-timer driven use (see deploy/strava-deploy.timer) but
 # safe to run manually too:
@@ -24,6 +24,10 @@ REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 BRANCH="${DEPLOY_BRANCH:-prod}"
 COMPOSE="${COMPOSE:-docker compose}"
 LOCK_FILE="/tmp/strava-auto-deploy.lock"
+# Tracks the last SHA that was actually built, so a manual `git pull` in the
+# repo can't make a push look already-deployed. Lives in .git/ (untracked,
+# survives reboots).
+STATE_FILE="$REPO_DIR/.git/last-deployed-sha"
 
 log() { printf '[%s] %s\n' "$(date -u +'%FT%TZ')" "$*"; }
 
@@ -51,17 +55,19 @@ if ! git show-ref --verify --quiet "refs/heads/$BRANCH"; then
   git branch --track "$BRANCH" "origin/$BRANCH"
 fi
 
-LOCAL="$(git rev-parse "$BRANCH")"
 REMOTE="$(git rev-parse "origin/$BRANCH")"
+DEPLOYED="$(cat "$STATE_FILE" 2>/dev/null || true)"
 
-if [ "$LOCAL" = "$REMOTE" ]; then
-  log "Already at $LOCAL — no changes."
+if [ "$REMOTE" = "$DEPLOYED" ]; then
+  log "Already deployed $DEPLOYED — no changes."
   exit 0
 fi
 
-log "Updating $BRANCH: $LOCAL → $REMOTE"
-log "New commits:"
-git log --oneline --no-color "$LOCAL..$REMOTE" | sed 's/^/  /'
+log "Deploying $BRANCH: ${DEPLOYED:-<unknown>} → $REMOTE"
+if [ -n "$DEPLOYED" ] && git cat-file -e "$DEPLOYED^{commit}" 2>/dev/null; then
+  log "New commits:"
+  git log --oneline --no-color "$DEPLOYED..$REMOTE" | sed 's/^/  /'
+fi
 
 # ── Pull + rebuild ─────────────────────────────────────────────────────
 git checkout --quiet "$BRANCH"
@@ -70,4 +76,5 @@ git pull --ff-only --quiet origin "$BRANCH"
 log "Rebuilding Docker services..."
 $COMPOSE up -d --build
 
+git rev-parse HEAD > "$STATE_FILE"
 log "Deploy complete."
