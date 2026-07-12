@@ -138,7 +138,15 @@ def geocode_city(q: str = Query(min_length=3)):
         gdf = ox.geocode_to_gdf(q)
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"{type(e).__name__}: {e}")
-    return {"query": q, "display_name": str(gdf.iloc[0].get("display_name", q))}
+    west, south, east, north = (float(v) for v in gdf.total_bounds)
+    centroid = gdf.iloc[0].geometry.centroid
+    return {
+        "query": q,
+        "display_name": str(gdf.iloc[0].get("display_name", q)),
+        "lat": float(centroid.y),
+        "lon": float(centroid.x),
+        "bbox": {"south": south, "west": west, "north": north, "east": east},
+    }
 
 
 @router.delete("/{slug}")
