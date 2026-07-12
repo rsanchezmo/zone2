@@ -1,8 +1,10 @@
 import { Link } from 'react-router-dom'
-import { usePersonalRecords, useSportTotals } from '../api/hooks'
+import { usePersonalRecords, useSportTotals, type PersonalRecord } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
-import { formatPrPace } from '../utils/formatSpeed'
+import { formatPrPace, formatClockDuration, formatDurationHM } from '../utils/formatSpeed'
+import { parseLocalDate } from '../utils/dates'
 import ChartPanel from '../components/shared/ChartPanel'
+import PageHeader from '../components/shared/PageHeader'
 import { useTheme } from '../hooks/useTheme'
 import clsx from 'clsx'
 
@@ -18,42 +20,13 @@ const SPORT_CATEGORY_SPORT_TYPE: Record<string, string> = {
   swimming: 'Swim',
 }
 
-function formatPrTime(seconds: number): string {
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  const s = Math.round(seconds % 60)
-  if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
-  return `${m}:${s.toString().padStart(2, '0')}`
-}
-
-function formatTotalTime(seconds: number): string {
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  if (h >= 24) {
-    const days = Math.floor(h / 24)
-    const remH = h % 24
-    if (days > 0 && remH > 0) return `${days}d ${remH}h`
-    if (days > 0) return `${days}d`
-    return `${remH}h ${m}m`
-  }
-  return `${h}h ${m}m`
-}
-
+/** Same output style as formatDist, but keyed by sport category (all the PR data carries). */
 function formatDistance(km: number, category?: string): string {
   if (category === 'swimming') {
     const m = Math.round(km * 1000)
     return `${m.toLocaleString()} m`
   }
-  return `${km.toLocaleString(undefined, { maximumFractionDigits: 1 })} km`
-}
-
-interface PRRecord {
-  distance_m: number
-  label: string
-  time_s: number
-  activity_id: string | number
-  activity_name: string
-  date: string
+  return `${km.toFixed(1)} km`
 }
 
 export default function PersonalRecordsPage() {
@@ -65,7 +38,7 @@ export default function PersonalRecordsPage() {
   if (isLoading) {
     return (
       <div className="max-w-4xl mx-auto space-y-10 pb-12">
-        <PageHeader />
+        <PageHeader title="Records" description="best efforts across standard distances" />
         {Array.from({ length: 3 }).map((_, i) => (
           <div
             key={i}
@@ -90,13 +63,13 @@ export default function PersonalRecordsPage() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-10 pb-12">
-      <PageHeader />
+      <PageHeader title="Records" description="best efforts across standard distances" />
 
       {hasRecords ? (
         Object.entries(personalRecords).map(([category, records]) => {
           const sportType = SPORT_CATEGORY_SPORT_TYPE[category] ?? category
           const color = getSportColor(sportType)
-          const totals = sportTotals?.[category] as { distance_km: number; time_s: number; count: number } | undefined
+          const totals = sportTotals?.[category]
           const label = SPORT_CATEGORY_LABELS[category] ?? category
           return (
             <ChartPanel
@@ -117,7 +90,7 @@ export default function PersonalRecordsPage() {
                     <span className={clsx('w-px h-4', isLight ? 'bg-gray-200' : 'bg-surface-600')} aria-hidden="true" />
                     <TotalCell label="Distance" value={formatDistance(totals.distance_km, category)} accent={color} />
                     <span className={clsx('w-px h-4', isLight ? 'bg-gray-200' : 'bg-surface-600')} aria-hidden="true" />
-                    <TotalCell label="Time" value={formatTotalTime(totals.time_s)} />
+                    <TotalCell label="Time" value={formatDurationHM(totals.time_s)} />
                   </div>
                 ) : undefined
               }
@@ -131,12 +104,12 @@ export default function PersonalRecordsPage() {
                 )}>
                   <TotalCellBlock label="Activities" value={totals.count.toLocaleString()} />
                   <TotalCellBlock label="Distance" value={formatDistance(totals.distance_km, category)} accent={color} />
-                  <TotalCellBlock label="Time" value={formatTotalTime(totals.time_s)} />
+                  <TotalCellBlock label="Time" value={formatDurationHM(totals.time_s)} />
                 </div>
               )}
 
               <div>
-                {(records as PRRecord[]).map(record => (
+                {records.map(record => (
                   <PRRow key={record.distance_m} record={record} color={color} category={category} />
                 ))}
               </div>
@@ -167,20 +140,6 @@ export default function PersonalRecordsPage() {
         </div>
       )}
     </div>
-  )
-}
-
-// ────────────────────────────────────────────────────────
-// Page header — breadcrumb style matching Dashboard
-// ────────────────────────────────────────────────────────
-
-function PageHeader() {
-  return (
-    <header className="flex items-baseline gap-2">
-      <span className="eyebrow">Records</span>
-      <span className="text-[11px] text-gray-700">·</span>
-      <span className="text-[11px] text-gray-500 normal-case tracking-normal">best efforts across standard distances</span>
-    </header>
   )
 }
 
@@ -224,13 +183,13 @@ function TotalCellBlock({ label, value, accent }: { label: string; value: string
 // PRRow — single personal record row
 // ────────────────────────────────────────────────────────
 
-function PRRow({ record, color, category }: { record: PRRecord; color: string; category: string }) {
+function PRRow({ record, color, category }: { record: PersonalRecord; color: string; category: string }) {
   const { theme } = useTheme()
   const isLight = theme === 'light'
   const pace = formatPrPace(record.time_s, record.distance_m, category)
-  const time = formatPrTime(record.time_s)
+  const time = formatClockDuration(record.time_s)
   const date = record.date
-    ? new Date(record.date).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+    ? parseLocalDate(record.date).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
     : null
 
   return (

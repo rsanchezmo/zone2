@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { format, parseISO, differenceInDays } from 'date-fns'
+import { format, parseISO, differenceInCalendarDays } from 'date-fns'
 import {
   useRaceEvents, useCreateRaceEvent, useUpdateRaceEvent, useDeleteRaceEvent,
-  useActivitiesOnDates,
+  useActivitiesOnDates, type Activity, type RaceEvent,
 } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
 import { getPaceUnit, getDistUnit, getSportCategory, formatPace, isSpeedSport, parsePaceInput } from '../utils/formatSpeed'
+import { localDateStr } from '../utils/dates'
 import SportTypeCombobox from '../components/shared/SportTypeCombobox'
 import DatePicker from '../components/shared/DatePicker'
 import { FlagIcon, CheckIcon, ExternalLinkIcon } from '../components/icons'
@@ -45,24 +46,24 @@ export default function RacesPage() {
     setTargetPace(''); setDescription(''); setLocation(''); setUrl('')
   }
 
-  function startEdit(r: Record<string, unknown>) {
-    setEditingId(r.id as number)
-    setName(r.name as string)
-    setDate(r.date as string)
-    setSportType(r.sport_type as string)
+  function startEdit(r: RaceEvent) {
+    setEditingId(r.id)
+    setName(r.name)
+    setDate(r.date)
+    setSportType(r.sport_type)
     // User enters meters for swimming, km for others — convert km → m for swim display
     const displayDist = r.distance_km != null
-      ? (getSportCategory(r.sport_type as string) === 'swimming'
-          ? (r.distance_km as number) * 1000
-          : (r.distance_km as number))
+      ? (getSportCategory(r.sport_type) === 'swimming'
+          ? r.distance_km * 1000
+          : r.distance_km)
       : ''
     setDistanceKm(displayDist === '' ? '' : String(displayDist))
     setTargetPace(r.target_pace != null
-      ? formatPace(r.target_pace as number, isSpeedSport(r.sport_type as string))
+      ? formatPace(r.target_pace, isSpeedSport(r.sport_type))
       : '')
-    setDescription((r.description as string) || '')
-    setLocation((r.location as string) || '')
-    setUrl((r.url as string) || '')
+    setDescription(r.description || '')
+    setLocation(r.location || '')
+    setUrl(r.url || '')
     setShowForm(true)
   }
 
@@ -95,17 +96,17 @@ export default function RacesPage() {
   }
 
   const today = new Date()
-  const upcoming = (allRaces || []).filter((r: Record<string, unknown>) => (r.date as string) >= format(today, 'yyyy-MM-dd'))
-  const past = (allRaces || []).filter((r: Record<string, unknown>) => (r.date as string) < format(today, 'yyyy-MM-dd')).reverse()
+  const upcoming = (allRaces || []).filter(r => r.date >= format(today, 'yyyy-MM-dd'))
+  const past = (allRaces || []).filter(r => r.date < format(today, 'yyyy-MM-dd')).reverse()
 
   // Fetch only the activities on past race days, for "View activity" matching.
-  const pastDates = past.map((r: Record<string, unknown>) => r.date as string)
+  const pastDates = past.map(r => r.date)
   const { data: activitiesData } = useActivitiesOnDates(pastDates)
 
-  const activityByDate: Record<string, Array<{ id: number; name: string; sport_type: string; distance_km: number }>> = {}
+  const activityByDate: Record<string, Activity[]> = {}
   if (activitiesData?.items) {
     for (const a of activitiesData.items) {
-      const ds = a.start_date_local ? format(new Date(a.start_date_local), 'yyyy-MM-dd') : null
+      const ds = a.start_date_local ? localDateStr(a.start_date_local) : null
       if (ds) {
         if (!activityByDate[ds]) activityByDate[ds] = []
         activityByDate[ds].push(a)
@@ -251,13 +252,13 @@ export default function RacesPage() {
             <section>
               <div className="section-head mb-4"><span className="eyebrow" style={{ color: RACE_ACCENT }}>Upcoming</span></div>
               <div className="space-y-3 stagger-children">
-                {upcoming.map((r: Record<string, unknown>) => {
-                  const daysUntil = differenceInDays(parseISO(r.date as string), today) + 1
-                  const sportColor = getSportColor(r.sport_type as string)
-                  const isConfirming = confirmDeleteId === (r.id as number)
+                {upcoming.map(r => {
+                  const daysUntil = differenceInCalendarDays(parseISO(r.date), today)
+                  const sportColor = getSportColor(r.sport_type)
+                  const isConfirming = confirmDeleteId === r.id
                   return (
                     <article
-                      key={r.id as number}
+                      key={r.id}
                       className={clsx(panelClass, 'p-4 transition-colors')}
                       style={{ borderLeftWidth: 2, borderLeftColor: RACE_ACCENT }}
                     >
@@ -270,47 +271,58 @@ export default function RacesPage() {
                             borderColor: `${RACE_ACCENT}30`,
                           }}
                         >
-                          <div
-                            className="text-2xl font-mono tabular-nums font-bold leading-none"
-                            style={{ color: RACE_ACCENT, letterSpacing: '-0.02em' }}
-                          >
-                            {daysUntil}
-                          </div>
-                          <div className="eyebrow mt-1 text-[9px]" style={{ color: `${RACE_ACCENT}cc` }}>
-                            day{daysUntil !== 1 ? 's' : ''}
-                          </div>
+                          {daysUntil === 0 ? (
+                            <div
+                              className="text-sm font-mono font-bold leading-none uppercase tracking-[0.1em]"
+                              style={{ color: RACE_ACCENT }}
+                            >
+                              Today
+                            </div>
+                          ) : (
+                            <>
+                              <div
+                                className="text-2xl font-mono tabular-nums font-bold leading-none"
+                                style={{ color: RACE_ACCENT, letterSpacing: '-0.02em' }}
+                              >
+                                {daysUntil}
+                              </div>
+                              <div className="eyebrow mt-1 text-[9px]" style={{ color: `${RACE_ACCENT}cc` }}>
+                                day{daysUntil !== 1 ? 's' : ''}
+                              </div>
+                            </>
+                          )}
                         </div>
 
                         {/* Details */}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap mb-1">
-                            <span className={clsx('text-base font-semibold tracking-tight', isLight ? 'text-gray-900' : 'text-gray-100')}>{r.name as string}</span>
+                            <span className={clsx('text-base font-semibold tracking-tight', isLight ? 'text-gray-900' : 'text-gray-100')}>{r.name}</span>
                             <span
                               className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.15em] px-2 py-0.5 rounded-full border font-semibold"
                               style={{ color: sportColor, borderColor: `${sportColor}40`, backgroundColor: `${sportColor}15` }}
                             >
                               <span className="w-1 h-1 rounded-full" style={{ backgroundColor: sportColor }} aria-hidden="true" />
-                              {r.sport_type as string}
+                              {r.sport_type}
                             </span>
                           </div>
                           <div className="flex items-center gap-3 text-[11px] text-gray-500 flex-wrap font-mono tabular-nums">
-                            <span>{format(parseISO(r.date as string), 'EEE · MMM d, yyyy')}</span>
+                            <span>{format(parseISO(r.date), 'EEE · MMM d, yyyy')}</span>
                             {r.distance_km != null && (
                               <span>
-                                {getSportCategory(r.sport_type as string) === 'swimming'
-                                  ? `${Math.round((r.distance_km as number) * 1000)} m`
-                                  : `${r.distance_km as number} km`}
+                                {getSportCategory(r.sport_type) === 'swimming'
+                                  ? `${Math.round(r.distance_km * 1000)} m`
+                                  : `${r.distance_km} km`}
                               </span>
                             )}
-                            {r.target_pace != null && <span>{formatPace(r.target_pace as number, isSpeedSport(r.sport_type as string))} {getPaceUnit(r.sport_type as string)}</span>}
-                            {r.location != null && <span className="normal-case">{r.location as string}</span>}
+                            {r.target_pace != null && <span>{formatPace(r.target_pace, isSpeedSport(r.sport_type))} {getPaceUnit(r.sport_type)}</span>}
+                            {r.location != null && <span className="normal-case">{r.location}</span>}
                           </div>
                           {r.description != null && (
-                            <div className={clsx('text-xs mt-2 whitespace-pre-line', isLight ? 'text-gray-500' : 'text-gray-400')}>{r.description as string}</div>
+                            <div className={clsx('text-xs mt-2 whitespace-pre-line', isLight ? 'text-gray-500' : 'text-gray-400')}>{r.description}</div>
                           )}
                           {r.url != null && (
                             <a
-                              href={r.url as string}
+                              href={r.url}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="text-[11px] mt-1.5 inline-flex items-center gap-1"
@@ -326,8 +338,8 @@ export default function RacesPage() {
                         <RowActions
                           isConfirming={isConfirming}
                           onEdit={() => startEdit(r)}
-                          onConfirmDelete={() => { deleteRace.mutate(r.id as number, { onSuccess: () => toast('Race deleted', 'success') }); setConfirmDeleteId(null) }}
-                          onAskDelete={() => setConfirmDeleteId(r.id as number)}
+                          onConfirmDelete={() => { deleteRace.mutate(r.id, { onSuccess: () => toast('Race deleted', 'success') }); setConfirmDeleteId(null) }}
+                          onAskDelete={() => setConfirmDeleteId(r.id)}
                           onCancelDelete={() => setConfirmDeleteId(null)}
                         />
                       </div>
@@ -343,26 +355,26 @@ export default function RacesPage() {
             <section>
               <div className="section-head mb-4"><span className="eyebrow">Past races</span></div>
               <div className="space-y-2 stagger-children">
-                {past.map((r: Record<string, unknown>) => {
-                  const sportColor = getSportColor(r.sport_type as string)
-                  const dayActivities = activityByDate[r.date as string] || []
+                {past.map(r => {
+                  const sportColor = getSportColor(r.sport_type)
+                  const dayActivities = activityByDate[r.date] || []
                   // Among same-sport activities that day, prefer the one closest to
                   // the race distance (falls back to the longest) so warm-ups don't win.
-                  const raceKm = r.distance_km as number | null
+                  const raceKm = r.distance_km
                   const matchedActivity = dayActivities
                     .filter(a => a.sport_type === r.sport_type)
                     .sort((a, b) => raceKm != null
-                      ? Math.abs(a.distance_km - raceKm) - Math.abs(b.distance_km - raceKm)
-                      : b.distance_km - a.distance_km)[0]
-                  const isConfirming = confirmDeleteId === (r.id as number)
+                      ? Math.abs((a.distance_km ?? 0) - raceKm) - Math.abs((b.distance_km ?? 0) - raceKm)
+                      : (b.distance_km ?? 0) - (a.distance_km ?? 0))[0]
+                  const isConfirming = confirmDeleteId === r.id
                   return (
-                    <article key={r.id as number} className={clsx(panelClass, 'p-4 transition-colors')}>
+                    <article key={r.id} className={clsx(panelClass, 'p-4 transition-colors')}>
                       <div className="flex items-center gap-4">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap mb-0.5">
-                            <span className={clsx('text-sm font-semibold tracking-tight', isLight ? 'text-gray-900' : 'text-gray-100')}>{r.name as string}</span>
+                            <span className={clsx('text-sm font-semibold tracking-tight', isLight ? 'text-gray-900' : 'text-gray-100')}>{r.name}</span>
                             <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: sportColor }} aria-hidden="true" />
-                            <span className="text-[10px] uppercase tracking-[0.15em] text-gray-500">{r.sport_type as string}</span>
+                            <span className="text-[10px] uppercase tracking-[0.15em] text-gray-500">{r.sport_type}</span>
                             {matchedActivity && (
                               <Link
                                 to={`/activities/${matchedActivity.id}`}
@@ -374,31 +386,31 @@ export default function RacesPage() {
                             )}
                           </div>
                           <div className="flex items-center gap-3 text-[11px] text-gray-500 flex-wrap font-mono tabular-nums">
-                            <span>{format(parseISO(r.date as string), 'MMM d, yyyy')}</span>
+                            <span>{format(parseISO(r.date), 'MMM d, yyyy')}</span>
                             {r.distance_km != null && (
                               <span>
-                                {getSportCategory(r.sport_type as string) === 'swimming'
-                                  ? `${Math.round((r.distance_km as number) * 1000)} m`
-                                  : `${r.distance_km as number} km`}
+                                {getSportCategory(r.sport_type) === 'swimming'
+                                  ? `${Math.round(r.distance_km * 1000)} m`
+                                  : `${r.distance_km} km`}
                               </span>
                             )}
-                            {r.target_pace != null && <span>{formatPace(r.target_pace as number, isSpeedSport(r.sport_type as string))} {getPaceUnit(r.sport_type as string)}</span>}
-                            {r.location != null && <span className="normal-case">{r.location as string}</span>}
+                            {r.target_pace != null && <span>{formatPace(r.target_pace, isSpeedSport(r.sport_type))} {getPaceUnit(r.sport_type)}</span>}
+                            {r.location != null && <span className="normal-case">{r.location}</span>}
                             {r.url != null && (
-                              <a href={r.url as string} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1" style={{ color: RACE_ACCENT }} onClick={e => e.stopPropagation()}>
+                              <a href={r.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1" style={{ color: RACE_ACCENT }} onClick={e => e.stopPropagation()}>
                                 Website <ExternalLinkIcon size={9} />
                               </a>
                             )}
                           </div>
                           {r.description != null && (
-                            <div className={clsx('text-xs mt-1.5 whitespace-pre-line', isLight ? 'text-gray-400' : 'text-gray-500')}>{r.description as string}</div>
+                            <div className={clsx('text-xs mt-1.5 whitespace-pre-line', isLight ? 'text-gray-400' : 'text-gray-500')}>{r.description}</div>
                           )}
                         </div>
                         <RowActions
                           isConfirming={isConfirming}
                           onEdit={() => startEdit(r)}
-                          onConfirmDelete={() => { deleteRace.mutate(r.id as number, { onSuccess: () => toast('Race deleted', 'success') }); setConfirmDeleteId(null) }}
-                          onAskDelete={() => setConfirmDeleteId(r.id as number)}
+                          onConfirmDelete={() => { deleteRace.mutate(r.id, { onSuccess: () => toast('Race deleted', 'success') }); setConfirmDeleteId(null) }}
+                          onAskDelete={() => setConfirmDeleteId(r.id)}
                           onCancelDelete={() => setConfirmDeleteId(null)}
                         />
                       </div>

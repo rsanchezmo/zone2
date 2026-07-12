@@ -2,9 +2,10 @@ import { useMemo, useState } from 'react'
 import {
   ComposedChart, Area, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
-import { useRacePredictions, useRacePredictionsHistory } from '../api/hooks'
+import { useRacePredictions, useRacePredictionsHistory, type RacePrediction } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
-import { formatSpeed } from '../utils/formatSpeed'
+import { formatSpeed, formatClockDuration } from '../utils/formatSpeed'
+import { parseLocalDate } from '../utils/dates'
 import { useTheme } from '../hooks/useTheme'
 import { useIsMobile } from '../hooks/useIsMobile'
 import clsx from 'clsx'
@@ -14,28 +15,6 @@ const SPORTS: { key: string; label: string; sportType: string }[] = [
   { key: 'cycling', label: 'Cycling', sportType: 'Ride' },
   { key: 'swimming', label: 'Swimming', sportType: 'Swim' },
 ]
-
-interface PredictionEntry {
-  distance_m: number
-  label: string
-  pr_time_s: number | null
-  pr_date: string | null
-  source: string
-  predicted_time_s: number | null
-  predicted_time_low_s: number | null
-  predicted_time_high_s: number | null
-  models: Record<string, number | null>
-}
-
-function formatSec(s: number | null | undefined): string {
-  if (s == null || !Number.isFinite(s)) return '—'
-  const total = Math.round(s)
-  const h = Math.floor(total / 3600)
-  const m = Math.floor((total % 3600) / 60)
-  const sec = total % 60
-  if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`
-  return `${m}:${sec.toString().padStart(2, '0')}`
-}
 
 export default function AnalyticsPage() {
   const { theme, colors } = useTheme()
@@ -49,8 +28,13 @@ export default function AnalyticsPage() {
   const { data: preds, isLoading: predsLoading } = useRacePredictions(sport)
   const { data: history, isLoading: histLoading } = useRacePredictionsHistory(sport, weeks)
 
-  const predictions: PredictionEntry[] = preds?.predictions ?? []
-  const validPredictions = predictions.filter(p => p.predicted_time_s != null)
+  const predictions = useMemo<RacePrediction[]>(() => preds?.predictions ?? [], [preds])
+  const validPredictions = useMemo(
+    () => predictions.filter(
+      (p): p is RacePrediction & { predicted_time_s: number } => p.predicted_time_s != null,
+    ),
+    [predictions],
+  )
 
   const [focusDistance, setFocusDistance] = useState<number | null>(null)
   const effectiveFocus = useMemo(() => {
@@ -66,7 +50,7 @@ export default function AnalyticsPage() {
 
   const chartData = useMemo(() => {
     if (!history?.points || effectiveFocus == null) return []
-    return (history.points as Array<{ end_date: string; predictions: PredictionEntry[] }>)
+    return history.points
       .map(point => {
         const p = point.predictions.find(pp => pp.distance_m === effectiveFocus)
         if (!p || p.predicted_time_s == null) return null
@@ -77,7 +61,6 @@ export default function AnalyticsPage() {
           time: p.predicted_time_s,
           low,
           high,
-          band: high - low,  // stacked atop low to paint the IQR band
         }
       })
       .filter((x): x is NonNullable<typeof x> => x != null)
@@ -155,7 +138,7 @@ export default function AnalyticsPage() {
               const isFocused = p.distance_m === effectiveFocus
               const isRecent = p.source === 'personal_record' && p.pr_time_s != null
               const band = (p.predicted_time_high_s != null && p.predicted_time_low_s != null)
-                ? `${formatSec(p.predicted_time_low_s)} – ${formatSec(p.predicted_time_high_s)}`
+                ? `${formatClockDuration(p.predicted_time_low_s)} – ${formatClockDuration(p.predicted_time_high_s)}`
                 : null
               return (
                 <button
@@ -183,9 +166,9 @@ export default function AnalyticsPage() {
                     </span>
                   </div>
                   <div className={clsx('text-xl md:text-2xl font-bold font-mono tabular-nums', isLight ? 'text-gray-900' : 'text-gray-100')}>
-                    {formatSec(p.predicted_time_s)}
+                    {formatClockDuration(p.predicted_time_s)}
                   </div>
-                  {p.predicted_time_s != null && p.predicted_time_s > 0 && (
+                  {p.predicted_time_s > 0 && (
                     <div className={clsx('text-[11px] font-mono tabular-nums mt-0.5', isLight ? 'text-gray-600' : 'text-gray-300')}>
                       {formatSpeed(p.distance_m / p.predicted_time_s, sportMeta.sportType)}
                     </div>
@@ -197,7 +180,7 @@ export default function AnalyticsPage() {
                   )}
                   {isRecent && p.pr_time_s != null && (
                     <div className="text-[10px] text-gray-500 font-mono tabular-nums mt-0.5">
-                      recent best {formatSec(p.pr_time_s)}
+                      recent best {formatClockDuration(p.pr_time_s)}
                     </div>
                   )}
                 </button>
@@ -249,7 +232,7 @@ export default function AnalyticsPage() {
                 dataKey="date"
                 tick={{ fill: colors.tickFill, fontSize: 10 }}
                 tickFormatter={(v: string) => {
-                  const d = new Date(v)
+                  const d = parseLocalDate(v)
                   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })
                 }}
                 interval={chartData.length <= 16 ? 0 : Math.floor(chartData.length / 12)}
@@ -262,7 +245,7 @@ export default function AnalyticsPage() {
               />
               <YAxis
                 tick={{ fill: colors.tickFillSecondary, fontSize: 10 }}
-                tickFormatter={(v: number) => formatSec(v)}
+                tickFormatter={(v: number) => formatClockDuration(v)}
                 width={isMobile ? 42 : 60}
                 axisLine={false}
                 tickLine={false}
@@ -281,14 +264,14 @@ export default function AnalyticsPage() {
                 itemStyle={{ color: colors.tickFillSecondary }}
                 formatter={((v: number | number[] | undefined, name: string): [string, string] | undefined => {
                   if (v == null) return undefined
-                  if (name === 'Central') return [formatSec(v as number), 'Predicted']
+                  if (name === 'Central') return [formatClockDuration(v as number), 'Predicted']
                   if (name === 'IQR' && Array.isArray(v)) {
-                    return [`${formatSec(v[0])} – ${formatSec(v[1])}`, 'IQR band']
+                    return [`${formatClockDuration(v[0])} – ${formatClockDuration(v[1])}`, 'IQR band']
                   }
                   return undefined
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 }) as any}
-                labelFormatter={(v) => new Date(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                labelFormatter={(v) => parseLocalDate(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
               />
               {/* Range Area: dataKey returns [low, high] so Recharts draws the
                   filled band between them directly — no stacking hacks. */}

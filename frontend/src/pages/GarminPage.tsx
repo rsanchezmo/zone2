@@ -9,10 +9,13 @@ import { useTheme } from '../hooks/useTheme'
 import { useIsMobile } from '../hooks/useIsMobile'
 import {
   useGarminStatus, useGarminLatest, useGarminTrends, useTriggerGarminSync, useCancelGarminSync,
+  type GarminTrendRow as TrendRow,
 } from '../api/hooks'
 import StatCard from '../components/shared/StatCard'
 import ChartPanel, { LegendSwatch } from '../components/shared/ChartPanel'
 import PageHeader from '../components/shared/PageHeader'
+import { WEEKDAYS_FULL, WEEKDAY_LETTERS } from '../constants/weekdays'
+import { formatDurationHM } from '../utils/formatSpeed'
 
 // Single accent for the whole page. Variations come from opacity / tints
 // within the same cyan family, never from switching hues.
@@ -119,13 +122,6 @@ const RHYTHM_OPTIONS = [
   { label: '1y', days: 365 },
 ] as const
 
-type TrendRow = Record<string, unknown> & { date: string }
-type TrendsResp = {
-  start_date: string
-  end_date: string
-  days: number
-  metrics: Record<string, TrendRow[]>
-}
 type LooseRecord = Record<string, unknown>
 type ChartDotProps = { cx: number; cy: number; payload: LooseRecord }
 
@@ -133,6 +129,10 @@ type ChartDotProps = { cx: number; cy: number; payload: LooseRecord }
 
 function num(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null
+}
+function secondsToMinutes(v: unknown): number | null {
+  const s = num(v)
+  return s != null ? s / 60 : null
 }
 function displayNum(v: unknown): number {
   if (typeof v === 'number' && Number.isFinite(v)) return v
@@ -187,16 +187,8 @@ function cleanPhrase(p: string | null | undefined): string {
   return p.replace(/_\d+$/, '').toLowerCase().replace(/_/g, ' ')
     .replace(/\b\w/g, c => c.toUpperCase())
 }
-function fmtHm(seconds: number): string {
-  const totalMin = Math.round(seconds / 60)
-  const h = Math.floor(totalMin / 60)
-  return `${h}h ${String(totalMin % 60).padStart(2, '0')}m`
-}
 
 // ─────────────────────────────────────────── weekly rhythm
-
-const WEEKDAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-const WEEKDAY_LETTERS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
 
 type WeekdayPattern = {
   bestIdx: number            // Monday = 0
@@ -327,13 +319,14 @@ export default function GarminPage() {
     const us = latest?.user_summary?.payload ?? null
     const spo2 = latest?.spo2?.payload ?? null
     const im = latest?.intensity_minutes?.payload ?? null
+    const sleepSeconds = num(sleep?.sleepTimeSeconds)
 
     return {
       restingHR: num(hr?.restingHeartRate),
       hr7dAvg: num(hr?.lastSevenDaysAvgRestingHeartRate),
       sleepScore: num(overall.value),
       sleepQualifier: overall.qualifierKey as string | undefined,
-      sleepHours: sleep ? sleep.sleepTimeSeconds / 3600 : null,
+      sleepHours: sleepSeconds != null ? sleepSeconds / 3600 : null,
       sleepFeedback: cleanCoaching(sleep?.sleepScoreFeedback),
       sleepInsight:  cleanCoaching(sleep?.sleepScoreInsight),
       readinessFeedback: cleanCoaching(tr?.feedbackShort),
@@ -393,14 +386,14 @@ export default function GarminPage() {
     : null
 
   // ── Chart shaping ────────────────────────────────────────────────
-  const t = trends as TrendsResp | undefined
+  const t = trends
 
   const sleepData = useMemo(() => (t?.metrics.sleep ?? []).map(r => ({
     date: r.date,
-    deep:  num(r.deep_seconds)  ? (r.deep_seconds  as number) / 60 : null,
-    rem:   num(r.rem_seconds)   ? (r.rem_seconds   as number) / 60 : null,
-    light: num(r.light_seconds) ? (r.light_seconds as number) / 60 : null,
-    awake: num(r.awake_seconds) ? (r.awake_seconds as number) / 60 : null,
+    deep:  secondsToMinutes(r.deep_seconds),
+    rem:   secondsToMinutes(r.rem_seconds),
+    light: secondsToMinutes(r.light_seconds),
+    awake: secondsToMinutes(r.awake_seconds),
     score: num(r.score),
     sleep_hr: num(r.avg_hr),
   })), [t])
@@ -506,11 +499,18 @@ export default function GarminPage() {
     ? weightData[weightData.length - 1].kg - weightData[0].kg
     : null
 
-  const goalRef = stepsData[0]?.goal ?? null
+  // Reference line uses the most recent known goal (rows are chronological).
+  const goalRef = useMemo(() => {
+    for (let i = stepsData.length - 1; i >= 0; i--) {
+      const g = stepsData[i].goal
+      if (g != null) return g
+    }
+    return null
+  }, [stepsData])
 
   // ── Weekly rhythm: per-weekday averages over their own window ────
   const rhythm = useMemo(() => {
-    const m = (rhythmTrends as TrendsResp | undefined)?.metrics
+    const m = rhythmTrends?.metrics
     return {
       sleepScore: weekdayPattern(m?.sleep, r => num(r.score), 'max'),
       sleepDuration: weekdayPattern(m?.sleep, r => num(r.total_seconds), 'max'),
@@ -766,7 +766,7 @@ export default function GarminPage() {
                 <RhythmTile label="Best sleep" pattern={rhythm.sleepScore}
                   format={v => `${Math.round(v)} score`} isLight={isLight} />
                 <RhythmTile label="Longest sleep" pattern={rhythm.sleepDuration}
-                  format={fmtHm} isLight={isLight} />
+                  format={formatDurationHM} isLight={isLight} />
                 <RhythmTile label="Highest HRV" pattern={rhythm.hrv}
                   format={v => `${Math.round(v)} ms`} isLight={isLight} />
                 <RhythmTile label="Least stress" pattern={rhythm.stress}
@@ -1536,7 +1536,7 @@ function RhythmTile({
       <div className="relative eyebrow mb-1.5">{label}</div>
       <div className={clsx('relative text-xl font-bold tracking-tight',
         isLight ? 'text-gray-900' : 'text-gray-100')}>
-        {WEEKDAY_NAMES[pattern.bestIdx]}
+        {WEEKDAYS_FULL[pattern.bestIdx]}
       </div>
       <div className={clsx('relative text-[11px] mt-0.5 mb-3', isLight ? 'text-gray-500' : 'text-gray-500')}>
         avg {format(pattern.bestMean)}
@@ -1552,7 +1552,7 @@ function RhythmTile({
           const heightPct = m != null && maxMean > 0 ? Math.max(10, (m / maxMean) * 100) : 4
           return (
             <div key={i} className="flex-1 flex flex-col items-center gap-1"
-              title={m != null ? `${WEEKDAY_NAMES[i]} · avg ${format(m)}` : WEEKDAY_NAMES[i]}>
+              title={m != null ? `${WEEKDAYS_FULL[i]} · avg ${format(m)}` : WEEKDAYS_FULL[i]}>
               <div className="w-full h-8 flex items-end">
                 <div className="w-full rounded-sm"
                   style={{

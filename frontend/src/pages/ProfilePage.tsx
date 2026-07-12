@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { useAthleteProfile, useAthleteZones, useZonesSettings, useUpdateZonesSettings, useSyncStatus, useSportTypes, useGoals, useGoalProgress, useCreateGoal, useUpdateGoal, useDeleteGoal, useRateLimits, useCacheCompleteness, useBackfillStreams, useCalendarFeedUrl, useRotateCalendarFeedToken } from '../api/hooks'
+import { useAthleteProfile, useAthleteZones, useZonesSettings, useUpdateZonesSettings, useSyncStatus, useSportTypes, useGoals, useGoalProgress, useCreateGoal, useUpdateGoal, useDeleteGoal, useRateLimits, useCacheCompleteness, useBackfillStreams, useCalendarFeedUrl, useRotateCalendarFeedToken, type AthleteGear, type Goal } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
 import { getSportCategory } from '../utils/formatSpeed'
+import { todayLocalStr } from '../utils/dates'
 import ChartPanel from '../components/shared/ChartPanel'
 import { useTheme } from '../hooks/useTheme'
 import { useToast } from '../hooks/useToast'
+import { useNow } from '../hooks/useNow'
 import clsx from 'clsx'
 
 const HR_ZONE_COLORS = ['#6b7280', '#3b82f6', '#22c55e', '#eab308', '#ef4444']
@@ -47,7 +49,7 @@ export default function ProfilePage() {
   const { data: syncStatus } = useSyncStatus()
   const { data: sportTypes } = useSportTypes()
   const { data: goals } = useGoals()
-  const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), [])
+  const todayStr = useMemo(() => todayLocalStr(), [])
   const { data: goalProgressData } = useGoalProgress(todayStr)
   const { data: rateLimits } = useRateLimits(syncStatus?.syncing)
   const { data: cacheCompleteness } = useCacheCompleteness(syncStatus?.syncing)
@@ -76,7 +78,6 @@ export default function ProfilePage() {
     if (!window.confirm('Rotate the feed token? Any existing calendar subscription will stop working — you will need to re-add the new URL.')) return
     rotateFeedToken.mutate(undefined, {
       onSuccess: () => toast('Token rotated — re-subscribe with the new URL', 'success'),
-      onError: () => toast('Could not rotate token', 'error'),
     })
   }
   const [editingGoalId, setEditingGoalId] = useState<number | null>(null)
@@ -139,13 +140,12 @@ export default function ProfilePage() {
   const createdAt = profile.created_at ? new Date(profile.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }) : null
   const updatedAt = profile.updated_at ? new Date(profile.updated_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }) : null
 
-  const hrZones = zones?.heart_rate?.zones as { min: number; max: number }[] | undefined
-  const maxHr = zones?.heart_rate?.max_hr as number | undefined
+  const hrZones = zones?.heart_rate?.zones ?? undefined
+  const maxHr = zones?.heart_rate?.max_hr ?? undefined
 
-  type GearItem = { id: string; name: string; nickname?: string; primary: boolean; retired: boolean; converted_distance: number }
-  const sortByDist = (a: GearItem, b: GearItem) => (b.converted_distance ?? 0) - (a.converted_distance ?? 0)
-  const shoes = (((profile.shoes as unknown) as GearItem[] | undefined) ?? []).slice().sort(sortByDist)
-  const bikes = (((profile.bikes as unknown) as GearItem[] | undefined) ?? []).slice().sort(sortByDist)
+  const sortByDist = (a: AthleteGear, b: AthleteGear) => (b.converted_distance ?? 0) - (a.converted_distance ?? 0)
+  const shoes = (profile.shoes ?? []).slice().sort(sortByDist)
+  const bikes = (profile.bikes ?? []).slice().sort(sortByDist)
   const hasGear = shoes.length > 0 || bikes.length > 0
 
   const handleGoalSubmit = () => {
@@ -160,28 +160,26 @@ export default function ProfilePage() {
     if (editingGoalId != null) {
       updateGoal.mutate({ id: editingGoalId, ...payload }, {
         onSuccess: () => { setEditingGoalId(null); setShowGoalForm(false); toast('Goal updated', 'success') },
-        onError: () => toast('Failed to update goal', 'error'),
       })
     } else {
       createGoal.mutate(payload, {
         onSuccess: () => { setShowGoalForm(false); setGoalForm({ year: String(currentYear), sport_type: 'Run', metric: 'distance_km', period: 'weekly', target_value: '' }); toast('Goal created', 'success') },
-        onError: () => toast('Failed to create goal', 'error'),
       })
     }
   }
 
-  const startEdit = (goal: Record<string, unknown>) => {
-    setEditingGoalId(goal.id as number)
+  const startEdit = (goal: Goal) => {
+    setEditingGoalId(goal.id)
     // Convert km back to meters for swimming distance goals
-    let displayValue = goal.target_value as number
-    if (goal.metric === 'distance_km' && getSportCategory(goal.sport_type as string) === 'swimming') {
+    let displayValue = goal.target_value
+    if (goal.metric === 'distance_km' && getSportCategory(goal.sport_type) === 'swimming') {
       displayValue = displayValue * 1000
     }
     setGoalForm({
       year: String(goal.year),
-      sport_type: goal.sport_type as string,
-      metric: goal.metric as string,
-      period: goal.period as string,
+      sport_type: goal.sport_type,
+      metric: goal.metric,
+      period: goal.period,
       target_value: String(displayValue),
     })
     setShowGoalForm(true)
@@ -274,7 +272,7 @@ export default function ProfilePage() {
           glow={false}
           toolbar={
             <ZoneSourceSelector
-              current={(zonesSettings?.source as 'strava' | 'estimated' | 'manual' | undefined) ?? 'estimated'}
+              current={zonesSettings?.source ?? 'estimated'}
               onChange={source => updateZonesSettings.mutate({ source })}
               isLight={isLight}
               pending={updateZonesSettings.isPending}
@@ -332,7 +330,7 @@ export default function ProfilePage() {
 
           {zonesSettings?.source === 'manual' && (
             <ManualZonesEditor
-              initial={(zonesSettings?.manual_zones as Array<{ min: number; max: number }> | undefined) ?? hrZones}
+              initial={zonesSettings?.manual_zones ?? hrZones}
               isLight={isLight}
               onSave={zones => updateZonesSettings.mutate({ source: 'manual', manual_zones: zones })}
               saving={updateZonesSettings.isPending}
@@ -437,12 +435,12 @@ export default function ProfilePage() {
         {/* Goals list with progress */}
         {goals && goals.length > 0 ? (
           <div className="space-y-3">
-            {goals.map((goal: Record<string, unknown>) => {
-              const sport = goal.sport_type as string
+            {goals.map(goal => {
+              const sport = goal.sport_type
               const color = sport === '__all__' ? '#9ca3af' : getSportColor(sport)
-              const metric = goal.metric as string
+              const metric = goal.metric
               const isSwimmingDist = metric === 'distance_km' && getSportCategory(sport) === 'swimming'
-              const targetRaw = goal.target_value as number
+              const targetRaw = goal.target_value
               const targetDisplay = isSwimmingDist ? Math.round(targetRaw * 1000) : targetRaw
               const targetUnit = isSwimmingDist ? 'm' : metric === 'distance_km' ? 'km' : metric === 'time_hours' ? 'hrs' : metric === 'elevation_m' ? 'm' : ''
 
@@ -473,9 +471,9 @@ export default function ProfilePage() {
                       {metricLabel(metric, sport)}
                     </span>
                     <span className={clsx('text-[11px] px-1.5 py-0.5 rounded-md', isLight ? 'bg-gray-100 text-gray-500' : 'bg-surface-700 text-gray-400')}>
-                      {periodLabel(goal.period as string).toLowerCase()}
+                      {periodLabel(goal.period).toLowerCase()}
                     </span>
-                    <span className="text-[11px] text-gray-500 font-mono">{goal.year as number}</span>
+                    <span className="text-[11px] text-gray-500 font-mono">{goal.year}</span>
                     <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button
                         onClick={() => startEdit(goal)}
@@ -484,9 +482,8 @@ export default function ProfilePage() {
                         Edit
                       </button>
                       <button
-                        onClick={() => deleteGoal.mutate(goal.id as number, {
+                        onClick={() => deleteGoal.mutate(goal.id, {
                           onSuccess: () => toast('Goal deleted', 'success'),
-                          onError: () => toast('Failed to delete goal', 'error'),
                         })}
                         className="text-[11px] px-1.5 py-0.5 rounded text-red-400 hover:text-red-300 hover:bg-red-500/10"
                       >
@@ -887,9 +884,7 @@ function ManualZonesEditor({
 // GearGroup — list of gear items (shoes or bikes) from Strava
 // ────────────────────────────────────────────────────────
 
-type GearItemView = { id: string; name: string; nickname?: string; primary: boolean; retired: boolean; converted_distance: number }
-
-function GearGroup({ title, items, isLight, accent }: { title: string; items: GearItemView[]; isLight: boolean; accent: string }) {
+function GearGroup({ title, items, isLight, accent }: { title: string; items: AthleteGear[]; isLight: boolean; accent: string }) {
   return (
     <div>
       <div className={clsx('text-[11px] uppercase tracking-[0.15em] mb-2 flex items-center gap-2', isLight ? 'text-gray-400' : 'text-gray-500')}>
@@ -969,7 +964,7 @@ function InfoTile({ label, value, unit, compact }: { label: string; value: strin
 // FeedStatusPill — shows whether the ICS feed has been polled recently
 // ────────────────────────────────────────────────────────
 function FeedStatusPill({ lastFetchedAt }: { lastFetchedAt: string | null }) {
-  const [now] = useState(() => Date.now())
+  const now = useNow(60_000)
   if (!lastFetchedAt) {
     return (
       <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded border bg-amber-500/10 border-amber-500/30 text-amber-600">

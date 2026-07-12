@@ -2,6 +2,7 @@ import { useState } from 'react'
 import {
   useWorkoutTemplates, useCreateWorkoutTemplate,
   useUpdateWorkoutTemplate, useDeleteWorkoutTemplate,
+  type WorkoutTemplate,
 } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
 import { getPaceUnit } from '../utils/formatSpeed'
@@ -18,7 +19,7 @@ export default function WorkoutsPage() {
   const isLight = theme === 'light'
   const { toast } = useToast()
   const [sportFilter, setSportFilter] = useState<string>('All')
-  const [editingTemplate, setEditingTemplate] = useState<Record<string, unknown> | null>(null)
+  const [editingTemplate, setEditingTemplate] = useState<WorkoutTemplate | null>(null)
   const [showBuilder, setShowBuilder] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
 
@@ -49,12 +50,12 @@ export default function WorkoutsPage() {
     setShowBuilder(false)
   }
 
-  function startEdit(t: Record<string, unknown>) {
+  function startEdit(t: WorkoutTemplate) {
     setEditingTemplate(t)
-    setName(t.name as string)
-    setSportType(t.sport_type as string)
-    setDescription((t.description as string) || '')
-    setSegments((t.segments as Segment[]) || [])
+    setName(t.name)
+    setSportType(t.sport_type)
+    setDescription(t.description || '')
+    setSegments(t.segments || [])
     setShowBuilder(true)
   }
 
@@ -64,17 +65,15 @@ export default function WorkoutsPage() {
       name: name.trim(),
       sport_type: sportType,
       description: description.trim() || undefined,
-      segments: segments as unknown as Record<string, unknown>[],
+      segments,
     }
     if (editingTemplate) {
-      updateTemplate.mutate({ id: editingTemplate.id as number, ...payload }, {
+      updateTemplate.mutate({ id: editingTemplate.id, ...payload }, {
         onSuccess: () => { resetForm(); toast('Workout updated', 'success') },
-        onError: () => toast('Failed to update workout', 'error'),
       })
     } else {
       createTemplate.mutate(payload, {
         onSuccess: () => { resetForm(); toast('Workout created', 'success') },
-        onError: () => toast('Failed to create workout', 'error'),
       })
     }
   }
@@ -111,9 +110,9 @@ export default function WorkoutsPage() {
                 onClick={() => setSportFilter(s)}
                 className="text-[11px] font-medium rounded-full px-3 py-1.5 border transition-all tracking-[0.05em]"
                 style={{
-                  borderColor: active ? color : `${color}30`,
-                  color: active ? '#fff' : color,
-                  backgroundColor: active ? `${color}40` : 'transparent',
+                  borderColor: active ? `${color}50` : `${color}30`,
+                  color,
+                  backgroundColor: active ? `${color}15` : 'transparent',
                 }}
               >
                 {s}
@@ -213,24 +212,24 @@ export default function WorkoutsPage() {
           </div>
         ) : (
           <div className="grid gap-3 stagger-children">
-            {(templates as Record<string, unknown>[]).map(t => {
-              const sColor = getSportColor(t.sport_type as string)
-              const isConfirming = confirmDeleteId === (t.id as number)
+            {templates.map(t => {
+              const sColor = getSportColor(t.sport_type)
+              const isConfirming = confirmDeleteId === t.id
               return (
                 <div
-                  key={t.id as number}
+                  key={t.id}
                   className={clsx(panelClass, 'p-4 transition-colors')}
                   style={{ borderLeftWidth: 2, borderLeftColor: sColor }}
                 >
                   <div className="flex items-start justify-between mb-3 gap-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap mb-1">
-                        <span className={clsx('font-semibold text-sm tracking-tight', isLight ? 'text-gray-900' : 'text-gray-100')}>{t.name as string}</span>
+                        <span className={clsx('font-semibold text-sm tracking-tight', isLight ? 'text-gray-900' : 'text-gray-100')}>{t.name}</span>
                         <span
                           className="text-[10px] uppercase tracking-[0.15em] rounded-full px-2 py-0.5 border font-semibold"
                           style={{ color: sColor, borderColor: `${sColor}40`, backgroundColor: `${sColor}15` }}
                         >
-                          {t.sport_type as string}
+                          {t.sport_type}
                         </span>
                       </div>
                       {!!t.description && (
@@ -243,9 +242,8 @@ export default function WorkoutsPage() {
                           <span className="text-[11px] uppercase tracking-[0.15em] text-red-400">Delete?</span>
                           <button
                             onClick={() => {
-                              deleteTemplate.mutate(t.id as number, {
+                              deleteTemplate.mutate(t.id, {
                                 onSuccess: () => toast('Workout deleted', 'success'),
-                                onError: () => toast('Failed to delete workout', 'error'),
                               })
                               setConfirmDeleteId(null)
                             }}
@@ -259,12 +257,12 @@ export default function WorkoutsPage() {
                       ) : (
                         <>
                           <button onClick={() => startEdit(t)} className={clsx('text-[11px] uppercase tracking-[0.15em]', isLight ? 'text-gray-400 hover:text-gray-600' : 'text-gray-500 hover:text-gray-200')}>Edit</button>
-                          <button onClick={() => setConfirmDeleteId(t.id as number)} className="text-red-400/80 hover:text-red-300 text-[11px] uppercase tracking-[0.15em]">Delete</button>
+                          <button onClick={() => setConfirmDeleteId(t.id)} className="text-red-400/80 hover:text-red-300 text-[11px] uppercase tracking-[0.15em]">Delete</button>
                         </>
                       )}
                     </div>
                   </div>
-                  <SegmentSummary segments={(t.segments as Segment[]) || []} />
+                  <SegmentSummary segments={t.segments || []} />
                 </div>
               )
             })}

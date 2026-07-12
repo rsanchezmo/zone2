@@ -1,6 +1,10 @@
 import { useMemo, useState, useCallback, useEffect, Component, type ReactNode } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { useActivity, useAthleteZones, useSimilarActivities, useActivityScore } from '../api/hooks'
+import {
+  useActivity, useAthleteZones, useSimilarActivities, useActivityScore,
+  type ActivityStreamPoint as StreamPoint, type ActivityPhoto as StravaPhoto,
+  type ScoreMetric, type SegmentScore, type TrainingSession,
+} from '../api/hooks'
 import StatCard from '../components/shared/StatCard'
 import MapView from '../components/shared/MapView'
 import type { KmMarker } from '../components/shared/MapView'
@@ -17,32 +21,14 @@ import {
   DistanceIcon, TimerIcon, BoltIcon, RangeIcon, HeartIcon,
 } from '../components/icons'
 import { getSportColor } from '../constants/sportColors'
-import { getSportCategory, convertSpeed, formatPace } from '../utils/formatSpeed'
+import { getSportCategory, convertSpeed, formatPace, formatClockDuration, formatDist, distValue, getDistUnit, isSpeedSport } from '../utils/formatSpeed'
+import { parseLocalDate } from '../utils/dates'
+import { scoreColor } from '../utils/scoreColor'
 import { SegmentSummary, type Segment } from '../components/shared/SegmentListBuilder'
 import { getSegmentColor } from '../components/shared/segmentUtils'
 import { useTheme } from '../hooks/useTheme'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import clsx from 'clsx'
-
-interface StreamPoint {
-  time?: number
-  distance?: number
-  altitude?: number
-  velocity_smooth?: number
-  heartrate?: number
-  cadence?: number
-  lat?: number
-  lng?: number
-  latlng?: [number, number]
-}
-
-
-interface StravaPhoto {
-  unique_id: string
-  urls: Record<string, string>
-  caption?: string
-  location?: [number, number]
-}
 
 function PhotoGallery({ photos }: { photos: StravaPhoto[] }) {
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
@@ -212,13 +198,15 @@ function computeGapSpeeds(streams: StreamPoint[]): number[] {
   })
 }
 
-function formatTime(seconds: number): string {
-  const m = Math.floor(seconds / 60)
-  const s = Math.round(seconds % 60)
-  return `${m}:${s.toString().padStart(2, '0')}`
+const SEG_TYPE_LABELS: Record<string, string> = {
+  warmup: 'Warmup', work: 'Work', recovery: 'Recovery', cooldown: 'Cooldown', rest: 'Rest',
 }
 
-
+// Hoisted StreamChart props so its React.memo sees stable references
+const ELEVATION_Y_DOMAIN: [string, string] = ['dataMin - 10', 'dataMax + 10']
+const speedTickFormatter = (v: number): string => v.toFixed(1)
+const paceTickFormatter = (v: number): string => formatPace(v, false)
+const swimXFormatter = (v: number): string => String(Math.round(v * 1000))
 
 function computeSplits(streams: StreamPoint[], sportType: string | undefined, gapSpeeds?: number[]): Split[] {
   if (!streams || streams.length < 2) return []
@@ -307,8 +295,10 @@ function computeSplits(streams: StreamPoint[], sportType: string | undefined, ga
         elevLoss: Math.round(elevLoss),
       })
 
-      currentKm++
-      splitStartIdx = i
+      // A GPS gap can cross several km boundaries in one step — skip to the last one crossed
+      currentKm = Math.max(currentKm + 1, Math.floor(dist))
+      // Start after the boundary sample so it isn't averaged into both splits
+      splitStartIdx = i + 1
     }
   }
 
@@ -318,19 +308,17 @@ function computeSplits(streams: StreamPoint[], sportType: string | undefined, ga
 /* Collapsible execution score section */
 function ExecutionScoreCollapsible({
   overall, isSegmented, session, sessionSegments, segmentScores, metrics,
-  sc, metricConfig, formatGoal, formatActual, segTypeLabels, formatSegDist, formatDetected, hasBreakdown, isSwim,
+  metricConfig, formatGoal, formatActual, formatSegDist, formatDetected, hasBreakdown, isSwim,
 }: {
   overall: number
   isSegmented: boolean
-  session: Record<string, unknown> | undefined
+  session: TrainingSession | undefined
   sessionSegments: Segment[] | undefined
-  segmentScores: Record<string, unknown>[] | undefined
-  metrics: Record<string, Record<string, unknown>> | undefined
-  sc: (s: number) => string
+  segmentScores: SegmentScore[] | undefined
+  metrics: Record<string, ScoreMetric> | undefined
   metricConfig: Record<string, { label: string; icon: ReactNode; color: string }>
-  formatGoal: (key: string, m: Record<string, unknown>) => string
-  formatActual: (key: string, m: Record<string, unknown>) => string
-  segTypeLabels: Record<string, string>
+  formatGoal: (key: string, m: ScoreMetric) => string
+  formatActual: (key: string, m: ScoreMetric) => string
   formatSegDist: (km: number | null | undefined) => string
   formatDetected: (km: number | null | undefined, mins: number | null | undefined, pace?: number | null, paceUnit?: string) => string | null
   hasBreakdown: boolean
@@ -350,7 +338,7 @@ function ExecutionScoreCollapsible({
       >
         <div className="flex items-center gap-3">
           <span className="text-xs text-gray-500 uppercase">Execution Score</span>
-          <span className="text-2xl font-bold font-mono" style={{ color: sc(overall) }}>{overall}</span>
+          <span className="text-2xl font-bold font-mono" style={{ color: scoreColor(overall) }}>{overall}</span>
           {isSegmented && (
             <span className={clsx('text-[10px] text-gray-500 border rounded-full px-2 py-0.5', isLight ? 'border-gray-300' : 'border-surface-600')}>structured</span>
           )}
@@ -381,18 +369,18 @@ function ExecutionScoreCollapsible({
           {isSegmented && segmentScores && segmentScores.length > 0 && (
             <div className="grid gap-2">
               {segmentScores.map((ss, i) => {
-                const segColor = getSegmentColor(ss.type as string)
-                const segScore = ss.overall_score as number | null
-                const isRecovery = ss.is_recovery as boolean
-                const segMetrics = ss.metrics as Record<string, Record<string, unknown>> | undefined
-                const typeLabel = segTypeLabels[ss.type as string] ?? (ss.type as string)
-                const distLabel = formatSegDist(ss.distance_km as number | null)
+                const segColor = getSegmentColor(ss.type)
+                const segScore = ss.overall_score
+                const isRecovery = ss.is_recovery
+                const segMetrics = ss.metrics
+                const typeLabel = SEG_TYPE_LABELS[ss.type] ?? ss.type
+                const distLabel = formatSegDist(ss.distance_km)
                 const durLabel = ss.duration_mins ? `${ss.duration_mins}'` : ''
-                const repLabel = (ss.rep as number) > 0 ? ` #${ss.rep}` : ''
+                const repLabel = ss.rep > 0 ? ` #${ss.rep}` : ''
                 const headerLabel = `${isRecovery ? 'Recovery' : typeLabel}${distLabel ? ` ${distLabel}` : ''}${durLabel ? ` ${durLabel}` : ''}${repLabel}`
-                const detected = formatDetected(ss.actual_distance_km as number | null, ss.actual_duration_mins as number | null, ss.actual_pace as number | null, ss.pace_unit as string | undefined)
-                const startKm = ss.start_km as number | undefined
-                const endKm = ss.end_km as number | undefined
+                const detected = formatDetected(ss.actual_distance_km, ss.actual_duration_mins, ss.actual_pace, ss.pace_unit)
+                const startKm = ss.start_km
+                const endKm = ss.end_km
                 const kmRange = startKm != null && endKm != null
                   ? (isSwim
                       ? `${Math.round(startKm * 1000)} – ${Math.round(endKm * 1000)} m`
@@ -419,7 +407,7 @@ function ExecutionScoreCollapsible({
                           )}
                         </div>
                         {hasScore ? (
-                          <span className="text-sm font-bold font-mono" style={{ color: sc(segScore) }}>
+                          <span className="text-sm font-bold font-mono" style={{ color: scoreColor(segScore) }}>
                             {segScore}
                           </span>
                         ) : (
@@ -431,14 +419,14 @@ function ExecutionScoreCollapsible({
                         <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1">
                           {Object.entries(segMetrics).map(([key, m]) => {
                             const cfg = metricConfig[key] ?? { label: key, icon: null, color: '#9ca3af' }
-                            const metricScore = m.score as number
+                            const metricScore = m.score
                             return (
                               <div key={key} className="flex items-center gap-1.5 text-[11px]">
                                 <span style={{ color: cfg.color }}>{cfg.icon}</span>
                                 <span className="text-gray-500">{formatGoal(key, m)}</span>
                                 <span className="text-gray-600">{'\u2192'}</span>
                                 <span className={clsx('font-mono', isLight ? 'text-gray-700' : 'text-gray-300')}>{formatActual(key, m)}</span>
-                                <span className="font-bold font-mono" style={{ color: sc(metricScore) }}>{metricScore}</span>
+                                <span className="font-bold font-mono" style={{ color: scoreColor(metricScore) }}>{metricScore}</span>
                               </div>
                             )
                           })}
@@ -455,7 +443,7 @@ function ExecutionScoreCollapsible({
           {!isSegmented && metrics && (
             <div className="grid gap-2">
               {Object.entries(metrics).map(([key, m]) => {
-                const s = m.score as number
+                const s = m.score
                 const cfg = metricConfig[key] ?? { label: key, icon: null, color: '#9ca3af' }
                 return (
                   <div key={key} className="flex rounded-lg overflow-hidden border" style={{ borderColor: `${cfg.color}20` }}>
@@ -465,7 +453,7 @@ function ExecutionScoreCollapsible({
                         <span className="text-xs font-medium flex items-center gap-1.5" style={{ color: cfg.color }}>
                           <span>{cfg.icon}</span> {cfg.label}
                         </span>
-                        <span className="text-sm font-bold font-mono" style={{ color: sc(s) }}>{s}</span>
+                        <span className="text-sm font-bold font-mono" style={{ color: scoreColor(s) }}>{s}</span>
                       </div>
                       <div className="flex items-center gap-3 text-xs">
                         <div className="flex-1">
@@ -543,7 +531,7 @@ function ActivityDetailPageInner() {
   const isLight = theme === 'light'
 
   const sportCategory = getSportCategory(activity?.sport_type)
-  const useSpeedUnit = sportCategory === 'cycling' || sportCategory === 'speed' || sportCategory === 'water'
+  const useSpeedUnit = isSpeedSport(activity?.sport_type)
 
   const { positions, velocities, streamSeries, paceUnit, gapSpeeds, overallGap } = useMemo(() => {
     const pos: [number, number][] = []
@@ -559,7 +547,7 @@ function ActivityDetailPageInner() {
     let avgGap: number | null = null
 
     if (activity?.streams && Array.isArray(activity.streams)) {
-      const streams = activity.streams as StreamPoint[]
+      const streams = activity.streams
       const isRunning = getSportCategory(activity?.sport_type) === 'running'
 
       // Compute GAP speeds for running
@@ -641,9 +629,10 @@ function ActivityDetailPageInner() {
   const splits = useMemo(() => {
     // Prefer splits_metric from detail endpoint when available
     if (activity?.splits_metric && Array.isArray(activity.splits_metric) && activity.splits_metric.length > 0) {
+      const splitsMetric = activity.splits_metric
       const cat = getSportCategory(activity.sport_type)
       const isRunning = cat === 'running'
-      return activity.splits_metric.map((sm: Record<string, unknown>, i: number) => {
+      return splitsMetric.map((sm, i) => {
         const avgSpeedMs = sm.average_speed as number || 0
         const { value: avgPace } = convertSpeed(avgSpeedMs, activity.sport_type)
         const gapSpeedMs = sm.average_grade_adjusted_speed as number | null
@@ -654,7 +643,7 @@ function ActivityDetailPageInner() {
         }
         return {
           km: i + 1,
-          isPartial: i === activity.splits_metric.length - 1 && (sm.distance as number || 0) < 900,
+          isPartial: i === splitsMetric.length - 1 && (sm.distance as number || 0) < 900,
           splitDistance: sm.distance as number || 1000,
           time: sm.moving_time as number || sm.elapsed_time as number || 0,
           avgPace,
@@ -668,7 +657,7 @@ function ActivityDetailPageInner() {
     }
     // Fallback to stream-computed splits
     if (!activity?.streams || !Array.isArray(activity.streams)) return []
-    return computeSplits(activity.streams as StreamPoint[], activity.sport_type, gapSpeeds.length > 0 ? gapSpeeds : undefined)
+    return computeSplits(activity.streams, activity.sport_type, gapSpeeds.length > 0 ? gapSpeeds : undefined)
   }, [activity, gapSpeeds])
 
   // Compute gradient legend labels (fast/slow pace or speed at p5/p95)
@@ -689,7 +678,7 @@ function ActivityDetailPageInner() {
   // Compute km markers for the map
   const kmMarkers: KmMarker[] = useMemo(() => {
     if (!activity?.streams || !Array.isArray(activity.streams) || positions.length === 0 || splits.length === 0) return []
-    const streams = activity.streams as StreamPoint[]
+    const streams = activity.streams
     const markers: KmMarker[] = []
     const { unit: pu } = convertSpeed(1, activity?.sport_type)
 
@@ -710,29 +699,21 @@ function ActivityDetailPageInner() {
       else if (pt.latlng) pos = [pt.latlng[0], pt.latlng[1]]
       if (!pos) continue
 
-      // Format time
-      const mins = Math.floor(split.time / 60)
-      const secs = Math.round(split.time % 60)
-      const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`
+      const tooltipLines: string[] = [
+        sportCategory === 'swimming' ? `${Math.round(split.splitDistance)} m` : `Km ${split.km}`,
+        `Pace: ${formatPace(split.avgPace, useSpeedUnit)} ${pu}`,
+        `Time: ${formatClockDuration(split.time)}`,
+      ]
+      if (split.avgHR != null) tooltipLines.push(`HR: ${split.avgHR} bpm`)
+      if (split.elevGain > 0 || split.elevLoss > 0) tooltipLines.push(`Elev: +${split.elevGain}m / -${split.elevLoss}m`)
+      if (split.avgCadence != null) tooltipLines.push(`Cadence: ${split.avgCadence} ${sportCategory === 'running' ? 'spm' : 'rpm'}`)
 
-      // Format pace
-      const paceMin = Math.floor(split.avgPace)
-      const paceSec = Math.round((split.avgPace - paceMin) * 60)
-      const paceStr = pu.includes('min') ? `${paceMin}:${paceSec.toString().padStart(2, '0')} ${pu}` : `${split.avgPace.toFixed(1)} ${pu}`
-
-      let tooltip = sportCategory === 'swimming' ? `<b>${Math.round(split.splitDistance)} m</b><br/>` : `<b>Km ${split.km}</b><br/>`
-      tooltip += `Pace: ${paceStr}<br/>`
-      tooltip += `Time: ${timeStr}`
-      if (split.avgHR != null) tooltip += `<br/>HR: ${split.avgHR} bpm`
-      if (split.elevGain > 0 || split.elevLoss > 0) tooltip += `<br/>Elev: +${split.elevGain}m / -${split.elevLoss}m`
-      if (split.avgCadence != null) tooltip += `<br/>Cadence: ${split.avgCadence} spm`
-
-      markers.push({ position: pos, km: split.km, tooltip })
+      markers.push({ position: pos, km: split.km, tooltipLines })
     }
     return markers
-  }, [activity, positions, splits, sportCategory])
+  }, [activity, positions, splits, sportCategory, useSpeedUnit])
 
-  const hrZoneBounds = athleteZones?.heart_rate?.zones as { min: number; max: number }[] | undefined
+  const hrZoneBounds = athleteZones?.heart_rate?.zones ?? undefined
   const hrHistogram = useMemo(() => {
     if (streamSeries.heartrate.length === 0) return null
     return buildHrHistogram(streamSeries.heartrate.map(p => p.value))
@@ -742,12 +723,8 @@ function ActivityDetailPageInner() {
   // NOTE: must be before early returns to avoid hooks-order violation
   const segmentZones = useMemo<ChartZone[]>(() => {
     if (!activityScore?.score) return []
-    const segScores = activityScore.score.segment_scores as { type: string; start_km?: number; end_km?: number; actual_distance_km: number; is_recovery: boolean }[] | undefined
+    const segScores = activityScore.score.segment_scores
     if (!segScores || segScores.length === 0) return []
-
-    const typeLabels: Record<string, string> = {
-      warmup: 'Warmup', work: 'Work', recovery: 'Recovery', cooldown: 'Cooldown', rest: 'Rest',
-    }
 
     return segScores
       .filter(seg => seg.start_km != null && seg.end_km != null && seg.end_km > seg.start_km)
@@ -757,7 +734,7 @@ function ActivityDetailPageInner() {
           x1: seg.start_km!,
           x2: seg.end_km!,
           color: getSegmentColor(segType),
-          label: typeLabels[segType] || segType,
+          label: SEG_TYPE_LABELS[segType] || segType,
           opacity: segType === 'work' ? 0.15 : 0.08,
         }
       })
@@ -813,7 +790,7 @@ function ActivityDetailPageInner() {
                 {activity.sport_type}
               </span>
               <span className={clsx('text-[11px] font-mono tabular-nums', isLight ? 'text-gray-500' : 'text-gray-500')}>
-                {activity.start_date_local ? new Date(activity.start_date_local).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' }) : ''}
+                {activity.start_date_local ? parseLocalDate(activity.start_date_local).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' }) : ''}
               </span>
             </div>
             <h2
@@ -846,7 +823,7 @@ function ActivityDetailPageInner() {
         )}
 
         {/* Metadata pills — hairline-bordered, sport-agnostic */}
-        {(activity.device_name || activity.gear || activity.average_temp != null || activity.timezone || activity.workout_type != null || activity.pr_count > 0 || activity.achievement_count > 0) && (
+        {(activity.device_name || activity.gear || activity.average_temp != null || activity.timezone || activity.workout_type != null || (activity.pr_count ?? 0) > 0 || (activity.achievement_count ?? 0) > 0) && (
           <div className="flex flex-wrap gap-1.5 mt-5">
             {activity.device_name && <MetaPill icon={<DeviceIcon size={11} />} text={activity.device_name} />}
             {activity.gear && (
@@ -859,11 +836,11 @@ function ActivityDetailPageInner() {
             {activity.average_temp != null && <MetaPill icon={<ThermometerIcon size={11} />} text={`${Math.round(activity.average_temp)}°C`} />}
             {activity.timezone && <MetaPill icon={<ClockIcon size={11} />} text={activity.timezone.replace(/^\(.*?\)\s*/, '')} />}
             {activity.workout_type != null && <MetaPill icon={<DumbbellIcon size={11} />} text={String(activity.workout_type)} />}
-            {activity.pr_count > 0 && (
-              <MetaPill icon={<MedalIcon size={11} />} text={`${activity.pr_count} PR${activity.pr_count > 1 ? 's' : ''}`} tone="amber" />
+            {(activity.pr_count ?? 0) > 0 && (
+              <MetaPill icon={<MedalIcon size={11} />} text={`${activity.pr_count} PR${(activity.pr_count ?? 0) > 1 ? 's' : ''}`} tone="amber" />
             )}
-            {activity.achievement_count > 0 && (
-              <MetaPill icon={<TrophyIcon size={11} />} text={`${activity.achievement_count} achievement${activity.achievement_count > 1 ? 's' : ''}`} tone="green" />
+            {(activity.achievement_count ?? 0) > 0 && (
+              <MetaPill icon={<TrophyIcon size={11} />} text={`${activity.achievement_count} achievement${(activity.achievement_count ?? 0) > 1 ? 's' : ''}`} tone="green" />
             )}
           </div>
         )}
@@ -879,7 +856,7 @@ function ActivityDetailPageInner() {
               color={sportAccent}
               kmMarkers={kmMarkers}
               velocities={velocities.length === positions.length ? velocities : undefined}
-              invertGradient={sportCategory !== 'cycling' && sportCategory !== 'speed' && sportCategory !== 'water'}
+              invertGradient={!useSpeedUnit}
               gradientFastLabel={gradientFastLabel}
               gradientSlowLabel={gradientSlowLabel}
             />
@@ -891,8 +868,8 @@ function ActivityDetailPageInner() {
       <section>
         <div className="section-head mb-4"><span className="eyebrow">Metrics</span></div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 stagger-children">
-        <StatCard label="Distance" value={sportCategory === 'swimming' ? Math.round((activity.distance_km ?? 0) * 1000) : activity.distance_km?.toFixed(2)} unit={sportCategory === 'swimming' ? 'm' : 'km'} />
-        <StatCard label="Moving Time" value={activity.moving_time_formatted} />
+        <StatCard label="Distance" value={distValue(activity.distance_km ?? 0, activity.sport_type, 2)} unit={getDistUnit(activity.sport_type)} />
+        <StatCard label="Moving Time" value={activity.moving_time_formatted ?? ''} />
         {activity.elapsed_time_formatted && activity.elapsed_time !== activity.moving_time && (
           <StatCard label="Elapsed Time" value={activity.elapsed_time_formatted} />
         )}
@@ -906,7 +883,12 @@ function ActivityDetailPageInner() {
           <StatCard label="Max HR" value={Math.round(activity.max_heartrate)} unit="bpm" color="text-pink-400" />
         )}
         {activity.average_cadence && (
-          <StatCard label="Cadence" value={Math.round(activity.average_cadence * 2)} unit="spm" color="text-blue-400" />
+          <StatCard
+            label="Cadence"
+            value={Math.round(activity.average_cadence * (sportCategory === 'running' ? 2 : 1))}
+            unit={sportCategory === 'running' ? 'spm' : 'rpm'}
+            color="text-blue-400"
+          />
         )}
         {activity.suffer_score && (
           <StatCard label="Suffer Score" value={activity.suffer_score} color="text-amber-400" />
@@ -933,7 +915,7 @@ function ActivityDetailPageInner() {
       {activity.best_efforts && activity.best_efforts.length > 0 && (
         <ChartPanel title="Best efforts" accent={sportAccent} glow={false}>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-            {activity.best_efforts.map((effort: Record<string, unknown>, i: number) => {
+            {activity.best_efforts.map((effort, i) => {
               const prRank = effort.pr_rank as number | null
               return (
                 <div
@@ -954,7 +936,7 @@ function ActivityDetailPageInner() {
                   </span>
                   <div className="flex items-center gap-1.5">
                     <span className={isLight ? 'text-gray-800' : 'text-gray-200'}>
-                      {formatTime(effort.elapsed_time as number)}
+                      {formatClockDuration(effort.elapsed_time as number)}
                     </span>
                     {prRank === 1 && <span className="text-amber-400 text-xs font-bold">PR</span>}
                     {prRank === 2 && <span className="text-gray-400 text-[10px]">2nd</span>}
@@ -969,13 +951,12 @@ function ActivityDetailPageInner() {
 
       {/* Execution Score */}
       {activityScore?.score && (() => {
-        const overall = activityScore.score.overall_score as number
-        const metrics = activityScore.score.metrics as Record<string, Record<string, unknown>> | undefined
-        const segmentScores = activityScore.score.segment_scores as Record<string, unknown>[] | undefined
+        const overall = activityScore.score.overall_score
+        const metrics = activityScore.score.metrics
+        const segmentScores = activityScore.score.segment_scores
         const isSegmented = activityScore.score.mode === 'segmented'
-        const session = activityScore.session as Record<string, unknown> | undefined
-        const sessionSegments = session?.segments as Segment[] | undefined
-        const sc = (s: number) => s >= 80 ? '#22c55e' : s >= 50 ? '#eab308' : '#ef4444'
+        const session = activityScore.session
+        const sessionSegments = session?.segments ?? undefined
 
         const metricConfig: Record<string, { label: string; icon: ReactNode; color: string }> = {
           distance: { label: 'Distance', icon: <DistanceIcon size={11} />, color: '#3b82f6' },
@@ -986,19 +967,14 @@ function ActivityDetailPageInner() {
         }
 
         const formatPaceVal = (pace: number, unit: string) => {
-          if (unit === 'min/km' || unit === 'min/100m') {
-            const mins = Math.floor(pace)
-            const secs = Math.round((pace - mins) * 60)
-            return `${mins}:${secs.toString().padStart(2, '0')} ${unit}`
-          }
-          return `${Math.round(pace * 10) / 10} ${unit}`
+          const isPaceUnit = unit === 'min/km' || unit === 'min/100m'
+          return `${formatPace(pace, !isPaceUnit)} ${unit}`
         }
 
         const isSwim = getSportCategory(activity.sport_type) === 'swimming'
-        const formatDistVal = (km: number) => isSwim ? `${Math.round(km * 1000)} m` : `${km} km`
 
-        const formatGoal = (key: string, m: Record<string, unknown>) => {
-          if (key === 'distance') return formatDistVal(m.target as number)
+        const formatGoal = (key: string, m: ScoreMetric) => {
+          if (key === 'distance') return formatDist(m.target as number, activity.sport_type, 1)
           if (key === 'duration') return `${m.target} ${m.unit}`
           if (key === 'avg_pace') return formatPaceVal(m.target as number, m.unit as string)
           if (key === 'pace') {
@@ -1011,17 +987,13 @@ function ActivityDetailPageInner() {
           return ''
         }
 
-        const formatActual = (key: string, m: Record<string, unknown>) => {
-          if (key === 'distance') return formatDistVal(m.actual as number)
+        const formatActual = (key: string, m: ScoreMetric) => {
+          if (key === 'distance') return formatDist(m.actual as number, activity.sport_type, 1)
           if (key === 'duration') return `${m.actual} ${m.unit}`
           if (key === 'avg_pace') return formatPaceVal(m.actual as number, m.unit as string)
           if (key === 'pace') return formatPaceVal(m.actual as number, m.unit as string)
           if (key === 'hr_zone') return `${m.actual_pct}%`
           return ''
-        }
-
-        const segTypeLabels: Record<string, string> = {
-          warmup: 'Warmup', work: 'Work', recovery: 'Recovery', cooldown: 'Cooldown', rest: 'Rest',
         }
 
         const formatSegDist = (km: number | null | undefined) => {
@@ -1053,11 +1025,9 @@ function ActivityDetailPageInner() {
             sessionSegments={sessionSegments}
             segmentScores={segmentScores}
             metrics={metrics}
-            sc={sc}
             metricConfig={metricConfig}
             formatGoal={formatGoal}
             formatActual={formatActual}
-            segTypeLabels={segTypeLabels}
             formatSegDist={formatSegDist}
             formatDetected={formatDetected}
             hasBreakdown={!!hasBreakdown}
@@ -1075,7 +1045,7 @@ function ActivityDetailPageInner() {
 
       {/* ── Garmin Laps ────────────────────────────── */}
       {activity.laps && activity.laps.length > 1 && (() => {
-        const laps = activity.laps as Record<string, unknown>[]
+        const laps = activity.laps ?? []
         return (
           <ChartPanel title="Laps" accent={sportAccent} glow={false}>
             <div className="overflow-x-auto">
@@ -1102,8 +1072,6 @@ function ActivityDetailPageInner() {
                     const lapSpeed = lap.average_speed as number || 0
                     const { value: paceVal } = convertSpeed(lapSpeed, activity.sport_type)
                     const lapDistRaw = lap.distance as number || 0
-                    const isSwim = sportCategory === 'swimming'
-                    const lapDist = isSwim ? lapDistRaw : lapDistRaw / 1000
 
                     return (
                       <tr
@@ -1114,10 +1082,10 @@ function ActivityDetailPageInner() {
                           {i + 1}
                         </td>
                         <td className={clsx('py-2 px-3 text-right font-mono', isLight ? 'text-gray-600' : 'text-gray-300')}>
-                          {isSwim ? `${Math.round(lapDist)} m` : `${lapDist.toFixed(2)} km`}
+                          {formatDist(lapDistRaw / 1000, activity.sport_type, 2)}
                         </td>
                         <td className={clsx('py-2 px-3 text-right font-mono', isLight ? 'text-gray-600' : 'text-gray-300')}>
-                          {formatTime(lap.moving_time as number || lap.elapsed_time as number || 0)}
+                          {formatClockDuration(lap.moving_time as number || lap.elapsed_time as number || 0)}
                         </td>
                         <td className="py-2 px-3 text-right font-mono">
                           {lapSpeed > 0 ? (
@@ -1243,7 +1211,7 @@ function ActivityDetailPageInner() {
                           </td>
                         )}
                         <td className={clsx('py-2 px-3 text-right font-mono', isLight ? 'text-gray-600' : 'text-gray-300')}>
-                          {formatTime(split.time)}
+                          {formatClockDuration(split.time)}
                         </td>
                         {splits.some((s: Split) => s.avgHR !== null) && (
                           <td className="py-2 px-3 text-right text-pink-400 font-mono">
@@ -1275,9 +1243,7 @@ function ActivityDetailPageInner() {
       {(() => {
         const isSwimStream = sportCategory === 'swimming'
         const streamXUnit = isSwimStream ? 'm' : 'km'
-        const streamXFormatter = isSwimStream
-          ? (v: number) => String(Math.round(v * 1000))
-          : undefined
+        const streamXFormatter = isSwimStream ? swimXFormatter : undefined
         return (
           <>
             {hasElevation && (
@@ -1287,7 +1253,7 @@ function ActivityDetailPageInner() {
                 color={getSportColor(activity.sport_type)}
                 gradientId="elevGrad"
                 unit="m"
-                yDomain={['dataMin - 10', 'dataMax + 10']}
+                yDomain={ELEVATION_Y_DOMAIN}
                 zones={segmentZones.length > 0 ? segmentZones : undefined}
                 xUnit={streamXUnit}
                 xFormatter={streamXFormatter}
@@ -1302,11 +1268,7 @@ function ActivityDetailPageInner() {
                 gradientId="paceGrad"
                 unit={paceUnit}
                 reversed={!useSpeedUnit}
-                formatValue={useSpeedUnit ? (v => `${v.toFixed(1)}`) : (v => {
-                  const m = Math.floor(v)
-                  const s = Math.round((v - m) * 60)
-                  return `${m}:${s.toString().padStart(2, '0')}`
-                })}
+                formatValue={useSpeedUnit ? speedTickFormatter : paceTickFormatter}
                 secondaryData={hasGap ? streamSeries.gap : undefined}
                 secondaryColor="#f97316"
                 secondaryLabel="GAP"
@@ -1347,22 +1309,7 @@ function ActivityDetailPageInner() {
 
       {/* Route Performance (Strava similar_activities) */}
       {activity.similar_activities && activity.similar_activities.effort_count > 1 && (() => {
-        const sa = activity.similar_activities as {
-          effort_count: number
-          average_speed: number
-          min_average_speed: number
-          mid_average_speed: number
-          max_average_speed: number
-          pr_rank: number | null
-          trend: {
-            speeds: number[]
-            current_activity_index: number
-            min_speed: number
-            mid_speed: number
-            max_speed: number
-            direction: number
-          } | null
-        }
+        const sa = activity.similar_activities!
         const trend = sa.trend
         const currentSpeed = activity.average_speed as number
         const sportColor = getSportColor(activity.sport_type)
@@ -1520,7 +1467,7 @@ function ActivityDetailPageInner() {
       {similarActivities && similarActivities.length > 0 && (
         <ChartPanel title="Similar activities" accent={sportAccent} glow={false}>
           <div className={clsx('divide-y', isLight ? 'divide-gray-100' : 'divide-surface-700')}>
-            {similarActivities.map((sa: Record<string, unknown>) => (
+            {similarActivities.map(sa => (
               <Link
                 key={sa.id as number}
                 to={`/activities/${sa.id}`}
@@ -1535,11 +1482,11 @@ function ActivityDetailPageInner() {
                     {String(sa.name)}
                   </div>
                   <div className="text-xs text-gray-500">
-                    {sa.start_date_local ? new Date(String(sa.start_date_local)).toLocaleDateString() : ''}
+                    {sa.start_date_local ? parseLocalDate(String(sa.start_date_local)).toLocaleDateString() : ''}
                   </div>
                 </div>
                 <div className="flex items-center gap-4 text-xs text-gray-400 font-mono flex-shrink-0">
-                  <span>{getSportCategory(sa.sport_type as string) === 'swimming' ? `${Math.round(((sa.distance_km as number) ?? 0) * 1000)} m` : `${(sa.distance_km as number)?.toFixed(1)} km`}</span>
+                  <span>{formatDist((sa.distance_km as number) ?? 0, sa.sport_type as string, 1)}</span>
                   {!!sa.formatted_pace && <span>{String(sa.formatted_pace)}</span>}
                   {(sa.total_elevation_gain as number) > 0 && (
                     <span className="text-green-400/70">+{Math.round(sa.total_elevation_gain as number)}m</span>
@@ -1554,7 +1501,7 @@ function ActivityDetailPageInner() {
 
       {/* ── Strava Segments ───────────────────────── */}
       {activity.segment_efforts && activity.segment_efforts.length > 0 && (() => {
-        const efforts = activity.segment_efforts as Record<string, unknown>[]
+        const efforts = activity.segment_efforts ?? []
         return (
           <details
             className={clsx('panel p-5 group', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}
@@ -1566,11 +1513,10 @@ function ActivityDetailPageInner() {
             </summary>
             <div className="space-y-3 mt-4">
               {efforts.map((effort, i) => {
-                const segment = effort.segment as Record<string, unknown> | undefined
+                const segment = effort.segment
                 const name = (effort.name as string) || (segment?.name as string) || `Segment ${i + 1}`
                 const elapsed = effort.elapsed_time as number || 0
                 const distance = (effort.distance as number || 0)
-                const isSwimSeg = sportCategory === 'swimming'
                 const distKm = distance / 1000
                 const prRank = effort.pr_rank as number | null
                 const avgHR = effort.average_heartrate as number | null
@@ -1611,14 +1557,14 @@ function ActivityDetailPageInner() {
                         )}
                       </div>
                       <span className={clsx('text-sm font-mono font-medium flex-shrink-0', isLight ? 'text-gray-800' : 'text-gray-200')}>
-                        {formatTime(elapsed)}
+                        {formatClockDuration(elapsed)}
                       </span>
                     </div>
 
                     {/* Stats row */}
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
                       <span className={clsx('font-mono', isLight ? 'text-gray-600' : 'text-gray-400')}>
-                        {isSwimSeg ? `${Math.round(distance)} m` : (distKm >= 1 ? `${distKm.toFixed(2)} km` : `${Math.round(distance)} m`)}
+                        {distKm < 1 ? `${Math.round(distance)} m` : formatDist(distKm, activity.sport_type, 2)}
                       </span>
                       <span className={clsx('font-mono', isLight ? 'text-gray-600' : 'text-gray-400')}>
                         {paceStr} <span className="text-gray-500">{paceUnit}</span>
@@ -1636,7 +1582,7 @@ function ActivityDetailPageInner() {
                       )}
                       {avgCadence != null && (
                         <span className="font-mono text-blue-400/80">
-                          {Math.round(avgCadence * 2)} spm
+                          {Math.round(avgCadence * (sportCategory === 'running' ? 2 : 1))} {sportCategory === 'running' ? 'spm' : 'rpm'}
                         </span>
                       )}
                       {avgWatts != null && (

@@ -1,11 +1,11 @@
-import { useState, useEffect, useMemo, useLayoutEffect } from 'react'
+import { useState, useEffect, useMemo, useLayoutEffect, useRef } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { useActivities, useSportTypes, useYears, useAthleteProfile } from '../api/hooks'
+import { useActivities, useSportTypes, useYears, useAthleteProfile, type Activity } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
-import { getSportCategory } from '../utils/formatSpeed'
+import { distValue, getDistUnit } from '../utils/formatSpeed'
+import { parseLocalDate, todayLocalStr } from '../utils/dates'
 import { useTheme } from '../hooks/useTheme'
 import clsx from 'clsx'
-import { format } from 'date-fns'
 import DatePicker from '../components/shared/DatePicker'
 
 const SORT_OPTIONS = [
@@ -26,15 +26,15 @@ function useDebounce<T>(value: T, delay: number): T {
 }
 
 /* ── Activity Card ─────────────────────────────────── */
-function ActivityCard({ activity: a }: { activity: Record<string, unknown> }) {
+function ActivityCard({ activity: a }: { activity: Activity }) {
   const { theme } = useTheme()
   const isLight = theme === 'light'
-  const sportColor = getSportColor(a.sport_type as string)
-  const distanceKm = a.distance_km as number | undefined
-  const elevGain = a.total_elevation_gain as number | undefined
-  const avgHR = a.average_heartrate as number | undefined
+  const sportColor = getSportColor(a.sport_type)
+  const distanceKm = a.distance_km
+  const elevGain = a.total_elevation_gain
+  const avgHR = a.average_heartrate
   const dateStr = a.start_date_local
-    ? new Date(a.start_date_local as string).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+    ? parseLocalDate(a.start_date_local).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
     : ''
 
   return (
@@ -60,7 +60,7 @@ function ActivityCard({ activity: a }: { activity: Record<string, unknown> }) {
               'font-semibold tracking-tight truncate transition-colors',
               isLight ? 'text-gray-900 group-hover:text-gray-950' : 'text-gray-100 group-hover:text-white',
             )}>
-              {a.name as string}
+              {a.name}
             </div>
             <div className="flex items-center gap-2 mt-1.5 flex-wrap">
               <span
@@ -72,7 +72,7 @@ function ActivityCard({ activity: a }: { activity: Record<string, unknown> }) {
                 }}
               >
                 <span className="w-1 h-1 rounded-full" style={{ backgroundColor: sportColor }} aria-hidden="true" />
-                {a.sport_type as string}
+                {a.sport_type}
               </span>
               <span className={clsx('text-[11px] font-mono tabular-nums', isLight ? 'text-gray-500' : 'text-gray-500')}>{dateStr}</span>
             </div>
@@ -98,9 +98,9 @@ function ActivityCard({ activity: a }: { activity: Record<string, unknown> }) {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
               </svg>
               <span className={clsx('text-sm font-mono font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>
-                {getSportCategory(a.sport_type as string) === 'swimming' ? Math.round((distanceKm ?? 0) * 1000) : distanceKm}
+                {distValue(distanceKm, a.sport_type)}
               </span>
-              <span className="text-[10px] text-gray-500 uppercase tracking-wider">{getSportCategory(a.sport_type as string) === 'swimming' ? 'm' : 'km'}</span>
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider">{getDistUnit(a.sport_type)}</span>
             </div>
           )}
           {!!a.moving_time_formatted && (
@@ -157,12 +157,12 @@ export default function ActivitiesPage() {
     return y ? Number(y) : undefined
   })
   const [searchInput, setSearchInput] = useState(() => searchParams.get('q') || '')
+  const [todayStr] = useState(() => todayLocalStr())
   const [dateFrom, setDateFrom] = useState(() => searchParams.get('from') || '')
-  const [dateTo, setDateTo] = useState(() => searchParams.get('to') || format(new Date(), 'yyyy-MM-dd'))
+  const [dateTo, setDateTo] = useState(() => searchParams.get('to') || todayStr)
   const [sortBy, setSortBy] = useState(() => searchParams.get('sort') || 'date')
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>(() => (searchParams.get('dir') === 'asc' ? 'asc' : 'desc'))
   const [gearId, setGearId] = useState<string>(() => searchParams.get('gear_id') || '')
-  const [defaultsApplied, setDefaultsApplied] = useState(() => !!searchParams.get('from'))
 
   // Sync state to URL params (replaces history entry so back button works)
   useEffect(() => {
@@ -172,12 +172,12 @@ export default function ActivitiesPage() {
     if (year) params.set('year', String(year))
     if (searchInput) params.set('q', searchInput)
     if (dateFrom) params.set('from', dateFrom)
-    if (dateTo && dateTo !== format(new Date(), 'yyyy-MM-dd')) params.set('to', dateTo)
+    if (dateTo && dateTo !== todayStr) params.set('to', dateTo)
     if (sortBy !== 'date') params.set('sort', sortBy)
     if (sortDir !== 'desc') params.set('dir', sortDir)
     if (gearId) params.set('gear_id', gearId)
     setSearchParams(params, { replace: true })
-  }, [page, sportType, year, searchInput, dateFrom, dateTo, sortBy, sortDir, gearId, setSearchParams])
+  }, [page, sportType, year, searchInput, dateFrom, dateTo, todayStr, sortBy, sortDir, gearId, setSearchParams])
 
   // Save scroll position before navigating away, restore on mount
   useEffect(() => {
@@ -194,17 +194,10 @@ export default function ActivitiesPage() {
   const { data: sportTypes } = useSportTypes()
   const { data: years } = useYears()
 
-  // Default "from" to earliest activity date (Jan 1 of earliest year)
-  useEffect(() => {
-    if (!defaultsApplied && years && years.length > 0) {
-      const earliestYear = years[years.length - 1]
-      const frame = requestAnimationFrame(() => {
-        setDateFrom(`${earliestYear}-01-01`)
-        setDefaultsApplied(true)
-      })
-      return () => cancelAnimationFrame(frame)
-    }
-  }, [years, defaultsApplied])
+  // The default "From" (Jan 1 of the earliest activity year) excludes nothing,
+  // so it's display-only: only an explicitly chosen date is sent to the query.
+  // This keeps the initial mount to a single request.
+  const defaultDateFrom = years && years.length > 0 ? `${years[years.length - 1]}-01-01` : ''
 
   const { data, isLoading, isFetching } = useActivities(
     page, 20,
@@ -218,14 +211,22 @@ export default function ActivitiesPage() {
     gearId || undefined,
   )
 
+  // Restore the saved scroll offset exactly once per mount (once the list has
+  // rendered), then drop the key so later filter/page changes don't re-jump.
+  const scrollRestored = useRef(false)
   useLayoutEffect(() => {
+    if (scrollRestored.current || !data) return
+    scrollRestored.current = true
     const saved = sessionStorage.getItem('activities-scroll')
-    if (saved) {
-      requestAnimationFrame(() => window.scrollTo(0, Number(saved)))
-    }
+    if (!saved) return
+    sessionStorage.removeItem('activities-scroll')
+    requestAnimationFrame(() => window.scrollTo(0, Number(saved)))
   }, [data])
 
   const totalPages = data ? Math.ceil(data.total / data.per_page) : 0
+
+  const dateRangeChanged =
+    (dateFrom !== '' && dateFrom !== defaultDateFrom) || (dateTo !== '' && dateTo !== todayStr)
 
   const activeFilterCount = [
     sportType,
@@ -233,6 +234,7 @@ export default function ActivitiesPage() {
     debouncedSearch,
     sortBy !== 'date' || sortDir !== 'desc' ? 'sort' : '',
     gearId,
+    dateRangeChanged ? 'dates' : '',
   ].filter(Boolean).length
 
   const clearAll = () => {
@@ -240,7 +242,7 @@ export default function ActivitiesPage() {
     setYear(undefined)
     setSearchInput('')
     setDateFrom('')
-    setDateTo('')
+    setDateTo(todayStr)
     setSortBy('date')
     setSortDir('desc')
     setGearId('')
@@ -251,12 +253,12 @@ export default function ActivitiesPage() {
   const { data: profileForGear } = useAthleteProfile()
   const gearName = useMemo(() => {
     if (!gearId || !profileForGear) return null
-    const shoes = (profileForGear.shoes as Array<Record<string, unknown>> | undefined) ?? []
-    const bikes = (profileForGear.bikes as Array<Record<string, unknown>> | undefined) ?? []
+    const shoes = profileForGear.shoes ?? []
+    const bikes = profileForGear.bikes ?? []
     const found = [...shoes, ...bikes].find(g => g.id === gearId)
     if (!found) return gearId
-    const nick = (found.nickname as string | undefined)?.trim()
-    return nick || (found.name as string | undefined) || gearId
+    const nick = found.nickname?.trim()
+    return nick || found.name || gearId
   }, [gearId, profileForGear])
 
   // Page range for pagination
@@ -359,7 +361,7 @@ export default function ActivitiesPage() {
 
         {/* Row 2: Filters */}
         <div className="flex flex-wrap items-center gap-2">
-          <DatePicker value={dateFrom} onChange={v => {
+          <DatePicker value={dateFrom || defaultDateFrom} onChange={v => {
             setDateFrom(v)
             setPage(1)
           }} label="From" />
@@ -461,8 +463,8 @@ export default function ActivitiesPage() {
       ) : (
         <>
           <div className={clsx('space-y-2 transition-opacity duration-200 stagger-children', isFetching && !isLoading && 'opacity-60')}>
-            {data?.items?.map((a: Record<string, unknown>) => (
-              <ActivityCard key={a.id as string} activity={a} />
+            {data?.items?.map(a => (
+              <ActivityCard key={a.id} activity={a} />
             ))}
           </div>
 

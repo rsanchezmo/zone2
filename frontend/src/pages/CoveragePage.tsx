@@ -8,9 +8,14 @@ import {
   useCoverageCities, useCoverageEdges, useCoverageDistricts, useCoverageArea,
   useCoverageSyncStatus, useTriggerCoverageSync, useUncoveredEdges,
   useAddCity, useAddCityStatus, useGeocodeCity, useDeleteCity,
-  type AreaCoverage, type DistrictCoverage,
+  type AreaCoverage, type CoverageSummary, type DistrictCoverage,
 } from '../api/hooks'
+import { useNow } from '../hooks/useNow'
 import { useTheme } from '../hooks/useTheme'
+import { InvalidateSize } from '../components/shared/leafletHelpers'
+import { FullscreenIcon } from '../components/shared/mapChrome'
+import { tileLayerUrl } from '../utils/mapTiles'
+import { useExitFullscreenOnEscape } from '../hooks/useExitFullscreenOnEscape'
 import { MapStyleToggle, SATELLITE_ACCENT, SATELLITE_ATTR, SATELLITE_TILES, type MapStyle } from '../components/shared/MapStyleToggle'
 
 const COVERED_ACCENT = '#fb2c36'
@@ -39,6 +44,22 @@ function FlyToBbox({ bbox }: { bbox: [number, number, number, number] | null }) 
   return null
 }
 
+/** Fly to a city when it becomes active. On first load the covered-edges fit
+ *  positions the map instead, unless the city has nothing matched yet. */
+function FlyToActiveCity({ city }: { city: CoverageSummary | undefined }) {
+  const map = useMap()
+  const flownSlug = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    if (!city?.bbox || flownSlug.current === city.slug) return
+    const first = flownSlug.current === undefined
+    flownSlug.current = city.slug
+    if (first && city.num_matched_activities !== 0) return
+    const [south, west, north, east] = city.bbox
+    map.flyToBounds([[south, west], [north, east]], { padding: [30, 30], duration: 1.0 })
+  }, [map, city])
+  return null
+}
+
 /** Report the viewport bbox (south,west,north,east) when zoomed in enough for
  *  the uncovered-streets layer; payloads at city zoom would be the whole map. */
 const MISSING_MIN_ZOOM = 14
@@ -56,15 +77,6 @@ function ViewportTracker({ onChange }: { onChange: (bbox: string | undefined) =>
   }, [map, onChange])
   useMapEvents({ moveend: report, zoomend: report })
   useEffect(report, [report])
-  return null
-}
-
-function InvalidateSize({ expanded }: { expanded: boolean }) {
-  const map = useMap()
-  useEffect(() => {
-    const id = setTimeout(() => map.invalidateSize(), 100)
-    return () => clearTimeout(id)
-  }, [map, expanded])
   return null
 }
 
@@ -141,6 +153,14 @@ function TipButton({ tip, onClick, className, isLight, children }: {
   )
 }
 
+/** Ticking "elapsed since start" label; mounted only while a download runs. */
+function ElapsedSince({ startedAt }: { startedAt: number }) {
+  const now = useNow(1000)
+  const elapsed = Math.max(0, Math.round(now / 1000 - startedAt))
+  const txt = elapsed >= 60 ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : `${elapsed}s`
+  return <span className="font-mono tabular-nums"> · {txt}</span>
+}
+
 /** "+ City" button → inline input → geocode preview to confirm the resolved
  *  place → background download with status polling. The preview matters:
  *  bare "Amsterdam" resolves to New York City (née New Amsterdam). */
@@ -151,29 +171,28 @@ function AddCityForm({ onAdded }: { onAdded: (slug: string) => void }) {
   const [resolved, setResolved] = useState<string | null>(null)
   const geocodeMutation = useGeocodeCity()
   const addMutation = useAddCity()
-  const { data: status } = useAddCityStatus(open || addMutation.isPending)
+  // The hook keeps polling on its own while a download reports running.
+  const { data: status } = useAddCityStatus(addMutation.isPending)
   const running = !!status?.running
   const prevRunning = useRef(false)
 
+  // Completion resets the form via the parent: onAdded switches the active
+  // city, and the mount sites key this component by that slug.
   useEffect(() => {
     if (prevRunning.current && !running) {
       qc.invalidateQueries({ queryKey: ['coverage-cities'] })
       if (status?.slug && !status.error) {
         onAdded(status.slug)
-        setOpen(false)
-        setValue('')
       }
     }
     prevRunning.current = running
   }, [running, status, qc, onAdded])
 
   if (running) {
-    const elapsed = status?.started_at ? Math.max(0, Math.round(Date.now() / 1000 - status.started_at)) : null
-    const elapsedTxt = elapsed === null ? '' : elapsed >= 60 ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : `${elapsed}s`
     return (
       <span className="text-[11px] text-gray-500 animate-pulse whitespace-nowrap" title="Downloads the street network from OSM — takes a few minutes for a big city">
         adding {status?.city_name} — {status?.progress ?? 'working'}
-        {elapsedTxt && <span className="font-mono tabular-nums"> · {elapsedTxt}</span>}
+        {status?.started_at != null && <ElapsedSince startedAt={status.started_at} />}
       </span>
     )
   }
@@ -239,16 +258,6 @@ export default function CoveragePage() {
   const [showDistricts, setShowDistricts] = useState(true)
   const [flyBbox, setFlyBbox] = useState<[number, number, number, number] | null>(null)
 
-  // Fly to a city when it becomes active. On first load the covered-edges
-  // fit handles it, unless the city has nothing matched yet.
-  const flownSlug = useRef<string | undefined>(undefined)
-  useEffect(() => {
-    if (!activeSlug || !city?.bbox || flownSlug.current === activeSlug) return
-    const first = flownSlug.current === undefined
-    flownSlug.current = activeSlug
-    if (!first || city.num_matched_activities === 0) setFlyBbox([...city.bbox])
-  }, [activeSlug, city])
-
   const [expanded, setExpanded] = useState(false)
   const [mapStyle, setMapStyle] = useState<MapStyle>('street')
   const [selectMode, setSelectMode] = useState(false)
@@ -262,27 +271,23 @@ export default function CoveragePage() {
 
   const deleteMutation = useDeleteCity()
   const [confirmingDelete, setConfirmingDelete] = useState(false)
-  useEffect(() => setConfirmingDelete(false), [activeSlug])
   const syncMutation = useTriggerCoverageSync(activeSlug)
   const { data: syncStatus } = useCoverageSyncStatus(activeSlug, syncMutation.isSuccess)
   const syncRunning = !!syncStatus?.running
   const prevRunning = useRef(false)
+  const resetSyncMutation = syncMutation.reset
   useEffect(() => {
     if (prevRunning.current && !syncRunning) {
+      // Drop the mutation's success flag so the status poll stops with the sync.
+      resetSyncMutation()
       qc.invalidateQueries({ queryKey: ['coverage-cities'] })
       qc.invalidateQueries({ queryKey: ['coverage-edges'] })
       qc.invalidateQueries({ queryKey: ['coverage-districts'] })
     }
     prevRunning.current = syncRunning
-  }, [syncRunning, qc])
+  }, [syncRunning, qc, resetSyncMutation])
 
-  // Close fullscreen on Escape
-  useEffect(() => {
-    if (!expanded) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setExpanded(false) }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [expanded])
+  useExitFullscreenOnEscape(expanded, () => setExpanded(false))
 
   const accent = mapStyle === 'satellite' ? SATELLITE_ACCENT : COVERED_ACCENT
   const districtColor = mapStyle === 'satellite' ? '#c4b5fd' : isLight ? '#7c3aed' : '#8b5cf6'
@@ -331,11 +336,7 @@ export default function CoveragePage() {
     })
   }, [districtColor, districtStyle])
 
-  const tileUrl = mapStyle === 'satellite'
-    ? SATELLITE_TILES
-    : isLight
-      ? 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
-      : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+  const tileUrl = mapStyle === 'satellite' ? SATELLITE_TILES : tileLayerUrl(isLight)
 
   const overlayClass = clsx(
     'rounded-lg border backdrop-blur-md',
@@ -364,6 +365,13 @@ export default function CoveragePage() {
     setAreaStats(null)
   }
 
+  // Per-city UI state (delete confirmation, area selection) resets on switch.
+  const switchCity = (next: string | undefined) => {
+    setSlug(next)
+    setConfirmingDelete(false)
+    clearArea()
+  }
+
   const edgesKey = useMemo(
     () => `${activeSlug}-${(edges as { features?: unknown[] } | undefined)?.features?.length ?? 0}-${accent}`,
     [activeSlug, edges, accent],
@@ -378,7 +386,7 @@ export default function CoveragePage() {
         <div className={clsx('panel p-10 text-center text-sm space-y-4', isLight ? 'text-gray-500' : 'text-gray-400')}>
           <p>No coverage maps yet. Add a city to download its runnable street network, then sync your activities against it.</p>
           <div className="flex justify-center">
-            <AddCityForm onAdded={setSlug} />
+            <AddCityForm key={activeSlug ?? 'no-city'} onAdded={switchCity} />
           </div>
         </div>
       </div>
@@ -448,6 +456,7 @@ export default function CoveragePage() {
           )}
           <AreaSelect active={selectMode} onSelect={handleAreaSelect} />
           <FlyToBbox bbox={flyBbox} />
+          <FlyToActiveCity city={city} />
           <InvalidateSize expanded={expanded} />
         </MapContainer>
 
@@ -456,7 +465,7 @@ export default function CoveragePage() {
           {(cities?.length ?? 0) > 1 && (
             <select
               value={activeSlug}
-              onChange={e => { setSlug(e.target.value); clearArea() }}
+              onChange={e => switchCity(e.target.value)}
               className="select !text-xs !py-1 !px-1.5"
               aria-label="City"
             >
@@ -483,7 +492,7 @@ export default function CoveragePage() {
               <span className="text-[11px] text-red-400">delete {city.city_name} and its matched state?</span>
               <button
                 onClick={() => deleteMutation.mutate(city.slug, {
-                  onSuccess: () => { setSlug(undefined); clearArea(); setConfirmingDelete(false) },
+                  onSuccess: () => switchCity(undefined),
                 })}
                 disabled={deleteMutation.isPending}
                 className="btn !text-[10px] !py-0.5 !px-2 !text-red-400 !border-red-500/50"
@@ -522,7 +531,7 @@ export default function CoveragePage() {
           >
             {syncRunning ? 'Matching…' : 'Sync'}
           </button>
-          <AddCityForm onAdded={setSlug} />
+          <AddCityForm key={activeSlug ?? 'no-city'} onAdded={switchCity} />
         </div>
 
         {/* ── Controls — top right ─────────────────── */}
@@ -533,15 +542,7 @@ export default function CoveragePage() {
             className={buttonClass}
             isLight={isLight}
           >
-            {expanded ? (
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M6 2v4H2M10 14v-4h4M14 2l-4 4M2 14l4-4" />
-              </svg>
-            ) : (
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M2 6V2h4M14 10v4h-4M2 2l4 4M14 14l-4-4" />
-              </svg>
-            )}
+            <FullscreenIcon expanded={expanded} />
           </TipButton>
           <div className="relative group">
             <MapStyleToggle

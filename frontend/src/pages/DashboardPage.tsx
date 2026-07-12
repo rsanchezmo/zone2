@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom'
 import { useYearInSport, useYears, useSportTypes, useCumulativeDistance, useGoals, useWeeklyTotals, useSyncStatus } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
 import { formatSpeed, formatDist, formatDistAxis, distValue, getDistUnit } from '../utils/formatSpeed'
+import { parseLocalDate, todayLocalStr } from '../utils/dates'
+import { WEEKDAYS_SHORT } from '../constants/weekdays'
 import StatCard from '../components/shared/StatCard'
 import ExportButton from '../components/shared/ExportButton'
 import ChartPanel, { LegendSwatch } from '../components/shared/ChartPanel'
@@ -18,7 +20,6 @@ import { useIsMobile } from '../hooks/useIsMobile'
 import clsx from 'clsx'
 
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 type MetricMode = 'distance' | 'activities'
 type WeeklyWindow = 12 | 16 | 24 | 52
@@ -34,15 +35,15 @@ export default function DashboardPage() {
   const [weeklyTotalsWeeks, setWeeklyTotalsWeeks] = useState<WeeklyWindow>(12)
   const [monthlyMetric, setMonthlyMetric] = useState<MetricMode>('distance')
 
-  const { data: goalsData } = useGoals(year)
+  const { data: goalsData, isFetched: goalsFetched } = useGoals(year)
   const yearlyDistanceGoal = useMemo(() => {
     if (!goalsData) return undefined
-    const goal = goalsData.find((g: Record<string, unknown>) =>
+    const goal = goalsData.find(g =>
       g.metric === 'distance_km' &&
       (g.sport_type === mainSport || g.sport_type === '__all__')
     )
     if (!goal) return undefined
-    const target = goal.target_value as number
+    const target = goal.target_value
     if (goal.period === 'weekly') return Math.round(target * 52)
     if (goal.period === 'monthly') return Math.round(target * 12)
     return target
@@ -50,24 +51,27 @@ export default function DashboardPage() {
 
   const { data: yearData, isLoading: yearLoading, isFetching: yearFetching } = useYearInSport(year, mainSport, year - 1)
   const { data: weeklyTotalsData } = useWeeklyTotals(weeklyTotalsWeeks, mainSport)
-  const { data: cumulativeData } = useCumulativeDistance(year, mainSport, year - 1, yearlyDistanceGoal)
+  // Wait for goals so the series isn't fetched once without the target and again with it.
+  const { data: cumulativeData } = useCumulativeDistance(year, mainSport, year - 1, yearlyDistanceGoal, { enabled: goalsFetched })
   const { data: syncStatus } = useSyncStatus()
 
   const comp = yearData?.comparison
   const sportColor = getSportColor(mainSport)
-  const isCurrentYear = year === new Date().getFullYear()
 
   function yearDelta(section: 'main_sport' | 'all_sports', key: string): number | string | null {
     if (!yearData || !comp) return null
-    const c = yearData[section]?.[key]
-    const p = comp[section]?.[key]
+    const c = (yearData[section] as unknown as Record<string, unknown>)[key]
+    const p = (comp[section] as unknown as Record<string, unknown>)[key]
     if (c == null || c === 0) return null
     if (!p || p === 0) return 'new'
+    if (typeof c !== 'number' || typeof p !== 'number') return null
     return ((c - p) / p) * 100
   }
 
   // ── Hero derivations ─────────────────────────────────
   const today = useMemo(() => new Date(), [])
+  const todayStr = useMemo(() => todayLocalStr(), [])
+  const isCurrentYear = year === today.getFullYear()
   const yearStart = useMemo(() => new Date(year, 0, 1), [year])
   const yearEnd = useMemo(() => new Date(year, 11, 31), [year])
   const daysElapsed = useMemo(() => {
@@ -82,20 +86,18 @@ export default function DashboardPage() {
 
   const todayKm = useMemo(() => {
     if (!cumulativeData?.data?.length) return 0
-    const todayStr = today.toISOString().slice(0, 10)
-    const points = cumulativeData.data as { day: number; date: string; km: number; target?: number }[]
+    const points = cumulativeData.data
     for (let i = points.length - 1; i >= 0; i--) {
       if (points[i].date <= todayStr) return points[i].km
     }
     return 0
-  }, [cumulativeData, today])
+  }, [cumulativeData, todayStr])
 
   const goalProgress = yearlyDistanceGoal ? todayKm / yearlyDistanceGoal : 0
   const goalStatus = useMemo(() => {
     if (!yearlyDistanceGoal || !cumulativeData?.data) return null
-    const rawPoints = cumulativeData.data as { day: number; date: string; km: number; target?: number }[]
+    const rawPoints = cumulativeData.data
     if (rawPoints.length === 0) return null
-    const todayStr = today.toISOString().slice(0, 10)
     let todayPoint = null
     for (let i = rawPoints.length - 1; i >= 0; i--) {
       if (rawPoints[i].date <= todayStr) { todayPoint = rawPoints[i]; break }
@@ -106,7 +108,7 @@ export default function DashboardPage() {
     if (Math.abs(pct) <= 2) return { label: 'On track', tone: 'accent' as const, pct: 0 }
     if (pct > 0) return { label: 'Above target', tone: 'positive' as const, pct }
     return { label: 'Below target', tone: 'negative' as const, pct }
-  }, [cumulativeData, yearlyDistanceGoal, today])
+  }, [cumulativeData, yearlyDistanceGoal, todayStr])
 
   const headerDescription = useMemo(() => {
     const scope = `${year} ${mainSport}`
@@ -114,16 +116,16 @@ export default function DashboardPage() {
     return `${scope} · complete year · ${daysInYear} days`
   }, [year, mainSport, isCurrentYear, daysElapsed, daysInYear, daysRemaining])
 
-  // ETA to goal at current pace
+  // ETA to goal at current pace — only meaningful while the year is still running
   const etaToGoal = useMemo(() => {
-    if (!yearlyDistanceGoal || todayKm <= 0 || todayKm >= yearlyDistanceGoal) return null
+    if (!isCurrentYear || !yearlyDistanceGoal || todayKm <= 0 || todayKm >= yearlyDistanceGoal) return null
     const remainingKm = yearlyDistanceGoal - todayKm
     const avgPerDay = todayKm / daysElapsed
     if (avgPerDay <= 0) return null
     const daysToGoal = remainingKm / avgPerDay
     const eta = new Date(today.getTime() + daysToGoal * 86_400_000)
     return eta
-  }, [yearlyDistanceGoal, todayKm, daysElapsed, today])
+  }, [isCurrentYear, yearlyDistanceGoal, todayKm, daysElapsed, today])
 
   // This-week aggregates (last entry of weeklyTotalsData)
   const thisWeek = useMemo(() => {
@@ -152,12 +154,11 @@ export default function DashboardPage() {
     const currentPoints = cumulativeData.data as { day: number; date: string; km: number; target?: number }[]
     const compPoints = (cumulativeData.comparison?.data ?? []) as { day: number; date: string; km: number }[]
     const compMap = new Map(compPoints.map((p) => [p.day, p.km]))
-    const todayStr = today.toISOString().slice(0, 10)
     const step = Math.max(1, Math.floor(currentPoints.length / 60))
     return currentPoints
       .filter((_, i, arr) => i % step === 0 || i === arr.length - 1 || currentPoints[i].date === todayStr)
       .map(p => {
-        const d = new Date(p.date)
+        const d = parseLocalDate(p.date)
         return {
           day: p.day,
           date: p.date,
@@ -167,13 +168,12 @@ export default function DashboardPage() {
           target: p.target ?? null,
         }
       })
-  }, [cumulativeData, today])
+  }, [cumulativeData, todayStr])
 
   const todayLabel = useMemo(() => {
-    const todayStr = today.toISOString().slice(0, 10)
     const pt = cumulativeChartData.find(p => p.date === todayStr)
     return pt?.label
-  }, [cumulativeChartData, today])
+  }, [cumulativeChartData, todayStr])
 
   const sportBars = useMemo(() => {
     const perSport = yearData?.all_sports?.activities_per_sport ?? {}
@@ -477,7 +477,7 @@ export default function DashboardPage() {
       )}
 
       {/* ── Weekly totals ─────────────────────────────── */}
-      {weeklyTotalsData?.data?.length > 0 && (
+      {weeklyTotalsData && weeklyTotalsData.data.length > 0 && (
         <ChartPanel
           title="Weekly"
           sublabel={mainSport}
@@ -591,7 +591,7 @@ export default function DashboardPage() {
                 <RecordRow label="Average pace" value={formatSpeed(yearData.main_sport.average_speed, mainSport)} color={sportColor} />
               )}
               {yearData.main_sport.most_active_weekday != null && (
-                <RecordRow label="Most active day" value={WEEKDAY_LABELS[yearData.main_sport.most_active_weekday]} color={sportColor} />
+                <RecordRow label="Most active day" value={WEEKDAYS_SHORT[yearData.main_sport.most_active_weekday]} color={sportColor} />
               )}
               {yearData.main_sport.month_most_km != null && (
                 <RecordRow label={`Best month · ${getDistUnit(mainSport)}`} value={MONTH_LABELS[yearData.main_sport.month_most_km - 1]} color={sportColor} />
@@ -721,7 +721,7 @@ function HeroBlock(props: HeroBlockProps) {
             footnote={
               hasGoal && etaToGoal
                 ? 'at current pace'
-                : hasGoal ? undefined : `longest · ${longestActivityKm.toFixed(1)} ${getDistUnit(sport)}`
+                : hasGoal ? undefined : `longest · ${formatDist(longestActivityKm, sport)}`
             }
           />
         </div>

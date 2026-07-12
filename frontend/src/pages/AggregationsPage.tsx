@@ -1,50 +1,42 @@
-import { useState, useMemo, useRef } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { usePolylines, useSportTypes, useYears } from '../api/hooks'
+import { usePolylines, useSportTypes, useYears, useGeocodeCity, type GeocodeResult } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
 import { MapContainer, TileLayer, Polyline, useMap } from 'react-leaflet'
-import { useEffect } from 'react'
 import polyline from '@mapbox/polyline'
 import 'leaflet/dist/leaflet.css'
 import type { LatLngBoundsExpression } from 'leaflet'
 import ExportButton from '../components/shared/ExportButton'
 import { useTheme } from '../hooks/useTheme'
 import clsx from 'clsx'
+import { InvalidateSize } from '../components/shared/leafletHelpers'
+import { FullscreenIcon } from '../components/shared/mapChrome'
+import { tileLayerUrl } from '../utils/mapTiles'
+import { useExitFullscreenOnEscape } from '../hooks/useExitFullscreenOnEscape'
 import { MapStyleToggle, SATELLITE_ATTR, SATELLITE_TILES, type MapStyle } from '../components/shared/MapStyleToggle'
 
-function FitAll({ bounds }: { bounds: [number, number][] }) {
+/** Fit the map once per distinct route set, so filter changes refit. */
+function FitAll({ bounds, signature }: { bounds: [number, number][]; signature: string }) {
   const map = useMap()
-  const hasFitted = useRef(false)
+  const fittedFor = useRef<string | null>(null)
   useEffect(() => {
-    if (bounds.length > 0 && !hasFitted.current) {
-      map.fitBounds(bounds as LatLngBoundsExpression, { padding: [30, 30] })
-      hasFitted.current = true
-    }
-  }, [map, bounds])
+    if (bounds.length === 0 || fittedFor.current === signature) return
+    fittedFor.current = signature
+    map.fitBounds(bounds as LatLngBoundsExpression, { padding: [30, 30] })
+  }, [map, bounds, signature])
   return null
 }
 
-function FlyToCity({ target }: { target: { lat: number; lon: number; bbox: [number, number, number, number] } | null }) {
+function FlyToCity({ target }: { target: GeocodeResult['bbox'] | null }) {
   const map = useMap()
   useEffect(() => {
     if (target) {
-      const { bbox } = target
-      // Nominatim bbox: [south, north, west, east]
       map.flyToBounds(
-        [[parseFloat(String(bbox[0])), parseFloat(String(bbox[2]))], [parseFloat(String(bbox[1])), parseFloat(String(bbox[3]))]],
+        [[target.south, target.west], [target.north, target.east]],
         { padding: [30, 30], duration: 1.5 }
       )
     }
   }, [map, target])
-  return null
-}
-
-function InvalidateSize({ expanded }: { expanded: boolean }) {
-  const map = useMap()
-  useEffect(() => {
-    const id = setTimeout(() => map.invalidateSize(), 100)
-    return () => clearTimeout(id)
-  }, [map, expanded])
   return null
 }
 
@@ -63,17 +55,15 @@ export default function AggregationsPage() {
   const [sport, setSport] = useState<string>('')
   const [year, setYear] = useState<string>('')
   const [heatmapCity, setHeatmapCity] = useState('')
-  const [flyTarget, setFlyTarget] = useState<{ lat: number; lon: number; bbox: [number, number, number, number] } | null>(null)
-  const [isGeocoding, setIsGeocoding] = useState(false)
+  const [flyTarget, setFlyTarget] = useState<GeocodeResult['bbox'] | null>(null)
+  const geocodeMutation = useGeocodeCity()
   const [expanded, setExpanded] = useState(false)
   const [mapStyle, setMapStyle] = useState<MapStyle>('street')
   const navigate = useNavigate()
 
-  const tileUrl = mapStyle === 'satellite'
-    ? SATELLITE_TILES
-    : isLight
-      ? 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
-      : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+  useExitFullscreenOnEscape(expanded, () => setExpanded(false))
+
+  const tileUrl = mapStyle === 'satellite' ? SATELLITE_TILES : tileLayerUrl(isLight)
 
   const { data: rawPolylines, isLoading } = usePolylines(
     sport || undefined,
@@ -100,16 +90,28 @@ export default function AggregationsPage() {
       .filter(Boolean) as DecodedActivity[]
   }, [rawPolylines])
 
-  const allBounds = useMemo(() => {
-    const pts: [number, number][] = []
+  // Bounding corners over every route point — endpoints alone collapse loops.
+  const allBounds = useMemo<[number, number][]>(() => {
+    let south = Infinity
+    let west = Infinity
+    let north = -Infinity
+    let east = -Infinity
     for (const a of activities) {
-      if (a.positions.length > 0) {
-        pts.push(a.positions[0])
-        pts.push(a.positions[a.positions.length - 1])
+      for (const [lat, lng] of a.positions) {
+        if (lat < south) south = lat
+        if (lat > north) north = lat
+        if (lng < west) west = lng
+        if (lng > east) east = lng
       }
     }
-    return pts
+    if (south === Infinity) return []
+    return [[south, west], [north, east]]
   }, [activities])
+
+  const routesSignature = useMemo(
+    () => `${activities.length}:${activities[0]?.id ?? ''}:${activities[activities.length - 1]?.id ?? ''}`,
+    [activities],
+  )
 
   const heatmapUrl = useMemo(() => {
     const params = new URLSearchParams()
@@ -119,23 +121,11 @@ export default function AggregationsPage() {
     return `/api/exports/thunderstorm-heatmap?${params.toString()}`
   }, [heatmapCity, sport, year])
 
-  const handleGoToCity = async () => {
+  const handleGoToCity = () => {
     if (!heatmapCity.trim()) return
-    setIsGeocoding(true)
-    try {
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(heatmapCity)}&format=json&limit=1`,
-      )
-      const data = await res.json()
-      if (data.length > 0) {
-        const { lat, lon, boundingbox } = data[0]
-        setFlyTarget({ lat: parseFloat(lat), lon: parseFloat(lon), bbox: boundingbox })
-      }
-    } catch {
-      // silently fail
-    } finally {
-      setIsGeocoding(false)
-    }
+    geocodeMutation.mutate(heatmapCity, {
+      onSuccess: (result) => setFlyTarget(result.bbox),
+    })
   }
 
   const overlayClass = clsx(
@@ -190,6 +180,7 @@ export default function AggregationsPage() {
           <MapContainer
             center={[0, 0]}
             zoom={2}
+            preferCanvas
             style={{ height: '100%', width: '100%', background: colors.mapBg }}
             zoomControl={false}
           >
@@ -220,7 +211,7 @@ export default function AggregationsPage() {
                 />
               )
             })}
-            <FitAll bounds={allBounds} />
+            <FitAll bounds={allBounds} signature={routesSignature} />
             <FlyToCity target={flyTarget} />
             <InvalidateSize expanded={expanded} />
           </MapContainer>
@@ -290,11 +281,11 @@ export default function AggregationsPage() {
           />
           <button
             onClick={handleGoToCity}
-            disabled={!heatmapCity.trim() || isGeocoding}
+            disabled={!heatmapCity.trim() || geocodeMutation.isPending}
             className="btn !text-[11px] !py-1 !px-2.5"
             title="Zoom map to this city"
           >
-            {isGeocoding ? '…' : 'Go'}
+            {geocodeMutation.isPending ? '…' : 'Go'}
           </button>
           <ExportButton
             url={heatmapUrl}
@@ -316,15 +307,7 @@ export default function AggregationsPage() {
             title={expanded ? 'Exit fullscreen' : 'Fullscreen'}
             aria-label={expanded ? 'Exit fullscreen' : 'Enter fullscreen'}
           >
-            {expanded ? (
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M6 2v4H2M10 14v-4h4M14 2l-4 4M2 14l4-4" />
-              </svg>
-            ) : (
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M2 6V2h4M14 10v4h-4M2 2l4 4M14 14l-4-4" />
-              </svg>
-            )}
+            <FullscreenIcon expanded={expanded} />
           </button>
           <MapStyleToggle
             mapStyle={mapStyle}

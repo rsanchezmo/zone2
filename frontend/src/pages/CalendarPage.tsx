@@ -1,17 +1,22 @@
 import { Fragment, useState, useMemo, useRef, useEffect, useCallback, type ReactNode } from 'react'
 import {
   startOfMonth, endOfMonth, eachDayOfInterval, format, addMonths, subMonths, addDays, subDays,
-  isSameMonth, isToday, startOfWeek, endOfWeek, isSameWeek, parseISO, differenceInDays,
+  isSameMonth, isToday, startOfWeek, endOfWeek, isSameWeek, parseISO, differenceInCalendarDays,
 } from 'date-fns'
 import { Link } from 'react-router-dom'
 import {
-  useActivitiesByDateRange, useCalendarSessions, useCalendarSessionsByRange,
+  useActivitiesByDateRange, useCalendarSessionsByRange,
   useCreateSession, useUpdateSession, useDeleteSession, useWeeklyReport, useAthleteZones,
   useStreaks, useGoalProgress, useGoals, useSessionScores, useWorkoutTemplates, useCreateWorkoutTemplate,
   useRaceEventsByRange, useUpcomingRaces, useCreateRaceEvent, useUpdateRaceEvent, useDeleteRaceEvent,
+  type Activity, type ExecutionScore, type Goal, type RaceEvent, type SessionScoresResponse,
+  type TrainingSession, type WorkoutTemplate,
 } from '../api/hooks'
-import { getSportColor } from '../constants/sportColors'
-import { getPaceUnit, getSportCategory, formatDist, getDistUnit, formatPace, isSpeedSport, parsePaceInput } from '../utils/formatSpeed'
+import { getSportColor, DEFAULT_SPORT_COLOR } from '../constants/sportColors'
+import { getPaceUnit, getSportCategory, formatDist, getDistUnit, formatPace, isSpeedSport, parsePaceInput, formatDurationHM } from '../utils/formatSpeed'
+import { localDateStr, parseLocalDate } from '../utils/dates'
+import { scoreColor } from '../utils/scoreColor'
+import { WEEKDAYS_SHORT, WEEKDAYS_MIN, WEEKDAY_LETTERS } from '../constants/weekdays'
 import SportTypeCombobox from '../components/shared/SportTypeCombobox'
 import StatCard from '../components/shared/StatCard'
 import ExportButton from '../components/shared/ExportButton'
@@ -27,8 +32,6 @@ import { useTheme } from '../hooks/useTheme'
 import { useToast } from '../hooks/useToast'
 import SegmentListBuilder, { SegmentSummary, type Segment } from '../components/shared/SegmentListBuilder'
 import HrZoneDistributionChart from '../components/shared/HrZoneDistributionChart'
-
-const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 /* ── Sport Pie Chart ────────────────────────────────── */
 function SportPieChart({ title, data, formatValue, colorMap }: {
@@ -46,20 +49,21 @@ function SportPieChart({ title, data, formatValue, colorMap }: {
       .map(([name, value]) => ({
         name,
         value: Math.round(value * 10) / 10,
-        color: colorMap[name] ?? '#9ca3af',
+        color: colorMap[name] ?? DEFAULT_SPORT_COLOR,
       }))
   }, [data, colorMap])
 
   if (pieData.length === 0) return null
 
   const renderLabel = (props: unknown) => {
-    const { cx, cy, midAngle, innerRadius, outerRadius, value } = props as {
+    const { cx, cy, midAngle, innerRadius, outerRadius, value, name } = props as {
       cx: number
       cy: number
       midAngle: number
       innerRadius: number
       outerRadius: number
       value: number
+      name: string
     }
     const RADIAN = Math.PI / 180
     const radius = innerRadius + (outerRadius - innerRadius) * 0.4
@@ -67,7 +71,7 @@ function SportPieChart({ title, data, formatValue, colorMap }: {
     const y = cy + radius * Math.sin(-midAngle * RADIAN)
     return (
       <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central" fontSize={10} fontFamily="monospace" fontWeight="bold">
-        {Math.round(value * 10) / 10}
+        {formatValue(value, name)}
       </text>
     )
   }
@@ -140,7 +144,7 @@ function AccumulatedChart({ data, titles, colorMap }: AccumulatedChartProps) {
       }
     }
 
-    const chartData = WEEKDAYS.map((day, dayIdx) => {
+    const chartData = WEEKDAYS_SHORT.map((day, dayIdx) => {
       const point: Record<string, unknown> = { day, _dayIdx: dayIdx }
       for (const sport of sports) {
         let accum = 0
@@ -222,13 +226,6 @@ function AccumulatedChart({ data, titles, colorMap }: AccumulatedChartProps) {
   )
 }
 
-/* ── Score color helper ────────────────────────────── */
-function scoreColor(score: number): string {
-  if (score >= 80) return '#22c55e'
-  if (score >= 50) return '#eab308'
-  return '#ef4444'
-}
-
 /* ── Streak badge — current or best, with uppercase label ──────── */
 function StreakBadge({ value, label, kind, title }: { value: number; label: string; kind: 'current' | 'best'; title?: string }) {
   const { theme } = useTheme()
@@ -269,11 +266,11 @@ function SessionModal({
   onAddRace, onUpdateRace, onDeleteRace, onClose,
 }: {
   date: string
-  sessions: Record<string, unknown>[]
-  scores: Record<string, Record<string, unknown>> | undefined
-  races: Record<string, unknown>[]
+  sessions: TrainingSession[]
+  scores: SessionScoresResponse | undefined
+  races: RaceEvent[]
   onAdd: (data: Record<string, unknown>) => void
-  onCopy: (session: Record<string, unknown>, targetDate: string) => void
+  onCopy: (session: TrainingSession, targetDate: string) => void
   onUpdate: (id: number, data: Record<string, unknown>) => void
   onDelete: (id: number) => void
   onAddRace: (data: Record<string, unknown>) => void
@@ -324,35 +321,48 @@ function SessionModal({
     return () => document.removeEventListener('keydown', handler)
   }, [onClose])
 
-  function startEdit(s: Record<string, unknown>) {
-    setEditingId(s.id as number)
-    setSportType(s.sport_type as string)
-    setDescription((s.description as string) || '')
+  function startEditRace(r: RaceEvent) {
+    setEditingRaceId(r.id)
+    setRaceName(r.name)
+    setRaceSportType(r.sport_type)
+    setRaceDistanceKm(r.distance_km != null ? String(r.distance_km) : '')
+    // Stored decimal pace round-trips as M:SS for pace sports, plain decimal for speed sports
+    setRaceTargetPace(r.target_pace != null ? formatPace(r.target_pace, isSpeedSport(r.sport_type)) : '')
+    setRaceDescription(r.description || '')
+    setRaceLocation(r.location || '')
+    setRaceUrl(r.url || '')
+    setShowRaceForm(true)
+  }
+
+  function startEdit(s: TrainingSession) {
+    setEditingId(s.id)
+    setSportType(s.sport_type)
+    setDescription(s.description || '')
     const goals = new Set<string>()
-    const hasSegments = s.segments && Array.isArray(s.segments) && (s.segments as Segment[]).length > 0
+    const hasSegments = s.segments && Array.isArray(s.segments) && s.segments.length > 0
     // Don't show distance as a separate goal if it was auto-computed from segments
     if (s.planned_distance_km != null && !hasSegments) {
       goals.add('distance')
       // Convert km back to meters for swimming display
-      const displayDist = getSportCategory(s.sport_type as string) === 'swimming'
-        ? (s.planned_distance_km as number) * 1000
-        : (s.planned_distance_km as number)
+      const displayDist = getSportCategory(s.sport_type) === 'swimming'
+        ? s.planned_distance_km * 1000
+        : s.planned_distance_km
       setPlannedDistanceKm(String(displayDist))
     } else { setPlannedDistanceKm('') }
     if (s.planned_duration_mins != null) { goals.add('duration'); setPlannedDurationMins(String(s.planned_duration_mins)) } else { setPlannedDurationMins('') }
     // User enters M:SS (or decimal) for pace sports, X.X for speed sports — format stored decimal back into M:SS for display
-    const useSpeed = isSpeedSport(s.sport_type as string)
-    if (s.target_avg_pace != null) { goals.add('avg_pace'); setTargetAvgPace(formatPace(s.target_avg_pace as number, useSpeed)) } else { setTargetAvgPace('') }
+    const useSpeed = isSpeedSport(s.sport_type)
+    if (s.target_avg_pace != null) { goals.add('avg_pace'); setTargetAvgPace(formatPace(s.target_avg_pace, useSpeed)) } else { setTargetAvgPace('') }
     if (s.target_pace_min != null || s.target_pace_max != null) { goals.add('pace_range') }
-    setTargetPaceMin(s.target_pace_min != null ? formatPace(s.target_pace_min as number, useSpeed) : '')
-    setTargetPaceMax(s.target_pace_max != null ? formatPace(s.target_pace_max as number, useSpeed) : '')
+    setTargetPaceMin(s.target_pace_min != null ? formatPace(s.target_pace_min, useSpeed) : '')
+    setTargetPaceMax(s.target_pace_max != null ? formatPace(s.target_pace_max, useSpeed) : '')
     if (s.target_hr_zone != null) { goals.add('hr_zone') }
     setTargetHrZone(s.target_hr_zone != null ? String(s.target_hr_zone) : '')
     setTargetZonePct(s.target_zone_pct != null ? String(s.target_zone_pct) : '80')
-    if (hasSegments) {
+    if (hasSegments && s.segments) {
       goals.add('segments')
-      setSegments(s.segments as Segment[])
-      setWorkoutTemplateId((s.workout_template_id as number) ?? null)
+      setSegments(s.segments)
+      setWorkoutTemplateId(s.workout_template_id ?? null)
     } else {
       setSegments([])
       setWorkoutTemplateId(null)
@@ -515,17 +525,7 @@ function SessionModal({
                   style={{ borderColor: '#f59e0b60', backgroundColor: '#f59e0b08' }}
                 >
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 min-w-0 cursor-pointer" onClick={() => {
-                      setEditingRaceId(r.id as number)
-                      setRaceName(r.name as string)
-                      setRaceSportType(r.sport_type as string)
-                      setRaceDistanceKm(r.distance_km != null ? String(r.distance_km) : '')
-                      setRaceTargetPace(r.target_pace != null ? String(r.target_pace) : '')
-                      setRaceDescription((r.description as string) || '')
-                      setRaceLocation((r.location as string) || '')
-                      setRaceUrl((r.url as string) || '')
-                      setShowRaceForm(true)
-                    }}>
+                    <div className="flex items-center gap-2 min-w-0 cursor-pointer" onClick={() => startEditRace(r)}>
                       <span className="text-amber-500"><FlagIcon size={11} /></span>
                       <span className="text-sm text-amber-500 font-medium">{String(r.name)}</span>
                       {r.distance_km != null && (
@@ -544,17 +544,7 @@ function SessionModal({
                         </>
                       ) : (
                         <>
-                          <button onClick={() => {
-                            setEditingRaceId(r.id as number)
-                            setRaceName(r.name as string)
-                            setRaceSportType(r.sport_type as string)
-                            setRaceDistanceKm(r.distance_km != null ? String(r.distance_km) : '')
-                            setRaceTargetPace(r.target_pace != null ? String(r.target_pace) : '')
-                            setRaceDescription((r.description as string) || '')
-                            setRaceLocation((r.location as string) || '')
-                            setRaceUrl((r.url as string) || '')
-                            setShowRaceForm(true)
-                          }} className={clsx('text-gray-400 text-xs', isLight ? 'hover:text-gray-700' : 'hover:text-gray-200')}>Edit</button>
+                          <button onClick={() => startEditRace(r)} className={clsx('text-gray-400 text-xs', isLight ? 'hover:text-gray-700' : 'hover:text-gray-200')}>Edit</button>
                           <button onClick={() => setConfirmDeleteRaceId(r.id as number)} className="text-red-400 hover:text-red-300 text-xs">Delete</button>
                         </>
                       )}
@@ -636,7 +626,7 @@ function SessionModal({
                         name: raceName.trim(),
                         sport_type: raceSportType,
                         distance_km: raceDistanceKm ? parseFloat(raceDistanceKm) : null,
-                        target_pace: raceTargetPace ? parseFloat(raceTargetPace) : null,
+                        target_pace: raceTargetPace ? parsePaceInput(raceTargetPace, isSpeedSport(raceSportType)) : null,
                         description: raceDescription || null,
                         location: raceLocation || null,
                         url: raceUrl || null,
@@ -739,7 +729,7 @@ function SessionModal({
                           <button onClick={() => setCopyMonth(m => addMonths(m, 1))} className="text-gray-400 hover:text-gray-200 text-xs px-1">&gt;</button>
                         </div>
                         <div className="grid grid-cols-7 gap-0.5 text-center">
-                          {['M','T','W','T','F','S','S'].map((d, i) => (
+                          {WEEKDAY_LETTERS.map((d, i) => (
                             <div key={i} className="text-[9px] text-gray-600 py-0.5">{d}</div>
                           ))}
                           {mDays.map(d => {
@@ -957,30 +947,30 @@ function SessionModal({
                       >
                         {showTemplatePicker ? 'Hide templates' : 'Pick from library'}
                       </button>
-                      {showTemplatePicker && templates && (templates as Record<string, unknown>[]).length > 0 && (
+                      {showTemplatePicker && templates && templates.length > 0 && (
                         <div className="mt-1.5 space-y-1 max-h-32 overflow-y-auto">
-                          {(templates as Record<string, unknown>[]).map(t => (
+                          {templates.map((t: WorkoutTemplate) => (
                             <button
-                              key={t.id as number}
+                              key={t.id}
                               onClick={() => {
-                                setSegments((t.segments as Segment[]) || [])
-                                setWorkoutTemplateId(t.id as number)
+                                setSegments(t.segments || [])
+                                setWorkoutTemplateId(t.id)
                                 setShowTemplatePicker(false)
                               }}
                               className={clsx(
                                 'w-full text-left text-xs rounded px-2 py-1.5 border transition-colors',
-                                workoutTemplateId === (t.id as number)
+                                workoutTemplateId === t.id
                                   ? 'border-blue-400/40 bg-blue-400/10 text-blue-400'
                                   : 'border-surface-600 hover:border-surface-500 text-gray-300'
                               )}
                             >
-                              <div className="font-medium">{t.name as string}</div>
-                              <SegmentSummary segments={(t.segments as Segment[]) || []} />
+                              <div className="font-medium">{t.name}</div>
+                              <SegmentSummary segments={t.segments || []} />
                             </button>
                           ))}
                         </div>
                       )}
-                      {showTemplatePicker && (!templates || (templates as Record<string, unknown>[]).length === 0) && (
+                      {showTemplatePicker && (!templates || templates.length === 0) && (
                         <div className="text-[10px] text-gray-500 mt-1">No templates for {sportType}</div>
                       )}
                     </div>
@@ -1013,7 +1003,7 @@ function SessionModal({
                               autoFocus
                               onKeyDown={e => {
                                 if (e.key === 'Enter' && saveTemplateName.trim()) {
-                                  createTemplate.mutate({ name: saveTemplateName.trim(), sport_type: sportType, segments: segments as unknown as Record<string, unknown>[] })
+                                  createTemplate.mutate({ name: saveTemplateName.trim(), sport_type: sportType, segments })
                                   setShowSaveTemplate(false)
                                   setSaveTemplateName('')
                                 }
@@ -1023,7 +1013,7 @@ function SessionModal({
                             <button
                               onClick={() => {
                                 if (!saveTemplateName.trim()) return
-                                createTemplate.mutate({ name: saveTemplateName.trim(), sport_type: sportType, segments: segments as unknown as Record<string, unknown>[] })
+                                createTemplate.mutate({ name: saveTemplateName.trim(), sport_type: sportType, segments })
                                 setShowSaveTemplate(false)
                                 setSaveTemplateName('')
                               }}
@@ -1139,7 +1129,7 @@ function SessionModal({
 }
 
 /* ── Upcoming Plan (expandable) ─────────────────────── */
-function UpcomingPlan({ sessions, todayStr }: { sessions: Record<string, unknown>[] | undefined; todayStr: string }) {
+function UpcomingPlan({ sessions, todayStr }: { sessions: TrainingSession[] | undefined; todayStr: string }) {
   const { theme } = useTheme()
   const isLight = theme === 'light'
   const [expandedId, setExpandedId] = useState<number | null>(null)
@@ -1149,11 +1139,11 @@ function UpcomingPlan({ sessions, todayStr }: { sessions: Record<string, unknown
       <div className="eyebrow mb-3">Upcoming Plan (7 days)</div>
       {sessions && sessions.length > 0 ? (
         <div className="space-y-2">
-          {sessions.map((s: Record<string, unknown>) => {
-            const color = getSportColor(s.sport_type as string)
-            const sessionDate = new Date(s.date as string + 'T00:00:00')
+          {sessions.map(s => {
+            const color = getSportColor(s.sport_type)
+            const sessionDate = parseLocalDate(s.date)
             const isTodaySession = s.date === todayStr
-            const isExpanded = expandedId === (s.id as number)
+            const isExpanded = expandedId === s.id
             return (
               <div
                 key={s.id as number}
@@ -1281,7 +1271,7 @@ function WeekPicker({ currentWeekStart, onSelect, onClose }: {
         <button onClick={() => setViewMonth(m => addMonths(m, 1))} className={clsx('px-1', isLight ? 'text-gray-400 hover:text-gray-700' : 'text-gray-400 hover:text-gray-100')}>&rarr;</button>
       </div>
       <div className="grid grid-cols-7 text-center mb-1 gap-px">
-        {['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map(d => <span key={d} className="eyebrow text-[9px]">{d}</span>)}
+        {WEEKDAYS_MIN.map(d => <span key={d} className="eyebrow text-[9px]">{d}</span>)}
       </div>
       <div className="grid grid-cols-7 gap-px">
         {days.map(day => {
@@ -1406,7 +1396,7 @@ export default function CalendarPage() {
   const [showModal, setShowModal] = useState(false)
   const [showMonthPicker, setShowMonthPicker] = useState(false)
   const [draggingSessionId, setDraggingSessionId] = useState<number | null>(null)
-  const [draggingSession, setDraggingSession] = useState<Record<string, unknown> | null>(null)
+  const [draggingSession, setDraggingSession] = useState<TrainingSession | null>(null)
   const [dragOverDate, setDragOverDate] = useState<string | null>(null)
 
   const showToast = useCallback((msg: string) => {
@@ -1416,20 +1406,20 @@ export default function CalendarPage() {
   const { data: streakData } = useStreaks()
   const { data: calGoals } = useGoals(currentMonth.getFullYear())
 
-  const month = currentMonth.getMonth() + 1
-  const year = currentMonth.getFullYear()
-
-  const monthStart = startOfMonth(currentMonth)
-  const monthEnd = endOfMonth(currentMonth)
-  const calStart = startOfWeek(monthStart, { weekStartsOn: 1 })
-  const calEnd = endOfWeek(monthEnd, { weekStartsOn: 1 })
-  const days = eachDayOfInterval({ start: calStart, end: calEnd })
-
-  const dateFrom = format(calStart, 'yyyy-MM-dd')
-  const dateTo = format(calEnd, 'yyyy-MM-dd')
+  // Full Monday-aligned grid range, memoized so week summaries don't recompute on drag&drop re-renders
+  const { days, dateFrom, dateTo } = useMemo(() => {
+    const calStart = startOfWeek(startOfMonth(currentMonth), { weekStartsOn: 1 })
+    const calEnd = endOfWeek(endOfMonth(currentMonth), { weekStartsOn: 1 })
+    return {
+      days: eachDayOfInterval({ start: calStart, end: calEnd }),
+      dateFrom: format(calStart, 'yyyy-MM-dd'),
+      dateTo: format(calEnd, 'yyyy-MM-dd'),
+    }
+  }, [currentMonth])
 
   const { data: activitiesData, isLoading: activitiesLoading } = useActivitiesByDateRange(dateFrom, dateTo)
-  const { data: sessions } = useCalendarSessions(month, year)
+  // Fetch the full grid range so sessions on leading/trailing days of adjacent months render too
+  const { data: sessions } = useCalendarSessionsByRange(dateFrom, dateTo)
   const { data: sessionScores } = useSessionScores(dateFrom, dateTo)
   const createSession = useCreateSession()
   const updateSession = useUpdateSession()
@@ -1449,11 +1439,14 @@ export default function CalendarPage() {
   const isCurrentWeek = weekStart === thisWeekStart
   const { data: weekData, isLoading: weekLoading } = useWeeklyReport(weekStart)
   const { data: athleteZones } = useAthleteZones()
-  const hrZoneBounds = athleteZones?.heart_rate?.zones as { min: number; max: number }[] | undefined
+  const hrZoneBounds = athleteZones?.heart_rate?.zones ?? undefined
   const current = weekData?.current
   const previous = weekData?.previous
 
-  const { data: weekActivities } = useActivitiesByDateRange(current?.week_start, current?.week_end)
+  // weekStart is always a Monday (the backend snaps to Monday too), so the range is known
+  // locally and this query can fire in parallel with the weekly report
+  const weekEndStr = format(addDays(parseISO(weekStart), 6), 'yyyy-MM-dd')
+  const { data: weekActivities } = useActivitiesByDateRange(weekStart, weekEndStr)
   const { data: goalProgressData } = useGoalProgress(weekStart)
 
   // Upcoming planned sessions (next 7 days)
@@ -1473,19 +1466,20 @@ export default function CalendarPage() {
 
   function delta(key: string): number | string | null {
     if (!current || !previous) return null
-    const c = current[key]
-    const p = previous[key]
+    const c = (current as unknown as Record<string, unknown>)[key]
+    const p = (previous as unknown as Record<string, unknown>)[key]
     if (c == null || c === 0) return null
     if (!p || p === 0) return 'new'
+    if (typeof c !== 'number' || typeof p !== 'number') return null
     return ((c - p) / p) * 100
   }
 
   // Build maps
   const activityMap = useMemo(() => {
-    const map: Record<string, Array<{ id: number; name: string; sport_type: string; distance_km: number; moving_time?: number }>> = {}
+    const map: Record<string, Activity[]> = {}
     if (activitiesData?.items) {
       for (const a of activitiesData.items) {
-        const dateStr = a.start_date_local ? format(new Date(a.start_date_local), 'yyyy-MM-dd') : null
+        const dateStr = a.start_date_local ? localDateStr(a.start_date_local) : null
         if (dateStr) {
           if (!map[dateStr]) map[dateStr] = []
           map[dateStr].push(a)
@@ -1496,7 +1490,7 @@ export default function CalendarPage() {
   }, [activitiesData])
 
   const sessionMap = useMemo(() => {
-    const map: Record<string, Array<Record<string, unknown>>> = {}
+    const map: Record<string, TrainingSession[]> = {}
     if (sessions) {
       for (const s of sessions) {
         if (!map[s.date]) map[s.date] = []
@@ -1507,7 +1501,7 @@ export default function CalendarPage() {
   }, [sessions])
 
   const raceMap = useMemo(() => {
-    const map: Record<string, Array<Record<string, unknown>>> = {}
+    const map: Record<string, RaceEvent[]> = {}
     if (raceEventsRange) {
       for (const r of raceEventsRange) {
         if (!map[r.date]) map[r.date] = []
@@ -1517,19 +1511,56 @@ export default function CalendarPage() {
     return map
   }, [raceEventsRange])
 
+  // One entry per week row (keyed by the index of its Monday in `days`); memoized so
+  // km/time totals and goal bars don't recompute on every dragOver re-render
+  const weekSummaries = useMemo(() => {
+    const summaries: Record<number, { totalKm: number; timeStr: string; goals: (Goal & { current_value: number; percentage: number })[] }> = {}
+    const weeklyGoals = (calGoals ?? []).filter(g => g.period === 'weekly')
+    for (let idx = 0; idx < days.length; idx += 7) {
+      const weekDays = days.slice(idx, idx + 7)
+      let totalKm = 0
+      let totalSec = 0
+      for (const wd of weekDays) {
+        const acts = activityMap[format(wd, 'yyyy-MM-dd')] || []
+        for (const a of acts) {
+          totalKm += a.distance_km ?? 0
+          totalSec += a.moving_time ?? 0
+        }
+      }
+      const goals = weeklyGoals.map(g => {
+        let current = 0
+        for (const wd of weekDays) {
+          const acts = activityMap[format(wd, 'yyyy-MM-dd')] || []
+          for (const a of acts) {
+            if (g.sport_type !== '__all__' && a.sport_type !== g.sport_type) continue
+            if (g.metric === 'distance_km') current += a.distance_km ?? 0
+            else if (g.metric === 'time_hours') current += (a.moving_time ?? 0) / 3600
+            else if (g.metric === 'activities') current += 1
+          }
+        }
+        const target = g.target_value
+        const pct = target > 0 ? (current / target) * 100 : 0
+        return { ...g, current_value: current, percentage: pct }
+      })
+      summaries[idx] = { totalKm, timeStr: formatDurationHM(totalSec), goals }
+    }
+    return summaries
+  }, [days, activityMap, calGoals])
+
   function handleAddSession(data: Record<string, unknown>) {
     if (!selectedDate) return
     createSession.mutate({ date: selectedDate, title: data.sport_type as string, ...data })
   }
 
-  function handleCopySession(session: Record<string, unknown>, targetDate: string) {
+  function handleCopySession(session: TrainingSession, targetDate: string) {
     const copyFields = [
       'sport_type', 'description',
       'planned_distance_km', 'planned_duration_mins', 'planned_intensity',
       'target_avg_pace', 'target_pace_min', 'target_pace_max',
       'target_hr_zone', 'target_zone_pct',
-    ]
-    const data: Record<string, unknown> = { date: targetDate, title: session.sport_type as string }
+      'segments', 'workout_template_id',
+    ] as const
+    const data: Record<string, unknown> = { date: targetDate, title: session.sport_type }
     for (const f of copyFields) {
       if (session[f] != null) data[f] = session[f]
     }
@@ -1570,7 +1601,7 @@ export default function CalendarPage() {
           </div>
         </div>
         {/* Streak badges */}
-        {streakData && (streakData.current_streak > 0 || streakData.longest_streak > 0 || streakData.current_week_streak > 0 || streakData.longest_week_streak > 0) && (
+        {streakData && (streakData.current_streak > 0 || streakData.longest_streak > 0 || (streakData.current_week_streak ?? 0) > 0 || (streakData.longest_week_streak ?? 0) > 0) && (
           <div className="flex items-center gap-1.5 flex-wrap">
             {streakData.current_streak > 0 && (
               <StreakBadge
@@ -1588,7 +1619,7 @@ export default function CalendarPage() {
                 title={`Longest day streak: ${streakData.longest_streak_start} to ${streakData.longest_streak_end}`}
               />
             )}
-            {streakData.current_week_streak > 0 && (
+            {streakData.current_week_streak != null && streakData.current_week_streak > 0 && (
               <StreakBadge
                 value={streakData.current_week_streak}
                 label={`wk${streakData.current_week_streak !== 1 ? 's' : ''}`}
@@ -1596,7 +1627,7 @@ export default function CalendarPage() {
                 title="Current streak — consecutive weeks with activities"
               />
             )}
-            {streakData.longest_week_streak > 0 && (
+            {streakData.longest_week_streak != null && streakData.longest_week_streak > 0 && (
               <StreakBadge
                 value={streakData.longest_week_streak}
                 label="best wks"
@@ -1610,7 +1641,7 @@ export default function CalendarPage() {
         {/* Race countdown banner */}
         {upcomingRaces && upcomingRaces.length > 0 && (() => {
           const nextRace = upcomingRaces[0]
-          const daysUntil = differenceInDays(parseISO(nextRace.date), new Date()) + 1
+          const daysUntil = differenceInCalendarDays(parseLocalDate(nextRace.date), new Date())
           return (
             <Link
               to="/races"
@@ -1624,15 +1655,23 @@ export default function CalendarPage() {
                 className="flex flex-col items-center justify-center rounded-lg px-3 py-1.5 shrink-0 min-w-[58px] border"
                 style={{ backgroundColor: '#eab30810', borderColor: '#eab30830' }}
               >
-                <div
-                  className="text-xl font-mono tabular-nums font-bold leading-none"
-                  style={{ color: '#eab308', letterSpacing: '-0.02em' }}
-                >
-                  {daysUntil}
-                </div>
-                <div className="eyebrow mt-0.5 text-[9px]" style={{ color: '#eab308cc' }}>
-                  day{daysUntil !== 1 ? 's' : ''}
-                </div>
+                {daysUntil === 0 ? (
+                  <div className="text-sm font-mono font-bold leading-none py-1.5" style={{ color: '#eab308' }}>
+                    Today
+                  </div>
+                ) : (
+                  <>
+                    <div
+                      className="text-xl font-mono tabular-nums font-bold leading-none"
+                      style={{ color: '#eab308', letterSpacing: '-0.02em' }}
+                    >
+                      {daysUntil}
+                    </div>
+                    <div className="eyebrow mt-0.5 text-[9px]" style={{ color: '#eab308cc' }}>
+                      day{daysUntil !== 1 ? 's' : ''}
+                    </div>
+                  </>
+                )}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-0.5">
@@ -1650,19 +1689,19 @@ export default function CalendarPage() {
               </div>
               {upcomingRaces.length > 1 && (
                 <div className="hidden md:flex items-center gap-1 shrink-0">
-                  {upcomingRaces.slice(1, 4).map((r: Record<string, unknown>) => {
-                    const d = differenceInDays(parseISO(r.date as string), new Date()) + 1
+                  {upcomingRaces.slice(1, 4).map(r => {
+                    const d = differenceInCalendarDays(parseLocalDate(r.date), new Date())
                     return (
                       <div
-                        key={r.id as number}
+                        key={r.id}
                         className={clsx(
                           'flex items-center gap-1 border rounded-lg px-2 py-0.5',
                           isLight ? 'bg-white border-amber-200' : 'bg-surface-800 border-amber-500/20',
                         )}
-                        title={`${r.name}: ${format(parseISO(r.date as string), 'MMM d, yyyy')}`}
+                        title={`${r.name}: ${format(parseISO(r.date), 'MMM d, yyyy')}`}
                       >
-                        <span className="text-[11px] font-mono tabular-nums font-semibold text-amber-500">{d}d</span>
-                        <span className="text-[10px] text-gray-500 truncate max-w-[72px]">{r.name as string}</span>
+                        <span className="text-[11px] font-mono tabular-nums font-semibold text-amber-500">{d === 0 ? 'Today' : `${d}d`}</span>
+                        <span className="text-[10px] text-gray-500 truncate max-w-[72px]">{r.name}</span>
                       </div>
                     )
                   })}
@@ -1676,7 +1715,7 @@ export default function CalendarPage() {
       {/* Calendar grid — horizontal scroll on mobile so 7 columns stay legible */}
       <div className="-mx-6 md:mx-0 px-6 md:px-0 overflow-x-auto">
         <div className="grid grid-cols-7 gap-1 min-w-[640px] md:min-w-0" key={format(currentMonth, 'yyyy-MM')} style={{ animation: 'fadeIn 200ms ease-out' }}>
-        {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(d => (
+        {WEEKDAYS_SHORT.map(d => (
           <div key={d} className="eyebrow text-center py-1.5">{d}</div>
         ))}
 
@@ -1712,70 +1751,33 @@ export default function CalendarPage() {
             planStatus = allMatched ? 'done' : 'missed'
           }
 
-          const weekSummary = idx % 7 === 0 ? (() => {
-            const weekDays = days.slice(idx, idx + 7)
-            let totalKm = 0
-            let totalSec = 0
-            for (const wd of weekDays) {
-              const ds = format(wd, 'yyyy-MM-dd')
-              const acts = activityMap[ds] || []
-              for (const a of acts) {
-                totalKm += a.distance_km ?? 0
-                totalSec += a.moving_time ?? 0
-              }
-            }
-            const totalMin = Math.floor(totalSec / 60)
-            const h = Math.floor(totalMin / 60)
-            const m = totalMin % 60
-            const timeStr = h > 0 ? `${h}h ${m}m` : `${m}m`
-
-            // Compute weekly goal progress client-side for this week row
-            const weeklyGoalProgress = (calGoals ?? [])
-              .filter((g: Record<string, unknown>) => g.period === 'weekly')
-              .map((g: Record<string, unknown>) => {
-                let current = 0
-                for (const wd of weekDays) {
-                  const ds = format(wd, 'yyyy-MM-dd')
-                  const acts = activityMap[ds] || []
-                  for (const a of acts) {
-                    if (g.sport_type !== '__all__' && a.sport_type !== g.sport_type) continue
-                    if (g.metric === 'distance_km') current += a.distance_km ?? 0
-                    else if (g.metric === 'time_hours') current += (a.moving_time ?? 0) / 3600
-                    else if (g.metric === 'activities') current += 1
-                  }
-                }
-                const target = g.target_value as number
-                const pct = target > 0 ? (current / target) * 100 : 0
-                return { ...g, current_value: current, percentage: pct }
-              })
-
-            return (
-              <div key={`week-${idx}`} className={clsx('col-span-7 flex items-center justify-end gap-3 px-3 py-1 rounded-lg', isLight ? 'bg-gray-50/80' : 'bg-surface-800/50')}>
-                {weeklyGoalProgress.map((g: Record<string, unknown>) => {
-                  const sport = g.sport_type as string
-                  const color = sport === '__all__' ? '#9ca3af' : getSportColor(sport)
-                  const pct = Math.min(g.percentage as number, 100)
-                  return (
-                    <div key={g.id as number} className="flex items-center gap-1" title={`${sport === '__all__' ? 'All' : sport}: ${(g.current_value as number).toFixed(1)} / ${g.target_value as number} ${(g.metric as string).replace('_', ' ')} (${(g.percentage as number).toFixed(0)}%)`}>
-                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                      <div className={clsx('w-16 h-1.5 rounded-full overflow-hidden', isLight ? 'bg-gray-200' : 'bg-surface-700')}>
-                        <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: (g.percentage as number) >= 100 ? '#22c55e' : color }} />
-                      </div>
-                      <span className="text-[9px] font-mono" style={{ color: (g.percentage as number) >= 100 ? '#22c55e' : '#6b7280' }}>
-                        {(g.percentage as number).toFixed(0)}%
-                      </span>
+          const summary = idx % 7 === 0 ? weekSummaries[idx] : null
+          const weekSummary = summary ? (
+            <div key={`week-${idx}`} className={clsx('col-span-7 flex items-center justify-end gap-3 px-3 py-1 rounded-lg', isLight ? 'bg-gray-50/80' : 'bg-surface-800/50')}>
+              {summary.goals.map(g => {
+                const sport = g.sport_type
+                const color = sport === '__all__' ? DEFAULT_SPORT_COLOR : getSportColor(sport)
+                const pct = Math.min(g.percentage, 100)
+                return (
+                  <div key={g.id} className="flex items-center gap-1" title={`${sport === '__all__' ? 'All' : sport}: ${g.current_value.toFixed(1)} / ${g.target_value} ${g.metric.replace('_', ' ')} (${g.percentage.toFixed(0)}%)`}>
+                    <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                    <div className={clsx('w-16 h-1.5 rounded-full overflow-hidden', isLight ? 'bg-gray-200' : 'bg-surface-700')}>
+                      <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: g.percentage >= 100 ? '#22c55e' : color }} />
                     </div>
-                  )
-                })}
-                <span className="text-[10px] text-gray-500 font-mono">
-                  {totalKm.toFixed(1)} km
-                </span>
-                <span className="text-[10px] text-gray-500 font-mono">
-                  {timeStr}
-                </span>
-              </div>
-            )
-          })() : null
+                    <span className="text-[9px] font-mono" style={{ color: g.percentage >= 100 ? '#22c55e' : '#6b7280' }}>
+                      {g.percentage.toFixed(0)}%
+                    </span>
+                  </div>
+                )
+              })}
+              <span className="text-[10px] text-gray-500 font-mono">
+                {summary.totalKm.toFixed(1)} km
+              </span>
+              <span className="text-[10px] text-gray-500 font-mono">
+                {summary.timeStr}
+              </span>
+            </div>
+          ) : null
 
           return (
             <Fragment key={dateStr}>
@@ -1826,10 +1828,10 @@ export default function CalendarPage() {
                 {planStatus && (() => {
                   // Compute average score for sessions on this day
                   const dayScores = daySessions
-                    .map(s => sessionScores?.[String(s.id as number)])
-                    .filter((sc): sc is Record<string, unknown> => sc != null && sc.overall_score != null)
+                    .map(s => sessionScores?.[String(s.id)])
+                    .filter((sc): sc is ExecutionScore => sc != null && sc.overall_score != null)
                   const avgScore = dayScores.length > 0
-                    ? Math.round(dayScores.reduce((sum, sc) => sum + (sc.overall_score as number), 0) / dayScores.length)
+                    ? Math.round(dayScores.reduce((sum, sc) => sum + sc.overall_score, 0) / dayScores.length)
                     : null
 
                   return (
@@ -1992,25 +1994,25 @@ export default function CalendarPage() {
                 <div className="eyebrow mb-3">Activities This Week</div>
                 {weekActivities?.items && weekActivities.items.length > 0 ? (
                   <div className="space-y-2">
-                    {weekActivities.items.map((a: Record<string, unknown>) => {
-                      const color = weekSportColors[a.sport_type as string] ?? getSportColor(a.sport_type as string)
+                    {weekActivities.items.map(a => {
+                      const color = weekSportColors[a.sport_type] ?? getSportColor(a.sport_type)
                       return (
                         <Link
-                          key={a.id as string}
+                          key={a.id}
                           to={`/activities/${a.id}`}
                           className={clsx('flex items-center gap-3 px-3 py-2 rounded-lg transition-colors group', isLight ? 'hover:bg-black/[0.04]' : 'hover:bg-white/[0.04]')}
                         >
                           <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                          <span className={clsx('text-sm truncate flex-1', isLight ? 'text-gray-600 group-hover:text-gray-900' : 'text-gray-300 group-hover:text-gray-100')}>{a.name as string}</span>
-                          <span className="text-xs text-gray-500 shrink-0">{a.sport_type as string}</span>
+                          <span className={clsx('text-sm truncate flex-1', isLight ? 'text-gray-600 group-hover:text-gray-900' : 'text-gray-300 group-hover:text-gray-100')}>{a.name}</span>
+                          <span className="text-xs text-gray-500 shrink-0">{a.sport_type}</span>
                           {a.distance_km != null && (
-                            <span className="text-xs font-mono shrink-0" style={{ color }}>{formatDist(a.distance_km as number, a.sport_type as string)}</span>
+                            <span className="text-xs font-mono shrink-0" style={{ color }}>{formatDist(a.distance_km, a.sport_type)}</span>
                           )}
                           {a.moving_time != null && (
-                            <span className="text-xs font-mono text-gray-500 shrink-0">{Math.round((a.moving_time as number) / 60)} min</span>
+                            <span className="text-xs font-mono text-gray-500 shrink-0">{Math.round(a.moving_time / 60)} min</span>
                           )}
                           <span className="text-xs text-gray-600 shrink-0">
-                            {a.start_date_local ? new Date(a.start_date_local as string).toLocaleDateString(undefined, { weekday: 'short' }) : ''}
+                            {a.start_date_local ? format(parseLocalDate(a.start_date_local), 'EEE') : ''}
                           </span>
                         </Link>
                       )
@@ -2048,15 +2050,15 @@ export default function CalendarPage() {
               <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
                 <div className="eyebrow mb-3">Goal Progress</div>
                 <div className="space-y-3.5">
-                  {goalProgressData.goals.map((g: Record<string, unknown>) => {
-                    const sport = g.sport_type as string
-                    const color = sport === '__all__' ? '#9ca3af' : getSportColor(sport)
-                    const pct = Math.min(g.percentage as number, 100)
-                    const isComplete = (g.percentage as number) >= 100
-                    const metricStr = (g.metric as string).replace('_', ' ')
-                    const periodStr = g.period as string
+                  {goalProgressData.goals.map(g => {
+                    const sport = g.sport_type
+                    const color = sport === '__all__' ? DEFAULT_SPORT_COLOR : getSportColor(sport)
+                    const pct = Math.min(g.percentage, 100)
+                    const isComplete = g.percentage >= 100
+                    const metricStr = g.metric.replace('_', ' ')
+                    const periodStr = g.period
                     return (
-                      <div key={g.id as number}>
+                      <div key={g.id}>
                         <div className="flex items-center justify-between mb-1">
                           <div className="flex items-center gap-2">
                             <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
@@ -2064,7 +2066,7 @@ export default function CalendarPage() {
                             <span className="text-[11px] text-gray-500">{metricStr} / {periodStr}</span>
                           </div>
                           <span className="text-xs font-mono" style={{ color: isComplete ? '#22c55e' : color }}>
-                            {(g.current_value as number).toFixed(1)} / {g.target_value as number} ({(g.percentage as number).toFixed(0)}%)
+                            {g.current_value.toFixed(1)} / {g.target_value} ({g.percentage.toFixed(0)}%)
                           </span>
                         </div>
                         <div className={clsx('h-1.5 rounded-full overflow-hidden', isLight ? 'bg-gray-200' : 'bg-surface-700')}>
