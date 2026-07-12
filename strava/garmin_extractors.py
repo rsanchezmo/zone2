@@ -207,8 +207,23 @@ def _extract_respiration(p: dict) -> dict[str, Any]:
     }
 
 
+def _extract_body_composition(p: dict) -> dict[str, Any]:
+    # Garmin stores masses in grams. Composition fields are null for MANUAL
+    # weigh-ins; they only arrive from an Index scale.
+    def _kg(v: Any) -> float | None:
+        return v / 1000 if isinstance(v, (int, float)) else None
+
+    return {
+        "weight_kg": _kg(p.get("weight")),
+        "bmi": p.get("bmi"),
+        "body_fat_pct": p.get("bodyFat"),
+        "muscle_mass_kg": _kg(p.get("muscleMass")),
+        "source": p.get("sourceType"),
+    }
+
+
 # metric -> projection. The keys here are exactly the metrics the trends charts
-# read; metrics absent from this map (e.g. body_composition) get no summary.
+# read; metrics absent from this map get no summary.
 EXTRACTORS: dict[str, Any] = {
     "sleep": _extract_sleep,
     "hrv": _extract_hrv,
@@ -223,6 +238,7 @@ EXTRACTORS: dict[str, Any] = {
     "user_summary": _extract_user_summary,
     "spo2": _extract_spo2,
     "respiration": _extract_respiration,
+    "body_composition": _extract_body_composition,
 }
 
 # Iteration order used by the trends endpoint and the summary writer.
