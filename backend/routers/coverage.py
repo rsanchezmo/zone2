@@ -58,12 +58,37 @@ def _get_matcher(slug: str) -> StravaMapMatcher:
         return _matchers[slug]
 
 
+def _read_stats_cache(slug: str) -> dict | None:
+    fp = _osm_dir() / f"{slug}_stats.json"
+    if not fp.exists():
+        return None
+    try:
+        return json.loads(fp.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 @router.get("/cities")
 def list_cities(streets_only: bool = Query(False)):
+    """City list with coverage stats. Reads the per-city stats JSON so it never
+    has to build a matcher (each instance holds ~300 MB); falls back to building
+    one — and backfilling the cache — for cities added before stats caching."""
+    variant = "streets" if streets_only else "all"
     out = []
     for slug, city_name in _known_cities().items():
+        cached = _read_stats_cache(slug)
+        if cached and variant in cached:
+            out.append({
+                "slug": slug,
+                "city_name": cached.get("city_name", city_name),
+                "num_matched_activities": cached.get("num_matched_activities", 0),
+                "bbox": cached.get("bbox"),
+                **cached[variant],
+            })
+            continue
         matcher = _get_matcher(slug)
         stats = matcher.coverage_stats_from_state(streets_only=streets_only)
+        matcher.write_stats_cache()
         out.append({
             "slug": slug,
             "city_name": city_name,
@@ -95,6 +120,8 @@ def _run_add_city(city_name: str):
         slug = matcher._slug()
         with _matchers_lock:
             _matchers[slug] = matcher
+        # Seed the stats cache so the first /cities call needn't build a matcher.
+        matcher.write_stats_cache()
         logger.info("City map for %s ready (%s)", city_name, slug)
     except Exception as e:
         logger.exception("Adding city %s failed", city_name)
@@ -163,7 +190,7 @@ def delete_city(slug: str):
     # another city whose slug extends this one.
     suffixes = [
         "nodes.parquet", "edges.parquet", "boundary.parquet", "meta.json",
-        "covered_edges.parquet", "matched_activities.parquet",
+        "covered_edges.parquet", "matched_activities.parquet", "stats.json",
         "inmem", "inmem.pkl", "inmem.dat", "inmem.idx",
     ]
     paths = [_osm_dir() / f"{slug}_{s}" for s in suffixes]

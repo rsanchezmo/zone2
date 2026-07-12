@@ -8,6 +8,10 @@ services:
       - strava-data:/app/.strava
       - strava-workdir:/app/strava_intelligence_workdir
     restart: unless-stopped
+    # Cap so a coverage-matching spike gets this container OOM-killed (and
+    # restarted) instead of thrashing the whole Pi host.
+    mem_limit: 2g
+    mem_reservation: 512m
 
   cloudflared:
     image: cloudflare/cloudflared:latest

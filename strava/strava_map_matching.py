@@ -1,6 +1,7 @@
 import json
 import logging
-import osmnx as ox
+import os
+import threading
 from leuvenmapmatching.matcher.distance import DistanceMatcher
 from leuvenmapmatching.map.inmem import InMemMap
 from leuvenmapmatching.util import dist_euclidean as _dist_euclidean
@@ -258,6 +259,9 @@ class StravaMapMatcher:
         self._map_con: InMemMap | None = None
         self._city_boundary: gpd.GeoDataFrame = None  # type: ignore[assignment]
         self._und_gdf: gpd.GeoDataFrame | None = None
+        # Serializes state-file reads/writes so a background sync rewriting the
+        # coverage parquet can't be observed mid-write by request threads.
+        self._state_lock = threading.RLock()
 
         self._load_map(force_reload=force_reload)
 
@@ -389,6 +393,9 @@ class StravaMapMatcher:
             return
 
         logger.info("Downloading map for %s from OSM...", self.city_name)
+        # osmnx pulls in a heavy dependency stack (~140 MB RSS); import it only
+        # on the first-time download path, never on the cache-hit path above.
+        import osmnx as ox
         # The footway subtag distinguishes sidewalks/crossings (excluded)
         # from real park paths (kept); it is not in osmnx defaults.
         if 'footway' not in ox.settings.useful_tags_way:
@@ -510,8 +517,15 @@ class StravaMapMatcher:
         return result
 
     @staticmethod
-    def _split_by_distance(coords: list[tuple], max_gap_m: float = 100.0) -> list[list[tuple]]:
-        """Split a coordinate list at consecutive points further than max_gap_m apart."""
+    def _split_by_distance(coords: list[tuple], max_gap_m: float = 250.0) -> list[list[tuple]]:
+        """Split a coordinate list at consecutive points further than max_gap_m apart.
+
+        Threshold is tuned for Strava summary polylines: their Douglas-Peucker
+        simplification routinely leaves >100 m gaps between vertices on straight
+        streets, so a tighter cut severs (and loses) those streets. 250 m still
+        breaks at genuine GPS dropouts while letting the matcher's non-emitting
+        states bridge simplification gaps.
+        """
         n = len(coords)
         if n < 2:
             return []
@@ -824,19 +838,28 @@ class StravaMapMatcher:
         return (self.workdir / f"{slug}_covered_edges.parquet",
                 self.workdir / f"{slug}_matched_activities.parquet")
 
+    def _atomic_write_parquet(self, df: pd.DataFrame, path: Path) -> None:
+        """Write a parquet via a temp file + atomic rename, so a crash mid-write
+        (e.g. OOM kill) can never leave a truncated file that readers choke on."""
+        tmp = path.parent / f"{path.name}.tmp{os.getpid()}"
+        df.to_parquet(tmp)
+        os.replace(tmp, path)
+
     def matched_activity_ids(self) -> set:
         """Ids of activities already matched (or attempted) against this city."""
         _, meta_fp = self._state_paths()
-        if not meta_fp.exists():
-            return set()
-        return set(pd.read_parquet(meta_fp)['activity_id'])
+        with self._state_lock:
+            if not meta_fp.exists():
+                return set()
+            return set(pd.read_parquet(meta_fp)['activity_id'])
 
     def covered_edge_set(self) -> set[tuple[int, int]]:
         """Unique undirected edges covered so far, from the persisted state."""
         edges_fp, _ = self._state_paths()
-        if not edges_fp.exists():
-            return set()
-        df = pd.read_parquet(edges_fp)
+        with self._state_lock:
+            if not edges_fp.exists():
+                return set()
+            df = pd.read_parquet(edges_fp)
         return set(zip(df['u'].tolist(), df['v'].tolist()))
 
     def save_match_state(
@@ -876,16 +899,19 @@ class StravaMapMatcher:
                     'coverage_pct': 0.0,
                 })
 
-        if edge_rows:
-            new_edges = pd.DataFrame(edge_rows)
-            if edges_fp.exists():
-                new_edges = pd.concat([pd.read_parquet(edges_fp), new_edges], ignore_index=True)
-            new_edges.drop_duplicates(['activity_id', 'u', 'v']).to_parquet(edges_fp)
-        if meta_rows:
-            new_meta = pd.DataFrame(meta_rows)
-            if meta_fp.exists():
-                new_meta = pd.concat([pd.read_parquet(meta_fp), new_meta], ignore_index=True)
-            new_meta.drop_duplicates('activity_id', keep='last').to_parquet(meta_fp)
+        with self._state_lock:
+            if edge_rows:
+                new_edges = pd.DataFrame(edge_rows)
+                if edges_fp.exists():
+                    new_edges = pd.concat([pd.read_parquet(edges_fp), new_edges], ignore_index=True)
+                self._atomic_write_parquet(
+                    new_edges.drop_duplicates(['activity_id', 'u', 'v']), edges_fp)
+            if meta_rows:
+                new_meta = pd.DataFrame(meta_rows)
+                if meta_fp.exists():
+                    new_meta = pd.concat([pd.read_parquet(meta_fp), new_meta], ignore_index=True)
+                self._atomic_write_parquet(
+                    new_meta.drop_duplicates('activity_id', keep='last'), meta_fp)
 
     def match_incremental(self, activities: gpd.GeoDataFrame) -> dict:
         """Match only activities not yet in the persisted state, then return
@@ -905,7 +931,33 @@ class StravaMapMatcher:
             logger.info("Matching %d new activities for %s", len(todo), self.city_name)
             _, results = self.match(todo)
             self.save_match_state(results, attempted_ids=list(todo['id']))
-        return self.coverage_stats_from_state()
+        # Release the InMemMap + rtree (tens of MB) held only for matching; it
+        # reloads from the on-disk pickle in ~0.1 s when the next sync needs it.
+        self._map_con = None
+        stats = self.coverage_stats_from_state()
+        self.write_stats_cache()
+        return stats
+
+    def _stats_cache_path(self) -> Path:
+        return self.workdir / f"{self._slug()}_stats.json"
+
+    def write_stats_cache(self) -> None:
+        """Persist summary coverage stats to JSON so list endpoints can report
+        numbers without constructing a matcher (which would hold ~300 MB per
+        city). Written after every sync and on city add."""
+        payload = {
+            'city_name': self.city_name,
+            'num_matched_activities': len(self.matched_activity_ids()),
+            'bbox': self.city_bbox(),
+            'all': {k: v for k, v in self.coverage_stats_from_state(streets_only=False).items()
+                    if not k.startswith('_')},
+            'streets': {k: v for k, v in self.coverage_stats_from_state(streets_only=True).items()
+                        if not k.startswith('_')},
+        }
+        path = self._stats_cache_path()
+        tmp = path.parent / f"{path.name}.tmp{os.getpid()}"
+        tmp.write_text(json.dumps(payload))
+        os.replace(tmp, path)
 
     def _coverage_from_edges(self, traversed: set[tuple[int, int]],
                              streets_only: bool = False) -> dict:
@@ -1021,6 +1073,7 @@ class StravaMapMatcher:
                 return cached
 
         logger.info("Downloading admin_level=%d boundaries for %s...", admin_level, self.city_name)
+        import osmnx as ox
         boundary_4326 = self._city_boundary.to_crs('EPSG:4326').union_all()
         try:
             # osmnx ORs the tags dict, so admin_level must be filtered afterwards
