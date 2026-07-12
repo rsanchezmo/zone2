@@ -11,7 +11,7 @@ from backend.config import settings
 from backend.dependencies import get_si
 from strava.strava_intelligence import StravaIntelligence
 from strava.strava_map_matching import StravaMapMatcher
-from strava.strava_utils import get_activities_as_gdf
+from strava.strava_utils import get_activities_as_gdf_from_streams
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -288,7 +288,11 @@ def _run_coverage_sync(slug: str, si: StravaIntelligence, sport_types: list[str]
     err = None
     try:
         matcher = _get_matcher(slug)
-        gdf = get_activities_as_gdf(si.strava_activities_cache.activities)
+        # High-resolution GPS streams (falls back to summary polyline per
+        # activity when a stream isn't cached); the matcher thins them to
+        # ~20 m so density stays comparable to polylines.
+        cache = si.strava_activities_cache
+        gdf = get_activities_as_gdf_from_streams(cache.activities, cache.streams)
         gdf = gdf[gdf["sport_type"].isin(sport_types)]
         stats = matcher.match_incremental(gdf)
         logger.info("Coverage sync for %s done: %s%%", slug, stats.get("coverage_pct"))

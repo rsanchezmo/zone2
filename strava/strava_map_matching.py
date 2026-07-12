@@ -516,28 +516,61 @@ class StravaMapMatcher:
 
         return result
 
+    # Target spacing (m) for GPS points fed to the matcher. Dense streams
+    # (~3 m at 1 Hz) are thinned to this so the Viterbi lattice stays cheap;
+    # sparse summary polylines (~24 m) pass through essentially untouched.
+    THIN_SPACING_M: float = 20.0
+
+    @staticmethod
+    def _thin(pts: np.ndarray, min_m: float) -> np.ndarray:
+        """Decimate an (n, 2) projected-metre array to ~1 point per min_m,
+        measured from the last kept point. First and last are always kept."""
+        if len(pts) <= 2:
+            return pts
+        min2 = min_m * min_m
+        keep = [0]
+        lx, ly = pts[0]
+        for i in range(1, len(pts) - 1):
+            dx, dy = pts[i][0] - lx, pts[i][1] - ly
+            if dx * dx + dy * dy >= min2:
+                keep.append(i)
+                lx, ly = pts[i]
+        keep.append(len(pts) - 1)
+        return pts[keep]
+
     @staticmethod
     def _split_by_distance(coords: list[tuple], max_gap_m: float = 250.0) -> list[list[tuple]]:
-        """Split a coordinate list at consecutive points further than max_gap_m apart.
+        """Split a coordinate list at large gaps, then thin each part to
+        ~THIN_SPACING_M spacing.
 
-        Threshold is tuned for Strava summary polylines: their Douglas-Peucker
-        simplification routinely leaves >100 m gaps between vertices on straight
-        streets, so a tighter cut severs (and loses) those streets. 250 m still
-        breaks at genuine GPS dropouts while letting the matcher's non-emitting
-        states bridge simplification gaps.
+        The gap threshold is tuned for the input's density: Strava summary
+        polylines are Douglas-Peucker simplified and routinely leave >100 m gaps
+        between vertices on straight streets, so a tighter cut severs (and loses)
+        those streets. 250 m still breaks at genuine GPS dropouts while letting
+        the matcher's non-emitting states bridge simplification gaps.
+
+        Thinning keeps the matcher cheap on high-resolution GPS streams without
+        discarding accuracy — the kept vertices are real observations, just
+        fewer of them.
         """
         n = len(coords)
         if n < 2:
             return []
 
-        a = np.asarray(coords)           # shape (n, 2)
+        a = np.asarray(coords)           # shape (n, 2), projected metres
         d = np.diff(a, axis=0)                             # shape (n-1, 2)
         dist2 = (d * d).sum(axis=1)
         cuts = np.nonzero(dist2 > (max_gap_m * max_gap_m))[0] + 1
 
-        parts = np.split(a, cuts)                          # [web:25]
-        # Keep only segments with >= 2 points; convert back to list[tuple]
-        return [list(map(tuple, p)) for p in parts if len(p) >= 2]
+        parts = np.split(a, cuts)
+        out: list[list[tuple]] = []
+        for p in parts:
+            if len(p) < 2:
+                continue
+            thinned = StravaMapMatcher._thin(p, StravaMapMatcher.THIN_SPACING_M)
+            if len(thinned) >= 2:
+                out.append([tuple(x) for x in thinned])
+        return out
 
     def _create_matcher(self) -> DistanceMatcher:
         """Create a fresh DistanceMatcher instance."""
