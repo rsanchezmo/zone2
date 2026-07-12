@@ -112,6 +112,13 @@ const RANGE_OPTIONS = [
   { label: '365d', days: 365 },
 ] as const
 
+// Weekly-rhythm window. 7/30d give too few samples per weekday for the
+// comparison to mean anything, so this section has its own selector.
+const RHYTHM_OPTIONS = [
+  { label: '90d', days: 90 },
+  { label: '1y', days: 365 },
+] as const
+
 type TrendRow = Record<string, unknown> & { date: string }
 type TrendsResp = {
   start_date: string
@@ -180,6 +187,58 @@ function cleanPhrase(p: string | null | undefined): string {
   return p.replace(/_\d+$/, '').toLowerCase().replace(/_/g, ' ')
     .replace(/\b\w/g, c => c.toUpperCase())
 }
+function fmtHm(seconds: number): string {
+  const totalMin = Math.round(seconds / 60)
+  const h = Math.floor(totalMin / 60)
+  return `${h}h ${String(totalMin % 60).padStart(2, '0')}m`
+}
+
+// ─────────────────────────────────────────── weekly rhythm
+
+const WEEKDAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+const WEEKDAY_LETTERS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
+
+type WeekdayPattern = {
+  bestIdx: number            // Monday = 0
+  means: (number | null)[]   // per-weekday mean, Monday-first
+  bestMean: number
+  deltaPct: number | null    // best weekday vs the all-days mean
+}
+
+function weekdayPattern(
+  rows: TrendRow[] | undefined,
+  value: (r: TrendRow) => number | null,
+  mode: 'max' | 'min',
+): WeekdayPattern | null {
+  const sums = new Array(7).fill(0)
+  const counts = new Array(7).fill(0)
+  let total = 0
+  let n = 0
+  for (const r of rows ?? []) {
+    const v = value(r)
+    if (v == null) continue
+    const idx = (new Date(r.date + 'T00:00:00').getDay() + 6) % 7
+    sums[idx] += v
+    counts[idx] += 1
+    total += v
+    n += 1
+  }
+  // Every weekday needs a couple of samples before crowning a winner.
+  if (counts.some(c => c < 2)) return null
+  const means = sums.map((s, i) => s / counts[i])
+  let bestIdx = 0
+  for (let i = 1; i < 7; i++) {
+    if (mode === 'max' ? means[i] > means[bestIdx] : means[i] < means[bestIdx]) bestIdx = i
+  }
+  const overallMean = total / n
+  return {
+    bestIdx,
+    means,
+    bestMean: means[bestIdx],
+    deltaPct: overallMean !== 0 ? ((means[bestIdx] - overallMean) / overallMean) * 100 : null,
+  }
+}
+
 function cleanCoaching(p: string | null | undefined): { text: string; tone: 'pos' | 'neg' | 'neutral' } | null {
   if (!p || p === 'NONE') return null
   // Garmin codes carry a tone prefix we want to surface separately.
@@ -231,9 +290,11 @@ export default function GarminPage() {
   const isMobile = useIsMobile()
 
   const [days, setDays] = useState<number>(30)
+  const [rhythmDays, setRhythmDays] = useState<number>(90)
   const { data: status } = useGarminStatus()
   const { data: latest, isLoading: latestLoading } = useGarminLatest()
   const { data: trends, isLoading: trendsLoading } = useGarminTrends(days)
+  const { data: rhythmTrends, isLoading: rhythmLoading } = useGarminTrends(rhythmDays)
   const triggerSync = useTriggerGarminSync()
   const cancelSync = useCancelGarminSync()
 
@@ -447,6 +508,25 @@ export default function GarminPage() {
 
   const goalRef = stepsData[0]?.goal ?? null
 
+  // ── Weekly rhythm: per-weekday averages over their own window ────
+  const rhythm = useMemo(() => {
+    const m = (rhythmTrends as TrendsResp | undefined)?.metrics
+    return {
+      sleepScore: weekdayPattern(m?.sleep, r => num(r.score), 'max'),
+      sleepDuration: weekdayPattern(m?.sleep, r => num(r.total_seconds), 'max'),
+      stress: weekdayPattern(m?.stress, r => num(r.avg), 'min'),
+      restingHr: weekdayPattern(m?.heart_rates, r => num(r.resting), 'min'),
+      steps: weekdayPattern(m?.daily_steps, r => num(r.total_steps), 'max'),
+      calories: weekdayPattern(m?.user_summary, r => num(r.total_kcal), 'max'),
+      hrv: weekdayPattern(m?.hrv, r => num(r.last_night_avg), 'max'),
+      intensity: weekdayPattern(m?.intensity_minutes, r => {
+        const mod = num(r.moderate)
+        const vig = num(r.vigorous)
+        return mod == null && vig == null ? null : (mod ?? 0) + (vig ?? 0)
+      }, 'max'),
+    }
+  }, [rhythmTrends])
+
   // Common chart props
   const chartMargin = { top: 8, right: 8, left: 4, bottom: 8 }
   const xAxisProps = {
@@ -659,6 +739,50 @@ export default function GarminPage() {
 
       {enabled && (
         <>
+          {/* ── Weekly rhythm: which weekday wins each metric ────────── */}
+          <section className="space-y-4">
+            <div className="flex items-center gap-3 pt-2">
+              <div className="section-head flex-1">
+                <span className="eyebrow">Weekly rhythm</span>
+              </div>
+              <div className="flex items-center gap-0.5" role="tablist">
+                {RHYTHM_OPTIONS.map(opt => (
+                  <button key={opt.days} className="chip"
+                    data-active={opt.days === rhythmDays}
+                    onClick={() => setRhythmDays(opt.days)}>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {rhythmLoading ? (
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div key={i} className="panel h-36 animate-pulse" />
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <RhythmTile label="Best sleep" pattern={rhythm.sleepScore}
+                  format={v => `${Math.round(v)} score`} isLight={isLight} />
+                <RhythmTile label="Longest sleep" pattern={rhythm.sleepDuration}
+                  format={fmtHm} isLight={isLight} />
+                <RhythmTile label="Highest HRV" pattern={rhythm.hrv}
+                  format={v => `${Math.round(v)} ms`} isLight={isLight} />
+                <RhythmTile label="Least stress" pattern={rhythm.stress}
+                  format={v => `${Math.round(v)} stress`} isLight={isLight} />
+                <RhythmTile label="Lowest resting HR" pattern={rhythm.restingHr}
+                  format={v => `${Math.round(v)} bpm`} isLight={isLight} />
+                <RhythmTile label="Most steps" pattern={rhythm.steps}
+                  format={v => `${Math.round(v).toLocaleString()} steps`} isLight={isLight} />
+                <RhythmTile label="Biggest burn" pattern={rhythm.calories}
+                  format={v => `${Math.round(v).toLocaleString()} kcal`} isLight={isLight} />
+                <RhythmTile label="Most intensity" pattern={rhythm.intensity}
+                  format={v => `${Math.round(v)} min`} isLight={isLight} />
+              </div>
+            )}
+          </section>
+
           {/* ── Readiness factor breakdown (today snapshot) ──────────── */}
           <div className="section-head pt-2">
             <span className="eyebrow">Readiness & load</span>
@@ -1379,6 +1503,73 @@ function HeroTile({
           {detail}
         </div>
       )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────── weekly rhythm tile
+
+function RhythmTile({
+  label, pattern, format, isLight,
+}: {
+  label: string
+  pattern: WeekdayPattern | null
+  format: (v: number) => string
+  isLight: boolean
+}) {
+  if (!pattern) {
+    return (
+      <div className="panel p-4">
+        <div className="eyebrow mb-2">{label}</div>
+        <div className={clsx('text-sm py-6', isLight ? 'text-gray-400' : 'text-gray-600')}>
+          Not enough data
+        </div>
+      </div>
+    )
+  }
+  const maxMean = Math.max(...pattern.means.filter((m): m is number => m != null))
+  const delta = pattern.deltaPct
+  return (
+    <div className="panel relative overflow-hidden p-4">
+      <div className="absolute inset-0 pointer-events-none"
+        style={{ background: `radial-gradient(ellipse at top left, ${ACCENT}0c, transparent 65%)` }} />
+      <div className="relative eyebrow mb-1.5">{label}</div>
+      <div className={clsx('relative text-xl font-bold tracking-tight',
+        isLight ? 'text-gray-900' : 'text-gray-100')}>
+        {WEEKDAY_NAMES[pattern.bestIdx]}
+      </div>
+      <div className={clsx('relative text-[11px] mt-0.5 mb-3', isLight ? 'text-gray-500' : 'text-gray-500')}>
+        avg {format(pattern.bestMean)}
+        {delta != null && Math.abs(delta) >= 0.5 && (
+          <span style={{ color: ACCENT }}>
+            {' '}· {delta >= 0 ? '+' : ''}{delta.toFixed(0)}% vs typical
+          </span>
+        )}
+      </div>
+      <div className="relative flex items-end gap-1">
+        {pattern.means.map((m, i) => {
+          const winner = i === pattern.bestIdx
+          const heightPct = m != null && maxMean > 0 ? Math.max(10, (m / maxMean) * 100) : 4
+          return (
+            <div key={i} className="flex-1 flex flex-col items-center gap-1"
+              title={m != null ? `${WEEKDAY_NAMES[i]} · avg ${format(m)}` : WEEKDAY_NAMES[i]}>
+              <div className="w-full h-8 flex items-end">
+                <div className="w-full rounded-sm"
+                  style={{
+                    height: `${heightPct}%`,
+                    background: winner ? ACCENT : isLight ? '#e2e8f0' : '#334155',
+                    boxShadow: winner ? `0 0 8px ${ACCENT}66` : undefined,
+                  }} />
+              </div>
+              <div className={clsx('text-[9px] leading-none',
+                winner ? 'font-semibold' : isLight ? 'text-gray-400' : 'text-gray-600')}
+                style={winner ? { color: ACCENT } : undefined}>
+                {WEEKDAY_LETTERS[i]}
+              </div>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
