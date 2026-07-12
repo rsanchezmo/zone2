@@ -37,7 +37,7 @@ docker-compose up
 - `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` — optional, for the Telegram bot
 - `CLOUDFLARE_TUNNEL_TOKEN` — optional, for Docker deployment with Cloudflare Tunnel
 
-There are no tests, linter, or CI configured.
+There are no tests or CI configured. The frontend has ESLint (react-hooks v7 / React Compiler rules) — keep `cd frontend && npm run lint` and `npx tsc -b` at zero errors.
 
 ## Architecture
 
