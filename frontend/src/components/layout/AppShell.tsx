@@ -4,6 +4,7 @@ import { useQueryClient, useIsFetching } from '@tanstack/react-query'
 import { useSyncStatus, useTriggerSync, useBackfillStreams } from '../../api/hooks'
 import { useTheme } from '../../hooks/useTheme'
 import { useToast } from '../../hooks/useToast'
+import PageErrorBoundary from './PageErrorBoundary'
 import clsx from 'clsx'
 
 const NAV_ITEMS: { to: string; label: string; color: string; icon: React.ReactNode }[] = [
@@ -147,6 +148,21 @@ function SyncPopover({ isLight }: { isLight: boolean }) {
           </button>
         </div>
       )}
+    </div>
+  )
+}
+
+// Isolated so useIsFetching's per-query-transition re-renders don't
+// cascade through the whole shell.
+function GlobalLoadingBar({ color }: { color: string }) {
+  const isFetching = useIsFetching()
+  if (isFetching === 0) return null
+  return (
+    <div className="fixed top-0 left-0 right-0 z-[60] h-[2px]">
+      <div
+        className="h-full animate-loading-bar"
+        style={{ background: `linear-gradient(90deg, transparent, ${color}, transparent)` }}
+      />
     </div>
   )
 }
@@ -345,6 +361,7 @@ function MobileNav({ isLight, location }: { isLight: boolean; location: { pathna
               <NavLink
                 key={item.to}
                 to={item.to}
+                onClick={() => setOpen(false)}
                 className={clsx(
                   'flex items-center gap-3 px-4 py-3 text-sm font-medium transition-colors',
                   isActive
@@ -408,7 +425,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const { toast } = useToast()
 
   const qc = useQueryClient()
-  const isFetching = useIsFetching()
   const wasSyncing = useRef(false)
 
   const [dockPosition, setDockPosition] = useState<DockPosition>(getInitialDockPosition)
@@ -451,11 +467,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     updateIndicator()
   }, [location.pathname, dockPosition, updateIndicator])
 
-  // Auto-sync on session start when data is stale
+  // Auto-sync on session start when data is stale. Fire at most once per
+  // needs_sync episode — a failed trigger (e.g. expired token) would
+  // otherwise retry in a tight loop while needs_sync stays true.
+  const autoSyncAttempted = useRef(false)
   useEffect(() => {
-    if (syncStatus?.needs_sync && !syncStatus?.syncing && !syncTriggerPending) {
-      triggerSync({ include_streams: true })
+    if (!syncStatus?.needs_sync) {
+      autoSyncAttempted.current = false
+      return
     }
+    if (syncStatus.syncing || syncTriggerPending || autoSyncAttempted.current) return
+    autoSyncAttempted.current = true
+    triggerSync({ include_streams: true })
   }, [syncStatus?.needs_sync, syncStatus?.syncing, syncTriggerPending, triggerSync])
 
   // Invalidate only activity-dependent queries on sync completion. Hitting
@@ -464,12 +487,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (wasSyncing.current && syncStatus?.syncing === false) {
       const activityDependentKeys = [
-        'activities', 'activities-range', 'activity', 'similar-activities',
-        'polylines', 'sport-types', 'years',
-        'weekly-report', 'year-in-sport', 'efficiency-factor',
-        'performance-frontier', 'activity-clock', 'cumulative-distance',
+        'activities', 'activities-range', 'activities-on-dates', 'activity',
+        'similar-activities', 'polylines', 'sport-types', 'years',
+        'weekly-report', 'year-in-sport', 'cumulative-distance',
         'streaks', 'personal-records', 'sport-totals', 'weekly-totals',
-        'race-predictions', 'training-load', 'fitness-chart', 'fitness-trend',
+        'race-predictions', 'race-predictions-history', 'relative-effort-weekly',
         'session-scores', 'activity-score', 'goal-progress',
         'cache-completeness',
       ]
@@ -488,24 +510,19 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen">
       {/* Global loading bar */}
-      {isFetching > 0 && (
-        <div className="fixed top-0 left-0 right-0 z-[60] h-[2px]">
-          <div
-            className="h-full animate-loading-bar"
-            style={{ background: `linear-gradient(90deg, transparent, ${activeColor}, transparent)` }}
-          />
-        </div>
-      )}
+      <GlobalLoadingBar color={activeColor} />
 
       {/* Main content — padding differs per viewport:
           mobile: top clearance for the hamburger
           tablet+: room for the left/bottom dock */}
       <main className={clsx('min-h-screen p-6 pt-20', isBottom ? 'md:pb-24' : 'md:pl-20', 'md:pt-6')}>
-        {children}
+        <PageErrorBoundary resetKey={location.pathname}>
+          {children}
+        </PageErrorBoundary>
       </main>
 
       {/* Mobile nav: hamburger + slide-in drawer */}
-      <MobileNav key={location.pathname} isLight={isLight} location={location} />
+      <MobileNav isLight={isLight} location={location} />
 
       {/* Desktop/tablet floating dock — hidden on mobile */}
       <div className={clsx(
