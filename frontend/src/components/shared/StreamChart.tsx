@@ -1,5 +1,5 @@
 import { AreaChart, Area, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea } from 'recharts'
-import { useMemo, Component, type ReactNode } from 'react'
+import { memo, useMemo, Component, type ReactNode } from 'react'
 import { useTheme } from '../../hooks/useTheme'
 import { useIsMobile } from '../../hooks/useIsMobile'
 
@@ -100,7 +100,7 @@ function resampleByDistance(
   return result
 }
 
-export default function StreamChart({
+function StreamChart({
   title, data, color, gradientId, unit,
   reversed = false, yDomain, formatValue,
   secondaryData, secondaryColor, secondaryLabel,
@@ -317,3 +317,5 @@ export default function StreamChart({
     </ChartErrorBoundary>
   )
 }
+
+export default memo(StreamChart)

@@ -5,8 +5,7 @@ import {
 } from 'date-fns'
 import clsx from 'clsx'
 import { useTheme } from '../../hooks/useTheme'
-
-const WEEKDAY_HEADERS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']
+import { WEEKDAYS_MIN } from '../../constants/weekdays'
 
 /** Format a yyyy-MM-dd string to dd/MM/yyyy for display */
 function toDisplay(isoDate: string): string {
@@ -153,7 +152,7 @@ export default function DatePicker({ value, onChange, label, inputClassName }: D
 
           {/* Weekday headers */}
           <div className="grid grid-cols-7 gap-0.5 text-center mb-1">
-            {WEEKDAY_HEADERS.map(d => (
+            {WEEKDAYS_MIN.map(d => (
               <div key={d} className={clsx('text-[9px] py-0.5', isLight ? 'text-gray-400' : 'text-gray-600')}>{d}</div>
             ))}
           </div>

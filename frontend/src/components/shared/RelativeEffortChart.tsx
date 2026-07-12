@@ -2,22 +2,14 @@ import { useMemo } from 'react'
 import {
   ComposedChart, Area, Scatter, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
-import { useWeeklyRelativeEffort } from '../../api/hooks'
+import { useWeeklyRelativeEffort, type RelativeEffortWeek } from '../../api/hooks'
 import { useTheme } from '../../hooks/useTheme'
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { getSportColor } from '../../constants/sportColors'
 import ChartPanel from './ChartPanel'
 import clsx from 'clsx'
 
-interface WeekPoint {
-  week_start: string
-  relative_effort: number
-  band_low: number
-  band_high: number
-  status: 'below' | 'in_range' | 'above'
-}
-
-const STATUS_META: Record<WeekPoint['status'], { label: string; color: string }> = {
+const STATUS_META: Record<RelativeEffortWeek['status'], { label: string; color: string }> = {
   below: { label: 'Below range', color: '#38bdf8' },
   in_range: { label: 'In range', color: '#22c55e' },
   above: { label: 'Above range', color: '#a78bfa' },
@@ -36,7 +28,7 @@ export default function RelativeEffortChart({ sportType }: { sportType?: string 
   const { data, isLoading } = useWeeklyRelativeEffort(sportType || undefined)
   const accent = sportType ? getSportColor(sportType) : '#a78bfa'
 
-  const weeks: WeekPoint[] = useMemo(() => (data?.weeks ?? []).slice(-WEEKS_SHOWN), [data])
+  const weeks: RelativeEffortWeek[] = useMemo(() => (data?.weeks ?? []).slice(-WEEKS_SHOWN), [data])
   const chartData = useMemo(
     () => weeks.map(w => ({ date: w.week_start, re: w.relative_effort, low: w.band_low, high: w.band_high })),
     [weeks],

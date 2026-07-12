@@ -121,20 +121,39 @@ export function distValue(km: number, sportType: string | undefined | null, deci
   return km.toFixed(decimals)
 }
 
+/** Format seconds as a clock string: "M:SS" below an hour, "H:MM:SS" above. */
+export function formatClockDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return 'N/A'
+  const total = Math.round(seconds)
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+/** Format seconds compactly as "42m", "3h 12m", or "2d 5h". */
+export function formatDurationHM(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return 'N/A'
+  const totalMins = Math.round(seconds / 60)
+  const days = Math.floor(totalMins / 1440)
+  const hours = Math.floor((totalMins % 1440) / 60)
+  const mins = totalMins % 60
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${mins}m`
+  return `${mins}m`
+}
+
 /** Format a PR pace from time and distance (used by PersonalRecordsPage). */
 export function formatPrPace(seconds: number, distanceM: number, category: string): string {
+  if (seconds <= 0 || distanceM <= 0) return 'N/A'
   if (category === 'cycling') {
     const kmh = (distanceM / seconds) * 3.6
     return `${kmh.toFixed(1)} km/h`
   }
-  if (category === 'swimming') {
-    const per100 = (seconds / distanceM) * 100
-    const m = Math.floor(per100 / 60)
-    const s = Math.round(per100 % 60)
-    return `${m}:${s.toString().padStart(2, '0')} /100m`
-  }
-  const perKm = (seconds / distanceM) * 1000
-  const m = Math.floor(perKm / 60)
-  const s = Math.round(perKm % 60)
-  return `${m}:${s.toString().padStart(2, '0')} /km`
+  const per = category === 'swimming' ? (seconds / distanceM) * 100 : (seconds / distanceM) * 1000
+  const total = Math.round(per)
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  return `${m}:${s.toString().padStart(2, '0')} ${category === 'swimming' ? '/100m' : '/km'}`
 }

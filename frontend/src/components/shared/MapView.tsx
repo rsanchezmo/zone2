@@ -1,11 +1,13 @@
 import { MapContainer, TileLayer, Polyline, Marker, Tooltip, CircleMarker, useMap } from 'react-leaflet'
-import { useState, useEffect, useMemo } from 'react'
+import { memo, useState, useEffect, useMemo } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { LatLngBoundsExpression } from 'leaflet'
 import { useTheme } from '../../hooks/useTheme'
 import clsx from 'clsx'
 import { MapStyleToggle, SATELLITE_ACCENT, SATELLITE_ATTR, SATELLITE_TILES, type MapStyle } from './MapStyleToggle'
+import { InvalidateSize } from './leafletHelpers'
+import { tileLayerUrl } from '../../utils/mapTiles'
 
 function FitBounds({ positions }: { positions: [number, number][] }) {
   const map = useMap()
@@ -14,19 +16,6 @@ function FitBounds({ positions }: { positions: [number, number][] }) {
       map.fitBounds(positions as LatLngBoundsExpression, { padding: [30, 30] })
     }
   }, [map, positions])
-  return null
-}
-
-function InvalidateSize({ expanded }: { expanded: boolean }) {
-  const map = useMap()
-  useEffect(() => {
-    setTimeout(() => {
-      map.invalidateSize()
-      // Re-fit bounds after resize so the route stays centered
-      const container = map.getContainer()
-      if (container) map.invalidateSize()
-    }, 150)
-  }, [map, expanded])
   return null
 }
 
@@ -57,7 +46,8 @@ function createEndIcon() {
 export interface KmMarker {
   position: [number, number]
   km: number
-  tooltip: string // HTML or plain text for tooltip
+  /** Plain-text tooltip content, one entry per line */
+  tooltipLines: string[]
 }
 
 /** Interpolate between two hex colors. t in [0,1] */
@@ -93,7 +83,7 @@ interface MapViewProps {
   kmMarkers?: KmMarker[]
   /** velocity_smooth values aligned with positions, for gradient coloring */
   velocities?: number[]
-  /** If true, slower = green (pace sports). If false, faster = green (speed sports). Default true. */
+  /** If true, faster = green; if false, slower = green. Default true. */
   invertGradient?: boolean
   /** Formatted fast pace/speed label for legend, e.g. "3:45 min/km" */
   gradientFastLabel?: string
@@ -101,7 +91,10 @@ interface MapViewProps {
   gradientSlowLabel?: string
 }
 
-export default function MapView({ positions, color = '#ef4444', showMarkers = true, kmMarkers, velocities, invertGradient = true, gradientFastLabel, gradientSlowLabel }: MapViewProps) {
+/** Number of quantized gradient colors; consecutive same-color spans merge into one polyline layer. */
+const GRADIENT_STEPS = 16
+
+function MapView({ positions, color = '#ef4444', showMarkers = true, kmMarkers, velocities, invertGradient = true, gradientFastLabel, gradientSlowLabel }: MapViewProps) {
   const { theme, colors } = useTheme()
   const isLight = theme === 'light'
   const [expanded, setExpanded] = useState(false)
@@ -153,6 +146,7 @@ export default function MapView({ positions, color = '#ef4444', showMarkers = tr
     const segments: { positions: [number, number][]; color: string }[] = []
     // Sample every N points based on total count to keep segment count reasonable
     const step = Math.max(1, Math.floor(positions.length / 800))
+    let prevBucket = -1
     for (let i = 0; i < positions.length - step; i += step) {
       const end = Math.min(i + step, positions.length - 1)
       const vel = smoothed[i]
@@ -161,10 +155,17 @@ export default function MapView({ positions, color = '#ef4444', showMarkers = tr
       normalized = Math.max(0, Math.min(1, normalized))
       // For pace sports (running), invert so slow=red, fast=green
       const colorVal = invertGradient ? 1 - normalized : normalized
-      segments.push({
-        positions: [positions[i], positions[end]],
-        color: velocityToColor(colorVal),
-      })
+      const bucket = Math.round(colorVal * (GRADIENT_STEPS - 1))
+      if (bucket === prevBucket) {
+        // Sampled spans are contiguous, so extending the last polyline keeps the route unbroken
+        segments[segments.length - 1].positions.push(positions[end])
+      } else {
+        segments.push({
+          positions: [positions[i], positions[end]],
+          color: velocityToColor(bucket / (GRADIENT_STEPS - 1)),
+        })
+        prevBucket = bucket
+      }
     }
     return segments
   }, [hasVelocities, velocities, positions, invertGradient])
@@ -174,11 +175,7 @@ export default function MapView({ positions, color = '#ef4444', showMarkers = tr
   const center = positions[Math.floor(positions.length / 2)]
   const startPos = positions[0]
   const endPos = positions[positions.length - 1]
-  const tileUrl = mapStyle === 'satellite'
-    ? SATELLITE_TILES
-    : theme === 'light'
-      ? 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
-      : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+  const tileUrl = mapStyle === 'satellite' ? SATELLITE_TILES : tileLayerUrl(isLight)
   const attribution = mapStyle === 'satellite' ? SATELLITE_ATTR : '&copy; CartoDB'
   const routeColor = mapStyle === 'satellite' ? SATELLITE_ACCENT : color
 
@@ -260,7 +257,9 @@ export default function MapView({ positions, color = '#ef4444', showMarkers = tr
               offset={[0, -8]}
               className="km-marker-tooltip"
             >
-              <div dangerouslySetInnerHTML={{ __html: m.tooltip }} />
+              {m.tooltipLines.map((line, i) => (
+                <div key={i}>{line}</div>
+              ))}
             </Tooltip>
           </CircleMarker>
         ))}
@@ -271,24 +270,6 @@ export default function MapView({ positions, color = '#ef4444', showMarkers = tr
           </>
         )}
       </MapContainer>
-
-      {/* Km marker tooltip styles */}
-      <style>{`
-        .km-marker-tooltip {
-          background: ${isLight ? '#fff' : '#1e293b'} !important;
-          border: 1px solid ${isLight ? '#e5e7eb' : '#334155'} !important;
-          border-radius: 8px !important;
-          padding: 6px 10px !important;
-          font-size: 11px !important;
-          font-family: ui-monospace, monospace !important;
-          color: ${isLight ? '#111827' : '#e5e7eb'} !important;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
-          line-height: 1.5 !important;
-        }
-        .km-marker-tooltip::before {
-          border-top-color: ${isLight ? '#fff' : '#1e293b'} !important;
-        }
-      `}</style>
 
       {/* Map controls */}
       <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2">
@@ -372,3 +353,5 @@ export default function MapView({ positions, color = '#ef4444', showMarkers = tr
     </div>
   )
 }
+
+export default memo(MapView)

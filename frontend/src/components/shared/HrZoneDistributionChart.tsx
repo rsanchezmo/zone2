@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { useTheme } from '../../hooks/useTheme'
 import type { HrHistogram } from './hrHistogram'
@@ -45,7 +45,7 @@ function gaussianSmooth(counts: number[], sigma: number): number[] {
   return out
 }
 
-export default function HrZoneDistributionChart({
+function HrZoneDistributionChart({
   histogram,
   zones,
   percentages,
@@ -280,3 +280,5 @@ export default function HrZoneDistributionChart({
     </div>
   )
 }
+
+export default memo(HrZoneDistributionChart)

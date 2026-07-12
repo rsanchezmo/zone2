@@ -1,7 +1,8 @@
-import { useState, useMemo } from 'react'
+import { useState } from 'react'
 import clsx from 'clsx'
 import { useToast } from '../../hooks/useToast'
 import ExportDialog, { type ExportType } from './ExportDialog'
+import { downloadWithToast } from './download'
 
 interface ExportButtonProps {
   url: string
@@ -16,16 +17,10 @@ export default function ExportButton({ url, label = 'PNG', filename = 'export.pn
   const { toast } = useToast()
 
   // Parse URL into baseUrl + baseParams for the dialog
-  const { baseUrl, baseParams } = useMemo(() => {
-    const qIdx = url.indexOf('?')
-    if (qIdx === -1) return { baseUrl: url, baseParams: {} as Record<string, string> }
-    const base = url.slice(0, qIdx)
-    const params: Record<string, string> = {}
-    new URLSearchParams(url.slice(qIdx + 1)).forEach((v, k) => {
-      params[k] = v
-    })
-    return { baseUrl: base, baseParams: params }
-  }, [url])
+  const qIdx = url.indexOf('?')
+  const baseUrl = qIdx === -1 ? url : url.slice(0, qIdx)
+  const baseParams: Record<string, string> =
+    qIdx === -1 ? {} : Object.fromEntries(new URLSearchParams(url.slice(qIdx + 1)))
 
   async function handleExport() {
     if (exportType) {
@@ -34,29 +29,8 @@ export default function ExportButton({ url, label = 'PNG', filename = 'export.pn
     }
 
     setLoading(true)
-    try {
-      const response = await fetch(url)
-      if (!response.ok) {
-        let msg = 'Export failed'
-        try {
-          const body = await response.json()
-          if (body?.detail) msg = String(body.detail)
-        } catch { /* not JSON */ }
-        toast(msg, 'error')
-        return
-      }
-      const blob = await response.blob()
-      const link = document.createElement('a')
-      link.href = URL.createObjectURL(blob)
-      link.download = filename
-      link.click()
-      URL.revokeObjectURL(link.href)
-      toast('Export downloaded', 'success')
-    } catch {
-      toast('Export failed', 'error')
-    } finally {
-      setLoading(false)
-    }
+    await downloadWithToast(url, filename, toast)
+    setLoading(false)
   }
 
   return (

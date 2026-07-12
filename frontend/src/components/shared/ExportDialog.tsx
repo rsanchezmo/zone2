@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useEffectEvent } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import { useTheme } from '../../hooks/useTheme'
 import { useToast } from '../../hooks/useToast'
 import ColorPicker from './ColorPicker'
+import { downloadWithToast, parseFastApiError } from './download'
 
 export type ExportType =
   | 'weekly-report'
@@ -49,14 +50,20 @@ interface ExportDialogProps {
   exportType: ExportType
 }
 
-export default function ExportDialog({
-  open,
+/** Mounts the dialog content fresh on every open so all settings state
+ *  starts from its initializers — no imperative reset needed. */
+export default function ExportDialog({ open, ...props }: ExportDialogProps) {
+  if (!open) return null
+  return <ExportDialogContent {...props} />
+}
+
+function ExportDialogContent({
   onClose,
   baseUrl,
   baseParams,
   defaultFilename,
   exportType,
-}: ExportDialogProps) {
+}: Omit<ExportDialogProps, 'open'>) {
   const { theme } = useTheme()
   const isLight = theme === 'light'
   const { toast } = useToast()
@@ -73,24 +80,6 @@ export default function ExportDialog({
   const [previewSrc, setPreviewSrc] = useState<string | null>(null)
   const imgRef = useRef<HTMLImageElement>(null)
   const previewCounter = useRef(0)
-
-  // Reset state when dialog opens
-  useEffect(() => {
-    if (!open) return
-    setNeonColor('#fc0101')
-    setFilename(defaultFilename)
-    setQuality(DEFAULT_DPIS[exportType])
-    setTitle('')
-    setShowTitle(true)
-    setRadiusKm('20')
-    setPreviewError(null)
-    setPreviewSrc(null)
-    setPreviewLoading(false)
-    // Auto-generate initial preview. Cancel the rAF if the dialog closes
-    // (or remounts) before it fires to avoid setState-after-unmount.
-    const rafId = requestAnimationFrame(() => generatePreviewRef.current?.())
-    return () => cancelAnimationFrame(rafId)
-  }, [open, defaultFilename, exportType])
 
   // Build URL with given DPI
   const buildUrl = useCallback((dpi: number) => {
@@ -117,29 +106,16 @@ export default function ExportDialog({
 
     // Fetch instead of <img src> so we can read the server's error body
     // (FastAPI returns JSON with a `detail` field) and surface it to the user.
-    let objectUrl: string | null = null
     fetch(url).then(async r => {
       if (id !== previewCounter.current) return
       if (!r.ok) {
-        let msg = `Preview unavailable (${r.status})`
-        try {
-          const body = await r.json()
-          if (body?.detail) msg = String(body.detail)
-        } catch { /* not JSON */ }
-        setPreviewError(msg)
+        setPreviewError(await parseFastApiError(r, `Preview unavailable (${r.status})`))
         setPreviewLoading(false)
         return
       }
       const blob = await r.blob()
-      if (id !== previewCounter.current) {
-        URL.revokeObjectURL(URL.createObjectURL(blob))
-        return
-      }
-      objectUrl = URL.createObjectURL(blob)
-      setPreviewSrc(prev => {
-        if (prev) URL.revokeObjectURL(prev)
-        return objectUrl
-      })
+      if (id !== previewCounter.current) return
+      setPreviewSrc(URL.createObjectURL(blob))
       setPreviewLoading(false)
     }).catch(() => {
       if (id !== previewCounter.current) return
@@ -148,50 +124,38 @@ export default function ExportDialog({
     })
   }, [buildUrl])
 
-  // Keep a ref so the reset effect can call the latest version
-  const generatePreviewRef = useRef(generatePreview)
-  generatePreviewRef.current = generatePreview
+  // Effect event so the mount effect calls the latest version without
+  // re-running (and re-fetching) when preview settings change.
+  const startInitialPreview = useEffectEvent(() => generatePreview())
+
+  // Auto-generate the initial preview once per open (this component mounts
+  // fresh each time). Cancel the rAF if the dialog closes before it fires.
+  useEffect(() => {
+    const rafId = requestAnimationFrame(() => startInitialPreview())
+    return () => cancelAnimationFrame(rafId)
+  }, [])
+
+  // Revoke each preview object URL once it's replaced, cleared, or unmounted
+  useEffect(() => {
+    if (!previewSrc) return
+    return () => URL.revokeObjectURL(previewSrc)
+  }, [previewSrc])
 
   // Escape key handler
   useEffect(() => {
-    if (!open) return
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open, onClose])
+  }, [onClose])
 
   async function handleDownload() {
     setDownloading(true)
-    try {
-      const url = buildUrl(quality)
-      const response = await fetch(url)
-      if (!response.ok) {
-        let msg = 'Export failed'
-        try {
-          const body = await response.json()
-          if (body?.detail) msg = String(body.detail)
-        } catch { /* not JSON */ }
-        toast(msg, 'error')
-        return
-      }
-      const blob = await response.blob()
-      const link = document.createElement('a')
-      link.href = URL.createObjectURL(blob)
-      link.download = filename
-      link.click()
-      URL.revokeObjectURL(link.href)
-      toast('Export downloaded', 'success')
-      onClose()
-    } catch {
-      toast('Export failed', 'error')
-    } finally {
-      setDownloading(false)
-    }
+    const ok = await downloadWithToast(buildUrl(quality), filename, toast)
+    setDownloading(false)
+    if (ok) onClose()
   }
-
-  if (!open) return null
 
   const colorOption = hasColorOption(exportType)
 

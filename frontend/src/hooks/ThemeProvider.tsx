@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { DARK_COLORS, LIGHT_COLORS, ThemeContext, type Theme } from './themeContext'
 
 function getInitialTheme(): Theme {
@@ -21,12 +21,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('theme', theme)
   }, [theme])
 
-  const toggleTheme = () => setTheme(t => (t === 'dark' ? 'light' : 'dark'))
+  const toggleTheme = useCallback(() => setTheme(t => (t === 'dark' ? 'light' : 'dark')), [])
 
-  const colors = useMemo(() => (theme === 'dark' ? DARK_COLORS : LIGHT_COLORS), [theme])
+  const value = useMemo(
+    () => ({ theme, toggleTheme, colors: theme === 'dark' ? DARK_COLORS : LIGHT_COLORS }),
+    [theme, toggleTheme],
+  )
 
   return (
-    <ThemeContext.Provider value={{ theme, toggleTheme, colors }}>
+    <ThemeContext.Provider value={value}>
       {children}
     </ThemeContext.Provider>
   )

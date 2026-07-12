@@ -39,10 +39,10 @@ function NumericInput({ value, onChange, className, placeholder = '--' }: {
       value={raw}
       onChange={e => {
         const v = e.target.value
-        // Allow digits, dots, and empty
-        if (v !== '' && !/^-?\d*\.?\d*$/.test(v)) return
+        // Allow digits, dots, and empty — distances/durations are never negative
+        if (v !== '' && !/^\d*\.?\d*$/.test(v)) return
         setRaw(v)
-        if (v === '' || v === '.' || v === '-') {
+        if (v === '' || v === '.') {
           onChange(null)
         } else {
           const n = parseFloat(v)
@@ -51,7 +51,7 @@ function NumericInput({ value, onChange, className, placeholder = '--' }: {
       }}
       onBlur={() => {
         // Clean up trailing dots on blur
-        if (raw === '' || raw === '.' || raw === '-') {
+        if (raw === '' || raw === '.') {
           setRaw('')
           onChange(null)
         }
@@ -63,6 +63,20 @@ function NumericInput({ value, onChange, className, placeholder = '--' }: {
 
 function emptySegment(type: Segment['type'] = 'work'): Segment {
   return { type, distance_km: null, duration_mins: null, repetitions: 1 }
+}
+
+/* Stable React keys per segment: reorders keep object identity, so index keys
+ * would bleed NumericInput's mid-edit buffer into the neighboring row. */
+const segmentKeys = new WeakMap<Segment, number>()
+let nextSegmentKey = 0
+
+function segmentKey(seg: Segment): number {
+  let key = segmentKeys.get(seg)
+  if (key === undefined) {
+    key = ++nextSegmentKey
+    segmentKeys.set(seg, key)
+  }
+  return key
 }
 
 /** True for time-based pace units (min/km, min/100m) where smaller = faster.
@@ -90,7 +104,13 @@ export default function SegmentListBuilder({ segments, onChange, paceUnit = 'min
   const slowLabel = isPace ? 'Slowest' : 'Max speed'
 
   const update = useCallback((idx: number, patch: Partial<Segment>) => {
-    const next = segments.map((s, i) => i === idx ? { ...s, ...patch } : s)
+    const next = segments.map((s, i) => {
+      if (i !== idx) return s
+      const updated = { ...s, ...patch }
+      // Edits replace the object; carry the key over so the row doesn't remount
+      segmentKeys.set(updated, segmentKey(s))
+      return updated
+    })
     onChange(next)
   }, [segments, onChange])
 
@@ -122,7 +142,7 @@ export default function SegmentListBuilder({ segments, onChange, paceUnit = 'min
         const color = getSegmentColor(seg.type)
         return (
           <div
-            key={idx}
+            key={segmentKey(seg)}
             className="flex rounded-lg overflow-hidden border"
             style={{ borderColor: `${color}30` }}
           >

@@ -69,6 +69,30 @@ body::before {
 }
 .light .district-tip-km { color: #6b7280; }
 
+/* Km-marker tooltip on activity maps */
+.km-marker-tooltip {
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+  border-radius: 8px !important;
+  padding: 6px 10px !important;
+  font-size: 11px !important;
+  font-family: ui-monospace, monospace !important;
+  color: #e5e7eb !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
+  line-height: 1.5 !important;
+}
+.km-marker-tooltip::before {
+  border-top-color: #1e293b !important;
+}
+.light .km-marker-tooltip {
+  background: #fff !important;
+  border-color: #e5e7eb !important;
+  color: #111827 !important;
+}
+.light .km-marker-tooltip::before {
+  border-top-color: #fff !important;
+}
+
 /* Light mode overrides */
 .light {
   --color-surface-900: #fafafa;
@@ -214,24 +238,6 @@ body::before {
 }
 .chart-card:hover::after {
   opacity: 1;
-}
-
-/* ── KaTeX formula overrides ────────────────────── */
-.katex-display-override .katex-display {
-  margin: 0;
-}
-.katex-display-override .katex {
-  font-size: 0.95em;
-  color: #e2e8f0;
-}
-.katex-display-override .katex .mord.text {
-  color: #94a3b8;
-}
-.light .katex-display-override .katex {
-  color: #334155;
-}
-.light .katex-display-override .katex .mord.text {
-  color: #64748b;
 }
 
 /* Page header typography */
