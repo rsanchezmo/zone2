@@ -239,6 +239,10 @@ class StravaMapMatcher:
     # of the matching target (running them is recorded), but excluded from
     # the denominator in the streets-only coverage view.
     PATH_HIGHWAYS = {'footway', 'path', 'track', 'steps', 'cycleway', 'bridleway'}
+    # Fraction of the city area the mapped district polygons must cover to be
+    # treated as a real subdivision. Below this the city isn't administratively
+    # mapped in OSM (e.g. a small city) and we fall back to a single whole-city district.
+    MIN_DISTRICT_COVERAGE = 0.4
 
     def __init__(self, city_name: str, workdir: Path, force_reload: bool = False,
                  on_progress: Callable[[str], None] | None = None):
@@ -1103,7 +1107,7 @@ class StravaMapMatcher:
         if fp.exists() and not force_reload:
             cached = gpd.read_parquet(fp)
             if len(cached):
-                return cached
+                return self._with_city_fallback(cached)
 
         logger.info("Downloading admin_level=%d boundaries for %s...", admin_level, self.city_name)
         import osmnx as ox
@@ -1136,9 +1140,31 @@ class StravaMapMatcher:
         # The query polygon is a bbox-ish hull; drop polygons merely touching it
         polys = polys[polys.representative_point().within(self._city_boundary.union_all())]
         polys = polys.drop_duplicates('name').reset_index(drop=True)
+        # Persist the whole-city fallback when OSM has nothing, so we don't
+        # re-hit Overpass on every request; a real but sparse set is kept as-is
+        # and collapsed at read time by _with_city_fallback.
+        if len(polys) == 0:
+            polys = self._city_polygon_fallback()
         polys.to_parquet(fp)
         logger.info("Saved %d districts to %s", len(polys), fp)
-        return polys
+        return self._with_city_fallback(polys)
+
+    def _city_polygon_fallback(self) -> gpd.GeoDataFrame:
+        """A single district spanning the whole city, named after it."""
+        name = self.city_name.split(',')[0].strip()
+        geom = self._city_boundary.union_all()
+        return gpd.GeoDataFrame({'name': [name]}, geometry=[geom], crs=self._city_boundary.crs)
+
+    def _with_city_fallback(self, polys: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        """Collapse to a whole-city district when the mapped polygons cover too
+        little of the city to be a real subdivision. Applied to both freshly
+        fetched and cached polygons, so cities OSM doesn't subdivide (and any
+        stale sparse cache) stay usable without re-querying OSM."""
+        if len(polys):
+            city_area = self._city_boundary.union_all().area
+            if city_area > 0 and polys.union_all().area / city_area >= self.MIN_DISTRICT_COVERAGE:
+                return polys
+        return self._city_polygon_fallback()
 
     @staticmethod
     def _scoped_stats(scoped: gpd.GeoDataFrame) -> dict:
