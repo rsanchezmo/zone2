@@ -285,6 +285,24 @@ export function useSportTypes() {
   });
 }
 
+export interface RecentPhoto {
+  unique_id: string;
+  urls: Record<string, string>;
+  caption?: string | null;
+  activity_id: number;
+  activity_name?: string | null;
+  sport_type?: string | null;
+  start_date_local?: string | null;
+}
+
+export function useRecentPhotos(limit = 6) {
+  return useQuery<RecentPhoto[]>({
+    queryKey: ['recent-photos', limit],
+    queryFn: () => api.get('/activities/photos/recent', { params: { limit } }).then(r => r.data),
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
 export function useYears() {
   return useQuery<number[]>({
     queryKey: ['years'],

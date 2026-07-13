@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useEffect, Component, type ReactNode } from 'react'
+import { useMemo, useState, Component, type ReactNode } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
   useActivity, useAthleteZones, useSimilarActivities, useActivityScore,
@@ -26,37 +26,14 @@ import { parseLocalDate } from '../utils/dates'
 import { scoreColor } from '../utils/scoreColor'
 import { SegmentSummary, type Segment } from '../components/shared/SegmentListBuilder'
 import { getSegmentColor } from '../components/shared/segmentUtils'
+import PhotoLightbox from '../components/shared/PhotoLightbox'
+import { photoThumbUrl } from '../components/shared/photoUrls'
 import { useTheme } from '../hooks/useTheme'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import clsx from 'clsx'
 
 function PhotoGallery({ photos }: { photos: StravaPhoto[] }) {
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
-
-  const getThumbUrl = (photo: StravaPhoto) => {
-    const urls = photo.urls || {}
-    return urls['200'] || urls['100'] || urls['400'] || urls['600'] || Object.values(urls)[0]
-  }
-
-  const getFullUrl = (photo: StravaPhoto) => {
-    const urls = photo.urls || {}
-    return urls['600'] || urls['400'] || urls['200'] || urls['100'] || Object.values(urls)[0]
-  }
-
-  const close = useCallback(() => setLightboxIdx(null), [])
-  const prev = useCallback(() => setLightboxIdx(i => i !== null ? (i - 1 + photos.length) % photos.length : null), [photos.length])
-  const next = useCallback(() => setLightboxIdx(i => i !== null ? (i + 1) % photos.length : null), [photos.length])
-
-  useEffect(() => {
-    if (lightboxIdx === null) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close()
-      if (e.key === 'ArrowLeft') prev()
-      if (e.key === 'ArrowRight') next()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [lightboxIdx, close, prev, next])
 
   return (
     <>
@@ -69,7 +46,7 @@ function PhotoGallery({ photos }: { photos: StravaPhoto[] }) {
             className="relative flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden group cursor-pointer ring-1 ring-inset ring-white/10 hover:ring-white/30 transition-all"
           >
             <img
-              src={getThumbUrl(photo)}
+              src={photoThumbUrl(photo)}
               alt={photo.caption || `Photo ${idx + 1}`}
               className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-110"
               loading="lazy"
@@ -78,62 +55,7 @@ function PhotoGallery({ photos }: { photos: StravaPhoto[] }) {
         ))}
       </div>
 
-      {/* Lightbox */}
-      {lightboxIdx !== null && (
-        <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm"
-          onClick={close}
-        >
-          <button
-            onClick={(e) => { e.stopPropagation(); close() }}
-            className="absolute top-4 right-4 w-10 h-10 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white text-xl transition-colors"
-          >
-            &times;
-          </button>
-          {photos.length > 1 && (
-            <>
-              <button
-                onClick={(e) => { e.stopPropagation(); prev() }}
-                className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white text-lg transition-colors"
-              >
-                &#8249;
-              </button>
-              <button
-                onClick={(e) => { e.stopPropagation(); next() }}
-                className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white text-lg transition-colors"
-              >
-                &#8250;
-              </button>
-            </>
-          )}
-          <img
-            src={getFullUrl(photos[lightboxIdx])}
-            alt={photos[lightboxIdx].caption || ''}
-            className="max-h-[90vh] max-w-[90vw] object-contain rounded-lg shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          />
-          {photos[lightboxIdx].caption && (
-            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 text-white/80 text-sm bg-black/50 px-4 py-2 rounded-lg">
-              {photos[lightboxIdx].caption}
-            </div>
-          )}
-          {/* Thumbnail strip in lightbox */}
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5">
-            {photos.map((photo, idx) => (
-              <button
-                key={photo.unique_id}
-                onClick={(e) => { e.stopPropagation(); setLightboxIdx(idx) }}
-                className={clsx(
-                  'w-10 h-10 rounded overflow-hidden transition-all flex-shrink-0',
-                  idx === lightboxIdx ? 'ring-2 ring-white opacity-100' : 'opacity-50 hover:opacity-80',
-                )}
-              >
-                <img src={getThumbUrl(photo)} alt="" className="w-full h-full object-cover" />
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      <PhotoLightbox photos={photos} index={lightboxIdx} onIndexChange={setLightboxIdx} />
     </>
   )
 }

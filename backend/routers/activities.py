@@ -4,6 +4,7 @@ import pandas as pd
 
 from backend._serialize import sanitize as _sanitize
 from backend.dependencies import get_si
+from strava.strava_activities_cache import _has_full_photo_list
 from strava.strava_intelligence import StravaIntelligence
 from strava.strava_utils import format_pace_or_speed
 from strava.streams_store import columnar_to_points
@@ -211,6 +212,44 @@ def get_polylines(
         }
         for _, row in filtered.iterrows()
     ]
+
+
+@router.get("/photos/recent")
+def recent_photos(
+    limit: int = Query(6, ge=1, le=30),
+    si: StravaIntelligence = Depends(get_si),
+):
+    """Newest activity photos first, each tagged with its activity — for the
+    profile collage. Walks activities newest-first and stops once `limit`
+    photos are collected, so it rarely scans the whole cache."""
+    activities = si.strava_activities_cache.get_prepared_view()
+    if activities.empty or "photos" not in activities.columns:
+        return []
+
+    ordered = activities.sort_values("start_date_local", ascending=False, na_position="last")
+    out: list[dict] = []
+    for _, row in ordered.iterrows():
+        raw = row["photos"]
+        if not _has_full_photo_list(raw):
+            continue
+        photos = [p for p in json.loads(raw) if isinstance(p.get("urls"), dict) and p["urls"]]
+        if not photos:
+            continue
+        # One photo per activity so the collage spans recent activities rather
+        # than clustering on one; Strava marks its cover shot as default_photo.
+        photo = next((p for p in photos if p.get("default_photo")), photos[0])
+        out.append({
+            "unique_id": photo.get("unique_id"),
+            "urls": photo["urls"],
+            "caption": photo.get("caption"),
+            "activity_id": _sanitize(row["id"]),
+            "activity_name": row.get("name"),
+            "sport_type": row.get("sport_type"),
+            "start_date_local": _sanitize(row["start_date_local"]),
+        })
+        if len(out) >= limit:
+            break
+    return out
 
 
 @router.get("/{activity_id}")
