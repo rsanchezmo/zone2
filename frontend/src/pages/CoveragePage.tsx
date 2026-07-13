@@ -254,7 +254,10 @@ export default function CoveragePage() {
   const city = cities?.find(c => c.slug === activeSlug)
 
   const { data: edges, isLoading: edgesLoading } = useCoverageEdges(activeSlug)
-  const { data: districts } = useCoverageDistricts(activeSlug)
+  // 9 = administrative districts, 10 = neighbourhoods (finer). Cities OSM
+  // doesn't subdivide at the chosen level collapse to a whole-city district.
+  const [adminLevel, setAdminLevel] = useState<9 | 10>(9)
+  const { data: districts } = useCoverageDistricts(activeSlug, adminLevel)
   const [showDistricts, setShowDistricts] = useState(true)
   const [flyBbox, setFlyBbox] = useState<[number, number, number, number] | null>(null)
 
@@ -423,7 +426,7 @@ export default function CoveragePage() {
           />
           {showDistricts && districtFC && (
             <GeoJSON
-              key={`districts-${activeSlug}-${districtColor}-${selectMode}`}
+              key={`districts-${activeSlug}-${adminLevel}-${districtColor}-${selectMode}`}
               data={districtFC}
               interactive={!selectMode}
               style={districtStyle}
@@ -592,6 +595,15 @@ export default function CoveragePage() {
               <path d="M8 2.2 13.5 6l-2 7H4.5l-2-7z" />
             </svg>
           </TipButton>
+          {showDistricts && (
+            <div className={clsx('flex items-center gap-0.5 px-1 py-0.5', overlayClass)}>
+              {([[9, 'Districts'], [10, 'Neighborhoods']] as const).map(([lvl, label]) => (
+                <button key={lvl} onClick={() => setAdminLevel(lvl)} className="chip" data-active={adminLevel === lvl}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* ── Area result — bottom left ────────────── */}
