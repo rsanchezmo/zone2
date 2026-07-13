@@ -595,41 +595,43 @@ export default function CoveragePage() {
               <path d="M8 2.2 13.5 6l-2 7H4.5l-2-7z" />
             </svg>
           </TipButton>
+        </div>
+
+        {/* ── Bottom left: area result + district granularity ──── */}
+        <div className="absolute bottom-3 left-3 z-[1000] flex flex-col gap-2 items-start">
+          {(areaStats || areaMutation.isPending) && (
+            <div className={clsx('px-3 py-2 flex items-center gap-3', overlayClass)}>
+              <span className="eyebrow text-[9px]">Selected area</span>
+              {areaMutation.isPending ? (
+                <span className="text-xs text-gray-500">computing…</span>
+              ) : areaStats && (
+                <>
+                  <span className="text-sm font-mono tabular-nums font-semibold" style={{ color: '#22d3ee' }}>
+                    {areaStats.coverage_pct}%
+                  </span>
+                  <span className={clsx('text-xs font-mono tabular-nums', isLight ? 'text-gray-700' : 'text-gray-300')}>
+                    {areaStats.covered_km} / {areaStats.total_km} km
+                  </span>
+                  <span className="text-[11px] text-gray-500">
+                    {areaStats.num_covered_streets}/{areaStats.num_streets} streets
+                  </span>
+                </>
+              )}
+              <button onClick={clearArea} className={clsx('text-[11px]', isLight ? 'text-gray-400 hover:text-gray-700' : 'text-gray-500 hover:text-gray-200')} aria-label="Clear selection">
+                ✕
+              </button>
+            </div>
+          )}
           {showDistricts && (
             <div className={clsx('flex items-center gap-0.5 px-1 py-0.5', overlayClass)}>
               {([[9, 'Districts'], [10, 'Neighborhoods']] as const).map(([lvl, label]) => (
-                <button key={lvl} onClick={() => setAdminLevel(lvl)} className="chip" data-active={adminLevel === lvl}>
+                <button key={lvl} onClick={() => setAdminLevel(lvl)} className="chip whitespace-nowrap" data-active={adminLevel === lvl}>
                   {label}
                 </button>
               ))}
             </div>
           )}
         </div>
-
-        {/* ── Area result — bottom left ────────────── */}
-        {(areaStats || areaMutation.isPending) && (
-          <div className={clsx('absolute bottom-3 left-3 z-[1000] px-3 py-2 flex items-center gap-3', overlayClass)}>
-            <span className="eyebrow text-[9px]">Selected area</span>
-            {areaMutation.isPending ? (
-              <span className="text-xs text-gray-500">computing…</span>
-            ) : areaStats && (
-              <>
-                <span className="text-sm font-mono tabular-nums font-semibold" style={{ color: '#22d3ee' }}>
-                  {areaStats.coverage_pct}%
-                </span>
-                <span className={clsx('text-xs font-mono tabular-nums', isLight ? 'text-gray-700' : 'text-gray-300')}>
-                  {areaStats.covered_km} / {areaStats.total_km} km
-                </span>
-                <span className="text-[11px] text-gray-500">
-                  {areaStats.num_covered_streets}/{areaStats.num_streets} streets
-                </span>
-              </>
-            )}
-            <button onClick={clearArea} className={clsx('text-[11px]', isLight ? 'text-gray-400 hover:text-gray-700' : 'text-gray-500 hover:text-gray-200')} aria-label="Clear selection">
-              ✕
-            </button>
-          </div>
-        )}
 
         {/* ── Hints ────────────────────────────────── */}
         {selectMode && (
