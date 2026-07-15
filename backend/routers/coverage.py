@@ -225,16 +225,22 @@ def _clip_to_bbox(gdf, bbox: str):
     return gdf.cx[west:east, south:north]
 
 
-def _edges_to_geojson(subset) -> dict:
+def _edges_to_geojson(subset, include_times: bool = False) -> dict:
     features = []
-    for geom, name in zip(subset.geometry, subset["name"]):
+    names = subset["name"].tolist()
+    times = (subset["times"].tolist() if include_times and "times" in subset.columns
+             else [None] * len(subset))
+    for geom, name, t in zip(subset.geometry, names, times):
         if geom is None or geom.is_empty:
             continue
         coords = [[round(x, 6), round(y, 6)] for x, y in geom.coords]
+        props = {"name": None if name is None or str(name) == "nan" else str(name)}
+        if t is not None:
+            props["times"] = int(t)
         features.append({
             "type": "Feature",
             "geometry": {"type": "LineString", "coordinates": coords},
-            "properties": {"name": None if name is None or str(name) == "nan" else str(name)},
+            "properties": props,
         })
     return {"type": "FeatureCollection", "features": features}
 
@@ -245,6 +251,7 @@ def coverage_edges(
     covered: bool = Query(True),
     bbox: str | None = Query(None, description="south,west,north,east — required for covered=false"),
     streets_only: bool = Query(False),
+    counts: bool = Query(False, description="Include per-edge traversal count as `times`"),
 ):
     """Runnable edges as GeoJSON. Covered edges are few; uncovered edges are
     the whole city, so they must be bounded by a bbox."""
@@ -252,11 +259,11 @@ def coverage_edges(
         raise HTTPException(status_code=400, detail="bbox is required for covered=false")
 
     matcher = _get_matcher(slug)
-    und = matcher.undirected_with_covered(streets_only=streets_only)
+    und = matcher.undirected_with_covered(streets_only=streets_only, with_counts=counts)
     subset = und[und["covered"] == covered].to_crs("EPSG:4326")
     if bbox:
         subset = _clip_to_bbox(subset, bbox)
-    return _edges_to_geojson(subset)
+    return _edges_to_geojson(subset, include_times=counts)
 
 
 @router.get("/{slug}/districts")

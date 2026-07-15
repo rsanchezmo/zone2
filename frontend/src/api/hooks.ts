@@ -1482,7 +1482,10 @@ export interface AreaCoverage {
   num_covered_streets: number;
 }
 
-export type CoverageEdges = GeoJSON.FeatureCollection<GeoJSON.LineString, { name: string | null }>;
+export type CoverageEdges = GeoJSON.FeatureCollection<
+  GeoJSON.LineString,
+  { name: string | null; times?: number }
+>;
 
 export function useCoverageCities() {
   return useQuery<CoverageSummary[]>({
@@ -1495,7 +1498,7 @@ export function useCoverageCities() {
 export function useCoverageEdges(slug?: string) {
   return useQuery<CoverageEdges>({
     queryKey: ['coverage-edges', slug],
-    queryFn: () => api.get(`/coverage/${slug}/edges`, { params: { covered: true } }).then(r => r.data),
+    queryFn: () => api.get(`/coverage/${slug}/edges`, { params: { covered: true, counts: true } }).then(r => r.data),
     enabled: !!slug,
     staleTime: 5 * 60 * 1000,
     placeholderData: keepPreviousData,

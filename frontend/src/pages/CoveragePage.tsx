@@ -20,6 +20,25 @@ import { MapStyleToggle, SATELLITE_ACCENT, SATELLITE_ATTR, SATELLITE_TILES, type
 
 const COVERED_ACCENT = '#fb2c36'
 
+// Magma stops for the traversal-frequency heatmap: streets run once stay cool
+// and dim, the daily loops glow hot.
+const HEAT_STOPS = ['#3b0f70', '#8c2981', '#de4968', '#fe9f6d', '#fcfdbf'] as const
+
+/** Map a normalised [0,1] frequency to a magma colour by interpolating stops. */
+function heatColor(t: number): string {
+  const x = Math.min(1, Math.max(0, t)) * (HEAT_STOPS.length - 1)
+  const i = Math.min(HEAT_STOPS.length - 2, Math.floor(x))
+  const f = x - i
+  const c1 = parseInt(HEAT_STOPS[i].slice(1), 16)
+  const c2 = parseInt(HEAT_STOPS[i + 1].slice(1), 16)
+  const mix = (shift: number) => {
+    const a = (c1 >> shift) & 255
+    const b = (c2 >> shift) & 255
+    return Math.round(a + f * (b - a))
+  }
+  return `rgb(${mix(16)},${mix(8)},${mix(0)})`
+}
+
 function FitToLayer({ data }: { data: unknown }) {
   const map = useMap()
   const fitted = useRef(false)
@@ -263,6 +282,7 @@ export default function CoveragePage() {
 
   const [expanded, setExpanded] = useState(false)
   const [mapStyle, setMapStyle] = useState<MapStyle>('street')
+  const [heatmapMode, setHeatmapMode] = useState(false)
   const [selectMode, setSelectMode] = useState(false)
   const [areaRect, setAreaRect] = useState<L.LatLngBounds | null>(null)
   const [areaStats, setAreaStats] = useState<AreaCoverage | null>(null)
@@ -375,9 +395,23 @@ export default function CoveragePage() {
     clearArea()
   }
 
+  // Highest traversal count in view — the hot end of the heatmap's log scale.
+  const maxTimes = useMemo(() => {
+    if (!heatmapMode || !edges) return 1
+    let m = 1
+    for (const f of edges.features) m = Math.max(m, f.properties.times ?? 0)
+    return m
+  }, [heatmapMode, edges])
+
+  const heatNorm = useCallback(
+    (t: number) => (maxTimes <= 1 ? 0 : Math.log(Math.max(1, t)) / Math.log(maxTimes)),
+    [maxTimes],
+  )
+
   const edgesKey = useMemo(
-    () => `${activeSlug}-${(edges as { features?: unknown[] } | undefined)?.features?.length ?? 0}-${accent}`,
-    [activeSlug, edges, accent],
+    () => `${activeSlug}-${(edges as { features?: unknown[] } | undefined)?.features?.length ?? 0}`
+      + `-${heatmapMode ? `heat${maxTimes}` : accent}`,
+    [activeSlug, edges, accent, heatmapMode, maxTimes],
   )
 
   if (!citiesLoading && (cities?.length ?? 0) === 0) {
@@ -445,7 +479,30 @@ export default function CoveragePage() {
               }}
             />
           )}
-          {edges && (
+          {edges && heatmapMode && (
+            <>
+              {/* Frequency heatmap: colour + weight scale with how often each
+                  street was run (log scale, glow underlay + brighter core). */}
+              <GeoJSON
+                key={`${edgesKey}-hglow`}
+                data={edges}
+                style={(f?: GeoJSON.Feature) => {
+                  const n = heatNorm((f?.properties as { times?: number } | null)?.times ?? 1)
+                  return { color: heatColor(n), weight: 3 + 4 * n, opacity: 0.16 }
+                }}
+              />
+              <GeoJSON
+                key={`${edgesKey}-hcore`}
+                data={edges}
+                style={(f?: GeoJSON.Feature) => {
+                  const n = heatNorm((f?.properties as { times?: number } | null)?.times ?? 1)
+                  return { color: heatColor(n), weight: 1.2 + 2.2 * n, opacity: 0.95 }
+                }}
+              />
+              <FitToLayer data={edges} />
+            </>
+          )}
+          {edges && !heatmapMode && (
             <>
               {/* Glow underlay + bright core */}
               <GeoJSON key={`${edgesKey}-glow`} data={edges} style={{ color: accent, weight: 5, opacity: 0.18 }} />
@@ -565,6 +622,16 @@ export default function CoveragePage() {
             </span>
           </div>
           <TipButton
+            tip={heatmapMode ? 'Show solid coverage' : 'Frequency heatmap — colour streets by how often you’ve run them'}
+            onClick={() => setHeatmapMode(m => !m)}
+            className={clsx(buttonClass, heatmapMode && '!text-orange-400 !border-orange-500/50')}
+            isLight={isLight}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M8 1.8c.6 2 2 2.7 2 4.7a2 2 0 0 1-4 0M8 1.8C6.2 3.8 4 5.4 4 9a4 4 0 0 0 8 0c0-1.8-.8-2.9-1.6-3.8" />
+            </svg>
+          </TipButton>
+          <TipButton
             tip={selectMode ? 'Cancel area selection' : 'Measure an area — drag a rectangle to get its coverage'}
             onClick={() => { setSelectMode(m => !m); if (areaRect) clearArea() }}
             className={clsx(buttonClass, selectMode && '!text-cyan-400 !border-cyan-500/50')}
@@ -599,6 +666,17 @@ export default function CoveragePage() {
 
         {/* ── Bottom left: area result + district granularity ──── */}
         <div className="absolute bottom-3 left-3 z-[1000] flex flex-col gap-2 items-start">
+          {heatmapMode && edges && (
+            <div className={clsx('px-3 py-2 flex items-center gap-2', overlayClass)}>
+              <span className="eyebrow text-[9px]">Runs</span>
+              <span className="text-[10px] text-gray-500">1</span>
+              <span
+                className="h-2 w-24 rounded-full"
+                style={{ background: `linear-gradient(to right, ${HEAT_STOPS.join(', ')})` }}
+              />
+              <span className="text-[10px] text-gray-500">{maxTimes}×</span>
+            </div>
+          )}
           {(areaStats || areaMutation.isPending) && (
             <div className={clsx('px-3 py-2 flex items-center gap-3', overlayClass)}>
               <span className="eyebrow text-[9px]">Selected area</span>

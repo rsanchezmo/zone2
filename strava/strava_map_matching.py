@@ -899,6 +899,17 @@ class StravaMapMatcher:
             df = pd.read_parquet(edges_fp)
         return set(zip(df['u'].tolist(), df['v'].tolist()))
 
+    def covered_edge_counts(self) -> dict[tuple[int, int], int]:
+        """Per undirected edge, how many distinct activities traversed it —
+        the traversal-frequency signal behind the coverage heatmap."""
+        edges_fp, _ = self._state_paths()
+        with self._state_lock:
+            if not edges_fp.exists():
+                return {}
+            df = pd.read_parquet(edges_fp)
+        counts = df.groupby(['u', 'v'])['activity_id'].nunique()
+        return {(int(u), int(v)): int(c) for (u, v), c in counts.items()}
+
     def save_match_state(
         self,
         match_results: dict[int | str, MatchResult],
@@ -1076,16 +1087,25 @@ class StravaMapMatcher:
             self._und_gdf = gdf.drop_duplicates(['u', 'v']).reset_index(drop=True)
         return self._und_gdf
 
-    def undirected_with_covered(self, streets_only: bool = False) -> gpd.GeoDataFrame:
-        """Undirected edges flagged with whether the persisted state covers them."""
+    def undirected_with_covered(self, streets_only: bool = False,
+                                with_counts: bool = False) -> gpd.GeoDataFrame:
+        """Undirected edges flagged with whether the persisted state covers them.
+
+        With with_counts, also carries a `times` column — the number of distinct
+        activities that traversed each edge (0 when uncovered)."""
         und = self._undirected_gdf()
         if streets_only:
             und = und[und['street']]
-        covered = self.covered_edge_set()
         out = und.copy()
-        out['covered'] = [
-            (u, v) in covered for u, v in zip(und['u'].tolist(), und['v'].tolist())
-        ]
+        us, vs = und['u'].tolist(), und['v'].tolist()
+        if with_counts:
+            counts = self.covered_edge_counts()
+            times = [counts.get((u, v), 0) for u, v in zip(us, vs)]
+            out['times'] = times
+            out['covered'] = [t > 0 for t in times]
+        else:
+            covered = self.covered_edge_set()
+            out['covered'] = [(u, v) in covered for u, v in zip(us, vs)]
         return out
 
     @staticmethod
