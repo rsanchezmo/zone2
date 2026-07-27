@@ -1,11 +1,14 @@
-import { useState, useEffect, useRef, useLayoutEffect, useCallback } from 'react'
+import { useState, useEffect, useRef, useLayoutEffect, useCallback, lazy, Suspense } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { useQueryClient, useIsFetching } from '@tanstack/react-query'
 import { useSyncStatus, useTriggerSync, useBackfillStreams } from '../../api/hooks'
+import { useBackdrop } from '../../hooks/useBackdrop'
 import { useTheme } from '../../hooks/useTheme'
 import { useToast } from '../../hooks/useToast'
 import PageErrorBoundary from './PageErrorBoundary'
 import clsx from 'clsx'
+
+const RouteBackdrop = lazy(() => import('./RouteBackdrop'))
 
 const NAV_ITEMS: { to: string; label: string; color: string; icon: React.ReactNode }[] = [
   { to: '/calendar', label: 'Calendar', color: '#60a5fa', icon: (
@@ -423,6 +426,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const isLight = theme === 'light'
   const location = useLocation()
   const { toast } = useToast()
+  const backdropEnabled = useBackdrop().settings.enabled
 
   const qc = useQueryClient()
   const wasSyncing = useRef(false)
@@ -509,6 +513,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen">
+      {/* Route wallpaper — lazy so its polyline decoder never lands in the
+          main bundle for athletes who leave it off. */}
+      {backdropEnabled && (
+        <Suspense fallback={null}>
+          <RouteBackdrop />
+        </Suspense>
+      )}
+
       {/* Global loading bar */}
       <GlobalLoadingBar color={activeColor} />
 

@@ -186,13 +186,14 @@ export interface ActivityPolyline {
   name: string;
 }
 
-export function usePolylines(sportType?: string, year?: number) {
+export function usePolylines(sportType?: string, year?: number, enabled = true) {
   return useQuery<ActivityPolyline[]>({
     queryKey: ['polylines', sportType, year],
     queryFn: () =>
       api.get('/activities/polylines', { params: { sport_type: sportType, year: year } })
         .then(r => r.data),
     placeholderData: keepPreviousData,
+    enabled,
   });
 }
 

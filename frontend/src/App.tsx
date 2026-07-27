@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { ThemeProvider } from './hooks/ThemeProvider'
 import { ToastProvider } from './hooks/ToastProvider'
+import { BackdropProvider } from './hooks/BackdropProvider'
 import AppShell from './components/layout/AppShell'
 import RootErrorBoundary from './components/layout/RootErrorBoundary'
 import CalendarPage from './pages/CalendarPage'
@@ -34,25 +35,27 @@ export default function App() {
     <RootErrorBoundary>
       <ThemeProvider>
         <ToastProvider>
-          <AppShell>
-            <Suspense fallback={<RouteFallback />}>
-              <Routes>
-                <Route path="/" element={<Navigate to="/calendar" replace />} />
-                <Route path="/dashboard" element={<DashboardPage />} />
-                <Route path="/activities" element={<ActivitiesPage />} />
-                <Route path="/activities/:id" element={<ActivityDetailPage />} />
-                <Route path="/aggregations" element={<AggregationsPage />} />
-                <Route path="/coverage" element={<CoveragePage />} />
-                <Route path="/calendar" element={<CalendarPage />} />
-                <Route path="/records" element={<PersonalRecordsPage />} />
-                <Route path="/workouts" element={<WorkoutsPage />} />
-                <Route path="/races" element={<RacesPage />} />
-                <Route path="/analytics" element={<AnalyticsPage />} />
-                <Route path="/garmin" element={<GarminPage />} />
-                <Route path="/profile" element={<ProfilePage />} />
-              </Routes>
-            </Suspense>
-          </AppShell>
+          <BackdropProvider>
+            <AppShell>
+              <Suspense fallback={<RouteFallback />}>
+                <Routes>
+                  <Route path="/" element={<Navigate to="/calendar" replace />} />
+                  <Route path="/dashboard" element={<DashboardPage />} />
+                  <Route path="/activities" element={<ActivitiesPage />} />
+                  <Route path="/activities/:id" element={<ActivityDetailPage />} />
+                  <Route path="/aggregations" element={<AggregationsPage />} />
+                  <Route path="/coverage" element={<CoveragePage />} />
+                  <Route path="/calendar" element={<CalendarPage />} />
+                  <Route path="/records" element={<PersonalRecordsPage />} />
+                  <Route path="/workouts" element={<WorkoutsPage />} />
+                  <Route path="/races" element={<RacesPage />} />
+                  <Route path="/analytics" element={<AnalyticsPage />} />
+                  <Route path="/garmin" element={<GarminPage />} />
+                  <Route path="/profile" element={<ProfilePage />} />
+                </Routes>
+              </Suspense>
+            </AppShell>
+          </BackdropProvider>
         </ToastProvider>
       </ThemeProvider>
     </RootErrorBoundary>

@@ -8,6 +8,7 @@ import { getSportColor } from '../constants/sportColors'
 import { getSportCategory } from '../utils/formatSpeed'
 import { todayLocalStr } from '../utils/dates'
 import ChartPanel from '../components/shared/ChartPanel'
+import BackdropSettingsPanel from '../components/shared/BackdropSettingsPanel'
 import { useTheme } from '../hooks/useTheme'
 import { useToast } from '../hooks/useToast'
 import { useNow } from '../hooks/useNow'
@@ -767,6 +768,9 @@ export default function ProfilePage() {
           </div>
         </ChartPanel>
       )}
+
+      {/* ── Page background ─────────────────────────────── */}
+      <BackdropSettingsPanel />
 
       {/* ── Calendar subscription ───────────────────────── */}
       <section>
