@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, Query
 
 from backend.dependencies import get_si
 from backend.routers.exports import clear_export_cache
+from backend.routers.gear import clear_gear_cache
 from backend.routers.stats import clear_stats_cache
 from strava.strava_intelligence import StravaIntelligence
 
@@ -39,6 +40,7 @@ def _finalize_sync(si: StravaIntelligence, error: str | None) -> str | None:
         si.strava_analytics.invalidate_caches()
         clear_stats_cache()
         clear_export_cache()
+        clear_gear_cache()
         # Eagerly warm the in-memory cache so the first post-sync read doesn't
         # pay the full parquet reload cost on the user's request.
         si.strava_activities_cache._load_to_memory()

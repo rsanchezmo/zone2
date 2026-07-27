@@ -31,7 +31,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.config import settings
 from backend.dependencies import set_strava_intelligence
-from backend.routers import activities, stats, exports, calendar, calendar_feed, sync, athlete, goals, workouts, races, health, garmin, coverage
+from backend.routers import activities, stats, exports, calendar, calendar_feed, sync, athlete, gear, goals, workouts, races, health, garmin, coverage
 from backend.routers.sync import _try_claim_sync, _run_sync
 from backend.db import init_db
 from strava.strava_intelligence import StravaIntelligence
@@ -217,6 +217,7 @@ app.include_router(calendar.router, prefix="/api/calendar", tags=["calendar"])
 app.include_router(calendar_feed.router, prefix="/api", tags=["calendar-feed"])
 app.include_router(sync.router, prefix="/api/sync", tags=["sync"])
 app.include_router(athlete.router, prefix="/api/athlete", tags=["athlete"])
+app.include_router(gear.router, prefix="/api/gear", tags=["gear"])
 app.include_router(goals.router, prefix="/api/goals", tags=["goals"])
 app.include_router(workouts.router, prefix="/api/workouts", tags=["workouts"])
 app.include_router(races.router, prefix="/api/races", tags=["races"])

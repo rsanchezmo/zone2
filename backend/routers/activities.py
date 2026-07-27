@@ -187,6 +187,7 @@ def activities_on_dates(
 def get_polylines(
     sport_type: str | None = None,
     year: int | None = None,
+    gear_id: str | None = None,
     si: StravaIntelligence = Depends(get_si),
 ):
     """Return lightweight polyline data for all activities (for world map view)."""
@@ -198,6 +199,8 @@ def get_polylines(
         activities = activities[activities["sport_type"] == sport_type]
     if year:
         activities = activities[activities["start_date_local"].dt.year == year]
+    if gear_id and "gear_id" in activities.columns:
+        activities = activities[activities["gear_id"] == gear_id]
 
     # Use pre-parsed map dicts — no json.loads needed
     has_map = activities["map"].apply(lambda m: isinstance(m, dict) and bool(m.get("summary_polyline")))

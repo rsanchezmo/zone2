@@ -19,6 +19,7 @@ const WorkoutsPage = lazy(() => import('./pages/WorkoutsPage'))
 const RacesPage = lazy(() => import('./pages/RacesPage'))
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'))
 const ProfilePage = lazy(() => import('./pages/ProfilePage'))
+const GearDetailPage = lazy(() => import('./pages/GearDetailPage'))
 const GarminPage = lazy(() => import('./pages/GarminPage'))
 const CoveragePage = lazy(() => import('./pages/CoveragePage'))
 
@@ -52,6 +53,7 @@ export default function App() {
                   <Route path="/analytics" element={<AnalyticsPage />} />
                   <Route path="/garmin" element={<GarminPage />} />
                   <Route path="/profile" element={<ProfilePage />} />
+                  <Route path="/gear/:gearId" element={<GearDetailPage />} />
                 </Routes>
               </Suspense>
             </AppShell>

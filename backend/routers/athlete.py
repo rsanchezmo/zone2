@@ -16,6 +16,7 @@ from backend.services.zones import (
     resolve_hr_zones,
     set_setting,
 )
+from backend.services.gear import resolve_gear_catalog
 from backend.services.resting_hr import (
     DEFAULT_SOURCE as RHR_DEFAULT_SOURCE,
     Source as RestingHrSource,
@@ -31,18 +32,9 @@ router = APIRouter()
 def get_athlete_profile(si: StravaIntelligence = Depends(get_si)):
     profile = dict(si.strava_user_cache.get_athlete_profile())
 
-    # Strava omits retired gear from /athlete, but activities still carry the
-    # gear_id — recover retired items via /gear/{id} and merge them in.
-    activities = si.strava_activities_cache.activities
-    if not activities.empty and "gear_id" in activities.columns:
-        shoes = list(profile.get("shoes") or [])
-        bikes = list(profile.get("bikes") or [])
-        known = {g["id"] for g in shoes + bikes}
-        missing = sorted(set(activities["gear_id"].dropna()) - known)
-        for gear in si.strava_user_cache.get_gear_details(missing).values():
-            (bikes if gear["id"].startswith("b") else shoes).append(gear)
-        profile["shoes"] = shoes
-        profile["bikes"] = bikes
+    catalog = resolve_gear_catalog(si).values()
+    profile["shoes"] = [g for g in catalog if g["kind"] == "shoes"]
+    profile["bikes"] = [g for g in catalog if g["kind"] == "bikes"]
 
     return profile
 
