@@ -6,7 +6,7 @@ services:
     env_file: .env
     volumes:
       - strava-data:/app/.strava
-      - strava-workdir:/app/strava_intelligence_workdir
+      - strava-workdir:/app/zone2_workdir
     restart: unless-stopped
     # Cap so a coverage-matching spike gets this container OOM-killed (and
     # restarted) instead of thrashing the whole Pi host.
@@ -22,6 +22,11 @@ services:
       - app
     restart: unless-stopped
 
+# Names pinned explicitly: Compose otherwise prefixes them with the project
+# name, which it derives from the directory. Renaming the checkout would then
+# point at fresh empty volumes and orphan the cached activities and token.
 volumes:
   strava-data:
+    name: strava-intelligence_strava-data
   strava-workdir:
+    name: strava-intelligence_strava-workdir

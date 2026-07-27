@@ -3,11 +3,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 import pandas as pd
 
 from backend._serialize import sanitize as _sanitize
-from backend.dependencies import get_si
-from strava.strava_activities_cache import _has_full_photo_list
-from strava.strava_intelligence import StravaIntelligence
-from strava.strava_utils import format_pace_or_speed
-from strava.streams_store import columnar_to_points
+from backend.dependencies import get_z2
+from zone2.activities_cache import _has_full_photo_list
+from zone2.core import Zone2
+from zone2.utils import format_pace_or_speed
+from zone2.streams_store import columnar_to_points
 
 router = APIRouter()
 
@@ -106,9 +106,9 @@ def list_activities(
     search: str | None = Query(None),
     sort_by: str = Query("date"),
     sort_dir: str = Query("desc"),
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
-    activities = si.strava_activities_cache.get_prepared_view()
+    activities = z2.strava_activities_cache.get_prepared_view()
     if activities.empty:
         return {"items": [], "total": 0, "page": page, "per_page": per_page}
 
@@ -153,16 +153,16 @@ def list_activities(
 
 
 @router.get("/sport-types")
-def get_sport_types(si: StravaIntelligence = Depends(get_si)):
-    activities = si.strava_activities_cache.activities_raw
+def get_sport_types(z2: Zone2 = Depends(get_z2)):
+    activities = z2.strava_activities_cache.activities_raw
     if activities.empty:
         return []
     return sorted(activities["sport_type"].unique().tolist())
 
 
 @router.get("/years")
-def get_years(si: StravaIntelligence = Depends(get_si)):
-    activities = si.strava_activities_cache.get_prepared_view()
+def get_years(z2: Zone2 = Depends(get_z2)):
+    activities = z2.strava_activities_cache.get_prepared_view()
     if activities.empty:
         return []
     return sorted(activities["start_date_local"].dt.year.unique().tolist(), reverse=True)
@@ -171,9 +171,9 @@ def get_years(si: StravaIntelligence = Depends(get_si)):
 @router.get("/on-dates")
 def activities_on_dates(
     dates: str = Query(..., description="Comma-separated YYYY-MM-DD local dates"),
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
-    activities = si.strava_activities_cache.get_prepared_view()
+    activities = z2.strava_activities_cache.get_prepared_view()
     if activities.empty:
         return {"items": []}
     wanted = {d.strip() for d in dates.split(",") if d.strip()}
@@ -188,10 +188,10 @@ def get_polylines(
     sport_type: str | None = None,
     year: int | None = None,
     gear_id: str | None = None,
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
     """Return lightweight polyline data for all activities (for world map view)."""
-    activities = si.strava_analytics._get_prepared_activities()
+    activities = z2.strava_analytics._get_prepared_activities()
     if activities.empty:
         return []
 
@@ -220,12 +220,12 @@ def get_polylines(
 @router.get("/photos/recent")
 def recent_photos(
     limit: int = Query(6, ge=1, le=30),
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
     """Newest activity photos first, each tagged with its activity — for the
     profile collage. Walks activities newest-first and stops once `limit`
     photos are collected, so it rarely scans the whole cache."""
-    activities = si.strava_activities_cache.get_prepared_view()
+    activities = z2.strava_activities_cache.get_prepared_view()
     if activities.empty or "photos" not in activities.columns:
         return []
 
@@ -256,11 +256,11 @@ def recent_photos(
 
 
 @router.get("/{activity_id}")
-def get_activity(activity_id: int, si: StravaIntelligence = Depends(get_si)):
-    row = si.strava_activities_cache.get_activity_by_id(activity_id)
+def get_activity(activity_id: int, z2: Zone2 = Depends(get_z2)):
+    row = z2.strava_activities_cache.get_activity_by_id(activity_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Activity not found")
-    streams = si.strava_activities_cache.get_streams(activity_id)
+    streams = z2.strava_activities_cache.get_streams(activity_id)
     return _activity_to_dict(row, include_streams=True, streams=streams)
 
 
@@ -268,13 +268,13 @@ def get_activity(activity_id: int, si: StravaIntelligence = Depends(get_si)):
 def get_similar_activities(
     activity_id: int,
     limit: int = Query(5, ge=1, le=20),
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
-    target = si.strava_activities_cache.get_activity_by_id(activity_id)
+    target = z2.strava_activities_cache.get_activity_by_id(activity_id)
     if target is None:
         raise HTTPException(status_code=404, detail="Activity not found")
 
-    activities = si.strava_activities_cache.activities_raw
+    activities = z2.strava_activities_cache.activities_raw
     if activities.empty:
         return []
 

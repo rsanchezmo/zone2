@@ -2,10 +2,10 @@
 # Auto-deploy: fetch the configured branch, rebuild Docker services when
 # origin has commits newer than the last deployed SHA (.git/last-deployed-sha).
 #
-# Designed for systemd-timer driven use (see deploy/strava-deploy.timer) but
+# Designed for systemd-timer driven use (see deploy/z2-deploy.timer) but
 # safe to run manually too:
 #
-#     sudo systemctl start strava-deploy.service
+#     sudo systemctl start z2-deploy.service
 #
 # or directly:
 #
@@ -23,7 +23,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 BRANCH="${DEPLOY_BRANCH:-prod}"
 COMPOSE="${COMPOSE:-docker compose}"
-LOCK_FILE="/tmp/strava-auto-deploy.lock"
+LOCK_FILE="/tmp/z2-auto-deploy.lock"
 # Tracks the last SHA that was actually built, so a manual `git pull` in the
 # repo can't make a push look already-deployed. Lives in .git/ (untracked,
 # survives reboots).

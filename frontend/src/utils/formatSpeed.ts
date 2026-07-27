@@ -1,6 +1,6 @@
 /**
  * Centralized pace/speed formatting utilities.
- * Mirrors the backend logic in strava/strava_utils.py exactly.
+ * Mirrors the backend logic in zone2/utils.py exactly.
  */
 
 const CYCLING_SPORTS = new Set([

@@ -1,17 +1,17 @@
-from strava.strava_intelligence import StravaIntelligence
-from strava.strava_map_matching import StravaMapMatcher
+from zone2.core import Zone2
+from zone2.map_matching import StravaMapMatcher
 from pathlib import Path
 
-from strava.strava_utils import get_activities_as_gdf, get_activities_as_gdf_from_streams
+from zone2.utils import get_activities_as_gdf, get_activities_as_gdf_from_streams
 
 
 if __name__ == "__main__":
 
-    workdir = Path("./strava_intelligence_workdir")
-    strava_intelligence = StravaIntelligence(workdir=workdir, sync_max_age_hours=3)
+    workdir = Path("./zone2_workdir")
+    z2 = Zone2(workdir=workdir, sync_max_age_hours=3)
 
     # # get the heatmap of a city
-    strava_intelligence.strava_visualizer.thunderstorm_heatmap(
+    z2.strava_visualizer.thunderstorm_heatmap(
         location="Paris, France",
         sport_types=["Run"],
         show_title=False,
@@ -26,7 +26,7 @@ if __name__ == "__main__":
     # )
     
     # activities_gdf = get_activities_as_gdf_from_streams(
-    #     strava_intelligence.strava_activities_cache.activities
+    #     z2.strava_activities_cache.activities
     # )
     
     # # get a dataframe with the activity id == 1234567890
@@ -56,10 +56,10 @@ if __name__ == "__main__":
     #     save_path=workdir / "osm_maps" / "coverage.png",
     # )
 
-    weekly_data = strava_intelligence.get_weekly_report()
-    # strava_intelligence.get_weekly_report('2026-02-11')
+    weekly_data = z2.get_weekly_report()
+    # z2.get_weekly_report('2026-02-11')
 
-    strava_year_in_sport = strava_intelligence.get_year_in_sport(
+    strava_year_in_sport = z2.get_year_in_sport(
         year=2026,
         main_sport='Run',
         comparison_year=2025,
@@ -67,4 +67,4 @@ if __name__ == "__main__":
         comparison_neon_color="#91ffe9",
     )
     
-    # strava_intelligence.save_gpkg_activities()
+    # z2.save_gpkg_activities()

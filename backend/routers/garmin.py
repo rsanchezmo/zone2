@@ -23,9 +23,9 @@ from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
-from backend.dependencies import get_si
-from strava.garmin_extractors import SUMMARY_METRICS
-from strava.strava_intelligence import StravaIntelligence
+from backend.dependencies import get_z2
+from zone2.garmin_extractors import SUMMARY_METRICS
+from zone2.core import Zone2
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -52,14 +52,14 @@ def _release(error: str | None, summary: dict | None = None) -> None:
             _garmin_sync_status["last_summary"] = summary
 
 
-def _run_garmin_sync(si: StravaIntelligence, full: bool) -> None:
+def _run_garmin_sync(z2: Zone2, full: bool) -> None:
     err: str | None = None
     summary: dict | None = None
     try:
         if full:
-            summary = si.garmin_cache.sync_full()
+            summary = z2.garmin_cache.sync_full()
         else:
-            rows = si.garmin_cache.sync_recent(days=14)
+            rows = z2.garmin_cache.sync_recent(days=14)
             summary = {"rows_written": rows}
     except Exception as e:
         err = f"{type(e).__name__}: {e}"
@@ -72,15 +72,15 @@ def _run_garmin_sync(si: StravaIntelligence, full: bool) -> None:
 
 
 @router.get("/status")
-def status(si: StravaIntelligence = Depends(get_si)) -> dict[str, Any]:
-    coverage = si.garmin_cache.status()
+def status(z2: Zone2 = Depends(get_z2)) -> dict[str, Any]:
+    coverage = z2.garmin_cache.status()
     with _garmin_sync_lock:
         syncing = _garmin_sync_status["running"]
         last_error = _garmin_sync_status["last_error"]
         last_summary = _garmin_sync_status["last_summary"]
     return {
-        "enabled": si.garmin_client.enabled,
-        "client_error": si.garmin_client.last_error,
+        "enabled": z2.garmin_client.enabled,
+        "client_error": z2.garmin_client.last_error,
         "syncing": syncing,
         "last_error": last_error,
         "last_summary": last_summary,
@@ -95,28 +95,28 @@ def status(si: StravaIntelligence = Depends(get_si)) -> dict[str, Any]:
 def trigger_sync(
     background_tasks: BackgroundTasks,
     full: bool = Query(default=False),
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
-    if not si.garmin_client.enabled and not si.garmin_client.ensure_logged_in():
+    if not z2.garmin_client.enabled and not z2.garmin_client.ensure_logged_in():
         raise HTTPException(
             status_code=503,
-            detail=si.garmin_client.last_error or "Garmin client not configured",
+            detail=z2.garmin_client.last_error or "Garmin client not configured",
         )
     if not _try_claim():
         return {"status": "already_running"}
-    background_tasks.add_task(_run_garmin_sync, si, full)
+    background_tasks.add_task(_run_garmin_sync, z2, full)
     return {"status": "started", "full": full}
 
 
 @router.post("/sync/cancel")
-def cancel_sync(si: StravaIntelligence = Depends(get_si)):
+def cancel_sync(z2: Zone2 = Depends(get_z2)):
     """Ask a running sync (typically a long backfill) to stop at its next loop
     check. The partial result is cached, so a later sync resumes cheaply."""
     with _garmin_sync_lock:
         running = _garmin_sync_status["running"]
     if not running:
         return {"status": "not_running"}
-    si.garmin_cache.request_cancel()
+    z2.garmin_cache.request_cancel()
     return {"status": "cancelling"}
 
 
@@ -128,13 +128,13 @@ def daily_stats(
     metric: str = Query(...),
     start_date: str = Query(...),
     end_date: str = Query(...),
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ) -> dict[str, Any]:
     return {
         "metric": metric,
         "start_date": start_date,
         "end_date": end_date,
-        "rows": si.garmin_cache.get_range(metric, start_date, end_date),
+        "rows": z2.garmin_cache.get_range(metric, start_date, end_date),
     }
 
 
@@ -142,11 +142,11 @@ def daily_stats(
 
 
 @router.get("/latest")
-def latest(si: StravaIntelligence = Depends(get_si)) -> dict[str, Any]:
+def latest(z2: Zone2 = Depends(get_z2)) -> dict[str, Any]:
     """Most-recent cached payload per metric — feeds the stat-card row."""
     out: dict[str, Any] = {}
-    for metric in si.garmin_client.ALL_METRICS:
-        out[metric] = si.garmin_cache.get_latest(metric)
+    for metric in z2.garmin_client.ALL_METRICS:
+        out[metric] = z2.garmin_cache.get_latest(metric)
     return out
 
 
@@ -156,11 +156,11 @@ def latest(si: StravaIntelligence = Depends(get_si)) -> dict[str, Any]:
 @router.get("/trends")
 def trends(
     days: int = Query(default=30, ge=1, le=365),
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ) -> dict[str, Any]:
     """Pre-shaped per-day numeric series across all metrics. One call powers
     every chart on the Garmin page. Reads the slim `garmin_daily_summary`
-    projections written at sync time (see strava/garmin_extractors), so a 365d
+    projections written at sync time (see zone2/garmin_extractors), so a 365d
     request touches a few hundred KB instead of deserializing ~135MB of fat
     payloads."""
     end = date_t.today()
@@ -175,7 +175,7 @@ def trends(
         "metrics": {},
     }
     for metric in SUMMARY_METRICS:
-        rows = si.garmin_cache.get_summary_range(metric, s_iso, e_iso)
+        rows = z2.garmin_cache.get_summary_range(metric, s_iso, e_iso)
         out["metrics"][metric] = [
             {"date": r["date"], **r["summary"]} for r in rows
         ]

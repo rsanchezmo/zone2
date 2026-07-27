@@ -4,7 +4,7 @@ from typing import Literal, TypedDict
 
 import aiosqlite
 
-from strava.strava_intelligence import StravaIntelligence
+from zone2.core import Zone2
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ def _max_hr_from_zones(zones: list[dict], fallback: int | None) -> int | None:
     return fallback
 
 
-async def resolve_hr_zones(si: StravaIntelligence, db: aiosqlite.Connection) -> ResolvedZones:
+async def resolve_hr_zones(z2: Zone2, db: aiosqlite.Connection) -> ResolvedZones:
     """Return HR zones according to the user's selected source, with fallback.
 
     Sources:
@@ -60,7 +60,7 @@ async def resolve_hr_zones(si: StravaIntelligence, db: aiosqlite.Connection) -> 
         requested = DEFAULT_SOURCE
     requested_source: Source = requested  # type: ignore[assignment]
 
-    estimated_max_hr = si.strava_analytics.get_max_heart_rate()
+    estimated_max_hr = z2.strava_analytics.get_max_heart_rate()
 
     if requested_source == "manual":
         raw = await get_setting(db, "manual_hr_zones")
@@ -77,7 +77,7 @@ async def resolve_hr_zones(si: StravaIntelligence, db: aiosqlite.Connection) -> 
                     )
             except (json.JSONDecodeError, TypeError) as e:
                 logger.warning("Invalid manual_hr_zones JSON in settings: %s", e)
-        estimated_zones = si.strava_analytics.get_hr_zones()
+        estimated_zones = z2.strava_analytics.get_hr_zones()
         return ResolvedZones(
             zones=estimated_zones,
             max_hr=_max_hr_from_zones(estimated_zones, estimated_max_hr),
@@ -88,7 +88,7 @@ async def resolve_hr_zones(si: StravaIntelligence, db: aiosqlite.Connection) -> 
 
     if requested_source == "strava":
         try:
-            strava = si.strava_user_cache.get_athlete_zones()
+            strava = z2.strava_user_cache.get_athlete_zones()
             hr = strava.get("heart_rate", {}) if isinstance(strava, dict) else {}
             if hr.get("custom_zones") and isinstance(hr.get("zones"), list):
                 # Strava's zone 5 may have max=null; normalise to estimated max_hr.
@@ -107,7 +107,7 @@ async def resolve_hr_zones(si: StravaIntelligence, db: aiosqlite.Connection) -> 
                 )
         except Exception as e:
             logger.warning("Failed to fetch Strava zones: %s", e)
-        estimated_zones = si.strava_analytics.get_hr_zones()
+        estimated_zones = z2.strava_analytics.get_hr_zones()
         return ResolvedZones(
             zones=estimated_zones,
             max_hr=_max_hr_from_zones(estimated_zones, estimated_max_hr),
@@ -117,7 +117,7 @@ async def resolve_hr_zones(si: StravaIntelligence, db: aiosqlite.Connection) -> 
         )
 
     # default: estimated
-    estimated_zones = si.strava_analytics.get_hr_zones()
+    estimated_zones = z2.strava_analytics.get_hr_zones()
     return ResolvedZones(
         zones=estimated_zones,
         max_hr=_max_hr_from_zones(estimated_zones, estimated_max_hr),

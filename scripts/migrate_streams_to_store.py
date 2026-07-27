@@ -41,7 +41,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from strava.streams_store import (  # noqa: E402
+from zone2.streams_store import (  # noqa: E402
     StreamsStore,
     from_strava_api,
     points_to_columnar,

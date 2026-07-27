@@ -2,7 +2,7 @@ import json
 import logging
 from pathlib import Path
 
-from strava.strava_endpoint import StravaEndpoint
+from zone2.endpoint import StravaEndpoint
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)

@@ -9,7 +9,7 @@ __pycache__/
 
 # Local data
 .strava/
-strava_intelligence_workdir/
+zone2_workdir/
 
 # Git
 .git/

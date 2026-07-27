@@ -32,7 +32,7 @@ FORBIDDEN_PATHS=(
   '(^|/)\.strava/'
   '(^|/)cache/.*\.json$'
   '(^|/)token\.json$'
-  'strava_intelligence_workdir/'
+  'zone2_workdir/'
 )
 
 staged_files=$(git diff --cached --name-only --diff-filter=AM)

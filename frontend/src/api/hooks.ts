@@ -1522,7 +1522,7 @@ export function useGarminLatest() {
   });
 }
 
-/** One day of a metric's slim chart summary (see strava/garmin_extractors.py);
+/** One day of a metric's slim chart summary (see zone2/garmin_extractors.py);
  * the fields vary per metric, so everything beyond the date stays unknown. */
 export type GarminTrendRow = Record<string, unknown> & { date: string };
 

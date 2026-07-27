@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Strava Intelligence is a full-stack application for analyzing and visualizing Strava activities locally, without Strava Premium. It syncs activities via the Strava API, caches them as Parquet files, and provides a React web app with dashboards, personal records, training calendar, and map visualizations — plus a Telegram bot and CLI-generated neon-styled PNG reports.
+z2 is a full-stack application for analyzing and visualizing Strava activities locally, without Strava Premium. It syncs activities via the Strava API, caches them as Parquet files, and provides a React web app with dashboards, personal records, training calendar, and map visualizations — plus a Telegram bot and CLI-generated neon-styled PNG reports.
 
 ## Setup & Running
 
@@ -43,10 +43,10 @@ There are no tests or CI configured. The frontend has ESLint (react-hooks v7 / R
 
 ### Core Class Hierarchy
 
-`StravaIntelligence` is the main orchestrator that wires everything together:
+`Zone2` (in `zone2/core.py`) is the main orchestrator that wires everything together:
 
 ```
-StravaIntelligence
+Zone2
 ├── StravaEndpoint          — Strava API client (OAuth, activity/stream fetching)
 ├── StravaActivitiesCache   — Local Parquet-based activity storage with lazy in-memory loading
 ├── StravaUserCache          — Cached user profile/zones data
@@ -73,7 +73,7 @@ StravaIntelligence
 - `athlete.py` — Profile, rate limits, HR zones
 - `goals.py` — Yearly goal CRUD with progress tracking
 - `workouts.py` — Workout template management with segments
-- `dependencies.py` — DI providing `StravaIntelligence` singleton
+- `dependencies.py` — DI providing `Zone2` singleton
 - `config.py` — Pydantic settings (`workdir`, `cors_origins`, `sync_max_age_hours`)
 - `db.py` — SQLite via aiosqlite at `.strava/calendar.db` (tables: `training_sessions`, `goals`, `workout_templates`)
 
@@ -93,8 +93,8 @@ StravaIntelligence
 ### Key Conventions
 
 - All geo data uses `EPSG:4326` (BASE_CRS) as base, projected to `EPSG:3857` (WEB_MERCATOR_CRS) for visualization
-- Speed is stored in m/s (Strava API native); conversion to pace/speed uses `convert_speed()` / `format_pace_or_speed()` in `strava_utils.py` which auto-detects sport category
-- Sport categories are classified via string matching in `strava_utils.py`: running, cycling, swimming
+- Speed is stored in m/s (Strava API native); conversion to pace/speed uses `convert_speed()` / `format_pace_or_speed()` in `zone2/utils.py` which auto-detects sport category
+- Sport categories are classified via string matching in `zone2/utils.py`: running, cycling, swimming
 - Visualizations use a consistent dark/neon aesthetic with configurable `neon_color` parameters
 - Output images for reports use Instagram Story aspect ratio (9:16)
 - Token/auth data cached in `.strava/token.json`; activity metadata in `.strava/metadata.json`
@@ -104,6 +104,6 @@ StravaIntelligence
 ### Files of Note
 
 - `run_dev.py` — Runs backend + frontend dev servers concurrently
-- `strava/strava_intelligence_mcp.py` — Placeholder for future MCP server integration (currently empty)
+- `zone2/mcp.py` — Placeholder for future MCP server integration (currently empty)
 - `main.py` — Sandbox/example script, not a library entry point
 - `cache/` — SHA-based JSON cache files (for user data caching via `StravaUserCache`)

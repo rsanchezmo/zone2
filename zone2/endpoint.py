@@ -510,7 +510,7 @@ class StravaEndpoint:
             {time: [...], distance: [...], heartrate: [...], latlng: [[lat, lng], ...], ...}
         with all lists aligned. Empty dict when the activity has no streams.
         """
-        from strava.streams_store import from_strava_api
+        from zone2.streams_store import from_strava_api
 
         self._ensure_rate_limit_budget()
         headers = self.__get_headers()

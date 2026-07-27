@@ -30,11 +30,11 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.config import settings
-from backend.dependencies import set_strava_intelligence
+from backend.dependencies import set_zone2
 from backend.routers import activities, stats, exports, calendar, calendar_feed, sync, athlete, gear, goals, workouts, races, health, garmin, coverage
 from backend.routers.sync import _try_claim_sync, _run_sync
 from backend.db import init_db
-from strava.strava_intelligence import StravaIntelligence
+from zone2.core import Zone2
 
 
 _TOKEN_QS_RE = re.compile(r"(token=)[^&\s\"']+")
@@ -66,7 +66,7 @@ def _configure_logging() -> None:
     """Wire our app + strava loggers into stdout with a consistent format.
 
     Uses force=True so we override whatever uvicorn set up by default —
-    otherwise our `logger.info(...)` calls in strava/ would get swallowed
+    otherwise our `logger.info(...)` calls in zone2/ would get swallowed
     or formatted differently from FastAPI's own request logs.
     """
     level = getattr(logging, settings.log_level.upper(), logging.INFO)
@@ -80,7 +80,7 @@ def _configure_logging() -> None:
 
 
 async def _periodic_sync_loop(
-    si: StravaIntelligence, interval_hours: int, initial_delay_s: int = 30
+    z2: Zone2, interval_hours: int, initial_delay_s: int = 30
 ) -> None:
     """Fire an incremental sync every interval_hours. Runs an initial catch-up
     shortly after startup (initial_delay_s) so a restart/redeploy doesn't leave
@@ -96,7 +96,7 @@ async def _periodic_sync_loop(
             delay = interval_hours * 3600  # subsequent runs at the full interval
             if _try_claim_sync():
                 log.info("auto-sync starting")
-                await asyncio.to_thread(_run_sync, si, False, True)
+                await asyncio.to_thread(_run_sync, z2, False, True)
                 log.info("auto-sync finished")
             else:
                 log.info("auto-sync skipped: another sync already running")
@@ -107,7 +107,7 @@ async def _periodic_sync_loop(
 
 
 async def _periodic_garmin_sync_loop(
-    si: StravaIntelligence, interval_hours: int, initial_delay_s: int = 30
+    z2: Zone2, interval_hours: int, initial_delay_s: int = 30
 ) -> None:
     """Refresh Garmin wellness data every interval_hours via sync_recent(days=14).
     Runs an initial catch-up shortly after startup (initial_delay_s) so a
@@ -127,7 +127,7 @@ async def _periodic_garmin_sync_loop(
             delay = interval_hours * 3600  # subsequent runs at the full interval
             if _try_claim_garmin():
                 log.info("Garmin auto-sync starting")
-                await asyncio.to_thread(_run_garmin_sync, si, False)
+                await asyncio.to_thread(_run_garmin_sync, z2, False)
                 log.info("Garmin auto-sync finished")
             else:
                 log.info("Garmin auto-sync skipped: another Garmin sync running")
@@ -139,27 +139,27 @@ async def _periodic_garmin_sync_loop(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: initialize StravaIntelligence singleton
+    # Startup: initialize Zone2 singleton
     _configure_logging()
     # Anchor Garmin's token cache under .strava/ alongside the Strava token,
-    # before StravaIntelligence reads the env var to build its GarminClient.
+    # before Zone2 reads the env var to build its GarminClient.
     os.environ.setdefault("GARMINTOKENS", str(Path(".strava") / "garmin"))
-    si = StravaIntelligence(
+    z2 = Zone2(
         workdir=settings.workdir,
         auto_sync=False,
         sync_max_age_hours=settings.sync_max_age_hours,
     )
     # Best-effort Garmin login at startup. Doesn't raise if it fails.
-    if si.garmin_client.email:
-        await asyncio.to_thread(si.garmin_client.ensure_logged_in)
-    set_strava_intelligence(si)
+    if z2.garmin_client.email:
+        await asyncio.to_thread(z2.garmin_client.ensure_logged_in)
+    set_zone2(z2)
     await init_db()
 
     # One-time: derive slim per-day chart summaries for any cached Garmin
     # payloads that predate the summary table. Idempotent (no-op once filled),
     # threaded since the first pass parses every stored payload.
     try:
-        await asyncio.to_thread(si.garmin_cache.backfill_missing_summaries)
+        await asyncio.to_thread(z2.garmin_cache.backfill_missing_summaries)
     except Exception:
         logging.getLogger("backend.startup").exception("Garmin summary backfill failed")
 
@@ -168,17 +168,17 @@ async def lifespan(app: FastAPI):
     # a thread since pd.read_parquet is blocking.
     startup_log = logging.getLogger("backend.startup")
     startup_log.info("warming activities cache…")
-    await asyncio.to_thread(si.strava_activities_cache._load_to_memory)
+    await asyncio.to_thread(z2.strava_activities_cache._load_to_memory)
     startup_log.info("activities cache warm")
 
     sync_task: asyncio.Task | None = None
     if settings.auto_sync_hours > 0:
-        sync_task = asyncio.create_task(_periodic_sync_loop(si, settings.auto_sync_hours))
+        sync_task = asyncio.create_task(_periodic_sync_loop(z2, settings.auto_sync_hours))
 
     garmin_sync_task: asyncio.Task | None = None
-    if settings.auto_garmin_sync_hours > 0 and si.garmin_client.email:
+    if settings.auto_garmin_sync_hours > 0 and z2.garmin_client.email:
         garmin_sync_task = asyncio.create_task(
-            _periodic_garmin_sync_loop(si, settings.auto_garmin_sync_hours)
+            _periodic_garmin_sync_loop(z2, settings.auto_garmin_sync_hours)
         )
 
     try:
@@ -194,7 +194,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Strava Intelligence",
+    title="z2",
     lifespan=lifespan,
     docs_url=None,
     redoc_url=None,

@@ -21,7 +21,7 @@ from backend.services.zones import get_setting, set_setting
 
 FEED_TOKEN_KEY = "calendar_feed_token"
 LAST_FETCH_KEY = "calendar_feed_last_fetched_at"
-PRODID = "-//Strava Intelligence//Calendar Feed//EN"
+PRODID = "-//z2//Calendar Feed//EN"
 
 
 def is_env_managed() -> bool:
@@ -285,14 +285,14 @@ def build_ics(sessions: Iterable[dict], races: Iterable[dict]) -> str:
         f"PRODID:{PRODID}",
         "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH",
-        "X-WR-CALNAME:Strava Intelligence — Training Plan",
+        "X-WR-CALNAME:z2 — Training Plan",
         "X-WR-TIMEZONE:UTC",
     ]
     for s in sessions:
         if not s.get("date"):
             continue
         lines.extend(_event_lines(
-            uid=f"session-{s['id']}@strava-intelligence",
+            uid=f"session-{s['id']}@zone2",
             dtstamp=dtstamp,
             date_str=s["date"],
             summary=_session_summary(s),
@@ -302,7 +302,7 @@ def build_ics(sessions: Iterable[dict], races: Iterable[dict]) -> str:
         if not r.get("date"):
             continue
         lines.extend(_event_lines(
-            uid=f"race-{r['id']}@strava-intelligence",
+            uid=f"race-{r['id']}@zone2",
             dtstamp=dtstamp,
             date_str=r["date"],
             summary=_race_summary(r),

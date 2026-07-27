@@ -79,7 +79,7 @@ async def calendar_feed(
         media_type="text/calendar; charset=utf-8",
         headers={
             "Cache-Control": "private, max-age=300",
-            "Content-Disposition": 'inline; filename="strava-intelligence.ics"',
+            "Content-Disposition": 'inline; filename="zone2.ics"',
         },
     )
 

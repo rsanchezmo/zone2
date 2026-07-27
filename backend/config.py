@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 class Settings(BaseSettings):
-    workdir: Path = Path("./strava_intelligence_workdir")
+    workdir: Path = Path("./zone2_workdir")
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:8000"]
     sync_max_age_hours: int = 12
     # If > 0, the backend runs an incremental sync every N hours. 0 disables

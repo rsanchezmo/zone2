@@ -9,8 +9,8 @@ A "slice" is the same shape with shorter arrays. Helpers `_len`, `_get`, and
 
 from __future__ import annotations
 
-from strava.strava_utils import convert_speed, get_sport_category
-from strava.streams_store import slice_streams as _slice, stream_length as _len
+from zone2.utils import convert_speed, get_sport_category
+from zone2.streams_store import slice_streams as _slice, stream_length as _len
 
 
 def match_activity(

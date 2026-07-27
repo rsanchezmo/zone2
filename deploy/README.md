@@ -5,21 +5,21 @@ Docker services when there are new commits.
 
 ## Install
 
-Assumes you've already cloned the repo at `/home/pi/strava-intelligence` and
+Assumes you've already cloned the repo at `/home/pi/zone2` and
 the user `pi` is in the `docker` group. If your username or path differ, edit
-`strava-deploy.service` first (the three `User=` / `Group=` / `WorkingDirectory=`
+`z2-deploy.service` first (the three `User=` / `Group=` / `WorkingDirectory=`
 / `ExecStart=` lines).
 
 ```bash
-cd /home/pi/strava-intelligence
+cd /home/pi/zone2
 
 # 1. Copy units into systemd
-sudo cp deploy/strava-deploy.service /etc/systemd/system/
-sudo cp deploy/strava-deploy.timer   /etc/systemd/system/
+sudo cp deploy/z2-deploy.service /etc/systemd/system/
+sudo cp deploy/z2-deploy.timer   /etc/systemd/system/
 
 # 2. Load and enable the timer (starts now, runs on every boot)
 sudo systemctl daemon-reload
-sudo systemctl enable --now strava-deploy.timer
+sudo systemctl enable --now z2-deploy.timer
 ```
 
 That's it. The timer fires 2 minutes after boot, then every 12 hours.
@@ -32,40 +32,40 @@ laptop — the Pi picks it up on its next firing.
 **Force a deploy right now** (no need to wait for the timer):
 
 ```bash
-sudo systemctl start strava-deploy.service
+sudo systemctl start z2-deploy.service
 ```
 
 **Watch live logs**:
 
 ```bash
-journalctl -u strava-deploy.service -f
+journalctl -u z2-deploy.service -f
 ```
 
 **See the timer schedule**:
 
 ```bash
-systemctl list-timers strava-deploy.timer
+systemctl list-timers z2-deploy.timer
 ```
 
 ## Tuning
 
-Change the poll interval by editing `strava-deploy.timer` (`OnUnitActiveSec=`
+Change the poll interval by editing `z2-deploy.timer` (`OnUnitActiveSec=`
 line) — any systemd time spec works (`30min`, `4h`, `1d`, etc.). Reload after:
 
 ```bash
-sudo cp deploy/strava-deploy.timer /etc/systemd/system/
+sudo cp deploy/z2-deploy.timer /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl restart strava-deploy.timer
+sudo systemctl restart z2-deploy.timer
 ```
 
 ## Disable
 
 ```bash
-sudo systemctl disable --now strava-deploy.timer
+sudo systemctl disable --now z2-deploy.timer
 ```
 
 The units stay in `/etc/systemd/system/` but never fire. Remove them with
-`sudo rm /etc/systemd/system/strava-deploy.{service,timer}` if you want a
+`sudo rm /etc/systemd/system/z2-deploy.{service,timer}` if you want a
 clean slate.
 
 ## Branching workflow

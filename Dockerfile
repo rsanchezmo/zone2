@@ -32,7 +32,7 @@ COPY pyproject.toml poetry.lock ./
 RUN poetry install --no-root --only main
 
 # Copy application code
-COPY strava/ ./strava/
+COPY zone2/ ./zone2/
 COPY backend/ ./backend/
 COPY cache/ ./cache/
 COPY main.py ./

@@ -1,11 +1,11 @@
 [tool.poetry]
-name = "strava-intelligence"
+name = "zone2"
 version = "0.1.0"
 description = "A Python toolkit for analyzing and visualizing your Strava activities"
 authors = ["rsanchezmo"]
 readme = "README.md"
 packages = [
-    { include = "strava" },
+    { include = "zone2" },
     { include = "backend" },
 ]
 

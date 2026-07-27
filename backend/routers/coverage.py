@@ -8,10 +8,10 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.config import settings
-from backend.dependencies import get_si
-from strava.strava_intelligence import StravaIntelligence
-from strava.strava_map_matching import StravaMapMatcher
-from strava.strava_utils import get_activities_as_gdf_from_streams
+from backend.dependencies import get_z2
+from zone2.core import Zone2
+from zone2.map_matching import StravaMapMatcher
+from zone2.utils import get_activities_as_gdf_from_streams
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -291,14 +291,14 @@ def coverage_area(slug: str, payload: AreaRequest):
     return matcher.coverage_in_polygon(payload.points, streets_only=payload.streets_only)
 
 
-def _run_coverage_sync(slug: str, si: StravaIntelligence, sport_types: list[str]):
+def _run_coverage_sync(slug: str, z2: Zone2, sport_types: list[str]):
     err = None
     try:
         matcher = _get_matcher(slug)
         # High-resolution GPS streams (falls back to summary polyline per
         # activity when a stream isn't cached); the matcher thins them to
         # ~20 m so density stays comparable to polylines.
-        cache = si.strava_activities_cache
+        cache = z2.strava_activities_cache
         gdf = get_activities_as_gdf_from_streams(cache.activities, cache.streams)
         gdf = gdf[gdf["sport_type"].isin(sport_types)]
         stats = matcher.match_incremental(gdf)
@@ -316,7 +316,7 @@ def trigger_coverage_sync(
     slug: str,
     background_tasks: BackgroundTasks,
     sport_types: str = Query("Run", description="Comma-separated sport types"),
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
     _get_matcher(slug)  # 404 before claiming the slot
     with _sync_lock:
@@ -324,7 +324,7 @@ def trigger_coverage_sync(
             raise HTTPException(status_code=409, detail="Coverage sync already running")
         _sync_status[slug] = {"running": True, "last_error": None}
     sports = [s.strip() for s in sport_types.split(",") if s.strip()]
-    background_tasks.add_task(_run_coverage_sync, slug, si, sports)
+    background_tasks.add_task(_run_coverage_sync, slug, z2, sports)
     return {"status": "started"}
 
 

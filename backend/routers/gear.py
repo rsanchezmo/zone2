@@ -5,9 +5,9 @@ import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
 
 from backend._ttl_cache import TTLCache
-from backend.dependencies import get_si
+from backend.dependencies import get_z2
 from backend.services.gear import gear_label, resolve_gear_catalog
-from strava.strava_intelligence import StravaIntelligence
+from zone2.core import Zone2
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -26,9 +26,9 @@ def _f(value) -> float:
     return float(value)
 
 
-def _gear_activities(si: StravaIntelligence) -> pd.DataFrame:
+def _gear_activities(z2: Zone2) -> pd.DataFrame:
     """Activities carrying a gear_id, dates already parsed."""
-    activities = si.strava_analytics._get_prepared_activities()
+    activities = z2.strava_analytics._get_prepared_activities()
     if activities.empty or "gear_id" not in activities.columns:
         return activities.iloc[0:0]
     return activities[activities["gear_id"].notna()]
@@ -76,13 +76,13 @@ def _rollup(gear: dict, acts: pd.DataFrame) -> dict:
     return summary
 
 
-def _all_time_bests(si: StravaIntelligence) -> dict[int, int]:
+def _all_time_bests(z2: Zone2) -> dict[int, int]:
     """distance_m -> fastest elapsed time across every activity with best efforts.
 
     Strava computes these server-side and ships them on the detailed activity,
     so this needs no streams.
     """
-    activities = si.strava_analytics._get_prepared_activities()
+    activities = z2.strava_analytics._get_prepared_activities()
     if activities.empty or "best_efforts" not in activities.columns:
         return {}
 
@@ -211,15 +211,15 @@ def _extreme(acts: pd.DataFrame, column: str, largest: bool = True) -> dict | No
 
 
 @router.get("")
-def list_gear(si: StravaIntelligence = Depends(get_si)):
+def list_gear(z2: Zone2 = Depends(get_z2)):
     """Every gear item with its activity rollup — powers the rotation timeline."""
-    key = ("list", si.strava_activities_cache.cache_version)
+    key = ("list", z2.strava_activities_cache.cache_version)
     cached = _gear_cache.get(key)
     if cached is not None:
         return cached
 
-    catalog = resolve_gear_catalog(si)
-    activities = _gear_activities(si)
+    catalog = resolve_gear_catalog(z2)
+    activities = _gear_activities(z2)
     by_gear = dict(tuple(activities.groupby("gear_id"))) if not activities.empty else {}
 
     gear = [
@@ -234,18 +234,18 @@ def list_gear(si: StravaIntelligence = Depends(get_si)):
 
 
 @router.get("/{gear_id}")
-def gear_detail(gear_id: str, si: StravaIntelligence = Depends(get_si)):
-    key = ("detail", gear_id, si.strava_activities_cache.cache_version)
+def gear_detail(gear_id: str, z2: Zone2 = Depends(get_z2)):
+    key = ("detail", gear_id, z2.strava_activities_cache.cache_version)
     cached = _gear_cache.get(key)
     if cached is not None:
         return cached
 
-    catalog = resolve_gear_catalog(si)
+    catalog = resolve_gear_catalog(z2)
     gear = catalog.get(gear_id)
     if gear is None:
         raise HTTPException(status_code=404, detail=f"Unknown gear id {gear_id}")
 
-    all_gear_activities = _gear_activities(si)
+    all_gear_activities = _gear_activities(z2)
     acts = (
         all_gear_activities[all_gear_activities["gear_id"] == gear_id]
         if not all_gear_activities.empty
@@ -305,7 +305,7 @@ def gear_detail(gear_id: str, si: StravaIntelligence = Depends(get_si)):
         "activities": _activity_points(acts),
         "monthly": _monthly(acts),
         "sport_mix": _sport_mix(acts),
-        "best_efforts": _best_efforts_for(acts, _all_time_bests(si)),
+        "best_efforts": _best_efforts_for(acts, _all_time_bests(z2)),
         "extremes": {
             "longest": _extreme(acts, "distance"),
             "fastest": _extreme(acts, "average_speed"),

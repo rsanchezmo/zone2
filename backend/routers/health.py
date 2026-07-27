@@ -1,17 +1,17 @@
 from fastapi import APIRouter, Depends
 
-from backend.dependencies import get_si
+from backend.dependencies import get_z2
 from backend.routers.sync import _sync_status, _sync_lock
-from strava.strava_intelligence import StravaIntelligence
+from zone2.core import Zone2
 
 router = APIRouter()
 
 
 @router.get("")
-def health(si: StravaIntelligence = Depends(get_si)):
+def health(z2: Zone2 = Depends(get_z2)):
     """Liveness/readiness probe. Returns cache state so it's also useful for
     manual curl + Docker/Cloudflare readiness gates."""
-    cache = si.strava_activities_cache
+    cache = z2.strava_activities_cache
     with _sync_lock:
         sync_running = _sync_status["running"]
     return {

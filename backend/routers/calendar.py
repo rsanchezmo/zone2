@@ -8,10 +8,10 @@ import pandas as pd
 
 from backend._serialize import sanitize as _sanitize
 from backend.db import get_db
-from backend.dependencies import get_si
+from backend.dependencies import get_z2
 from backend.scoring import match_activity, compute_execution_score, has_targets
 from backend.services.zones import resolve_hr_zones
-from strava.strava_intelligence import StravaIntelligence
+from zone2.core import Zone2
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +120,7 @@ async def get_session_scores(
     date_from: str = Query(...),
     date_to: str = Query(...),
     db: aiosqlite.Connection = Depends(get_db),
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
     """Bulk compute execution scores for sessions with targets in date range."""
     cursor = await db.execute(
@@ -134,7 +134,7 @@ async def get_session_scores(
     if not sessions_with_targets:
         return {}
 
-    activities_df = si.strava_activities_cache.get_prepared_view()
+    activities_df = z2.strava_activities_cache.get_prepared_view()
     if not activities_df.empty:
         dt_from = pd.to_datetime(date_from)
         dt_to = pd.to_datetime(date_to) + pd.Timedelta(days=1)  # inclusive
@@ -161,7 +161,7 @@ async def get_session_scores(
 
     hr_zones = None
     try:
-        hr_zones = (await resolve_hr_zones(si, db))["zones"]
+        hr_zones = (await resolve_hr_zones(z2, db))["zones"]
     except Exception as e:
         logger.debug("Could not load HR zones for scoring: %s", e)
 
@@ -178,7 +178,7 @@ async def get_session_scores(
         pending.append((sid, session, matched))
 
     matched_ids = [m["id"] for _, _, m in pending if m.get("id") is not None]
-    streams_map = si.strava_activities_cache.get_streams_bulk(matched_ids) if matched_ids else {}
+    streams_map = z2.strava_activities_cache.get_streams_bulk(matched_ids) if matched_ids else {}
 
     for sid, session, matched in pending:
         streams = streams_map.get(int(matched["id"])) if matched.get("id") is not None else None
@@ -191,10 +191,10 @@ async def get_session_scores(
 async def get_score_by_activity(
     activity_id: int,
     db: aiosqlite.Connection = Depends(get_db),
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
     """Get execution score for a specific Strava activity, if a matching session exists."""
-    row = si.strava_activities_cache.get_activity_by_id(activity_id)
+    row = z2.strava_activities_cache.get_activity_by_id(activity_id)
     if row is None:
         return None
     sdt = row.get("start_date_local")
@@ -216,11 +216,11 @@ async def get_score_by_activity(
 
     hr_zones = None
     try:
-        hr_zones = (await resolve_hr_zones(si, db))["zones"]
+        hr_zones = (await resolve_hr_zones(z2, db))["zones"]
     except Exception as e:
         logger.debug("Could not load HR zones for scoring: %s", e)
 
-    streams = si.strava_activities_cache.get_streams(activity_id)
+    streams = z2.strava_activities_cache.get_streams(activity_id)
 
     for session in sessions_with_targets:
         if session.get("sport_type") != activity_dict.get("sport_type"):

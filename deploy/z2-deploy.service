@@ -1,5 +1,5 @@
 [Unit]
-Description=Strava Intelligence — auto-deploy from prod branch
+Description=z2 — auto-deploy from prod branch
 After=network-online.target docker.service
 Wants=network-online.target
 Requires=docker.service
@@ -9,8 +9,8 @@ Type=oneshot
 # EDIT THESE to match your Pi: the user that owns the repo and its path.
 User=pi
 Group=pi
-WorkingDirectory=/home/pi/strava-intelligence
-ExecStart=/home/pi/strava-intelligence/scripts/auto-deploy.sh
+WorkingDirectory=/home/pi/zone2
+ExecStart=/home/pi/zone2/scripts/auto-deploy.sh
 
 # Treat a failed rebuild as a failure so systemd logs it clearly.
 # (The old container keeps running — failure here doesn't stop the app.)

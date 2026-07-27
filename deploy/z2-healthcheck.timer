@@ -1,5 +1,5 @@
 [Unit]
-Description=Run Strava Intelligence health probe every 15 min
+Description=Run z2 health probe every 15 min
 
 [Timer]
 # First run shortly after boot — catches immediate post-reboot breakage.
@@ -7,7 +7,7 @@ OnBootSec=2min
 # Then every 15 min. Keep this in sync with the Healthchecks.io check's
 # "period" (15 min) and "grace" (5 min) — gives ~20 min detection.
 OnUnitActiveSec=15min
-Unit=strava-healthcheck.service
+Unit=z2-healthcheck.service
 Persistent=true
 
 [Install]

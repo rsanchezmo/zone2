@@ -1,6 +1,6 @@
-# Deploying Strava Intelligence
+# Deploying z2
 
-Run Strava Intelligence on a Raspberry Pi (or any ARM64 / x86 server),
+Run z2 on a Raspberry Pi (or any ARM64 / x86 server),
 accessible from anywhere via Cloudflare Tunnel, protected by Cloudflare
 Access, and optionally auto-deployed from a `prod` branch on every push.
 
@@ -13,6 +13,39 @@ Internet → Cloudflare Access (auth) → Cloudflare Tunnel → cloudflared → 
 No ports are opened on your network. Cloudflare handles TLS, DNS, and
 authentication. SSH into the Pi can go through the same tunnel (see
 [SSH over the tunnel](#ssh-over-the-tunnel) below).
+
+## Migrating an existing install (renamed from `strava-intelligence`)
+
+Nothing breaks if you skip this — `auto-deploy.sh` resolves its own repo root,
+so an existing checkout keeps deploying under the old directory name. Do it
+only if you want the Pi to match the docs:
+
+```bash
+# 1. Stop the stack under the OLD Compose project name, or the renamed
+#    directory yields a second project whose containers fight for :8000.
+cd /home/pi/strava-intelligence
+docker compose down
+
+# 2. Swap the systemd units
+sudo systemctl disable --now strava-deploy.timer strava-healthcheck.timer
+sudo rm /etc/systemd/system/strava-{deploy,healthcheck}.{service,timer}
+sudo mv /etc/strava-healthcheck.env /etc/z2-healthcheck.env
+
+# 3. Rename the checkout and reinstall
+mv /home/pi/strava-intelligence /home/pi/zone2
+cd /home/pi/zone2
+sudo cp deploy/z2-*.service deploy/z2-*.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now z2-deploy.timer z2-healthcheck.timer
+
+# 4. Bring it back up
+docker compose up -d --build
+```
+
+Your data survives: `docker-compose.yml` pins the volume names to
+`strava-intelligence_strava-data` / `..._strava-workdir`, so they stay attached
+no matter what the directory or Compose project is called. Only the container's
+workdir mount path moves, to `/app/zone2_workdir`.
 
 ## Prerequisites
 
@@ -120,8 +153,8 @@ build (the Dockerfile `COPY`s `cache/`, so the build fails without it):
 
 ```bash
 # On the Pi, switch to bind-mounts first (see docker-compose.override.yml below).
-rsync -avz --delete ./.strava/ pi:/home/pi/strava-intelligence/strava-data/
-rsync -avz           ./cache/  pi:/home/pi/strava-intelligence/cache/
+rsync -avz --delete ./.strava/ pi:/home/pi/zone2/strava-data/
+rsync -avz           ./cache/  pi:/home/pi/zone2/cache/
 ```
 
 Instead of editing the tracked `docker-compose.yml`, drop a
@@ -136,7 +169,7 @@ services:
       - "127.0.0.1:8000:8000"     # loopback-only; host cloudflared reaches it
     volumes: !override
       - ./strava-data:/app/.strava
-      - ./strava-workdir:/app/strava_intelligence_workdir
+      - ./strava-workdir:/app/zone2_workdir
   cloudflared:
     profiles: ["disabled"]        # skip if you run cloudflared on the host
 
@@ -159,8 +192,8 @@ is the only path in.
 
 ```bash
 # SSH into the Pi
-git clone https://github.com/yourusername/strava-intelligence.git
-cd strava-intelligence
+git clone https://github.com/yourusername/zone2.git
+cd zone2
 
 # Create your .env from the example
 cp .env.example .env
@@ -186,14 +219,14 @@ Pi automatically pulls + rebuilds whenever the `prod` branch moves forward.
 See [`deploy/README.md`](./deploy/README.md) for full details. Short version:
 
 ```bash
-# On the Pi, inside /home/pi/strava-intelligence
+# On the Pi, inside /home/pi/zone2
 # If your user/path differ from pi:/home/pi, patch the service in-flight:
 sed -e "s|User=pi|User=$USER|" -e "s|Group=pi|Group=$USER|" \
-    -e "s|/home/pi/|$HOME/|g" deploy/strava-deploy.service \
-  | sudo tee /etc/systemd/system/strava-deploy.service > /dev/null
-sudo cp deploy/strava-deploy.timer /etc/systemd/system/
+    -e "s|/home/pi/|$HOME/|g" deploy/z2-deploy.service \
+  | sudo tee /etc/systemd/system/z2-deploy.service > /dev/null
+sudo cp deploy/z2-deploy.timer /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now strava-deploy.timer
+sudo systemctl enable --now z2-deploy.timer
 ```
 
 Now the workflow is:
@@ -211,8 +244,8 @@ The timer fires every 12 hours (and 2 min after each boot). To deploy
 immediately without waiting for the timer:
 
 ```bash
-sudo systemctl start strava-deploy.service
-journalctl -u strava-deploy.service -f
+sudo systemctl start z2-deploy.service
+journalctl -u z2-deploy.service -f
 ```
 
 ## SSH over the tunnel
@@ -271,17 +304,17 @@ period.
 ```bash
 # On the Pi — store the ping URL (600 so only root reads it)
 echo "HC_URL=https://hc-ping.com/<your-check-uuid>" \
-  | sudo tee /etc/strava-healthcheck.env > /dev/null
-sudo chmod 600 /etc/strava-healthcheck.env
+  | sudo tee /etc/z2-healthcheck.env > /dev/null
+sudo chmod 600 /etc/z2-healthcheck.env
 
 # Install the script + systemd timer (see scripts/healthcheck.sh + deploy/).
 # Same sed patch as the auto-deploy unit, for non-pi users/paths:
 sed -e "s|User=pi|User=$USER|" -e "s|Group=pi|Group=$USER|" \
-    -e "s|/home/pi/|$HOME/|g" deploy/strava-healthcheck.service \
-  | sudo tee /etc/systemd/system/strava-healthcheck.service > /dev/null
-sudo cp deploy/strava-healthcheck.timer /etc/systemd/system/
+    -e "s|/home/pi/|$HOME/|g" deploy/z2-healthcheck.service \
+  | sudo tee /etc/systemd/system/z2-healthcheck.service > /dev/null
+sudo cp deploy/z2-healthcheck.timer /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now strava-healthcheck.timer
+sudo systemctl enable --now z2-healthcheck.timer
 ```
 
 Keep the Pi timer cadence and the HC.io **period** in sync (both `12h` is a
@@ -309,7 +342,7 @@ python run_dev.py   # see the main README
 If the auto-deploy timer isn't installed or you want to deploy without waiting:
 
 ```bash
-cd /home/pi/strava-intelligence
+cd /home/pi/zone2
 git pull
 docker compose up -d --build
 ```
@@ -317,7 +350,7 @@ docker compose up -d --build
 If the timer is installed, prefer:
 
 ```bash
-sudo systemctl start strava-deploy.service
+sudo systemctl start z2-deploy.service
 ```
 
 ## Troubleshooting

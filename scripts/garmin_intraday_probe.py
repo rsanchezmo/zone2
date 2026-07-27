@@ -48,7 +48,7 @@ except ImportError:
     print("ERROR: `garminconnect` not installed. Run: poetry add garminconnect curl-cffi")
     sys.exit(1)
 
-# The 10 per-day metrics the real sync fetches (strava/garmin_client.py).
+# The 10 per-day metrics the real sync fetches (zone2/garmin_client.py).
 # training_readiness is special-cased: the API returns a list of intraday
 # snapshots, so it's intraday by construction — we still probe it to confirm.
 METRICS_PER_DAY: list[tuple[str, callable]] = [

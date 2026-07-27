@@ -16,7 +16,7 @@ import matplotlib
 # Use non-GUI backend for matplotlib to prevent crashes on servers
 matplotlib.use("Agg")
 
-from strava.strava_intelligence import StravaIntelligence
+from zone2.core import Zone2
 
 # --- Logging Configuration ---
 logging.basicConfig(
@@ -25,7 +25,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- Configuration ---
-WORKDIR = Path(os.getenv("STRAVA_WORKDIR", "./strava_intelligence_workdir"))
+WORKDIR = Path(os.getenv("STRAVA_WORKDIR", "./zone2_workdir"))
 WEEKLY_DIR = WORKDIR / "weekly_reports"
 YEAR_DIR = WORKDIR / "year_in_sport"
 
@@ -42,11 +42,11 @@ def _generate_weekly_report() -> Tuple[Optional[Path], str]:
     1. Path to the image
     2. A text summary caption
     """
-    si = StravaIntelligence(workdir=WORKDIR)
-    si.ensure_activities_with_streams()
+    z2 = Zone2(workdir=WORKDIR)
+    z2.ensure_activities_with_streams()
     
     # 1. Generate the Visualization
-    si.get_weekly_report()
+    z2.get_weekly_report()
     
     # 2. Find the generated file
     list_of_files = glob.glob(str(WEEKLY_DIR / "*.png"))
@@ -74,7 +74,7 @@ def _generate_weekly_report() -> Tuple[Optional[Path], str]:
     )
 
     caption = (
-        f"🏃 **Weekly Strava Report**\n"
+        f"🏃 **z2 Weekly Report**\n"
         f"📅 **Week:** {date_range_str}"
     )
     
@@ -87,11 +87,11 @@ def _generate_yearly_report(year: int) -> Tuple[List[Path], str]:
     1. List of image paths
     2. A text summary caption for the album
     """
-    si = StravaIntelligence(workdir=WORKDIR)
-    si.ensure_activities_with_streams()
+    z2 = Zone2(workdir=WORKDIR)
+    z2.ensure_activities_with_streams()
     
     # 1. Generate the Visualizations
-    si.get_year_in_sport(
+    z2.get_year_in_sport(
         year=year,
         main_sport='Run',
         comparison_year=year - 1,
@@ -249,7 +249,7 @@ async def post_init(app: Application) -> None:
     await app.bot.set_my_commands(commands)
     
     msg = (
-        f"🤖 **Strava Bot Online**\n"
+        f"🤖 **z2 Bot Online**\n"
         f"📍 Timezone: {TZ}\n"
         f"📂 Workdir: `{WORKDIR}`"
     )

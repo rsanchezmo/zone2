@@ -1,7 +1,7 @@
-from strava.strava_analytics import StravaAnalytics
-from strava.strava_utils import get_activities_as_gdf, get_region_coordinates, format_pace_or_speed, convert_speed, get_sport_category
-from strava.constants import WEB_MERCATOR_CRS, BASE_CRS
-from strava.strava_analytics import WeeklyReportFeatures
+from zone2.analytics import StravaAnalytics
+from zone2.utils import get_activities_as_gdf, get_region_coordinates, format_pace_or_speed, convert_speed, get_sport_category
+from zone2.constants import WEB_MERCATOR_CRS, BASE_CRS
+from zone2.analytics import WeeklyReportFeatures
 
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -497,7 +497,7 @@ class StravaVisualizer:
         # Fetch streams for elevation data — try the cache first, else hit Strava.
         streams = self.strava_analytics.strava_activities_cache.get_streams(int(activity_id))
         if not streams:
-            from strava.strava_endpoint import StravaStreamFetchError
+            from zone2.endpoint import StravaStreamFetchError
             try:
                 streams = strava_endpoint.get_activity_streams(activity_id)
             except StravaStreamFetchError as e:
@@ -697,7 +697,7 @@ class StravaVisualizer:
         Shows sport-specific stats, monthly chart, and highlights.
         Optionally shows comparison with previous year.
         """
-        from strava.strava_analytics import YearInSportFeatures
+        from zone2.analytics import YearInSportFeatures
         
         main_sport_data = year_in_sport.get(main_sport, {})
         comparison_sport_data = comparison_data.get(main_sport, {}) if comparison_data else None
@@ -1100,7 +1100,7 @@ class StravaVisualizer:
         Shows total stats, sports breakdown, and monthly activity.
         Optionally shows comparison with previous year.
         """
-        from strava.strava_analytics import AllYearInSportFeatures
+        from zone2.analytics import AllYearInSportFeatures
         
         all_sports_data = year_in_sport.get('all', {})
         comparison_all_data = comparison_data.get('all', {}) if comparison_data else None

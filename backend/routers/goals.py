@@ -7,8 +7,8 @@ import aiosqlite
 import pandas as pd
 
 from backend.db import get_db
-from backend.dependencies import get_si
-from strava.strava_intelligence import StravaIntelligence
+from backend.dependencies import get_z2
+from zone2.core import Zone2
 
 router = APIRouter()
 
@@ -109,7 +109,7 @@ async def delete_goal(goal_id: int, db: aiosqlite.Connection = Depends(get_db)):
 async def goal_progress(
     week_start: str,
     db: aiosqlite.Connection = Depends(get_db),
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
     """Compute progress for all goals given a reference week_start (YYYY-MM-DD)."""
     ref = datetime.strptime(week_start, "%Y-%m-%d").date()
@@ -122,7 +122,7 @@ async def goal_progress(
     if not goals:
         return {"goals": []}
 
-    activities = si.strava_activities_cache.activities_raw.copy()
+    activities = z2.strava_activities_cache.activities_raw.copy()
     activities["start_date_local"] = pd.to_datetime(activities["start_date_local"])
 
     result = []

@@ -1,13 +1,13 @@
-from strava.strava_intelligence import StravaIntelligence
+from zone2.core import Zone2
 
-_instance: StravaIntelligence | None = None
+_instance: Zone2 | None = None
 
 
-def set_strava_intelligence(si: StravaIntelligence) -> None:
+def set_zone2(z2: Zone2) -> None:
     global _instance
-    _instance = si
+    _instance = z2
 
 
-def get_si() -> StravaIntelligence:
-    assert _instance is not None, "StravaIntelligence not initialized"
+def get_z2() -> Zone2:
+    assert _instance is not None, "Zone2 not initialized"
     return _instance

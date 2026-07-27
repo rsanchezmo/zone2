@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from backend.db import get_db
-from backend.dependencies import get_si
+from backend.dependencies import get_z2
 from backend.routers.exports import clear_export_cache
 from backend.routers.stats import clear_stats_cache
 from backend.services.zones import (
@@ -22,17 +22,17 @@ from backend.services.resting_hr import (
     Source as RestingHrSource,
     resolve_resting_hr,
 )
-from strava.strava_intelligence import StravaIntelligence
+from zone2.core import Zone2
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
 @router.get("/profile")
-def get_athlete_profile(si: StravaIntelligence = Depends(get_si)):
-    profile = dict(si.strava_user_cache.get_athlete_profile())
+def get_athlete_profile(z2: Zone2 = Depends(get_z2)):
+    profile = dict(z2.strava_user_cache.get_athlete_profile())
 
-    catalog = resolve_gear_catalog(si).values()
+    catalog = resolve_gear_catalog(z2).values()
     profile["shoes"] = [g for g in catalog if g["kind"] == "shoes"]
     profile["bikes"] = [g for g in catalog if g["kind"] == "bikes"]
 
@@ -40,17 +40,17 @@ def get_athlete_profile(si: StravaIntelligence = Depends(get_si)):
 
 
 @router.get("/rate-limits")
-def get_rate_limits(refresh: bool = False, si: StravaIntelligence = Depends(get_si)):
-    return si.strava_endpoint.get_rate_limits(refresh=refresh)
+def get_rate_limits(refresh: bool = False, z2: Zone2 = Depends(get_z2)):
+    return z2.strava_endpoint.get_rate_limits(refresh=refresh)
 
 
 @router.get("/zones")
 async def get_athlete_zones(
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
     db: aiosqlite.Connection = Depends(get_db),
 ):
     """Return HR zones using the user-selected source (strava / estimated / manual)."""
-    resolved = await resolve_hr_zones(si, db)
+    resolved = await resolve_hr_zones(z2, db)
     return {
         "heart_rate": {
             "zones": resolved["zones"],
@@ -89,7 +89,7 @@ async def get_zones_settings(db: aiosqlite.Connection = Depends(get_db)):
 async def update_zones_settings(
     payload: ZonesSettings,
     db: aiosqlite.Connection = Depends(get_db),
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
     # Validate + persist manual zones only when provided. Switching the source
     # on its own is always allowed; the resolver will fall back to estimated
@@ -122,8 +122,8 @@ async def update_zones_settings(
     await set_setting(db, "hr_zones_source", payload.source)
 
     # Drop caches so downstream analytics rebuild against the new source.
-    si.strava_analytics._hr_zones_cache = None
-    si.strava_analytics._training_load_cache = {}
+    z2.strava_analytics._hr_zones_cache = None
+    z2.strava_analytics._training_load_cache = {}
     clear_stats_cache()
     clear_export_cache()
 
@@ -132,11 +132,11 @@ async def update_zones_settings(
 
 @router.get("/resting-hr")
 async def get_resting_hr(
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
     db: aiosqlite.Connection = Depends(get_db),
 ):
     """Return the resting HR using the user-selected source (garmin / manual / estimated)."""
-    resolved = await resolve_resting_hr(si, db)
+    resolved = await resolve_resting_hr(z2, db)
     return {
         "value": resolved["value"],
         "source": resolved["source"],
@@ -167,16 +167,16 @@ async def get_resting_hr_settings(db: aiosqlite.Connection = Depends(get_db)):
 async def update_resting_hr_settings(
     payload: RestingHrSettings,
     db: aiosqlite.Connection = Depends(get_db),
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
     if payload.manual_resting_hr is not None:
         await set_setting(db, "manual_resting_hr", str(payload.manual_resting_hr))
     await set_setting(db, "resting_hr_source", payload.source)
 
     # Resting HR feeds daily TRIMP → PMC / fitness trend / relative effort.
-    si.strava_analytics._training_load_cache = {}
-    si.strava_analytics._pmc_cache = {}
-    si.strava_analytics._fitness_trend_cache = {}
+    z2.strava_analytics._training_load_cache = {}
+    z2.strava_analytics._pmc_cache = {}
+    z2.strava_analytics._fitness_trend_cache = {}
     clear_stats_cache()
     clear_export_cache()
 

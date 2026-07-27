@@ -1,4 +1,4 @@
-# 🏃 Strava Intelligence
+# 🏃 z2
 
 A Python toolkit for analyzing and visualizing your Strava activities without paying for Strava Premium. Sync your activities, generate cool visualizations, and track your performance metrics over time. This repository is conceived as a starting point for building more advanced Strava data analysis tools. I will keep adding features and visualizations over time.
 
@@ -6,6 +6,8 @@ A Python toolkit for analyzing and visualizing your Strava activities without pa
 ![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
 
 > ⚠️ **Disclaimer**: This project stores Strava data locally on your machine. It is the responsibility of each user to comply with [Strava's API Agreement](https://www.strava.com/legal/api) and their terms regarding data storage and usage. Please review Strava's policies before using this tool.
+
+**Powered by Strava.** z2 is an independent project and is not affiliated with, endorsed by, or sponsored by Strava, Inc.
 
 ## ✨ Current features
 
@@ -53,8 +55,8 @@ A Python toolkit for analyzing and visualizing your Strava activities without pa
 
 ```bash
 # Clone the repository
-git clone https://github.com/rsanchezmo/strava-intelligence.git
-cd strava-intelligence
+git clone https://github.com/rsanchezmo/zone2.git
+cd zone2
 
 # Install dependencies with Poetry
 poetry install
@@ -67,8 +69,8 @@ poetry env activate
 
 ```bash
 # Clone the repository
-git clone https://github.com/rsanchezmo/strava-intelligence.git
-cd strava-intelligence
+git clone https://github.com/rsanchezmo/zone2.git
+cd zone2
 
 # Create a virtual environment
 python -m venv .venv
@@ -180,14 +182,14 @@ To run the web app on a home server (Raspberry Pi, small VPS, etc.) behind a Clo
 ## 🚀 Quick Start (Python API)
 
 ```python
-from strava.strava_intelligence import StravaIntelligence
+from zone2.core import Zone2
 from pathlib import Path
 
 # Initialize (auto-syncs activities if cache is older than 12 hours)
-strava = StravaIntelligence(workdir=Path("./strava_intelligence_workdir"))
+z2 = Zone2(workdir=Path("./zone2_workdir"))
 
 # Generate a thunderstorm heatmap for your runs in a city
-strava.strava_visualizer.thunderstorm_heatmap(
+z2.strava_visualizer.thunderstorm_heatmap(
     sport_types=['Run'],
     location="paris",
     radius_km=20.0,
@@ -195,22 +197,22 @@ strava.strava_visualizer.thunderstorm_heatmap(
 )
 
 # Create an activity clock visualization
-strava.strava_visualizer.activity_clock(sport_types=['Run'])
+z2.strava_visualizer.activity_clock(sport_types=['Run'])
 
 # Generate a HUD-style dashboard
-strava.strava_visualizer.hud_dashboard(sport_types=['Run'])
+z2.strava_visualizer.hud_dashboard(sport_types=['Run'])
 
 # Plot efficiency factor trend
-strava.strava_visualizer.plot_efficiency_factor(sport_types=['Run'])
+z2.strava_visualizer.plot_efficiency_factor(sport_types=['Run'])
 
 # Plot performance frontier with fatigue model
-strava.strava_visualizer.plot_performance_frontier(sport_types=['Run'])
+z2.strava_visualizer.plot_performance_frontier(sport_types=['Run'])
 
 # Generate Year in Sport summary (Instagram Story format)
-strava.get_year_in_sport(year=2025, main_sport="Run", neon_color="#fc0101")
+z2.get_year_in_sport(year=2025, main_sport="Run", neon_color="#fc0101")
 
 # Generate Year in Sport with comparison to previous year
-strava.get_year_in_sport(
+z2.get_year_in_sport(
     year=2025, 
     main_sport="Run", 
     neon_color="#fc0101",
@@ -219,25 +221,25 @@ strava.get_year_in_sport(
 )
 
 # Generate Weekly Report (Instagram Story format)
-strava.get_weekly_report(week_start_date="2026-01-12", neon_color="#fc0101")
+z2.get_weekly_report(week_start_date="2026-01-12", neon_color="#fc0101")
 
 # Export activities as GeoJSON
-strava.save_geojson_activities()
+z2.save_geojson_activities()
 
 # --- Map Matching & Street Coverage ---
-from strava.strava_map_matching import StravaMapMatcher
-from strava.strava_utils import get_activities_as_gdf_from_streams
+from zone2.map_matching import StravaMapMatcher
+from zone2.utils import get_activities_as_gdf_from_streams
 
 # Initialize the map matcher for a city
 map_matcher = StravaMapMatcher(
     city_name="Paris, France",
-    workdir=Path("./strava_intelligence_workdir"),
+    workdir=Path("./zone2_workdir"),
     force_reload=False,
 )
 
 # Build a GeoDataFrame from high-res GPS streams
 activities_gdf = get_activities_as_gdf_from_streams(
-    strava.strava_activities_cache.activities
+    z2.strava_activities_cache.activities
 )
 
 # Match all activities to the OSM road network
@@ -306,7 +308,7 @@ Export your activities as GeoJSON for advanced spatial analysis in QGIS.
 ## 🏗️ Project Structure
 
 ```
-strava-intelligence/
+zone2/
 ├── main.py                         # Example usage (Python API)
 ├── telegram_bot.py                 # Scheduled Telegram reports
 ├── run_dev.py                      # Dev launcher (backend + frontend)
@@ -319,7 +321,7 @@ strava-intelligence/
 │   ├── app.py                      # FastAPI application + lifespan
 │   ├── config.py                   # Pydantic settings
 │   ├── db.py                       # SQLite (calendar / goals / workouts)
-│   ├── dependencies.py             # DI for the StravaIntelligence singleton
+│   ├── dependencies.py             # DI for the Zone2 singleton
 │   ├── export_cache.py             # In-memory TTL cache for PNG exports
 │   ├── scoring.py                  # Session execution scoring
 │   ├── _serialize.py               # numpy/pandas → JSON sanitizer
@@ -349,38 +351,43 @@ strava-intelligence/
 │   │   └── pages/                  # Dashboard, Calendar, Activities, …
 │   └── vite.config.ts
 ├── deploy/                         # systemd units for auto-deploy
-│   ├── strava-deploy.service
-│   ├── strava-deploy.timer
+│   ├── z2-deploy.service
+│   ├── z2-deploy.timer
 │   └── README.md
 ├── scripts/                        # Deploy + dev scripts
 │   ├── auto-deploy.sh              # prod-branch poller (run by systemd)
 │   ├── install-hooks.sh            # one-shot git hooks installer
 │   └── hooks/pre-commit            # secret-scanning pre-commit hook
-└── strava/                         # Core Python library
+└── zone2/                          # Core Python library
+    ├── activities_cache.py         # Parquet-backed cache w/ cache_version
+    ├── analytics.py                # Year-in-sport, weekly report, PRs, PMC
     ├── constants.py                # CRS constants
-    ├── strava_activities_cache.py  # Parquet-backed cache w/ cache_version
-    ├── strava_analytics.py         # Year-in-sport, weekly report, PRs, PMC
-    ├── strava_endpoint.py          # Strava API client w/ rate-limit pre-check
-    ├── strava_intelligence.py      # Main orchestrator class
-    ├── strava_map_matching.py      # OSM map matching & coverage
-    ├── strava_user_cache.py        # User data caching
-    ├── strava_utils.py             # Utility functions
-    └── strava_visualizer.py        # Visualization generators
+    ├── core.py                     # Main orchestrator class (Zone2)
+    ├── endpoint.py                 # Strava API client w/ rate-limit pre-check
+    ├── garmin_cache.py             # Parquet-backed Garmin daily-stats cache
+    ├── garmin_client.py            # Garmin Connect client
+    ├── garmin_extractors.py        # Per-metric payload → summary extractors
+    ├── map_matching.py             # OSM map matching & coverage
+    ├── mcp.py                      # MCP server (placeholder)
+    ├── streams_store.py            # Columnar GPS/HR stream storage
+    ├── user_cache.py               # User data caching
+    ├── utils.py                    # Utility functions
+    └── visualizer.py               # Visualization generators
 ```
 
 ## 📝 API Reference
 
-The library is organized around one orchestrator (`StravaIntelligence`) that
+The library is organized around one orchestrator (`Zone2`) that
 wires together four focused components. All Python methods listed below are
 the public surface; the web API exposes the same functionality via
 `/api/*` routes (see `backend/routers/`).
 
-### StravaIntelligence
+### Zone2
 
 The main class that orchestrates all functionality.
 
 ```python
-StravaIntelligence(
+Zone2(
     workdir: Path,                  # Working directory for generated outputs
     auto_sync: bool = True,         # Auto-sync on initialization
     sync_max_age_hours: int = 12,   # Cache age threshold for auto-sync

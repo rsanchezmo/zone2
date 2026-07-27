@@ -25,8 +25,8 @@ from datetime import date as date_t, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from strava.garmin_client import GarminClient
-from strava.garmin_extractors import SUMMARY_METRICS, extract, is_finalized
+from zone2.garmin_client import GarminClient
+from zone2.garmin_extractors import SUMMARY_METRICS, extract, is_finalized
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ class GarminDailyStatsCache:
         """rows = [(date_iso, metric, payload_dict_or_list), ...].
 
         Writes the raw payload and, for metrics that feed the trends charts,
-        the derived slim summary (see strava/garmin_extractors). Null payloads
+        the derived slim summary (see zone2/garmin_extractors). Null payloads
         are skipped — leaving a 'missing' gap we can refetch."""
         items: list[tuple[str, str, str]] = []
         summaries: list[tuple[str, str, str]] = []

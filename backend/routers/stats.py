@@ -7,11 +7,11 @@ import numpy as np
 
 from backend._ttl_cache import TTLCache
 from backend.db import get_db
-from backend.dependencies import get_si
+from backend.dependencies import get_z2
 from backend.services.zones import resolve_hr_zones
 from backend.services.resting_hr import resolve_resting_hr
-from strava.strava_intelligence import StravaIntelligence
-from strava.strava_utils import convert_speed, get_sport_category
+from zone2.core import Zone2
+from zone2.utils import convert_speed, get_sport_category
 
 router = APIRouter()
 
@@ -40,16 +40,16 @@ def _zones_signature(hr_zones: list | None) -> str:
 
 
 def _get_weekly_report_cached(
-    si: StravaIntelligence,
+    z2: Zone2,
     week_start: str | None,
     cutoff_date: str | None = None,
     hr_zones: list | None = None,
 ) -> dict:
-    key = ("weekly", week_start, cutoff_date, si.strava_activities_cache.cache_version, _zones_signature(hr_zones))
+    key = ("weekly", week_start, cutoff_date, z2.strava_activities_cache.cache_version, _zones_signature(hr_zones))
     cached = _stats_cache.get(key)
     if cached is not None:
         return cached
-    result = si.strava_analytics.get_weekly_report(week_start, cutoff_date=cutoff_date, hr_zones=hr_zones)
+    result = z2.strava_analytics.get_weekly_report(week_start, cutoff_date=cutoff_date, hr_zones=hr_zones)
     _stats_cache.set(key, result)
     return result
 
@@ -57,12 +57,12 @@ def _get_weekly_report_cached(
 @router.get("/weekly-report")
 async def weekly_report(
     week_start: str | None = None,
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    resolved = await resolve_hr_zones(si, db)
+    resolved = await resolve_hr_zones(z2, db)
     hr_zones = resolved["zones"]
-    report = _get_weekly_report_cached(si, week_start, hr_zones=hr_zones)
+    report = _get_weekly_report_cached(z2, week_start, hr_zones=hr_zones)
     # Previous week for deltas — with same day-of-week cutoff for fairness
     week_start_str = report.get("week_start")
     prev_report = None
@@ -77,12 +77,12 @@ async def weekly_report(
             days_elapsed = (today - current_monday).days
             cutoff_day_prev = prev_monday + timedelta(days=days_elapsed)
             prev_report = _get_weekly_report_cached(
-                si, prev_monday.strftime("%Y-%m-%d"),
+                z2, prev_monday.strftime("%Y-%m-%d"),
                 cutoff_date=cutoff_day_prev.strftime("%Y-%m-%d"),
                 hr_zones=hr_zones,
             )
         else:
-            prev_report = _get_weekly_report_cached(si, prev_monday.strftime("%Y-%m-%d"), hr_zones=hr_zones)
+            prev_report = _get_weekly_report_cached(z2, prev_monday.strftime("%Y-%m-%d"), hr_zones=hr_zones)
 
     return {
         "current": _serialize_enum_dict(report),
@@ -90,14 +90,14 @@ async def weekly_report(
     }
 
 
-def _get_year_in_sport_cached(si: StravaIntelligence, year: int, main_sport: str, cutoff):
-    key = ("year_in_sport", year, main_sport, cutoff, si.strava_activities_cache.cache_version)
+def _get_year_in_sport_cached(z2: Zone2, year: int, main_sport: str, cutoff):
+    key = ("year_in_sport", year, main_sport, cutoff, z2.strava_activities_cache.cache_version)
     cached = _stats_cache.get(key)
     if cached is not None:
         return cached
     result = {
-        "main": si.strava_analytics.get_year_in_sport(year, main_sport, cutoff_month_day=cutoff),
-        "all": si.strava_analytics.get_all_year_in_sport(year, cutoff_month_day=cutoff),
+        "main": z2.strava_analytics.get_year_in_sport(year, main_sport, cutoff_month_day=cutoff),
+        "all": z2.strava_analytics.get_all_year_in_sport(year, cutoff_month_day=cutoff),
     }
     _stats_cache.set(key, result)
     return result
@@ -108,7 +108,7 @@ def year_in_sport(
     year: int | None = None,
     main_sport: str = Query(default="Run"),
     comparison_year: int | None = None,
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
     today = date.today()
     year = year or today.year
@@ -117,7 +117,7 @@ def year_in_sport(
     # Only apply cutoff when viewing the current (incomplete) year
     cutoff = (today.month, today.day) if is_current_year else None
 
-    data = _get_year_in_sport_cached(si, year, main_sport, cutoff)
+    data = _get_year_in_sport_cached(z2, year, main_sport, cutoff)
 
     result = {
         "main_sport": _serialize_enum_dict(data["main"]),
@@ -127,7 +127,7 @@ def year_in_sport(
     }
 
     if comparison_year:
-        comp_data = _get_year_in_sport_cached(si, comparison_year, main_sport, cutoff)
+        comp_data = _get_year_in_sport_cached(z2, comparison_year, main_sport, cutoff)
         result["comparison"] = {
             "main_sport": _serialize_enum_dict(comp_data["main"]),
             "all_sports": _serialize_enum_dict(comp_data["all"]),
@@ -141,14 +141,14 @@ def year_in_sport(
 def efficiency_factor(
     sport_type: str = Query(default="Run"),
     window: int = Query(default=14, ge=3, le=90),
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
-    key = ("efficiency_factor", sport_type, window, si.strava_activities_cache.cache_version)
+    key = ("efficiency_factor", sport_type, window, z2.strava_activities_cache.cache_version)
     cached = _stats_cache.get(key)
     if cached is not None:
         return cached
 
-    activities = si.strava_analytics._get_prepared_activities()
+    activities = z2.strava_analytics._get_prepared_activities()
     filtered = activities[activities["sport_type"] == sport_type].copy()
 
     if filtered.empty:
@@ -189,15 +189,15 @@ def efficiency_factor(
 @router.get("/performance-frontier")
 def performance_frontier(
     sport_types: str = Query(default="Run"),
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
-    key = ("performance_frontier", sport_types, si.strava_activities_cache.cache_version)
+    key = ("performance_frontier", sport_types, z2.strava_activities_cache.cache_version)
     cached = _stats_cache.get(key)
     if cached is not None:
         return cached
 
     sport_list = [s.strip() for s in sport_types.split(",")]
-    activities = si.strava_analytics._get_prepared_activities()
+    activities = z2.strava_analytics._get_prepared_activities()
     filtered = activities[activities["sport_type"].isin(sport_list)].copy()
 
     if filtered.empty:
@@ -250,15 +250,15 @@ def performance_frontier(
 @router.get("/activity-clock")
 def activity_clock(
     sport_types: str = Query(default="Run"),
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
-    key = ("activity_clock", sport_types, si.strava_activities_cache.cache_version)
+    key = ("activity_clock", sport_types, z2.strava_activities_cache.cache_version)
     cached = _stats_cache.get(key)
     if cached is not None:
         return cached
 
     sport_list = [s.strip() for s in sport_types.split(",")]
-    activities = si.strava_analytics._get_prepared_activities()
+    activities = z2.strava_analytics._get_prepared_activities()
     filtered = activities[activities["sport_type"].isin(sport_list)].copy()
 
     if filtered.empty:
@@ -287,13 +287,13 @@ def cumulative_distance(
     main_sport: str = Query(default="Run"),
     comparison_year: int | None = None,
     yearly_target_km: float | None = None,
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
     """Daily cumulative distance for a year (optionally with comparison year and target)."""
     import calendar as cal
 
     year = year or date.today().year
-    activities = si.strava_activities_cache.activities_raw.copy()
+    activities = z2.strava_activities_cache.activities_raw.copy()
     activities["start_date_local"] = pd.to_datetime(activities["start_date_local"])
 
     days_in_year = 366 if cal.isleap(year) else 365
@@ -333,10 +333,10 @@ def cumulative_distance(
 
 @router.get("/streaks")
 def streaks(
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
     """Compute current and longest activity streaks (consecutive days with activities)."""
-    activities = si.strava_activities_cache.activities_raw.copy()
+    activities = z2.strava_activities_cache.activities_raw.copy()
     activities["start_date_local"] = pd.to_datetime(activities["start_date_local"])
     active_dates = sorted(activities["start_date_local"].dt.date.unique())
 
@@ -443,9 +443,9 @@ def streaks(
     }
 
 
-def _compute_sport_totals(si: StravaIntelligence) -> dict:
+def _compute_sport_totals(z2: Zone2) -> dict:
     """Compute total distance (km) and time (seconds) per sport category."""
-    activities = si.strava_activities_cache.activities
+    activities = z2.strava_activities_cache.activities
     if activities.empty:
         return {}
     RUNNING_TYPES = {"run", "trailrun", "virtualrun"}
@@ -481,34 +481,34 @@ def _compute_sport_totals(si: StravaIntelligence) -> dict:
 
 @router.get("/personal-records")
 def personal_records(
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
     bust_cache: bool = Query(default=False),
 ):
     """Personal records (best efforts) at standard distances for running, cycling, and swimming."""
-    key = ("personal_records", si.strava_activities_cache.cache_version)
+    key = ("personal_records", z2.strava_activities_cache.cache_version)
     if not bust_cache:
         cached = _stats_cache.get(key)
         if cached is not None:
             return cached
-    result = si.strava_analytics.get_personal_records()
+    result = z2.strava_analytics.get_personal_records()
     _stats_cache.set(key, result)
     return result
 
 
 @router.get("/sport-totals")
-def sport_totals(si: StravaIntelligence = Depends(get_si)):
+def sport_totals(z2: Zone2 = Depends(get_z2)):
     """Overall totals (distance, time, count) per sport category."""
-    return _compute_sport_totals(si)
+    return _compute_sport_totals(z2)
 
 
 @router.get("/weekly-totals")
 def weekly_totals(
     weeks: int = Query(default=12, ge=1, le=52),
     sport_type: str | None = None,
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
     """Total distance (km) and activity count per week for the last N weeks."""
-    activities = si.strava_activities_cache.activities_raw.copy()
+    activities = z2.strava_activities_cache.activities_raw.copy()
     if activities.empty:
         return {"data": [], "weeks": weeks, "sport_type": sport_type}
 
@@ -548,13 +548,13 @@ def weekly_totals(
 @router.get("/race-predictions")
 def race_predictions(
     sport_category: str = Query(default="running"),
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
-    key = ("race_predictions", sport_category, si.strava_activities_cache.cache_version)
+    key = ("race_predictions", sport_category, z2.strava_activities_cache.cache_version)
     cached = _stats_cache.get(key)
     if cached is not None:
         return cached
-    result = si.strava_analytics.get_race_predictions(sport_category)
+    result = z2.strava_analytics.get_race_predictions(sport_category)
     _stats_cache.set(key, result)
     return result
 
@@ -563,7 +563,7 @@ def race_predictions(
 def race_predictions_window_inputs(
     sport_category: str = Query(default="running"),
     end_date: str = Query(..., description="ISO date (YYYY-MM-DD); window is 365d ending at this date"),
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
     """Debug: return the raw per-distance bests that feed the race-prediction
     model for the 52-week window ending at `end_date`. Useful to explain
@@ -572,8 +572,8 @@ def race_predictions_window_inputs(
     end_ts = pd.Timestamp(end_date, tz="UTC") if "T" not in end_date else pd.Timestamp(end_date)
     if end_ts.tz is None:
         end_ts = end_ts.tz_localize("UTC")
-    window_days = si.strava_analytics.PREDICTIONS_WINDOW_DAYS
-    bests = si.strava_analytics._recent_best_efforts_list(
+    window_days = z2.strava_analytics.PREDICTIONS_WINDOW_DAYS
+    bests = z2.strava_analytics._recent_best_efforts_list(
         sport_category, within_days=window_days, end_date=end_ts.to_pydatetime()
     )
     return {
@@ -589,7 +589,7 @@ def race_predictions_history(
     sport_category: str = Query(default="running"),
     weeks: int = Query(default=52, ge=1, le=520),
     step_days: int = Query(default=7, ge=1, le=30),
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
     """Time series of race predictions across the last N weeks.
 
@@ -602,12 +602,12 @@ def race_predictions_history(
         sport_category,
         weeks,
         step_days,
-        si.strava_activities_cache.cache_version,
+        z2.strava_activities_cache.cache_version,
     )
     cached = _stats_cache.get(key)
     if cached is not None:
         return cached
-    points = si.strava_analytics.get_race_predictions_history(
+    points = z2.strava_analytics.get_race_predictions_history(
         sport_category, weeks=weeks, step_days=step_days
     )
     result = {"sport_category": sport_category, "weeks": weeks, "points": points}
@@ -619,11 +619,11 @@ def race_predictions_history(
 async def training_load(
     start_date: str | None = None,
     end_date: str | None = None,
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    resolved = await resolve_hr_zones(si, db)
-    data = si.strava_analytics.get_daily_training_load(hr_zones=resolved["zones"])
+    resolved = await resolve_hr_zones(z2, db)
+    data = z2.strava_analytics.get_daily_training_load(hr_zones=resolved["zones"])
     if start_date or end_date:
         filtered = data
         if start_date:
@@ -637,7 +637,7 @@ async def training_load(
 @router.get("/relative-effort/weekly")
 async def relative_effort_weekly(
     sport_type: str | None = None,
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
     db: aiosqlite.Connection = Depends(get_db),
 ):
     """Weekly Relative Effort with a personalized expected-range band, using the
@@ -648,23 +648,23 @@ async def relative_effort_weekly(
     swim, otherwise an empty series is returned (so the UI can hide the chart)."""
     if sport_type:
         cat = get_sport_category(sport_type)
-        sports = (cat,) if cat in si.strava_analytics.RE_SPORTS else ()
+        sports = (cat,) if cat in z2.strava_analytics.RE_SPORTS else ()
     else:
-        sports = si.strava_analytics.RE_SPORTS
+        sports = z2.strava_analytics.RE_SPORTS
 
-    resolved_zones = await resolve_hr_zones(si, db)
-    resolved_rhr = await resolve_resting_hr(si, db)
+    resolved_zones = await resolve_hr_zones(z2, db)
+    resolved_rhr = await resolve_resting_hr(z2, db)
     key = (
         "relative_effort_weekly",
         sport_type or "",
         _zones_signature(resolved_zones["zones"]),
         round(resolved_rhr["value"], 1),
-        si.strava_activities_cache.cache_version,
+        z2.strava_activities_cache.cache_version,
     )
     cached = _stats_cache.get(key)
     if cached is not None:
         return cached
-    result = si.strava_analytics.get_weekly_relative_effort(
+    result = z2.strava_analytics.get_weekly_relative_effort(
         hr_zones=resolved_zones["zones"],
         hr_rest=resolved_rhr["value"],
         sports=sports,
@@ -677,13 +677,13 @@ async def relative_effort_weekly(
 def fitness_chart(
     start_date: str | None = None,
     end_date: str | None = None,
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
-    key = ("fitness_chart", start_date, end_date, si.strava_activities_cache.cache_version)
+    key = ("fitness_chart", start_date, end_date, z2.strava_activities_cache.cache_version)
     cached = _stats_cache.get(key)
     if cached is not None:
         return cached
-    result = si.strava_analytics.get_pmc_chart(start_date, end_date)
+    result = z2.strava_analytics.get_pmc_chart(start_date, end_date)
     _stats_cache.set(key, result)
     return result
 
@@ -693,12 +693,12 @@ def fitness_trend(
     sport_type: str = Query(default="Run"),
     start_date: str | None = None,
     end_date: str | None = None,
-    si: StravaIntelligence = Depends(get_si),
+    z2: Zone2 = Depends(get_z2),
 ):
-    key = ("fitness_trend", sport_type, start_date, end_date, si.strava_activities_cache.cache_version)
+    key = ("fitness_trend", sport_type, start_date, end_date, z2.strava_activities_cache.cache_version)
     cached = _stats_cache.get(key)
     if cached is not None:
         return cached
-    result = si.strava_analytics.get_fitness_trend(sport_type, start_date, end_date)
+    result = z2.strava_analytics.get_fitness_trend(sport_type, start_date, end_date)
     _stats_cache.set(key, result)
     return result

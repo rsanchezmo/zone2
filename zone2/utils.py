@@ -4,7 +4,7 @@ import polyline
 import pandas as pd
 import json
 
-from strava.constants import BASE_CRS
+from zone2.constants import BASE_CRS
 
 
 # Sport category sets for reuse across functions (lowercase for matching)
@@ -332,7 +332,7 @@ def get_region_coordinates(region_name: str) -> dict | None:
     import requests
 
     url = "https://nominatim.openstreetmap.org/search"
-    headers = {'User-Agent': 'strava-intelligence/0.1'}
+    headers = {'User-Agent': 'zone2/0.1'}
     params = {
         'q': region_name,
         'format': 'json',

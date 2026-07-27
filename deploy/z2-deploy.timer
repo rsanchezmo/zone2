@@ -1,5 +1,5 @@
 [Unit]
-Description=Run Strava Intelligence auto-deploy every 12 hours
+Description=Run z2 auto-deploy every 12 hours
 
 [Timer]
 # First run shortly after boot — catches any commits pushed while the Pi
@@ -7,7 +7,7 @@ Description=Run Strava Intelligence auto-deploy every 12 hours
 OnBootSec=2min
 # Then every 12h from the last run.
 OnUnitActiveSec=12h
-Unit=strava-deploy.service
+Unit=z2-deploy.service
 # If the Pi was off when a firing was due, run it on next boot.
 Persistent=true
 

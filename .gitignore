@@ -11,7 +11,7 @@ __pycache__/
 .vscode/
 
 # Project workdir
-strava_intelligence_workdir/
+zone2_workdir/
 cache/
 
 # Frontend

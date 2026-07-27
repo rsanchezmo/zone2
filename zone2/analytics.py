@@ -5,9 +5,9 @@ import logging
 import math
 import pandas as pd
 import numpy as np
-from strava.strava_activities_cache import StravaActivitiesCache
-from strava.strava_user_cache import StravaUserCache
-from strava.strava_utils import (
+from zone2.activities_cache import StravaActivitiesCache
+from zone2.user_cache import StravaUserCache
+from zone2.utils import (
     vo2_max, get_sport_category, vdot_from_time_distance,
     predicted_time_from_vdot, riegel_predict, fit_riegel_exponent,
     compute_trimp_banister, compute_trimp_zone_weighted,
@@ -774,7 +774,7 @@ class StravaAnalytics:
         the fastest elapsed time for each standard distance. Numpy searchsorted
         replaces the inner Python loop for speed.
         """
-        from strava.strava_utils import get_sport_category
+        from zone2.utils import get_sport_category
 
         activities = self._get_prepared_activities()
 

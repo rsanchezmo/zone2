@@ -1,20 +1,20 @@
 import logging
 import os
 from pathlib import Path
-from strava.strava_analytics import StravaAnalytics, YearInSportFeatures
-from strava.strava_user_cache import StravaUserCache
-from strava.strava_activities_cache import StravaActivitiesCache
-from strava.strava_endpoint import StravaEndpoint
-from strava.strava_utils import *
-from strava.strava_visualizer import StravaVisualizer
-from strava.garmin_client import GarminClient
-from strava.garmin_cache import GarminDailyStatsCache
+from zone2.analytics import StravaAnalytics, YearInSportFeatures
+from zone2.user_cache import StravaUserCache
+from zone2.activities_cache import StravaActivitiesCache
+from zone2.endpoint import StravaEndpoint
+from zone2.utils import *
+from zone2.visualizer import StravaVisualizer
+from zone2.garmin_client import GarminClient
+from zone2.garmin_cache import GarminDailyStatsCache
 from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
 
-class StravaIntelligence:
+class Zone2:
     def __init__(self, workdir: Path, auto_sync: bool = True, sync_max_age_hours: int = 12):
         self.workdir = workdir
         self.workdir.mkdir(parents=True, exist_ok=True)

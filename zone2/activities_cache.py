@@ -5,8 +5,8 @@ import json
 from datetime import datetime, timedelta
 from typing import Iterable
 
-from strava.strava_endpoint import StravaRateLimitError, StravaStreamFetchError
-from strava.streams_store import (
+from zone2.endpoint import StravaRateLimitError, StravaStreamFetchError
+from zone2.streams_store import (
     StreamsStore,
     from_strava_api,
     points_to_columnar,
