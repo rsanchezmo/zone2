@@ -468,6 +468,18 @@ body::before {
   border-bottom-right-radius: 12px;
 }
 
+/* Frosted panel floating over a Leaflet map — controls, filters, legends. */
+.map-overlay {
+  @apply rounded-lg border backdrop-blur-md;
+  background: color-mix(in srgb, var(--color-surface-800) 85%, transparent);
+  border-color: color-mix(in srgb, var(--color-surface-600) 80%, transparent);
+}
+.light .map-overlay {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(229, 231, 235, 0.8);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
 /* Key/value row in a telemetry strip — monospace number right-aligned to a
  * muted label. Thin separator border by default. */
 .telemetry-row {
