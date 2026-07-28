@@ -378,7 +378,7 @@ export default function RacesPage() {
                             {matchedActivity && (
                               <Link
                                 to={`/activities/${matchedActivity.id}`}
-                                className="text-[10px] uppercase tracking-[0.15em] text-green-400 hover:text-green-300 inline-flex items-center gap-1"
+                                className="action-link text-[10px] uppercase tracking-[0.15em] text-green-400 hover:text-green-300"
                               >
                                 <CheckIcon size={10} />
                                 View activity
@@ -397,7 +397,7 @@ export default function RacesPage() {
                             {r.target_pace != null && <span>{formatPace(r.target_pace, isSpeedSport(r.sport_type))} {getPaceUnit(r.sport_type)}</span>}
                             {r.location != null && <span className="normal-case">{r.location}</span>}
                             {r.url != null && (
-                              <a href={r.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1" style={{ color: RACE_ACCENT }} onClick={e => e.stopPropagation()}>
+                              <a href={r.url} target="_blank" rel="noopener noreferrer" className="action-link" style={{ color: RACE_ACCENT }} onClick={e => e.stopPropagation()}>
                                 Website <ExternalLinkIcon size={9} />
                               </a>
                             )}
@@ -459,19 +459,20 @@ function RowActions({
 }) {
   const { theme } = useTheme()
   const isLight = theme === 'light'
-  const actionClass = clsx('text-[11px] uppercase tracking-[0.15em]', isLight ? 'text-gray-400 hover:text-gray-700' : 'text-gray-500 hover:text-gray-200')
+  const actionBase = 'action-link text-[11px] uppercase tracking-[0.15em]'
+  const actionClass = clsx(actionBase, isLight ? 'text-gray-400 hover:text-gray-700' : 'text-gray-500 hover:text-gray-200')
   return (
     <div className="flex items-center gap-2 shrink-0">
       {isConfirming ? (
         <>
           <span className="text-[11px] uppercase tracking-[0.15em] text-red-400">Delete?</span>
-          <button onClick={onConfirmDelete} className="text-red-400 hover:text-red-300 text-[11px] uppercase tracking-[0.15em] font-bold">Yes</button>
+          <button onClick={onConfirmDelete} className={clsx(actionBase, 'text-red-400 hover:text-red-300 font-bold')}>Yes</button>
           <button onClick={onCancelDelete} className={actionClass}>No</button>
         </>
       ) : (
         <>
           <button onClick={onEdit} className={actionClass}>Edit</button>
-          <button onClick={onAskDelete} className="text-red-400/80 hover:text-red-300 text-[11px] uppercase tracking-[0.15em]">Delete</button>
+          <button onClick={onAskDelete} className={clsx(actionBase, 'text-red-400/80 hover:text-red-300')}>Delete</button>
         </>
       )}
     </div>

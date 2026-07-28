@@ -681,7 +681,7 @@ function ActivityDetailPageInner() {
         <button
           onClick={() => navigate(-1)}
           className={clsx(
-            'group inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.18em] mb-4 transition-colors duration-150',
+            'action-link group gap-1.5 text-[11px] uppercase tracking-[0.18em] mb-4 transition-colors duration-150',
             isLight ? 'text-gray-500 hover:text-gray-900' : 'text-gray-500 hover:text-gray-100',
           )}
         >

@@ -73,7 +73,17 @@ const NAV_ITEMS: { to: string; label: string; color: string; icon: React.ReactNo
   )},
 ]
 
-function SyncPopover({ isLight }: { isLight: boolean }) {
+/** Anchor for the sync popover — the left dock, the bottom dock and the mobile
+ *  drawer each sit against a different edge, so each needs its own direction. */
+type PopoverPlacement = 'right' | 'above-start' | 'above-end'
+
+const POPOVER_PLACEMENT: Record<PopoverPlacement, string> = {
+  right: 'left-full ml-3 top-1/2 -translate-y-1/2',
+  'above-start': 'bottom-full mb-2 left-0',
+  'above-end': 'bottom-full mb-2 right-0',
+}
+
+function SyncPopover({ isLight, placement }: { isLight: boolean; placement: PopoverPlacement }) {
   const { data: syncStatus } = useSyncStatus()
   const triggerSync = useTriggerSync()
   const backfillStreams = useBackfillStreams()
@@ -111,7 +121,8 @@ function SyncPopover({ isLight }: { isLight: boolean }) {
 
       {open && (
         <div className={clsx(
-          'absolute left-full ml-3 top-1/2 -translate-y-1/2 w-56 rounded-xl border p-3 space-y-2 shadow-xl',
+          'absolute w-56 rounded-xl border p-3 space-y-2 shadow-xl',
+          POPOVER_PLACEMENT[placement],
           isLight
             ? 'bg-white/90 backdrop-blur-xl border-gray-200'
             : 'bg-surface-800/90 backdrop-blur-xl border-surface-600',
@@ -314,7 +325,9 @@ function MobileNav({ isLight, location }: { isLight: boolean; location: { pathna
         onClick={() => setOpen(true)}
         aria-label="Open navigation"
         className={clsx(
-          'fixed top-3 left-3 z-[10001] w-11 h-11 flex items-center justify-center rounded-xl border shadow-lg backdrop-blur-sm transition-colors',
+          // Below the dialog tier (9999+) so an open modal covers it, but above
+          // page content and expanded maps.
+          'fixed top-3 left-3 z-[9990] w-11 h-11 flex items-center justify-center rounded-xl border shadow-lg backdrop-blur-sm transition-colors',
           isLight
             ? 'bg-white/80 border-gray-200 text-gray-700 hover:bg-white'
             : 'bg-black/40 border-white/10 text-gray-200 hover:bg-black/60',
@@ -385,7 +398,7 @@ function MobileNav({ isLight, location }: { isLight: boolean; location: { pathna
         {/* Utilities footer */}
         <div className={clsx('border-t p-3 flex items-center gap-2', isLight ? 'border-gray-200' : 'border-surface-600')}>
           <div className="flex-1">
-            <SyncPopover isLight={isLight} />
+            <SyncPopover isLight={isLight} placement="above-start" />
           </div>
           <button
             onClick={toggleTheme}
@@ -571,7 +584,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
           {/* Utility buttons */}
           <div className={clsx('flex items-center', isBottom ? 'flex-row gap-0' : 'flex-col')}>
-            <SyncPopover isLight={isLight} />
+            <SyncPopover isLight={isLight} placement={isBottom ? 'above-end' : 'right'} />
 
             <button
               onClick={toggleTheme}

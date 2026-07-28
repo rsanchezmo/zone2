@@ -247,17 +247,17 @@ export default function WorkoutsPage() {
                               })
                               setConfirmDeleteId(null)
                             }}
-                            className="text-red-400 hover:text-red-300 text-[11px] uppercase tracking-[0.15em] font-bold"
+                            className="action-link text-red-400 hover:text-red-300 text-[11px] uppercase tracking-[0.15em] font-bold"
                           >Yes</button>
                           <button
                             onClick={() => setConfirmDeleteId(null)}
-                            className={clsx('text-[11px] uppercase tracking-[0.15em]', isLight ? 'text-gray-400 hover:text-gray-600' : 'text-gray-500 hover:text-gray-200')}
+                            className={clsx('action-link text-[11px] uppercase tracking-[0.15em]', isLight ? 'text-gray-400 hover:text-gray-600' : 'text-gray-500 hover:text-gray-200')}
                           >No</button>
                         </>
                       ) : (
                         <>
-                          <button onClick={() => startEdit(t)} className={clsx('text-[11px] uppercase tracking-[0.15em]', isLight ? 'text-gray-400 hover:text-gray-600' : 'text-gray-500 hover:text-gray-200')}>Edit</button>
-                          <button onClick={() => setConfirmDeleteId(t.id)} className="text-red-400/80 hover:text-red-300 text-[11px] uppercase tracking-[0.15em]">Delete</button>
+                          <button onClick={() => startEdit(t)} className={clsx('action-link text-[11px] uppercase tracking-[0.15em]', isLight ? 'text-gray-400 hover:text-gray-600' : 'text-gray-500 hover:text-gray-200')}>Edit</button>
+                          <button onClick={() => setConfirmDeleteId(t.id)} className="action-link text-red-400/80 hover:text-red-300 text-[11px] uppercase tracking-[0.15em]">Delete</button>
                         </>
                       )}
                     </div>

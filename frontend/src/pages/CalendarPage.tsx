@@ -33,6 +33,9 @@ import { useToast } from '../hooks/useToast'
 import SegmentListBuilder, { SegmentSummary, type Segment } from '../components/shared/SegmentListBuilder'
 import HrZoneDistributionChart from '../components/shared/HrZoneDistributionChart'
 
+/** Dots that fit across a day cell on the compact mobile grid before overflowing to a "+n". */
+const MOBILE_DOT_LIMIT = 4
+
 /* ── Sport Pie Chart ────────────────────────────────── */
 function SportPieChart({ title, data, formatValue, colorMap }: {
   title: string
@@ -486,7 +489,7 @@ function SessionModal({
   const paceUnit = getPaceUnit(sportType)
   return (
     <div
-      className={clsx('fixed inset-0 flex items-center justify-center z-50 animate-[fadeIn_150ms_ease-out]', isLight ? 'bg-black/30' : 'bg-black/60')}
+      className={clsx('fixed inset-0 p-4 flex items-center justify-center z-[10001] animate-[fadeIn_150ms_ease-out]', isLight ? 'bg-black/30' : 'bg-black/60')}
       onClick={onClose}
     >
       <div
@@ -1712,20 +1715,23 @@ export default function CalendarPage() {
         })()}
       </header>
 
-      {/* Calendar grid — horizontal scroll on mobile so 7 columns stay legible */}
-      <div className="-mx-6 md:mx-0 px-6 md:px-0 overflow-x-auto">
-        <div className="grid grid-cols-7 gap-1 min-w-[640px] md:min-w-0" key={format(currentMonth, 'yyyy-MM')} style={{ animation: 'fadeIn 200ms ease-out' }}>
-        {WEEKDAYS_SHORT.map(d => (
-          <div key={d} className="eyebrow text-center py-1.5">{d}</div>
+      {/* Calendar grid — all seven columns fit at every width; below md the cells
+          shrink to dots and the day modal carries the detail. */}
+      <div className="grid grid-cols-7 gap-0.5 md:gap-1" key={format(currentMonth, 'yyyy-MM')} style={{ animation: 'fadeIn 200ms ease-out' }}>
+        {WEEKDAYS_SHORT.map((d, i) => (
+          <div key={d} className="eyebrow text-center py-1.5 !text-[9px] md:!text-[11px] !tracking-[0.08em] md:!tracking-[0.18em]">
+            <span className="md:hidden">{WEEKDAYS_MIN[i]}</span>
+            <span className="hidden md:inline">{d}</span>
+          </div>
         ))}
 
         {activitiesLoading ? (
           <>
             {Array.from({ length: 35 }).map((_, i) => (
-              <div key={i} className={clsx('min-h-[120px] rounded-lg border animate-pulse', isLight ? 'bg-gray-100 border-gray-200' : 'bg-surface-800 border-surface-600')}>
-                <div className="p-2">
+              <div key={i} className={clsx('min-h-[54px] md:min-h-[120px] rounded-lg border animate-pulse', isLight ? 'bg-gray-100 border-gray-200' : 'bg-surface-800 border-surface-600')}>
+                <div className="p-1 md:p-2">
                   <div className="h-3 w-4 bg-surface-600 rounded mb-2" />
-                  <div className="space-y-1">
+                  <div className="hidden md:block space-y-1">
                     <div className="h-2 w-3/4 bg-surface-600 rounded" />
                     <div className="h-2 w-1/2 bg-surface-600 rounded" />
                   </div>
@@ -1753,7 +1759,9 @@ export default function CalendarPage() {
 
           const summary = idx % 7 === 0 ? weekSummaries[idx] : null
           const weekSummary = summary ? (
-            <div key={`week-${idx}`} className={clsx('col-span-7 flex items-center justify-end gap-3 px-3 py-1 rounded-lg', isLight ? 'bg-gray-50/80' : 'bg-surface-800/50')}>
+            // Wraps to a second row on narrow screens rather than trailing the
+            // week's totals off the edge.
+            <div key={`week-${idx}`} className={clsx('col-span-7 flex items-center justify-start md:justify-end flex-wrap gap-x-3 gap-y-1 px-1 md:px-3 py-1 rounded-lg', isLight ? 'bg-gray-50/80' : 'bg-surface-800/50')}>
               {summary.goals.map(g => {
                 const sport = g.sport_type
                 const color = sport === '__all__' ? DEFAULT_SPORT_COLOR : getSportColor(sport)
@@ -1806,7 +1814,7 @@ export default function CalendarPage() {
                   setDraggingSession(null)
                 }}
                 className={clsx(
-                  'relative min-h-[120px] p-2 rounded-lg border transition-all duration-150',
+                  'relative min-h-[54px] md:min-h-[120px] p-1 md:p-2 rounded-lg border transition-all duration-150',
                   'cursor-pointer',
                   inMonth
                     ? isLight ? 'border-gray-200 bg-white' : 'border-surface-600 bg-surface-800'
@@ -1838,7 +1846,7 @@ export default function CalendarPage() {
                     <div className="absolute top-1 right-1 flex items-center gap-1">
                       {avgScore !== null && (
                         <span
-                          className="text-[9px] font-bold font-mono px-1 rounded"
+                          className="hidden md:inline text-[9px] font-bold font-mono px-1 rounded"
                           style={{ color: scoreColor(avgScore), backgroundColor: `${scoreColor(avgScore)}15` }}
                         >
                           {avgScore}
@@ -1851,6 +1859,35 @@ export default function CalendarPage() {
                     </div>
                   )
                 })()}
+                {/* Mobile: dots stand in for the labelled rows — filled for logged
+                    activities, outlined for planned sessions. Nothing legible fits a
+                    ~45px cell, and the whole cell taps through to the day modal. */}
+                <div className="md:hidden flex flex-wrap items-center gap-[3px]">
+                  {dayActivities.slice(0, MOBILE_DOT_LIMIT).map(a => (
+                    <span
+                      key={a.id}
+                      className="w-1.5 h-1.5 rounded-full"
+                      style={{ backgroundColor: getSportColor(a.sport_type) }}
+                    />
+                  ))}
+                  {daySessions.slice(0, Math.max(0, MOBILE_DOT_LIMIT - dayActivities.length)).map(s => (
+                    <span
+                      key={s.id as number}
+                      className="w-1.5 h-1.5 rounded-full border"
+                      style={{ borderColor: getSportColor(s.sport_type as string) }}
+                    />
+                  ))}
+                  {dayActivities.length + daySessions.length > MOBILE_DOT_LIMIT && (
+                    <span className="text-[8px] font-mono leading-none text-gray-500">
+                      +{dayActivities.length + daySessions.length - MOBILE_DOT_LIMIT}
+                    </span>
+                  )}
+                  {(raceMap[dateStr] || []).length > 0 && (
+                    <span className="text-amber-500 leading-none"><FlagIcon size={8} /></span>
+                  )}
+                </div>
+
+                <div className="hidden md:block">
                 <div className="space-y-0.5">
                   {dayActivities.map((a) => (
                     <Link key={a.id} to={`/activities/${a.id}`} onClick={e => e.stopPropagation()} className={clsx('flex items-center gap-1.5 group rounded px-1 py-0.5 -mx-1 transition-colors', isLight ? 'hover:bg-black/[0.04]' : 'hover:bg-white/[0.04]')}>
@@ -1919,11 +1956,11 @@ export default function CalendarPage() {
                     </div>
                   )
                 })}
+                </div>
               </div>
             </Fragment>
           )
         })}
-        </div>
       </div>
 
       {/* Weekly Report — fade in */}

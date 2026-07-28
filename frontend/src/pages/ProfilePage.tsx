@@ -537,10 +537,12 @@ export default function ProfilePage() {
                       {periodLabel(goal.period).toLowerCase()}
                     </span>
                     <span className="text-[11px] text-gray-500 font-mono">{goal.year}</span>
-                    <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {/* Hover-reveal would strand these on touch, where no hover
+                        event ever fires — pin them visible there instead. */}
+                    <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
                       <button
                         onClick={() => startEdit(goal)}
-                        className={clsx('text-[11px] px-1.5 py-0.5 rounded', isLight ? 'text-gray-400 hover:text-gray-600 hover:bg-gray-100' : 'text-gray-500 hover:text-gray-300 hover:bg-surface-700')}
+                        className={clsx('text-[11px] px-2 py-1 rounded', isLight ? 'text-gray-400 hover:text-gray-600 hover:bg-gray-100' : 'text-gray-500 hover:text-gray-300 hover:bg-surface-700')}
                       >
                         Edit
                       </button>
@@ -548,7 +550,7 @@ export default function ProfilePage() {
                         onClick={() => deleteGoal.mutate(goal.id, {
                           onSuccess: () => toast('Goal deleted', 'success'),
                         })}
-                        className="text-[11px] px-1.5 py-0.5 rounded text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                        className="text-[11px] px-2 py-1 rounded text-red-400 hover:text-red-300 hover:bg-red-500/10"
                       >
                         Delete
                       </button>
@@ -647,7 +649,7 @@ export default function ProfilePage() {
                 {!allComplete && (
                   <button
                     onClick={() => setShowCacheDetails(d => !d)}
-                    className={clsx('text-[11px] transition-colors', isLight ? 'text-gray-400 hover:text-gray-600' : 'text-gray-500 hover:text-gray-300')}
+                    className={clsx('text-[11px] px-1 py-1 -my-1 rounded transition-colors', isLight ? 'text-gray-400 hover:text-gray-600' : 'text-gray-500 hover:text-gray-300')}
                   >
                     {showCacheDetails ? 'Hide details' : 'Show details'}
                   </button>
@@ -851,7 +853,7 @@ function ZoneSourceSelector({
             onClick={() => !selected && onChange(o.value)}
             disabled={pending}
             className={clsx(
-              'text-[10px] uppercase tracking-[0.1em] px-2 py-1 transition-colors',
+              'text-[10px] uppercase tracking-[0.1em] px-2.5 py-1.5 md:py-1 transition-colors',
               i > 0 && (isLight ? 'border-l border-gray-200' : 'border-l border-surface-600'),
               selected
                 ? (isLight ? 'bg-gray-900 text-white' : 'bg-gray-200 text-gray-900')
@@ -981,7 +983,9 @@ function GearTimeline({ items, isLight }: { items: GearSummary[]; isLight: boole
               <Link
                 to={`/gear/${g.id}`}
                 className={clsx(
-                  'text-[11px] truncate pr-3 self-center transition-colors',
+                  // Padded below md so the row clears the 24px touch target;
+                  // desktop keeps the tighter timeline rhythm.
+                  'text-[11px] truncate pr-3 self-center py-1 md:py-0 transition-colors',
                   g.retired && 'opacity-60',
                   isLight ? 'text-gray-600 hover:text-gray-900' : 'text-gray-400 hover:text-gray-100',
                 )}
@@ -989,7 +993,7 @@ function GearTimeline({ items, isLight }: { items: GearSummary[]; isLight: boole
               >
                 {g.label}
               </Link>
-              <Link to={`/gear/${g.id}`} className="relative h-5 flex items-center group">
+              <Link to={`/gear/${g.id}`} className="relative h-6 md:h-5 flex items-center group">
                 <div className={clsx('absolute inset-x-0 h-px', isLight ? 'bg-gray-100' : 'bg-surface-700')} aria-hidden="true" />
                 <div
                   className="absolute h-2.5 rounded-full transition-all duration-200 group-hover:h-3.5"

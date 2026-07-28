@@ -162,7 +162,7 @@ function ExportDialogContent({
   return createPortal(
     <div
       className={clsx(
-        'fixed inset-0 flex items-center justify-center z-[10001] animate-[fadeIn_150ms_ease-out]',
+        'fixed inset-0 p-4 flex items-center justify-center z-[10001] animate-[fadeIn_150ms_ease-out]',
         isLight ? 'bg-black/30' : 'bg-black/60'
       )}
       onClick={onClose}

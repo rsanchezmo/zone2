@@ -46,7 +46,7 @@ export default function PageHeader({
       </div>
 
       {(controls || actions) && (
-        <div className="flex items-center justify-end gap-2 flex-wrap shrink-0">
+        <div className="flex items-center justify-end gap-2 flex-wrap">
           {controls && (
             <div className={clsx('flex items-center gap-2 flex-wrap')}>
               {controls}

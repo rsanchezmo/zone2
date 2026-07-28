@@ -125,7 +125,7 @@ export default function BackdropSettingsPanel() {
           </span>
           <input
             type="range"
-            className="w-full accent-current"
+            className="w-full h-6 md:h-4 accent-current"
             style={{ color: settings.color }}
             min={BACKDROP_MIN_OPACITY * 100}
             max={BACKDROP_MAX_OPACITY * 100}

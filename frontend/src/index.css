@@ -382,6 +382,17 @@ body::before {
   color: #111827;
 }
 
+/* ── Inline text action (Edit / Delete / View activity) ──
+ * Hit area only — callers own type and color. Holds the 24px touch-target floor
+ * whatever the font size, while the negative block margin keeps the dense rows
+ * these sit in visually unchanged. */
+.action-link {
+  @apply inline-flex items-center gap-1 rounded;
+  min-height: 24px;
+  padding-inline: 4px;
+  margin-block: -4px;
+}
+
 /* ── Modal animations ────────────────────────────── */
 @keyframes fadeIn {
   from { opacity: 0; }

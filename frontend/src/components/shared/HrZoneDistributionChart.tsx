@@ -244,6 +244,21 @@ function HrZoneDistributionChart({
         {(() => {
           const ticks = [lo, ...splits, hi]
           const lastIdx = ticks.length - 1
+          // Upper zone thresholds can sit a few bpm below max HR, which collapses
+          // their labels into each other on a narrow chart. Marks stay at every
+          // boundary; a label is dropped when it would collide with one already
+          // placed. Walk right-to-left so the rightmost label — the one carrying
+          // the unit — always survives.
+          const MIN_LABEL_GAP = 34
+          const labelled = new Set<number>()
+          let lastLabelX = Infinity
+          for (let i = lastIdx; i >= 0; i--) {
+            const x = xScale(ticks[i])
+            if (x < padX - 1 || x > padX + innerW + 1) continue
+            if (lastLabelX - x < MIN_LABEL_GAP) continue
+            labelled.add(i)
+            lastLabelX = x
+          }
           return ticks.map((bpm, i) => {
             const x = xScale(bpm)
             if (x < padX - 1 || x > padX + innerW + 1) return null
@@ -259,19 +274,21 @@ function HrZoneDistributionChart({
                   strokeOpacity={0.6}
                   strokeWidth={1}
                 />
-                <text
-                  x={x}
-                  y={height - 6}
-                  textAnchor={isLast ? 'end' : 'middle'}
-                  fill={tickColor}
-                  fontSize={10}
-                  fontFamily="ui-sans-serif, system-ui, sans-serif"
-                >
-                  {Math.round(bpm)}
-                  {isLast && (
-                    <tspan dx={3} fill={tickColor} opacity={0.7}>bpm</tspan>
-                  )}
-                </text>
+                {labelled.has(i) && (
+                  <text
+                    x={x}
+                    y={height - 6}
+                    textAnchor={isLast ? 'end' : 'middle'}
+                    fill={tickColor}
+                    fontSize={10}
+                    fontFamily="ui-sans-serif, system-ui, sans-serif"
+                  >
+                    {Math.round(bpm)}
+                    {isLast && (
+                      <tspan dx={3} fill={tickColor} opacity={0.7}>bpm</tspan>
+                    )}
+                  </text>
+                )}
               </g>
             )
           })
