@@ -272,11 +272,15 @@ export default function CoveragePage() {
   const activeSlug = slug ?? cities?.[0]?.slug
   const city = cities?.find(c => c.slug === activeSlug)
 
-  const { data: edges, isLoading: edgesLoading } = useCoverageEdges(activeSlug)
+  // Leaflet layers read their GeoJSON once at mount, so every layer below is
+  // keyed by dataUpdatedAt: it moves the moment a fetch resolves, which is what
+  // forces the redraw — a key built from the request inputs alone would change
+  // while the previous payload is still the one being held.
+  const { data: edges, isLoading: edgesLoading, dataUpdatedAt: edgesAt } = useCoverageEdges(activeSlug)
   // 9 = administrative districts, 10 = neighbourhoods (finer). Cities OSM
   // doesn't subdivide at the chosen level collapse to a whole-city district.
   const [adminLevel, setAdminLevel] = useState<9 | 10>(9)
-  const { data: districts } = useCoverageDistricts(activeSlug, adminLevel)
+  const { data: districts, dataUpdatedAt: districtsAt } = useCoverageDistricts(activeSlug, adminLevel)
   const [showDistricts, setShowDistricts] = useState(true)
   const [flyBbox, setFlyBbox] = useState<[number, number, number, number] | null>(null)
 
@@ -290,7 +294,7 @@ export default function CoveragePage() {
 
   const [showMissing, setShowMissing] = useState(false)
   const [viewportBbox, setViewportBbox] = useState<string | undefined>(undefined)
-  const { data: uncovered } = useUncoveredEdges(activeSlug, showMissing ? viewportBbox : undefined)
+  const { data: uncovered, dataUpdatedAt: uncoveredAt } = useUncoveredEdges(activeSlug, showMissing ? viewportBbox : undefined)
 
   const deleteMutation = useDeleteCity()
   const [confirmingDelete, setConfirmingDelete] = useState(false)
@@ -409,9 +413,8 @@ export default function CoveragePage() {
   )
 
   const edgesKey = useMemo(
-    () => `${activeSlug}-${(edges as { features?: unknown[] } | undefined)?.features?.length ?? 0}`
-      + `-${heatmapMode ? `heat${maxTimes}` : accent}`,
-    [activeSlug, edges, accent, heatmapMode, maxTimes],
+    () => `${activeSlug}-${edgesAt}-${heatmapMode ? `heat${maxTimes}` : accent}`,
+    [activeSlug, edgesAt, accent, heatmapMode, maxTimes],
   )
 
   if (!citiesLoading && (cities?.length ?? 0) === 0) {
@@ -460,7 +463,7 @@ export default function CoveragePage() {
           />
           {showDistricts && districtFC && (
             <GeoJSON
-              key={`districts-${activeSlug}-${adminLevel}-${districtColor}-${selectMode}`}
+              key={`districts-${activeSlug}-${districtsAt}-${districtColor}-${selectMode}`}
               data={districtFC}
               interactive={!selectMode}
               style={districtStyle}
@@ -469,7 +472,7 @@ export default function CoveragePage() {
           )}
           {showMissing && uncovered && viewportBbox && (
             <GeoJSON
-              key={`missing-${activeSlug}-${viewportBbox}`}
+              key={`missing-${activeSlug}-${uncoveredAt}`}
               data={uncovered}
               style={{
                 color: mapStyle === 'satellite' ? '#cbd5e1' : isLight ? '#94a3b8' : '#64748b',
