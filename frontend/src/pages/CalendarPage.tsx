@@ -25,7 +25,7 @@ import {
 } from '../components/icons'
 import clsx from 'clsx'
 import {
-  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+  ComposedChart, Area, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   PieChart, Pie, Cell,
 } from 'recharts'
 import { useTheme } from '../hooks/useTheme'
@@ -122,14 +122,19 @@ function SportPieChart({ title, data, formatValue, colorMap }: {
 /* ── Accumulated Chart ──────────────────────────────── */
 interface AccumulatedChartProps {
   data: Record<string, Record<string, number>>
+  previous?: Record<string, Record<string, number>>
   titles?: Record<string, Record<string, string[]>>
   colorMap: Record<string, string>
 }
 
-function AccumulatedChart({ data, titles, colorMap }: AccumulatedChartProps) {
+function AccumulatedChart({ data, previous, titles, colorMap }: AccumulatedChartProps) {
   const { theme, colors } = useTheme()
   const isLight = theme === 'light'
-  const { chartData, sports, sportColorMap, activeDays } = useMemo(() => {
+  const totalColor = isLight ? '#111827' : '#f3f4f6'
+  const prevColor = isLight ? '#9ca3af' : '#6b7280'
+  const {
+    chartData, sports, sportColorMap, activeDays, weekTotal, prevWeekTotal, axisStep, axisMax, axisTicks,
+  } = useMemo(() => {
     const sportTotals = Object.entries(data).map(([sport, days]) => ({
       sport,
       total: Object.values(days).reduce((a, b) => a + b, 0),
@@ -147,8 +152,23 @@ function AccumulatedChart({ data, titles, colorMap }: AccumulatedChartProps) {
       }
     }
 
+    // Running all-sport total per weekday; null when the week has no counterpart to compare against.
+    const runningTotals = (src?: Record<string, Record<string, number>>) => {
+      if (!src) return null
+      const out: number[] = []
+      let running = 0
+      for (let d = 0; d < 7; d++) {
+        for (const days of Object.values(src)) running += days?.[d] ?? 0
+        out.push(Math.round(running))
+      }
+      return out
+    }
+    const totals = runningTotals(data) ?? []
+    const prevTotals = runningTotals(previous)
+
     const chartData = WEEKDAYS_SHORT.map((day, dayIdx) => {
-      const point: Record<string, unknown> = { day, _dayIdx: dayIdx }
+      const point: Record<string, unknown> = { day, _dayIdx: dayIdx, _total: totals[dayIdx] ?? 0 }
+      if (prevTotals) point._prevTotal = prevTotals[dayIdx]
       for (const sport of sports) {
         let accum = 0
         for (let d = 0; d <= dayIdx; d++) {
@@ -159,10 +179,41 @@ function AccumulatedChart({ data, titles, colorMap }: AccumulatedChartProps) {
       return point
     })
 
-    return { chartData, sports, sportColorMap, activeDays }
-  }, [data, colorMap])
+    // The busier of the two weeks tops the axis exactly, so the panel is never padded out
+    // to a rounded ceiling. Interior ticks stay on round intervals under that peak.
+    const axisMax = Math.max(totals[6] ?? 0, prevTotals?.[6] ?? 0) || 1
+    const axisStep = axisMax <= 60 ? 15 : axisMax <= 120 ? 30 : axisMax <= 360 ? 60 : axisMax <= 720 ? 120 : 180
+    const axisTicks: number[] = []
+    for (let v = 0; v < axisMax; v += axisStep) axisTicks.push(v)
+    // Drop a trailing interior tick that would crowd the peak label.
+    if (axisTicks.length > 1 && axisMax - axisTicks[axisTicks.length - 1] < axisStep * 0.5) axisTicks.pop()
+    axisTicks.push(axisMax)
+
+    return {
+      chartData,
+      sports,
+      sportColorMap,
+      activeDays,
+      weekTotal: totals[6] ?? 0,
+      prevWeekTotal: prevTotals ? prevTotals[6] : null,
+      axisStep,
+      axisMax,
+      axisTicks,
+    }
+  }, [data, previous, colorMap])
 
   if (sports.length === 0) return null
+
+  // The top tick is the peak itself, so it needs an exact label — kept space-free ("2h22")
+  // because Recharts word-wraps tick text. Interior steps read as "3h", or minutes below the hour.
+  const axisFmt = (v: number) => {
+    if (v === 0) return '0'
+    if (v !== axisMax) return axisStep % 60 === 0 ? `${v / 60}h` : `${v}m`
+    const h = Math.floor(v / 60)
+    const m = v % 60
+    if (h === 0) return `${m}m`
+    return m === 0 ? `${h}h` : `${h}h${m}`
+  }
 
   function makeActiveDot(sport: string, color: string) {
     return (props: unknown) => {
@@ -190,7 +241,23 @@ function AccumulatedChart({ data, titles, colorMap }: AccumulatedChartProps) {
   return (
     <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
       <div className="eyebrow mb-1">Accumulated Training Time</div>
-      <div className="flex gap-3 mb-3 flex-wrap">
+      <div className="flex gap-3 mb-3 flex-wrap items-center">
+        <div className="flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: totalColor, opacity: 0.5 }} />
+          <span className="text-[11px] text-gray-400">Total</span>
+          <span className={clsx('text-[11px] font-mono', isLight ? 'text-gray-700' : 'text-gray-200')}>
+            {formatDurationHM(weekTotal * 60)}
+          </span>
+        </div>
+        {prevWeekTotal !== null && (
+          <div className="flex items-center gap-1.5">
+            <span className="w-2.5 h-[2px]" style={{ backgroundColor: prevColor }} />
+            <span className="text-[11px] text-gray-400">Last week</span>
+            <span className={clsx('text-[11px] font-mono', isLight ? 'text-gray-600' : 'text-gray-400')}>
+              {formatDurationHM(prevWeekTotal * 60)}
+            </span>
+          </div>
+        )}
         {sports.map(s => (
           <div key={s} className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: sportColorMap[s] }} />
@@ -199,16 +266,48 @@ function AccumulatedChart({ data, titles, colorMap }: AccumulatedChartProps) {
         ))}
       </div>
       <ResponsiveContainer width="100%" height={220}>
-        <AreaChart data={chartData} margin={{ top: 20, right: 10, left: 0, bottom: 0 }}>
+        <ComposedChart data={chartData} margin={{ top: 20, right: 10, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={colors.gridStroke} />
           <XAxis dataKey="day" tick={{ fill: colors.tickFill, fontSize: 11 }} axisLine={false} tickLine={false} />
-          <YAxis tick={{ fill: colors.tickFillSecondary, fontSize: 10 }} axisLine={false} tickLine={false} width={35} tickFormatter={(v: number) => `${v}m`} />
+          <YAxis
+            tick={{ fill: colors.tickFillSecondary, fontSize: 10 }}
+            axisLine={false}
+            tickLine={false}
+            width={38}
+            domain={[0, axisMax]}
+            ticks={axisTicks}
+            interval={0}
+            tickFormatter={axisFmt}
+          />
           <Tooltip
             contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
             labelStyle={{ color: colors.labelColor }}
             itemStyle={{ color: colors.labelColor }}
-            formatter={(value, name) => [`${Number(value)} min`, String(name)]}
+            formatter={(value, name) => [formatDurationHM(Number(value) * 60), String(name)]}
+            itemSorter={item => (item.dataKey === '_total' ? 0 : item.dataKey === '_prevTotal' ? 1 : 2)}
           />
+          <Line
+            type="monotone"
+            dataKey="_total"
+            name="Total"
+            stroke={totalColor}
+            strokeOpacity={0.5}
+            strokeWidth={2}
+            dot={false}
+            activeDot={{ r: 4, fill: totalColor, stroke: 'none' }}
+          />
+          {prevWeekTotal !== null && (
+            <Line
+              type="monotone"
+              dataKey="_prevTotal"
+              name="Last week"
+              stroke={prevColor}
+              strokeWidth={1.5}
+              strokeDasharray="4 3"
+              dot={false}
+              activeDot={{ r: 3, fill: prevColor, stroke: 'none' }}
+            />
+          )}
           {sports.map(sport => (
             <Area
               key={sport}
@@ -223,7 +322,7 @@ function AccumulatedChart({ data, titles, colorMap }: AccumulatedChartProps) {
               label={makeLabel(sport, sportColorMap[sport])}
             />
           ))}
-        </AreaChart>
+        </ComposedChart>
       </ResponsiveContainer>
     </div>
   )
@@ -2077,6 +2176,7 @@ export default function CalendarPage() {
             {current.time_per_sport_per_day_mins && (
               <AccumulatedChart
                 data={current.time_per_sport_per_day_mins}
+                previous={previous?.time_per_sport_per_day_mins}
                 titles={current.activities_titles_per_day_per_sport}
                 colorMap={weekSportColors}
               />
