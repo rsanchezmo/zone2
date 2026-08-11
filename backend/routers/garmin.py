@@ -12,6 +12,7 @@ Endpoints
 - GET  /daily-stats        — raw cached payloads for one metric over a window
 - GET  /trends?days=30     — pre-shaped numeric series for charts (one call)
 - GET  /latest             — most-recent cached payload per metric (stat cards)
+- GET  /events?days=14     — Move IQ auto-detected activities over a window
 """
 
 from __future__ import annotations
@@ -148,6 +149,43 @@ def latest(z2: Zone2 = Depends(get_z2)) -> dict[str, Any]:
     for metric in z2.garmin_client.ALL_METRICS:
         out[metric] = z2.garmin_cache.get_latest(metric)
     return out
+
+
+# ---------------------------------------------------------------------- /events
+
+
+@router.get("/events")
+def events(
+    days: int = Query(default=14, ge=1, le=90),
+    z2: Zone2 = Depends(get_z2),
+) -> dict[str, Any]:
+    """Move IQ auto-detected activities (walking, biking, …) the watch spotted
+    without a recorded activity. Reads the cached `all_day_events` payloads and
+    flattens them into slim event dicts, newest first."""
+    end = date_t.today()
+    start = end - timedelta(days=days - 1)
+    rows = z2.garmin_cache.get_range("all_day_events", start, end)
+
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        for e in r["payload"] or []:
+            out.append({
+                "date": e.get("calendarDate") or r["date"],
+                "activity_type": e.get("activityType"),
+                "activity_sub_type": e.get("activitySubType"),
+                "start_local": e.get("startTimestampLocal"),
+                "end_local": e.get("endTimestampLocal"),
+                "duration_mins": e.get("duration"),
+                "moderate_mins": e.get("moderateIntensityMinutes"),
+                "vigorous_mins": e.get("vigorousIntensityMinutes"),
+            })
+    out.sort(key=lambda e: e["start_local"] or "", reverse=True)
+    return {
+        "start_date": start.isoformat(),
+        "end_date": end.isoformat(),
+        "days": days,
+        "events": out,
+    }
 
 
 # ---------------------------------------------------------------------- /trends

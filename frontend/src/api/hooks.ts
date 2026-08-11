@@ -1399,6 +1399,7 @@ export function useGarminStatus() {
     if (wasSyncing.current && !syncing) {
       qc.invalidateQueries({ queryKey: ['garmin-latest'] });
       qc.invalidateQueries({ queryKey: ['garmin-trends'] });
+      qc.invalidateQueries({ queryKey: ['garmin-events'] });
     }
     wasSyncing.current = syncing;
   }, [qc, syncing]);
@@ -1561,6 +1562,35 @@ export function useGarminTrends(days: number = 30) {
   return useQuery<GarminTrends>({
     queryKey: ['garmin-trends', days],
     queryFn: () => api.get('/garmin/trends', { params: { days } }).then(r => r.data),
+    staleTime: 1000 * 60 * 5,
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** One Move IQ auto-detected activity (not recorded on the watch). Local
+ * timestamps come as `YYYY-MM-DDTHH:MM:SS.0` — slice, don't Date-parse. */
+export interface GarminAutoEvent {
+  date: string;
+  activity_type: string | null;
+  activity_sub_type: string | null;
+  start_local: string | null;
+  end_local: string | null;
+  duration_mins: number | null;
+  moderate_mins: number | null;
+  vigorous_mins: number | null;
+}
+
+export interface GarminEventsResponse {
+  start_date: string;
+  end_date: string;
+  days: number;
+  events: GarminAutoEvent[];
+}
+
+export function useGarminEvents(days: number = 14) {
+  return useQuery<GarminEventsResponse>({
+    queryKey: ['garmin-events', days],
+    queryFn: () => api.get('/garmin/events', { params: { days } }).then(r => r.data),
     staleTime: 1000 * 60 * 5,
     placeholderData: keepPreviousData,
   });

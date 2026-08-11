@@ -9,8 +9,10 @@ import { useTheme } from '../hooks/useTheme'
 import { useIsMobile } from '../hooks/useIsMobile'
 import {
   useGarminStatus, useGarminLatest, useGarminTrends, useTriggerGarminSync, useCancelGarminSync,
-  type GarminTrendRow as TrendRow,
+  useGarminEvents,
+  type GarminTrendRow as TrendRow, type GarminAutoEvent,
 } from '../api/hooks'
+import { getSportColor, DEFAULT_SPORT_COLOR } from '../constants/sportColors'
 import StatCard from '../components/shared/StatCard'
 import ChartPanel, { LegendSwatch } from '../components/shared/ChartPanel'
 import PageHeader from '../components/shared/PageHeader'
@@ -166,6 +168,10 @@ function fmtDate(iso: unknown): string {
   const d = new Date(iso + 'T00:00:00')
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
+function fmtDayDate(iso: string): string {
+  const d = new Date(iso + 'T00:00:00')
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+}
 function fmtSigned(v: number): string {
   return v > 0 ? `+${v}` : String(v)
 }
@@ -251,6 +257,61 @@ function cleanCoaching(p: string | null | undefined): { text: string; tone: 'pos
 
 // ─────────────────────────────────────────── skeleton
 
+/* ── Move IQ auto-detected events ──────────────────────────────────── */
+
+/** Garmin Move IQ activityType → Strava sport key, so events reuse the
+ *  shared sport color map. */
+const MOVEIQ_SPORT: Record<string, string> = {
+  running: 'Run',
+  walking: 'Walk',
+  hiking: 'Hike',
+  cycling: 'Ride',
+  biking: 'Ride',
+  swimming: 'Swim',
+  rowing: 'Rowing',
+  elliptical: 'Elliptical',
+}
+
+/** Overrides where the shared palette would collide inside this panel —
+ *  Ride's blue sits right next to Swim's on a thin lane segment. */
+const MOVEIQ_COLOR_OVERRIDES: Record<string, string> = {
+  cycling: '#f59e0b',
+  biking: '#f59e0b',
+}
+
+function moveIqColor(type: string | null): string {
+  if (!type) return DEFAULT_SPORT_COLOR
+  const t = type.toLowerCase()
+  const override = MOVEIQ_COLOR_OVERRIDES[t]
+  if (override) return override
+  const key = MOVEIQ_SPORT[t]
+  return key ? getSportColor(key) : DEFAULT_SPORT_COLOR
+}
+
+function moveIqLabel(e: GarminAutoEvent): string {
+  const t = e.activity_sub_type ?? e.activity_type
+  if (!t) return 'Movement'
+  return t.charAt(0).toUpperCase() + t.slice(1)
+}
+
+/** Local timestamps arrive as `YYYY-MM-DDTHH:MM:SS.0`; slice the clock out
+ *  rather than Date-parsing into a shifted zone. */
+function eventClock(ts: string | null): string {
+  return ts ? ts.slice(11, 16) : '–'
+}
+
+/** Minutes since local midnight, for positioning on a day lane. */
+function eventDayOffset(ts: string | null): number | null {
+  if (!ts || ts.length < 16) return null
+  const h = Number(ts.slice(11, 13))
+  const m = Number(ts.slice(14, 16))
+  if (Number.isNaN(h) || Number.isNaN(m)) return null
+  return h * 60 + m
+}
+
+const EVENTS_RANGE_OPTIONS = [7, 14, 30]
+const LANE_HOUR_TICKS = [6, 12, 18]
+
 function PageSkeleton({ isLight }: { isLight: boolean }) {
   const bar = isLight ? 'bg-gray-100' : 'bg-surface-700'
   return (
@@ -287,8 +348,33 @@ export default function GarminPage() {
   const { data: latest, isLoading: latestLoading } = useGarminLatest()
   const { data: trends, isLoading: trendsLoading } = useGarminTrends(days)
   const { data: rhythmTrends, isLoading: rhythmLoading } = useGarminTrends(rhythmDays)
+  const [eventRange, setEventRange] = useState<number>(14)
+  const { data: eventsData } = useGarminEvents(eventRange)
   const triggerSync = useTriggerGarminSync()
   const cancelSync = useCancelGarminSync()
+
+  // Move IQ events grouped per day (newest first) + per-type totals for the legend.
+  const { eventDays, eventTypeTotals } = useMemo(() => {
+    const groups = new Map<string, GarminAutoEvent[]>()
+    const totals = new Map<string, number>()
+    for (const e of eventsData?.events ?? []) {
+      const list = groups.get(e.date)
+      if (list) list.push(e)
+      else groups.set(e.date, [e])
+      const t = (e.activity_type ?? 'other').toLowerCase()
+      totals.set(t, (totals.get(t) ?? 0) + (e.duration_mins ?? 0))
+    }
+    return {
+      eventDays: [...groups.entries()]
+        .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+        .map(([date, events]) => ({
+          date,
+          events,
+          totalMins: events.reduce((s, e) => s + (e.duration_mins ?? 0), 0),
+        })),
+      eventTypeTotals: [...totals.entries()].sort((a, b) => b[1] - a[1]),
+    }
+  }, [eventsData])
 
   const enabled = status?.enabled === true
   const syncing = status?.syncing === true
@@ -739,6 +825,104 @@ export default function GarminPage() {
 
       {enabled && (
         <>
+          {/* ── Auto-detected activity (Move IQ) ─────────────────────── */}
+          <section className="space-y-4">
+            <div className="section-head pt-2">
+              <span className="eyebrow">Auto-detected</span>
+            </div>
+            <ChartPanel
+              title="Move IQ"
+              sublabel={`last ${eventsData?.days ?? eventRange}d · movement the watch detected without a recorded activity`}
+              accent={ACCENT}
+              toolbar={
+                <div className="flex items-center gap-0.5" role="tablist">
+                  {EVENTS_RANGE_OPTIONS.map(d => (
+                    <button key={d} className="chip"
+                      data-active={d === eventRange}
+                      onClick={() => setEventRange(d)}>
+                      {d}d
+                    </button>
+                  ))}
+                </div>
+              }
+              legend={eventTypeTotals.length > 0 ? (
+                <>
+                  {eventTypeTotals.map(([type, mins]) => (
+                    <span key={type} className="inline-flex items-center gap-1.5 text-[11px] text-gray-500">
+                      <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: moveIqColor(type) }} />
+                      <span className="capitalize">{type}</span>
+                      <span className="font-mono tabular-nums">{formatDurationHM(mins * 60)}</span>
+                    </span>
+                  ))}
+                </>
+              ) : undefined}
+            >
+              {eventDays.length === 0 ? (
+                <div className={clsx('text-xs py-6 text-center', isLight ? 'text-gray-400' : 'text-gray-600')}>
+                  No auto-detected events cached yet — run a sync to pull them.
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {/* Hour axis, aligned with the lanes below */}
+                  <div className="flex items-center gap-3">
+                    <span className="w-24 shrink-0" />
+                    <div className="relative flex-1 h-4">
+                      {LANE_HOUR_TICKS.map(h => (
+                        <span
+                          key={h}
+                          className="absolute -translate-x-1/2 text-[10px] font-mono text-gray-500"
+                          style={{ left: `${(h / 24) * 100}%` }}
+                        >
+                          {String(h).padStart(2, '0')}
+                        </span>
+                      ))}
+                    </div>
+                    <span className="w-14 shrink-0" />
+                  </div>
+                  {eventDays.map(day => (
+                    <div key={day.date} className="flex items-center gap-3">
+                      <span className={clsx('text-xs font-mono tabular-nums w-24 shrink-0', isLight ? 'text-gray-500' : 'text-gray-400')}>
+                        {fmtDayDate(day.date)}
+                      </span>
+                      <div className={clsx('relative flex-1 h-7 rounded', isLight ? 'bg-gray-100' : 'bg-surface-700/40')}>
+                        {LANE_HOUR_TICKS.map(h => (
+                          <span
+                            key={h}
+                            className="absolute top-0 bottom-0 w-px"
+                            style={{ left: `${(h / 24) * 100}%`, backgroundColor: isLight ? '#e5e7eb' : '#ffffff14' }}
+                          />
+                        ))}
+                        {day.events.map((e, i) => {
+                          const startMin = eventDayOffset(e.start_local)
+                          if (startMin == null) return null
+                          const color = moveIqColor(e.activity_type)
+                          const durMin = Math.min(e.duration_mins ?? 0, 1440 - startMin)
+                          const intensity = (e.moderate_mins ?? 0) + (e.vigorous_mins ?? 0)
+                          return (
+                            <span
+                              key={i}
+                              className="absolute top-0.5 bottom-0.5 rounded-[3px]"
+                              style={{
+                                left: `${(startMin / 1440) * 100}%`,
+                                width: `${Math.max((durMin / 1440) * 100, 0.4)}%`,
+                                minWidth: 4,
+                                backgroundColor: color,
+                              }}
+                              title={`${moveIqLabel(e)} ${eventClock(e.start_local)}–${eventClock(e.end_local)} · ${e.duration_mins ?? 0} min${intensity > 0 ? ` · ${intensity} intensity min` : ''}`}
+                            />
+                          )
+                        })}
+                      </div>
+                      <span className="text-[11px] text-gray-500 font-mono tabular-nums w-14 text-right shrink-0">
+                        {formatDurationHM(day.totalMins * 60)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </ChartPanel>
+          </section>
+
           {/* ── Weekly rhythm: which weekday wins each metric ────────── */}
           <section className="space-y-4">
             <div className="flex items-center gap-3 pt-2">

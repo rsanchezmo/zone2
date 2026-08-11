@@ -82,6 +82,7 @@ class GarminClient:
         "spo2",
         "respiration",
         "intensity_minutes",
+        "all_day_events",
     )
     METRICS_RANGE: tuple[str, ...] = (
         "body_battery",
@@ -205,6 +206,11 @@ class GarminClient:
     def fetch_respiration(self, d):  return self._call("get_respiration_data", self._iso(d))
     def fetch_intensity_minutes(self, d): return self._call("get_intensity_minutes_data", self._iso(d))
 
+    def fetch_all_day_events(self, d):
+        """Move IQ auto-detected activities (walking, biking, …) for a day —
+        list[dict], present even when nothing was recorded on the watch."""
+        return self._call("get_all_day_events", self._iso(d))
+
     def fetch_training_readiness(self, d):
         """Garmin returns a list of intraday snapshots; we keep the latest by
         timestamp (which represents the most up-to-date assessment for the day).
@@ -250,4 +256,5 @@ class GarminClient:
         "spo2":               "fetch_spo2",
         "respiration":        "fetch_respiration",
         "intensity_minutes":  "fetch_intensity_minutes",
+        "all_day_events":     "fetch_all_day_events",
     }
