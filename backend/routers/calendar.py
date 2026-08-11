@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -115,6 +115,31 @@ def _activity_row_to_dict(row: pd.Series) -> dict:
     return d
 
 
+def _activities_by_day(z2: Zone2, date_from: str, date_to: str) -> dict[str, list[dict]]:
+    """Bucket cached activities within [date_from, date_to] (inclusive) by local day."""
+    activities_df = z2.strava_activities_cache.get_prepared_view()
+    if activities_df.empty:
+        return {}
+    dt_from = pd.to_datetime(date_from)
+    dt_to = pd.to_datetime(date_to) + pd.Timedelta(days=1)  # inclusive
+    if activities_df["start_date_local"].dt.tz is not None:
+        dt_from = dt_from.tz_localize(activities_df["start_date_local"].dt.tz)
+        dt_to = dt_to.tz_localize(activities_df["start_date_local"].dt.tz)
+    activities_df = activities_df[
+        (activities_df["start_date_local"] >= dt_from)
+        & (activities_df["start_date_local"] < dt_to)
+    ]
+
+    activity_map: dict[str, list[dict]] = {}
+    for _, row in activities_df.iterrows():
+        sdt = row.get("start_date_local")
+        if sdt is None:
+            continue
+        date_str = sdt.strftime("%Y-%m-%d") if hasattr(sdt, "strftime") else str(sdt)[:10]
+        activity_map.setdefault(date_str, []).append(_activity_row_to_dict(row))
+    return activity_map
+
+
 @router.get("/sessions/scores")
 async def get_session_scores(
     date_from: str = Query(...),
@@ -134,30 +159,7 @@ async def get_session_scores(
     if not sessions_with_targets:
         return {}
 
-    activities_df = z2.strava_activities_cache.get_prepared_view()
-    if not activities_df.empty:
-        dt_from = pd.to_datetime(date_from)
-        dt_to = pd.to_datetime(date_to) + pd.Timedelta(days=1)  # inclusive
-        if activities_df["start_date_local"].dt.tz is not None:
-            dt_from = dt_from.tz_localize(activities_df["start_date_local"].dt.tz)
-            dt_to = dt_to.tz_localize(activities_df["start_date_local"].dt.tz)
-        activities_df = activities_df[
-            (activities_df["start_date_local"] >= dt_from)
-            & (activities_df["start_date_local"] < dt_to)
-        ]
-
-    activity_map: dict[str, list[dict]] = {}
-    if not activities_df.empty:
-        for _, row in activities_df.iterrows():
-            sdt = row.get("start_date_local")
-            if sdt is not None:
-                if hasattr(sdt, "strftime"):
-                    date_str = sdt.strftime("%Y-%m-%d")
-                else:
-                    date_str = str(sdt)[:10]
-                if date_str not in activity_map:
-                    activity_map[date_str] = []
-                activity_map[date_str].append(_activity_row_to_dict(row))
+    activity_map = _activities_by_day(z2, date_from, date_to)
 
     hr_zones = None
     try:
@@ -185,6 +187,66 @@ async def get_session_scores(
         result[sid] = compute_execution_score(session, matched, hr_zones, streams)
 
     return result
+
+
+@router.get("/sessions/accomplishment")
+async def get_plan_accomplishment(
+    db: aiosqlite.Connection = Depends(get_db),
+    z2: Zone2 = Depends(get_z2),
+):
+    """Share of planned sessions that were actually executed.
+
+    A session counts as accomplished when an activity of its sport exists on
+    its day (rest days: when no activity does) or it was manually marked
+    completed. Sessions planned for today that are still unfulfilled are
+    excluded rather than counted as missed. Reported for all time and for a
+    recent 28-day window.
+    """
+    window_days = 28
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    cursor = await db.execute(
+        "SELECT * FROM training_sessions WHERE date <= ? ORDER BY date", (today,),
+    )
+    rows = await cursor.fetchall()
+    sessions = [_row_to_dict(row) for row in rows]
+    if not sessions:
+        return {
+            "total_planned": 0, "total_completed": 0, "rate": None,
+            "recent_planned": 0, "recent_completed": 0, "recent_rate": None,
+            "window_days": window_days,
+        }
+
+    activity_map = _activities_by_day(z2, sessions[0]["date"], today)
+    recent_from = (now - timedelta(days=window_days)).strftime("%Y-%m-%d")
+
+    total = completed = recent_total = recent_completed = 0
+    for session in sessions:
+        day_activities = activity_map.get(session["date"], [])
+        if session["sport_type"].lower() == "rest":
+            accomplished = len(day_activities) == 0
+        else:
+            accomplished = session["completed"] or match_activity(session, day_activities) is not None
+        if session["date"] == today and not accomplished:
+            continue
+        total += 1
+        recent = session["date"] >= recent_from
+        if recent:
+            recent_total += 1
+        if accomplished:
+            completed += 1
+            if recent:
+                recent_completed += 1
+
+    return {
+        "total_planned": total,
+        "total_completed": completed,
+        "rate": round(completed / total * 100, 1) if total else None,
+        "recent_planned": recent_total,
+        "recent_completed": recent_completed,
+        "recent_rate": round(recent_completed / recent_total * 100, 1) if recent_total else None,
+        "window_days": window_days,
+    }
 
 
 @router.get("/sessions/score-by-activity/{activity_id}")

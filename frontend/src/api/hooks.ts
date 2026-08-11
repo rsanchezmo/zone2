@@ -840,6 +840,7 @@ export function useUpdateZonesSettings() {
       qc.invalidateQueries({ queryKey: ['relative-effort-weekly'] });
       qc.invalidateQueries({ queryKey: ['session-scores'] });
       qc.invalidateQueries({ queryKey: ['activity-score'] });
+      qc.invalidateQueries({ queryKey: ['plan-accomplishment'] });
     },
   });
 }
@@ -913,6 +914,7 @@ export function useResyncActivity() {
       qc.invalidateQueries({ queryKey: ['weekly-report'] });
       qc.invalidateQueries({ queryKey: ['session-scores'] });
       qc.invalidateQueries({ queryKey: ['activity-score'] });
+      qc.invalidateQueries({ queryKey: ['plan-accomplishment'] });
       qc.invalidateQueries({ queryKey: ['cache-completeness'] });
     },
   });
@@ -1004,6 +1006,7 @@ export function useCreateSession() {
       qc.invalidateQueries({ queryKey: ['calendar-sessions-range'] });
       qc.invalidateQueries({ queryKey: ['session-scores'] });
       qc.invalidateQueries({ queryKey: ['activity-score'] });
+      qc.invalidateQueries({ queryKey: ['plan-accomplishment'] });
     },
   });
 }
@@ -1018,6 +1021,7 @@ export function useUpdateSession() {
       qc.invalidateQueries({ queryKey: ['calendar-sessions-range'] });
       qc.invalidateQueries({ queryKey: ['session-scores'] });
       qc.invalidateQueries({ queryKey: ['activity-score'] });
+      qc.invalidateQueries({ queryKey: ['plan-accomplishment'] });
     },
   });
 }
@@ -1032,7 +1036,27 @@ export function useDeleteSession() {
       qc.invalidateQueries({ queryKey: ['calendar-sessions-range'] });
       qc.invalidateQueries({ queryKey: ['session-scores'] });
       qc.invalidateQueries({ queryKey: ['activity-score'] });
+      qc.invalidateQueries({ queryKey: ['plan-accomplishment'] });
     },
+  });
+}
+
+/** Rates are null when no planned sessions fall in the corresponding window. */
+export interface PlanAccomplishment {
+  total_planned: number;
+  total_completed: number;
+  rate: number | null;
+  recent_planned: number;
+  recent_completed: number;
+  recent_rate: number | null;
+  window_days: number;
+}
+
+export function usePlanAccomplishment() {
+  return useQuery<PlanAccomplishment>({
+    queryKey: ['plan-accomplishment'],
+    queryFn: () => api.get('/calendar/sessions/accomplishment').then(r => r.data),
+    staleTime: 1000 * 60 * 5,
   });
 }
 

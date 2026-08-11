@@ -11,6 +11,7 @@ import {
   useActivitiesByDateRange, useCalendarSessionsByRange,
   useCreateSession, useUpdateSession, useDeleteSession, useWeeklyReport, useAthleteZones,
   useStreaks, useGoalProgress, useGoals, useSessionScores, useWorkoutTemplates, useCreateWorkoutTemplate,
+  usePlanAccomplishment,
   useRaceEventsByRange, useUpcomingRaces, useCreateRaceEvent, useUpdateRaceEvent, useDeleteRaceEvent,
   type Activity, type ExecutionScore, type Goal, type RaceEvent, type SessionScoresResponse,
   type TrainingSession, type WorkoutTemplate,
@@ -508,6 +509,29 @@ function StreakBadge({ value, label, kind, title }: { value: number; label: stri
 }
 
 
+
+
+/* ── Plan accomplishment badge — % of planned sessions executed ── */
+function PlanRateBadge({ rate, label, title }: { rate: number; label: string; title?: string }) {
+  const { theme } = useTheme()
+  const isLight = theme === 'light'
+  const accent = scoreColor(rate)
+  return (
+    <div
+      className={clsx(
+        'panel flex items-center gap-1.5 px-2.5 py-1',
+        isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
+      )}
+      title={title}
+    >
+      <span style={{ color: accent }}><CheckIcon size={11} /></span>
+      <span className="text-xs font-mono tabular-nums font-semibold" style={{ color: accent }}>
+        {Math.round(rate)}%
+      </span>
+      <span className="eyebrow text-[9px]">{label}</span>
+    </div>
+  )
+}
 
 
 /* ── Session Modal ──────────────────────────────────── */
@@ -1850,6 +1874,7 @@ export default function CalendarPage() {
   }, [toast])
 
   const { data: streakData } = useStreaks()
+  const { data: planRate } = usePlanAccomplishment()
 
   // Monday-aligned range for whichever view is active, memoized so week summaries
   // don't recompute on drag&drop re-renders.
@@ -2212,10 +2237,10 @@ export default function CalendarPage() {
             </div>
           </div>
         </div>
-        {/* Streak badges */}
-        {streakData && (streakData.current_streak > 0 || streakData.longest_streak > 0 || (streakData.current_week_streak ?? 0) > 0 || (streakData.longest_week_streak ?? 0) > 0) && (
+        {/* Streak + plan accomplishment badges */}
+        {((streakData && (streakData.current_streak > 0 || streakData.longest_streak > 0 || (streakData.current_week_streak ?? 0) > 0 || (streakData.longest_week_streak ?? 0) > 0)) || planRate?.rate != null) && (
           <div className="flex items-center gap-1.5 flex-wrap">
-            {streakData.current_streak > 0 && (
+            {streakData && streakData.current_streak > 0 && (
               <StreakBadge
                 value={streakData.current_streak}
                 label={`day${streakData.current_streak !== 1 ? 's' : ''}`}
@@ -2223,7 +2248,7 @@ export default function CalendarPage() {
                 title="Current streak — consecutive days with activities"
               />
             )}
-            {streakData.longest_streak > 0 && (
+            {streakData && streakData.longest_streak > 0 && (
               <StreakBadge
                 value={streakData.longest_streak}
                 label="best days"
@@ -2231,7 +2256,7 @@ export default function CalendarPage() {
                 title={`Longest day streak: ${streakData.longest_streak_start} to ${streakData.longest_streak_end}`}
               />
             )}
-            {streakData.current_week_streak != null && streakData.current_week_streak > 0 && (
+            {streakData && streakData.current_week_streak != null && streakData.current_week_streak > 0 && (
               <StreakBadge
                 value={streakData.current_week_streak}
                 label={`wk${streakData.current_week_streak !== 1 ? 's' : ''}`}
@@ -2239,13 +2264,30 @@ export default function CalendarPage() {
                 title="Current streak — consecutive weeks with activities"
               />
             )}
-            {streakData.longest_week_streak != null && streakData.longest_week_streak > 0 && (
+            {streakData && streakData.longest_week_streak != null && streakData.longest_week_streak > 0 && (
               <StreakBadge
                 value={streakData.longest_week_streak}
                 label="best wks"
                 kind="best"
                 title={`Longest week streak: ${streakData.longest_week_streak_start} to ${streakData.longest_week_streak_end}`}
               />
+            )}
+            {/* All-time plan rate splits into a recent badge only once history outgrows the window */}
+            {planRate?.rate != null && (
+              <>
+                {planRate.recent_rate != null && planRate.recent_planned < planRate.total_planned && (
+                  <PlanRateBadge
+                    rate={planRate.recent_rate}
+                    label="plan 4wk"
+                    title={`Plan accomplishment, last ${planRate.window_days} days: ${planRate.recent_completed} of ${planRate.recent_planned} planned sessions completed`}
+                  />
+                )}
+                <PlanRateBadge
+                  rate={planRate.rate}
+                  label={planRate.recent_planned < planRate.total_planned ? 'plan all' : 'plan'}
+                  title={`Plan accomplishment, all time: ${planRate.total_completed} of ${planRate.total_planned} planned sessions completed`}
+                />
+              </>
             )}
           </div>
         )}
