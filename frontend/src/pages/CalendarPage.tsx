@@ -1,5 +1,5 @@
 import {
-  Fragment, useState, useMemo, useRef, useEffect, useCallback,
+  useState, useMemo, useRef, useEffect, useCallback,
   type DragEvent as ReactDragEvent, type ReactNode,
 } from 'react'
 import {
@@ -13,8 +13,9 @@ import {
   useStreaks, useGoalProgress, useGoals, useSessionScores, useWorkoutTemplates, useCreateWorkoutTemplate,
   usePlanAccomplishment,
   useRaceEventsByRange, useUpcomingRaces, useCreateRaceEvent, useUpdateRaceEvent, useDeleteRaceEvent,
-  type Activity, type ExecutionScore, type Goal, type RaceEvent, type SessionScoresResponse,
-  type TrainingSession, type WorkoutTemplate,
+  useActivities,
+  type Activity, type ExecutionScore, type Goal, type GoalProgress, type RaceEvent,
+  type SessionScoresResponse, type TrainingSession, type WeeklyReport, type WorkoutTemplate,
 } from '../api/hooks'
 import { getSportColor, DEFAULT_SPORT_COLOR } from '../constants/sportColors'
 import { getPaceUnit, getSportCategory, formatDist, getDistUnit, formatPace, isSpeedSport, parsePaceInput, formatDurationHM } from '../utils/formatSpeed'
@@ -22,7 +23,6 @@ import { localDateStr, parseLocalDate } from '../utils/dates'
 import { scoreColor } from '../utils/scoreColor'
 import { WEEKDAYS_SHORT, WEEKDAYS_MIN, WEEKDAY_LETTERS } from '../constants/weekdays'
 import SportTypeCombobox from '../components/shared/SportTypeCombobox'
-import StatCard from '../components/shared/StatCard'
 import ExportButton from '../components/shared/ExportButton'
 import {
   FlagIcon, CheckIcon, DistanceIcon, TimerIcon, BoltIcon, RangeIcon, HeartIcon,
@@ -98,6 +98,8 @@ interface WeekSummary {
   totalKm: number
   timeStr: string
   plannedKm: number
+  /** False for a week with nothing logged or planned — its totals row is noise. */
+  hasContent: boolean
   goals: (Goal & { current_value: number; percentage: number })[]
 }
 
@@ -1403,14 +1405,25 @@ function SessionModal({
 }
 
 /* ── Upcoming Plan (expandable) ─────────────────────── */
-function UpcomingPlan({ sessions, todayStr }: { sessions: TrainingSession[] | undefined; todayStr: string }) {
+interface UpcomingPlanProps {
+  sessions: TrainingSession[] | undefined
+  todayStr: string
+  /** Drop the card chrome so the panel can sit as a section inside another one. */
+  bare?: boolean
+  /** Offered in place of the empty state's dead end. */
+  onPlan?: () => void
+}
+
+function UpcomingPlan({ sessions, todayStr, bare, onPlan }: UpcomingPlanProps) {
   const { theme } = useTheme()
   const isLight = theme === 'light'
   const [expandedId, setExpandedId] = useState<number | null>(null)
 
   return (
-    <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
-      <div className="eyebrow mb-3">Upcoming Plan (7 days)</div>
+    <div className={clsx(!bare && ['rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600'])}>
+      <div className={clsx('eyebrow', bare ? 'mb-2 !text-[9px]' : 'mb-3')}>
+        {bare ? 'Next 7 days' : 'Upcoming Plan (7 days)'}
+      </div>
       {sessions && sessions.length > 0 ? (
         <div className="space-y-2">
           {sessions.map(s => {
@@ -1464,8 +1477,228 @@ function UpcomingPlan({ sessions, todayStr }: { sessions: TrainingSession[] | un
           })}
         </div>
       ) : (
-        <div className="text-sm text-gray-500">No upcoming sessions</div>
+        <div>
+          <div className={clsx(bare ? 'text-xs' : 'text-sm', 'text-gray-500')}>
+            {bare ? 'No sessions planned yet.' : 'No upcoming sessions'}
+          </div>
+          {onPlan && (
+            <button
+              onClick={onPlan}
+              className="action-link mt-2 text-xs font-semibold text-blue-400 hover:text-blue-300"
+            >
+              <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" aria-hidden="true">
+                <path d="M7 1v12M1 7h12" />
+              </svg>
+              Plan a session
+            </button>
+          )}
+        </div>
       )}
+    </div>
+  )
+}
+
+/* ── Week Inspector ─────────────────────────────────
+ * The selected week's numbers, sitting beside the grid instead of a screen
+ * below it. Stacks under the grid below lg. */
+
+interface WeekInspectorProps {
+  weekStart: string
+  report: WeeklyReport | undefined
+  loading: boolean
+  activities: Activity[] | undefined
+  goals: GoalProgress[] | undefined
+  upcoming: TrainingSession[] | undefined
+  todayStr: string
+  atCurrentWeek: boolean
+  /** Week-over-week change per report key, as the stat cards used to show. */
+  delta: (key: string) => number | string | null
+  onPrev: () => void
+  onNext: () => void
+  onPlan: () => void
+}
+
+const INSPECTOR_ACTIVITY_LIMIT = 6
+
+function WeekInspector(props: WeekInspectorProps) {
+  const {
+    weekStart, report, loading, activities, goals, upcoming, todayStr,
+    atCurrentWeek, delta, onPrev, onNext, onPlan,
+  } = props
+  const { theme } = useTheme()
+  const isLight = theme === 'light'
+  const [showAll, setShowAll] = useState(false)
+
+  const weeklyGoals = useMemo(
+    () => (goals ?? []).filter(g => g.period === 'weekly'),
+    [goals],
+  )
+
+  // Newest first, matching how the week reads in the grid above it.
+  const sorted = useMemo(() => {
+    const items = [...(activities ?? [])]
+    items.sort((a, b) => (b.start_date_local ?? '').localeCompare(a.start_date_local ?? ''))
+    return items
+  }, [activities])
+  const shown = showAll ? sorted : sorted.slice(0, INSPECTOR_ACTIVITY_LIMIT)
+  const hidden = sorted.length - shown.length
+
+  return (
+    <aside className={clsx('panel p-4 flex flex-col gap-3.5 lg:sticky lg:top-4', isLight ? 'bg-white' : 'bg-surface-800')}>
+      <header className="flex items-start justify-between gap-2">
+        <div>
+          <div className="eyebrow !text-blue-400">Week {format(parseISO(weekStart), 'w')}</div>
+          <div className={clsx('text-[17px] font-semibold tracking-tight mt-0.5', isLight ? 'text-gray-900' : 'text-gray-100')}>
+            {formatWeekRange(weekStart)}
+          </div>
+        </div>
+        <div className="flex items-center gap-1">
+          <button onClick={onPrev} className="btn !px-2.5" aria-label="Previous week">&larr;</button>
+          <button onClick={onNext} disabled={atCurrentWeek} className="btn !px-2.5" aria-label="Next week">&rarr;</button>
+          <ExportButton
+            url={`/api/exports/weekly-report?week_start=${weekStart}`}
+            label=""
+            filename={`weekly_report_${weekStart}.png`}
+            exportType="weekly-report"
+          />
+        </div>
+      </header>
+
+      {loading ? (
+        <div className="grid grid-cols-2 gap-2 animate-pulse">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className={clsx('h-16 rounded-lg', isLight ? 'bg-gray-100' : 'bg-surface-700')} />
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-2">
+          <InspectorKpi label="Distance" value={(report?.total_distance_km ?? 0).toFixed(1)} unit="km" delta={delta('total_distance_km')} />
+          <InspectorKpi label="Time" value={formatDurationHM(Math.round((report?.total_time_hours ?? 0) * 3600))} delta={delta('total_time_hours')} />
+          <InspectorKpi label="Activities" value={String(report?.total_activities ?? 0)} delta={delta('total_activities')} />
+          <InspectorKpi label="Active days" value={String(report?.active_days ?? 0)} unit="/ 7" />
+          <InspectorKpi label="Elevation" value={String(Math.round(report?.total_elevation_m ?? 0))} unit="m" delta={delta('total_elevation_m')} />
+          <InspectorKpi label="Planned" value={String(upcoming?.length ?? 0)} unit="sessions" />
+        </div>
+      )}
+
+      {weeklyGoals.length > 0 && (
+        <section>
+          <div className="eyebrow !text-[9px] mb-2">Weekly goals</div>
+          <div className="space-y-2.5">
+            {weeklyGoals.map(g => {
+              const color = g.sport_type === '__all__' ? DEFAULT_SPORT_COLOR : getSportColor(g.sport_type)
+              const complete = g.percentage >= 100
+              return (
+                <div key={g.id}>
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                      <span className={clsx('text-[11px] truncate', isLight ? 'text-gray-700' : 'text-gray-300')}>
+                        {g.sport_type === '__all__' ? 'All sports' : g.sport_type}
+                      </span>
+                    </span>
+                    <span className="text-[11px] font-mono tabular-nums shrink-0" style={{ color: complete ? '#22c55e' : color }}>
+                      {g.current_value.toFixed(1)} / {g.target_value}
+                    </span>
+                  </div>
+                  <div className={clsx('h-1.5 rounded-full overflow-hidden', isLight ? 'bg-gray-200' : 'bg-surface-700')}>
+                    <div
+                      className="h-full rounded-full transition-all duration-500"
+                      style={{ width: `${Math.min(g.percentage, 100)}%`, backgroundColor: complete ? '#22c55e' : color }}
+                    />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )}
+
+      <section>
+        <div className="flex items-baseline justify-between mb-1">
+          <span className="eyebrow !text-[9px]">Activities</span>
+          <span className="text-[10px] font-mono tabular-nums text-gray-600">{sorted.length}</span>
+        </div>
+        {sorted.length === 0 ? (
+          <div className="text-xs text-gray-500 py-1">Nothing logged this week.</div>
+        ) : (
+          <div>
+            {shown.map(a => (
+              <Link
+                key={a.id}
+                to={`/activities/${a.id}`}
+                className={clsx(
+                  'flex items-center gap-2 py-1.5 border-t first:border-t-0 group',
+                  isLight ? 'border-gray-200' : 'border-surface-600',
+                )}
+              >
+                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: getSportColor(a.sport_type) }} />
+                <span className={clsx(
+                  'text-xs truncate flex-1',
+                  isLight ? 'text-gray-600 group-hover:text-gray-900' : 'text-gray-300 group-hover:text-gray-100',
+                )}>
+                  {a.name}
+                </span>
+                {a.moving_time != null && (
+                  <span className="text-[11px] font-mono tabular-nums text-gray-500 shrink-0">
+                    {Math.round(a.moving_time / 60)}m
+                  </span>
+                )}
+                <span className="text-[10px] font-mono text-gray-600 shrink-0 w-7 text-right">
+                  {a.start_date_local ? format(parseLocalDate(a.start_date_local), 'EEE') : ''}
+                </span>
+              </Link>
+            ))}
+            {(hidden > 0 || showAll) && (
+              <button
+                onClick={() => setShowAll(v => !v)}
+                className={clsx(
+                  'w-full text-center text-[11px] font-medium py-1.5 border-t text-blue-400 hover:text-blue-300',
+                  isLight ? 'border-gray-200' : 'border-surface-600',
+                )}
+              >
+                {showAll ? 'Show less' : `Show ${hidden} more`}
+              </button>
+            )}
+          </div>
+        )}
+      </section>
+
+      <div className={clsx('mt-auto pt-3 border-t border-dashed', isLight ? 'border-gray-300' : 'border-surface-500')}>
+        <UpcomingPlan sessions={upcoming} todayStr={todayStr} bare onPlan={onPlan} />
+      </div>
+    </aside>
+  )
+}
+
+function InspectorKpi({ label, value, unit, delta }: {
+  label: string
+  value: string
+  unit?: string
+  delta?: number | string | null
+}) {
+  const { theme } = useTheme()
+  const isLight = theme === 'light'
+  const up = delta === 'new' || (typeof delta === 'number' && delta >= 0)
+  // A change that rounds to zero reads as "-0%", which says nothing.
+  const showDelta = delta === 'new' || (typeof delta === 'number' && Math.abs(delta) >= 0.5)
+  return (
+    <div className={clsx('rounded-lg border px-3 py-2.5', isLight ? 'bg-gray-50 border-gray-200' : 'bg-surface-700/60 border-surface-600')}>
+      <div className="text-[10px] uppercase tracking-[0.12em] text-gray-500 mb-1">{label}</div>
+      <div className="flex items-baseline gap-1.5">
+        <span className={clsx('text-xl font-bold font-mono tabular-nums tracking-tight', isLight ? 'text-gray-900' : 'text-gray-100')}>
+          {value}
+          {unit && <span className="text-[11px] font-medium text-gray-500 ml-1">{unit}</span>}
+        </span>
+        {showDelta && (
+          <span className={clsx(
+            'text-[10px] font-semibold shrink-0',
+            up ? (isLight ? 'text-green-700' : 'text-green-400') : (isLight ? 'text-red-700' : 'text-red-400'),
+          )}>
+            {delta === 'new' ? 'new' : `${(delta as number) >= 0 ? '+' : ''}${(delta as number).toFixed(0)}%`}
+          </span>
+        )}
+      </div>
     </div>
   )
 }
@@ -1670,7 +1903,7 @@ function WeekView({
       )}
       style={{ animation: 'fadeIn 200ms ease-out' }}
     >
-      {summary && (
+      {summary?.hasContent && (
         <WeekTotals
           summary={summary}
           className={clsx('px-2.5 py-2', isLight ? 'bg-gray-50/80' : 'bg-surface-900/40')}
@@ -1855,9 +2088,21 @@ export default function CalendarPage() {
   const { toast } = useToast()
   const [view, setView] = useState<CalendarView>(getInitialView)
   const [currentMonth, setCurrentMonth] = useState(new Date())
-  const [weekStart, setWeekStart] = useState(() =>
-    format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd')
-  )
+  const thisWeekStart = format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd')
+
+  // The current week is empty for most of its first days, which left the whole
+  // report reading as zeros. Until the athlete picks a week, follow the last one
+  // that actually has activity — which is the current week once they train in it.
+  const { data: newestActivity } = useActivities(1, 1)
+  const latestActiveWeek = useMemo(() => {
+    const newest = newestActivity?.items?.[0]?.start_date_local
+    if (!newest) return null
+    return format(startOfWeek(parseLocalDate(newest), { weekStartsOn: 1 }), 'yyyy-MM-dd')
+  }, [newestActivity])
+
+  const [pickedWeek, setPickedWeek] = useState<string | null>(null)
+  const weekStart = pickedWeek ?? latestActiveWeek ?? thisWeekStart
+
   const [sportFilter, setSportFilter] = useState<Set<string>>(new Set())
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [showModal, setShowModal] = useState(false)
@@ -1906,10 +2151,17 @@ export default function CalendarPage() {
     setView(prev => {
       if (prev === next) return prev
       if (next === 'week') {
-        const target = isSameMonth(currentMonth, new Date())
-          ? startOfWeek(new Date(), { weekStartsOn: 1 })
-          : startOfWeek(startOfMonth(currentMonth), { weekStartsOn: 1 })
-        setWeekStart(format(target, 'yyyy-MM-dd'))
+        // The month grid highlights a selected week; keep it rather than snapping
+        // away from it, and only fall back when it isn't in the month on screen.
+        const gridStart = startOfWeek(startOfMonth(currentMonth), { weekStartsOn: 1 })
+        const gridEnd = endOfWeek(endOfMonth(currentMonth), { weekStartsOn: 1 })
+        const selected = parseISO(weekStart)
+        if (selected < gridStart || selected > gridEnd) {
+          const target = isSameMonth(currentMonth, new Date())
+            ? startOfWeek(new Date(), { weekStartsOn: 1 })
+            : gridStart
+          setPickedWeek(format(target, 'yyyy-MM-dd'))
+        }
       } else {
         setCurrentMonth(startOfMonth(parseISO(weekStart)))
       }
@@ -1934,7 +2186,6 @@ export default function CalendarPage() {
 
   // Weekly report — in week view the grid's own selector drives `weekStart`,
   // so the report always describes the week on screen.
-  const thisWeekStart = format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd')
   const isCurrentWeek = weekStart === thisWeekStart
   const { data: weekData, isLoading: weekLoading } = useWeeklyReport(weekStart)
   const { data: athleteZones } = useAthleteZones()
@@ -2077,10 +2328,26 @@ export default function CalendarPage() {
         const pct = target > 0 ? (current / target) * 100 : 0
         return { ...g, current_value: current, percentage: pct }
       })
-      summaries[idx] = { totalKm, timeStr: formatDurationHM(totalSec), plannedKm, goals }
+      summaries[idx] = {
+        totalKm,
+        timeStr: formatDurationHM(totalSec),
+        plannedKm,
+        hasContent: totalSec > 0 || totalKm > 0 || plannedKm > 0,
+        goals,
+      }
     }
     return summaries
   }, [days, activityMap, sessionMap, calGoals, showSport])
+
+  /** The month grid as one block per week, each carrying its own totals. */
+  const weekRows = useMemo(() => {
+    const rows: { monday: string; days: Date[]; summary: WeekSummary | undefined }[] = []
+    for (let idx = 0; idx < days.length; idx += 7) {
+      const weekDays = days.slice(idx, idx + 7)
+      rows.push({ monday: format(weekDays[0], 'yyyy-MM-dd'), days: weekDays, summary: weekSummaries[idx] })
+    }
+    return rows
+  }, [days, weekSummaries])
 
   function handleAddSession(data: Record<string, unknown>) {
     if (!selectedDate) return
@@ -2208,7 +2475,7 @@ export default function CalendarPage() {
               ) : (
                 <>
                   <button
-                    onClick={() => setWeekStart(w => format(subDays(parseISO(w), 7), 'yyyy-MM-dd'))}
+                    onClick={() => setPickedWeek(format(subDays(parseISO(weekStart), 7), 'yyyy-MM-dd'))}
                     className="btn !px-3"
                     aria-label="Previous week"
                   >&larr;</button>
@@ -2221,14 +2488,14 @@ export default function CalendarPage() {
                   {/* Unclamped, unlike the report's own picker in month view — the
                       point of week view is reading a plan that lives in the future. */}
                   <button
-                    onClick={() => setWeekStart(w => format(addDays(parseISO(w), 7), 'yyyy-MM-dd'))}
+                    onClick={() => setPickedWeek(format(addDays(parseISO(weekStart), 7), 'yyyy-MM-dd'))}
                     className="btn !px-3"
                     aria-label="Next week"
                   >&rarr;</button>
                   {showWeekPicker && (
                     <WeekPicker
                       currentWeekStart={weekStart}
-                      onSelect={setWeekStart}
+                      onSelect={setPickedWeek}
                       onClose={() => setShowWeekPicker(false)}
                     />
                   )}
@@ -2394,208 +2661,248 @@ export default function CalendarPage() {
         </div>
       )}
 
-      {view === 'week' ? (
-          <WeekView
-            days={days}
-            summary={weekSummaries[0]}
-            activityMap={activityMap}
-            sessionMap={sessionMap}
-            raceMap={raceMap}
-            scores={sessionScores}
-            dragOverDate={dragOverDate}
-            draggingSessionId={draggingSessionId}
-            dayDropProps={dayDropProps}
-            onOpenDay={openDay}
-            onSessionDragStart={handleSessionDragStart}
-            onSessionDragEnd={handleSessionDragEnd}
-            onRaceDragStart={handleRaceDragStart}
-          />
-      ) : (
-      /* Calendar grid — all seven columns fit at every width; below md the cells
-         shrink to dots and the day modal carries the detail. */
-      <div className="grid grid-cols-7 gap-0.5 md:gap-1" key={format(currentMonth, 'yyyy-MM')} style={{ animation: 'fadeIn 200ms ease-out' }}>
-        {WEEKDAYS_SHORT.map((d, i) => (
-          <div key={d} className="eyebrow text-center py-1.5 !text-[9px] md:!text-[11px] !tracking-[0.08em] md:!tracking-[0.18em]">
-            <span className="md:hidden">{WEEKDAYS_MIN[i]}</span>
-            <span className="hidden md:inline">{d}</span>
-          </div>
-        ))}
-
-        {activitiesLoading ? (
-          <>
-            {Array.from({ length: 35 }).map((_, i) => (
-              <div key={i} className={clsx('min-h-[54px] md:min-h-[120px] rounded-lg border animate-pulse', isLight ? 'bg-gray-100 border-gray-200' : 'bg-surface-800 border-surface-600')}>
-                <div className="p-1 md:p-2">
-                  <div className="h-3 w-4 bg-surface-600 rounded mb-2" />
-                  <div className="hidden md:block space-y-1">
-                    <div className="h-2 w-3/4 bg-surface-600 rounded" />
-                    <div className="h-2 w-1/2 bg-surface-600 rounded" />
-                  </div>
-                </div>
-              </div>
-            ))}
-          </>
-        ) : days.map((day, idx) => {
-          const dateStr = format(day, 'yyyy-MM-dd')
-          const dayActivities = activityMap[dateStr] || []
-          const daySessions = sessionMap[dateStr] || []
-          const inMonth = isSameMonth(day, currentMonth)
-          const isPastOrToday = day <= new Date(new Date().setHours(23, 59, 59, 999))
-          const planStatus = dayPlanStatus(daySessions, dayActivities, isPastOrToday)
-
-          const summary = idx % 7 === 0 ? weekSummaries[idx] : null
-          const weekSummary = summary ? (
-            // Wraps to a second row on narrow screens rather than trailing the
-            // week's totals off the edge.
-            <WeekTotals
-              key={`week-${idx}`}
-              summary={summary}
-              className={clsx(
-                'col-span-7 justify-start md:justify-end px-1 md:px-3 py-1 rounded-lg',
-                isLight ? 'bg-gray-50/80' : 'bg-surface-800/50',
-              )}
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] gap-4 items-start">
+        <div className="min-w-0">
+          {view === 'week' ? (
+            <WeekView
+              days={days}
+              summary={weekSummaries[0]}
+              activityMap={activityMap}
+              sessionMap={sessionMap}
+              raceMap={raceMap}
+              scores={sessionScores}
+              dragOverDate={dragOverDate}
+              draggingSessionId={draggingSessionId}
+              dayDropProps={dayDropProps}
+              onOpenDay={openDay}
+              onSessionDragStart={handleSessionDragStart}
+              onSessionDragEnd={handleSessionDragEnd}
+              onRaceDragStart={handleRaceDragStart}
             />
-          ) : null
-
-          return (
-            <Fragment key={dateStr}>
-              {weekSummary}
-              <div
-                onClick={() => openDay(dateStr)}
-                {...dayDropProps(dateStr, day)}
-                className={clsx(
-                  'relative min-h-[54px] md:min-h-[120px] p-1 md:p-2 rounded-lg border transition-all duration-150',
-                  'cursor-pointer',
-                  inMonth
-                    ? isLight ? 'border-gray-200 bg-white' : 'border-surface-600 bg-surface-800'
-                    : isLight ? 'border-transparent bg-gray-50/50' : 'border-transparent bg-surface-900/50',
-                  isToday(day) && (isLight ? 'ring-1 ring-gray-400/40 border-gray-300' : 'ring-1 ring-gray-500/30 border-gray-500/40'),
-                  dragOverDate === dateStr ? 'border-gray-400/60 ring-2 ring-gray-400/20 bg-gray-400/[0.03]' : 'hover:border-surface-500',
-                )}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className={clsx(
-                    'text-xs font-medium',
-                    isToday(day) ? (isLight ? 'bg-gray-900 text-white w-5 h-5 rounded-full flex items-center justify-center text-[10px]' : 'bg-gray-400/20 text-gray-100 w-5 h-5 rounded-full flex items-center justify-center text-[10px]')
-                      : inMonth ? (isLight ? 'text-gray-600' : 'text-gray-400')
-                      : 'text-gray-600',
-                  )}>
-                    {format(day, 'd')}
-                  </span>
-                </div>
-                {planStatus && (() => {
-                  const avgScore = dayAvgScore(daySessions, sessionScores)
-                  return (
-                    <div className="absolute top-1 right-1 flex items-center gap-1">
-                      {avgScore !== null && (
-                        <span
-                          className="hidden md:inline text-[9px] font-bold font-mono px-1 rounded"
-                          style={{ color: scoreColor(avgScore), backgroundColor: `${scoreColor(avgScore)}15` }}
-                        >
-                          {avgScore}
-                        </span>
-                      )}
-                      <span
-                        className={clsx('w-2 h-2 rounded-full', planStatus === 'done' ? 'bg-green-400' : 'bg-red-400')}
-                        title={planStatus === 'done' ? 'Plan completed' : 'Plan missed'}
-                      />
-                    </div>
-                  )
-                })()}
-                {/* Mobile: dots stand in for the labelled rows — filled for logged
-                    activities, outlined for planned sessions. Nothing legible fits a
-                    ~45px cell, and the whole cell taps through to the day modal. */}
-                <div className="md:hidden flex flex-wrap items-center gap-[3px]">
-                  {dayActivities.slice(0, MOBILE_DOT_LIMIT).map(a => (
-                    <span
-                      key={a.id}
-                      className="w-1.5 h-1.5 rounded-full"
-                      style={{ backgroundColor: getSportColor(a.sport_type) }}
-                    />
-                  ))}
-                  {daySessions.slice(0, Math.max(0, MOBILE_DOT_LIMIT - dayActivities.length)).map(s => (
-                    <span
-                      key={s.id as number}
-                      className="w-1.5 h-1.5 rounded-full border"
-                      style={{ borderColor: getSportColor(s.sport_type as string) }}
-                    />
-                  ))}
-                  {dayActivities.length + daySessions.length > MOBILE_DOT_LIMIT && (
-                    <span className="text-[8px] font-mono leading-none text-gray-500">
-                      +{dayActivities.length + daySessions.length - MOBILE_DOT_LIMIT}
-                    </span>
-                  )}
-                  {(raceMap[dateStr] || []).length > 0 && (
-                    <span className="text-amber-500 leading-none"><FlagIcon size={8} /></span>
-                  )}
-                </div>
-
-                <div className="hidden md:block">
-                <div className="space-y-0.5">
-                  {dayActivities.map((a) => (
-                    <Link key={a.id} to={`/activities/${a.id}`} onClick={e => e.stopPropagation()} className={clsx('flex items-center gap-1.5 group rounded px-1 py-0.5 -mx-1 transition-colors', isLight ? 'hover:bg-black/[0.04]' : 'hover:bg-white/[0.04]')}>
-                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: getSportColor(a.sport_type) }} />
-                      <span className={clsx('text-[10px] truncate leading-tight', isLight ? 'text-gray-500 group-hover:text-gray-900' : 'text-gray-400 group-hover:text-gray-100')}>{a.name}</span>
-                    </Link>
-                  ))}
-                </div>
-                {daySessions.map((s) => {
-                  const sColor = getSportColor(s.sport_type as string)
-                  return (
-                    <div
-                      key={s.id as number}
-                      draggable
-                      onDragStart={(e) => handleSessionDragStart(e, s)}
-                      onDragEnd={handleSessionDragEnd}
-                      className={clsx(
-                        'mt-0.5 text-[10px] px-1.5 py-0.5 rounded border border-dashed truncate cursor-grab active:cursor-grabbing',
-                        'transition-all duration-150 hover:scale-[1.02]',
-                        draggingSessionId === (s.id as number) && 'opacity-40 scale-95 rotate-1',
-                      )}
-                      style={{
-                        borderColor: `${sColor}60`,
-                        color: `${sColor}bb`,
-                      }}
-                      onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = `0 0 8px ${sColor}30` }}
-                      onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = 'none' }}
-                      title={s.description as string || s.sport_type as string}
-                    >
-                      {s.description ? `${s.sport_type}: ${s.description}` : s.sport_type as string}
-                    </div>
-                  )
-                })}
-                {(raceMap[dateStr] || []).map((r) => {
-                  const matchedActivity = isPastOrToday
-                    ? dayActivities.find(a => a.sport_type === r.sport_type)
-                    : null
-                  return (
-                    <div
-                      key={`race-${r.id}`}
-                      draggable
-                      onDragStart={(e) => handleRaceDragStart(e, r)}
-                      className={clsx(
-                        'mt-0.5 text-[10px] px-1.5 py-0.5 rounded border truncate',
-                        'cursor-grab active:cursor-grabbing transition-all duration-150 hover:scale-[1.02]',
-                        'border-amber-500/60 text-amber-500/90 bg-amber-500/5',
-                      )}
-                      title={`${r.name}${r.location ? ` — ${r.location}` : ''}${r.distance_km ? ` (${r.distance_km} km)` : ''}`}
-                    >
-                      <span className="inline-flex items-center gap-1"><FlagIcon size={9} /> {r.name as string}</span>
-                      {matchedActivity && (
-                        <Link to={`/activities/${matchedActivity.id}`} onClick={e => e.stopPropagation()} className="text-green-400 ml-1 inline-flex items-center align-middle">
-                          <CheckIcon size={9} />
-                        </Link>
-                      )}
-                    </div>
-                  )
-                })}
-                </div>
+          ) : (
+            /* Month grid — one block per week, so a week's totals sit under its own
+               days and the whole row is a single selection target for the inspector.
+               All seven columns fit at every width; below md the cells shrink to dots
+               and the day modal carries the detail. */
+            <div key={format(currentMonth, 'yyyy-MM')} style={{ animation: 'fadeIn 200ms ease-out' }}>
+              <div className="grid grid-cols-7 gap-0.5 md:gap-1 px-1">
+                {WEEKDAYS_SHORT.map((d, i) => (
+                  <div key={d} className="eyebrow text-center py-1.5 !text-[9px] md:!text-[11px] !tracking-[0.08em] md:!tracking-[0.18em]">
+                    <span className="md:hidden">{WEEKDAYS_MIN[i]}</span>
+                    <span className="hidden md:inline">{d}</span>
+                  </div>
+                ))}
               </div>
-            </Fragment>
-          )
-        })}
+
+              {activitiesLoading ? (
+                <div className="space-y-1">
+                  {Array.from({ length: 5 }).map((_, r) => (
+                    <div key={r} className="grid grid-cols-7 gap-0.5 md:gap-1 p-1">
+                      {Array.from({ length: 7 }).map((_, c) => (
+                        <div
+                          key={c}
+                          className={clsx(
+                            'min-h-[54px] md:min-h-[120px] rounded-lg border animate-pulse',
+                            isLight ? 'bg-gray-100 border-gray-200' : 'bg-surface-800 border-surface-600',
+                          )}
+                        />
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {weekRows.map(row => {
+                    const selected = row.monday === weekStart
+                    return (
+                      <div
+                        key={row.monday}
+                        onClick={() => setPickedWeek(row.monday)}
+                        aria-current={selected ? 'true' : undefined}
+                        className={clsx(
+                          'rounded-xl p-1 border transition-colors cursor-pointer',
+                          selected
+                            ? (isLight ? 'bg-blue-50/70 border-blue-200' : 'bg-blue-400/[0.05] border-blue-400/25')
+                            : (isLight ? 'border-transparent hover:border-gray-200' : 'border-transparent hover:border-surface-600'),
+                        )}
+                      >
+                        <div className="grid grid-cols-7 gap-0.5 md:gap-1">
+                          {row.days.map(day => {
+                            const dateStr = format(day, 'yyyy-MM-dd')
+                            const dayActivities = activityMap[dateStr] || []
+                            const daySessions = sessionMap[dateStr] || []
+                            const inMonth = isSameMonth(day, currentMonth)
+                            const isPastOrToday = day <= new Date(new Date().setHours(23, 59, 59, 999))
+                            const planStatus = dayPlanStatus(daySessions, dayActivities, isPastOrToday)
+                            return (
+                              <div
+                                key={dateStr}
+                                onClick={() => openDay(dateStr)}
+                                {...dayDropProps(dateStr, day)}
+                                className={clsx(
+                                  'relative min-h-[54px] md:min-h-[120px] p-1 md:p-2 rounded-lg border transition-all duration-150',
+                                  'cursor-pointer',
+                                  inMonth
+                                    ? isLight ? 'border-gray-200 bg-white' : 'border-surface-600 bg-surface-800'
+                                    : isLight ? 'border-transparent bg-gray-50/50' : 'border-transparent bg-surface-900/50',
+                                  isToday(day) && (isLight ? 'ring-1 ring-gray-400/40 border-gray-300' : 'ring-1 ring-gray-500/30 border-gray-500/40'),
+                                  dragOverDate === dateStr ? 'border-gray-400/60 ring-2 ring-gray-400/20 bg-gray-400/[0.03]' : 'hover:border-surface-500',
+                                )}
+                              >
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className={clsx(
+                                    'text-xs font-medium',
+                                    isToday(day) ? (isLight ? 'bg-gray-900 text-white w-5 h-5 rounded-full flex items-center justify-center text-[10px]' : 'bg-gray-400/20 text-gray-100 w-5 h-5 rounded-full flex items-center justify-center text-[10px]')
+                                      : inMonth ? (isLight ? 'text-gray-600' : 'text-gray-400')
+                                      : 'text-gray-600',
+                                  )}>
+                                    {format(day, 'd')}
+                                  </span>
+                                </div>
+                                {planStatus && (() => {
+                                  const avgScore = dayAvgScore(daySessions, sessionScores)
+                                  return (
+                                    <div className="absolute top-1 right-1 flex items-center gap-1">
+                                      {avgScore !== null && (
+                                        <span
+                                          className="hidden md:inline text-[9px] font-bold font-mono px-1 rounded"
+                                          style={{ color: scoreColor(avgScore), backgroundColor: `${scoreColor(avgScore)}15` }}
+                                        >
+                                          {avgScore}
+                                        </span>
+                                      )}
+                                      <span
+                                        className={clsx('w-2 h-2 rounded-full', planStatus === 'done' ? 'bg-green-400' : 'bg-red-400')}
+                                        title={planStatus === 'done' ? 'Plan completed' : 'Plan missed'}
+                                      />
+                                    </div>
+                                  )
+                                })()}
+                                {/* Mobile: dots stand in for the labelled rows — filled for logged
+                                    activities, outlined for planned sessions. Nothing legible fits a
+                                    ~45px cell, and the whole cell taps through to the day modal. */}
+                                <div className="md:hidden flex flex-wrap items-center gap-[3px]">
+                                  {dayActivities.slice(0, MOBILE_DOT_LIMIT).map(a => (
+                                    <span
+                                      key={a.id}
+                                      className="w-1.5 h-1.5 rounded-full"
+                                      style={{ backgroundColor: getSportColor(a.sport_type) }}
+                                    />
+                                  ))}
+                                  {daySessions.slice(0, Math.max(0, MOBILE_DOT_LIMIT - dayActivities.length)).map(s => (
+                                    <span
+                                      key={s.id as number}
+                                      className="w-1.5 h-1.5 rounded-full border"
+                                      style={{ borderColor: getSportColor(s.sport_type as string) }}
+                                    />
+                                  ))}
+                                  {dayActivities.length + daySessions.length > MOBILE_DOT_LIMIT && (
+                                    <span className="text-[8px] font-mono leading-none text-gray-500">
+                                      +{dayActivities.length + daySessions.length - MOBILE_DOT_LIMIT}
+                                    </span>
+                                  )}
+                                  {(raceMap[dateStr] || []).length > 0 && (
+                                    <span className="text-amber-500 leading-none"><FlagIcon size={8} /></span>
+                                  )}
+                                </div>
+
+                                <div className="hidden md:block">
+                                  <div className="space-y-0.5">
+                                    {dayActivities.map((a) => (
+                                      <Link key={a.id} to={`/activities/${a.id}`} onClick={e => e.stopPropagation()} className={clsx('flex items-center gap-1.5 group rounded px-1 py-0.5 -mx-1 transition-colors', isLight ? 'hover:bg-black/[0.04]' : 'hover:bg-white/[0.04]')}>
+                                        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: getSportColor(a.sport_type) }} />
+                                        <span className={clsx('text-[10px] truncate leading-tight', isLight ? 'text-gray-500 group-hover:text-gray-900' : 'text-gray-400 group-hover:text-gray-100')}>{a.name}</span>
+                                      </Link>
+                                    ))}
+                                  </div>
+                                  {daySessions.map((s) => {
+                                    const sColor = getSportColor(s.sport_type as string)
+                                    return (
+                                      <div
+                                        key={s.id as number}
+                                        draggable
+                                        onDragStart={(e) => handleSessionDragStart(e, s)}
+                                        onDragEnd={handleSessionDragEnd}
+                                        className={clsx(
+                                          'mt-0.5 text-[10px] px-1.5 py-0.5 rounded border border-dashed truncate cursor-grab active:cursor-grabbing',
+                                          'transition-all duration-150 hover:scale-[1.02]',
+                                          draggingSessionId === (s.id as number) && 'opacity-40 scale-95 rotate-1',
+                                        )}
+                                        style={{
+                                          borderColor: `${sColor}60`,
+                                          color: `${sColor}bb`,
+                                        }}
+                                        onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = `0 0 8px ${sColor}30` }}
+                                        onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = 'none' }}
+                                        title={s.description as string || s.sport_type as string}
+                                      >
+                                        {s.description ? `${s.sport_type}: ${s.description}` : s.sport_type as string}
+                                      </div>
+                                    )
+                                  })}
+                                  {(raceMap[dateStr] || []).map((r) => {
+                                    const matchedActivity = isPastOrToday
+                                      ? dayActivities.find(a => a.sport_type === r.sport_type)
+                                      : null
+                                    return (
+                                      <div
+                                        key={`race-${r.id}`}
+                                        draggable
+                                        onDragStart={(e) => handleRaceDragStart(e, r)}
+                                        className={clsx(
+                                          'mt-0.5 text-[10px] px-1.5 py-0.5 rounded border truncate',
+                                          'cursor-grab active:cursor-grabbing transition-all duration-150 hover:scale-[1.02]',
+                                          'border-amber-500/60 text-amber-500/90 bg-amber-500/5',
+                                        )}
+                                        title={`${r.name}${r.location ? ` — ${r.location}` : ''}${r.distance_km ? ` (${r.distance_km} km)` : ''}`}
+                                      >
+                                        <span className="inline-flex items-center gap-1"><FlagIcon size={9} /> {r.name as string}</span>
+                                        {matchedActivity && (
+                                          <Link to={`/activities/${matchedActivity.id}`} onClick={e => e.stopPropagation()} className="text-green-400 ml-1 inline-flex items-center align-middle">
+                                            <CheckIcon size={9} />
+                                          </Link>
+                                        )}
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                        {row.summary?.hasContent && (
+                          <WeekTotals
+                            summary={row.summary}
+                            className="justify-start md:justify-end px-1 md:px-2 pt-1.5"
+                          />
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <WeekInspector
+          weekStart={weekStart}
+          report={current}
+          loading={weekLoading}
+          activities={weekActivities?.items}
+          goals={goalProgressData?.goals}
+          upcoming={upcomingSessions}
+          todayStr={todayStr}
+          atCurrentWeek={isCurrentWeek}
+          delta={delta}
+          onPrev={() => setPickedWeek(format(subDays(parseISO(weekStart), 7), 'yyyy-MM-dd'))}
+          onNext={() => setPickedWeek(() => {
+            const next = format(addDays(parseISO(weekStart), 7), 'yyyy-MM-dd')
+            return next > thisWeekStart ? thisWeekStart : next
+          })}
+          onPlan={() => openDay(todayStr)}
+        />
       </div>
-      )}
 
       {/* Weekly Report — fade in */}
       <style>{`
@@ -2603,120 +2910,24 @@ export default function CalendarPage() {
         @keyframes scaleIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
       `}</style>
       <section>
-        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-          <div className="section-head flex-1">
-            <span className="eyebrow">Weekly report</span>
-          </div>
-          <div className="flex items-center gap-1.5 relative">
-            <ExportButton
-              url={`/api/exports/weekly-report?week_start=${weekStart}`}
-              label="PNG"
-              filename={`weekly_report_${weekStart}.png`}
-              exportType="weekly-report"
-            />
-            {view === 'week' ? (
-              // Driven by the grid's selector above — shown read-only so the
-              // section still says which week it describes when scrolled to.
-              <span className="text-xs text-gray-500 font-mono tabular-nums px-2">
-                {current?.week_start ?? weekStart}
-              </span>
-            ) : (
-              <>
-                <button
-                  onClick={() => setWeekStart(w => format(subDays(parseISO(w), 7), 'yyyy-MM-dd'))}
-                  className="btn !px-3"
-                  aria-label="Previous week"
-                >&larr;</button>
-                <button
-                  onClick={() => setShowWeekPicker(v => !v)}
-                  className="btn !text-sm min-w-[140px] text-center tabular-nums"
-                >
-                  {current?.week_start ?? weekStart}
-                </button>
-                <button
-                  onClick={() => setWeekStart(w => {
-                    const next = format(addDays(parseISO(w), 7), 'yyyy-MM-dd')
-                    return next > thisWeekStart ? thisWeekStart : next
-                  })}
-                  disabled={isCurrentWeek}
-                  className="btn !px-3"
-                  aria-label="Next week"
-                >&rarr;</button>
-                {showWeekPicker && (
-                  <WeekPicker
-                    currentWeekStart={weekStart}
-                    onSelect={setWeekStart}
-                    onClose={() => setShowWeekPicker(false)}
-                  />
-                )}
-              </>
-            )}
-          </div>
+        <div className="flex items-baseline gap-2.5 mb-4 flex-wrap">
+          <span className="eyebrow shrink-0">Week detail</span>
+          <span className={clsx('text-[11px]', isLight ? 'text-gray-300' : 'text-gray-700')}>·</span>
+          <span className="text-xs font-semibold text-blue-400 shrink-0">{formatWeekRange(weekStart)}</span>
+          <span className="text-[11px] text-gray-500 shrink-0">follows the week selected above</span>
+          <div className="section-head flex-1 min-w-[40px]" />
         </div>
 
         {weekLoading ? (
-          <div className="space-y-4 animate-pulse">
+          <div className="space-y-4">
+            <div className={clsx('rounded-xl h-56 border animate-pulse', isLight ? 'bg-gray-100 border-gray-200' : 'bg-surface-800 border-surface-600')} />
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className={clsx('rounded-xl p-4 h-48 border animate-pulse', isLight ? 'bg-gray-100 border-gray-200' : 'bg-surface-800 border-surface-600')} />
-              <div className={clsx('rounded-xl p-4 h-48 border animate-pulse', isLight ? 'bg-gray-100 border-gray-200' : 'bg-surface-800 border-surface-600')} />
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className={clsx('rounded-xl p-4 h-24 border animate-pulse', isLight ? 'bg-gray-100 border-gray-200' : 'bg-surface-800 border-surface-600')} />
-              ))}
+              <div className={clsx('rounded-xl h-48 border animate-pulse', isLight ? 'bg-gray-100 border-gray-200' : 'bg-surface-800 border-surface-600')} />
+              <div className={clsx('rounded-xl h-48 border animate-pulse', isLight ? 'bg-gray-100 border-gray-200' : 'bg-surface-800 border-surface-600')} />
             </div>
           </div>
         ) : current ? (
           <div className="space-y-4" style={{ animation: 'fadeIn 300ms ease-out' }}>
-            {/* Activities this week + Upcoming plan side by side */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Activities this week */}
-              <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
-                <div className="eyebrow mb-3">Activities This Week</div>
-                {weekActivities?.items && weekActivities.items.length > 0 ? (
-                  <div className="space-y-2">
-                    {weekActivities.items.map(a => {
-                      const color = weekSportColors[a.sport_type] ?? getSportColor(a.sport_type)
-                      return (
-                        <Link
-                          key={a.id}
-                          to={`/activities/${a.id}`}
-                          className={clsx('flex items-center gap-3 px-3 py-2 rounded-lg transition-colors group', isLight ? 'hover:bg-black/[0.04]' : 'hover:bg-white/[0.04]')}
-                        >
-                          <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                          <span className={clsx('text-sm truncate flex-1', isLight ? 'text-gray-600 group-hover:text-gray-900' : 'text-gray-300 group-hover:text-gray-100')}>{a.name}</span>
-                          <span className="text-xs text-gray-500 shrink-0">{a.sport_type}</span>
-                          {a.distance_km != null && (
-                            <span className="text-xs font-mono shrink-0" style={{ color }}>{formatDist(a.distance_km, a.sport_type)}</span>
-                          )}
-                          {a.moving_time != null && (
-                            <span className="text-xs font-mono text-gray-500 shrink-0">{Math.round(a.moving_time / 60)} min</span>
-                          )}
-                          <span className="text-xs text-gray-600 shrink-0">
-                            {a.start_date_local ? format(parseLocalDate(a.start_date_local), 'EEE') : ''}
-                          </span>
-                        </Link>
-                      )
-                    })}
-                  </div>
-                ) : (
-                  <div className={clsx('text-sm', isLight ? 'text-gray-400' : 'text-gray-600')}>No activities yet</div>
-                )}
-              </div>
-
-              {/* Upcoming planned sessions */}
-              <UpcomingPlan sessions={upcomingSessions} todayStr={todayStr} />
-            </div>
-
-            {/* Stats */}
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
-              <StatCard label="Activities" value={current.total_activities} delta={delta('total_activities')} />
-              <StatCard label="Distance" value={current.total_distance_km?.toFixed(1)} unit="km" delta={delta('total_distance_km')} />
-              <StatCard label="Time" value={current.total_time_hours?.toFixed(1)} unit="hrs" delta={delta('total_time_hours')} />
-              <StatCard label="Elevation" value={Math.round(current.total_elevation_m ?? 0)} unit="m" delta={delta('total_elevation_m')} />
-              <StatCard label="Active Days" value={current.active_days} delta={delta('active_days')} />
-            </div>
-
             {/* Accumulated Training Time */}
             {current.time_per_sport_per_day_mins && (
               <AccumulatedChart
@@ -2725,43 +2936,6 @@ export default function CalendarPage() {
                 titles={current.activities_titles_per_day_per_sport}
                 colorMap={weekSportColors}
               />
-            )}
-
-            {/* Goal Progress */}
-            {goalProgressData?.goals && goalProgressData.goals.length > 0 && (
-              <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
-                <div className="eyebrow mb-3">Goal Progress</div>
-                <div className="space-y-3.5">
-                  {goalProgressData.goals.map(g => {
-                    const sport = g.sport_type
-                    const color = sport === '__all__' ? DEFAULT_SPORT_COLOR : getSportColor(sport)
-                    const pct = Math.min(g.percentage, 100)
-                    const isComplete = g.percentage >= 100
-                    const metricStr = g.metric.replace('_', ' ')
-                    const periodStr = g.period
-                    return (
-                      <div key={g.id}>
-                        <div className="flex items-center justify-between mb-1">
-                          <div className="flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
-                            <span className="text-xs text-gray-300">{sport === '__all__' ? 'All Sports' : sport}</span>
-                            <span className="text-[11px] text-gray-500">{metricStr} / {periodStr}</span>
-                          </div>
-                          <span className="text-xs font-mono" style={{ color: isComplete ? '#22c55e' : color }}>
-                            {g.current_value.toFixed(1)} / {g.target_value} ({g.percentage.toFixed(0)}%)
-                          </span>
-                        </div>
-                        <div className={clsx('h-1.5 rounded-full overflow-hidden', isLight ? 'bg-gray-200' : 'bg-surface-700')}>
-                          <div
-                            className="h-full rounded-full transition-all duration-500"
-                            style={{ width: `${pct}%`, backgroundColor: isComplete ? '#22c55e' : color }}
-                          />
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
             )}
 
             {/* HR Zone Distribution */}
