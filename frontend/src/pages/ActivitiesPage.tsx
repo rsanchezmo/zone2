@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useLayoutEffect, useRef } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { format, getISOWeek, startOfWeek, endOfWeek, isSameMonth } from 'date-fns'
 import { useActivities, useSportTypes, useYears, useAthleteProfile, type Activity } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
 import { distValue, getDistUnit } from '../utils/formatSpeed'
@@ -7,6 +8,7 @@ import { parseLocalDate, todayLocalStr } from '../utils/dates'
 import { useTheme } from '../hooks/useTheme'
 import clsx from 'clsx'
 import DatePicker from '../components/shared/DatePicker'
+import RouteThumbnail from '../components/shared/RouteThumbnail'
 
 const SORT_OPTIONS = [
   { value: 'date', label: 'Date' },
@@ -25,8 +27,80 @@ function useDebounce<T>(value: T, delay: number): T {
   return debounced
 }
 
+/* ── Week grouping ─────────────────────────────────── */
+
+interface WeekGroup {
+  key: string
+  label: string
+  range: string
+  activities: Activity[]
+  totalKm: number
+  totalSeconds: number
+  /** The week continues on an adjacent page, so these totals cover only what's shown. */
+  partial: boolean
+}
+
+/** Seconds as a week time budget, e.g. "2:08 h". */
+function formatHours(seconds: number): string {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  return `${h}:${m.toString().padStart(2, '0')} h`
+}
+
+/**
+ * Group date-ordered activities into ISO weeks (Mon–Sun), preserving list order.
+ * A page boundary can split a week across pages, so the edge groups are flagged
+ * `partial` — their totals only cover the rows on this page.
+ */
+function groupByWeek(activities: Activity[], continuesBefore: boolean, continuesAfter: boolean): WeekGroup[] {
+  const groups: WeekGroup[] = []
+  const byKey = new Map<string, WeekGroup>()
+
+  for (const a of activities) {
+    if (!a.start_date_local) continue
+    const date = parseLocalDate(a.start_date_local)
+    const weekStart = startOfWeek(date, { weekStartsOn: 1 })
+    const weekEnd = endOfWeek(date, { weekStartsOn: 1 })
+    const key = format(weekStart, 'yyyy-MM-dd')
+
+    let group = byKey.get(key)
+    if (!group) {
+      const end = isSameMonth(weekStart, weekEnd) ? format(weekEnd, 'd') : format(weekEnd, 'MMM d')
+      group = {
+        key,
+        label: `Week ${getISOWeek(weekStart)}`,
+        range: `${format(weekStart, 'MMM d')} – ${end}`,
+        activities: [],
+        totalKm: 0,
+        totalSeconds: 0,
+        partial: false,
+      }
+      byKey.set(key, group)
+      groups.push(group)
+    }
+
+    group.activities.push(a)
+    group.totalKm += a.distance_km ?? 0
+    group.totalSeconds += a.moving_time ?? 0
+  }
+
+  if (groups.length > 0) {
+    if (continuesBefore) groups[0].partial = true
+    if (continuesAfter) groups[groups.length - 1].partial = true
+  }
+
+  return groups
+}
+
 /* ── Activity Card ─────────────────────────────────── */
-function ActivityCard({ activity: a }: { activity: Activity }) {
+
+interface ActivityCardProps {
+  activity: Activity
+  /** Inside a week group the header carries the range, so the card drops month and year. */
+  compactDate?: boolean
+}
+
+function ActivityCard({ activity: a, compactDate }: ActivityCardProps) {
   const { theme } = useTheme()
   const isLight = theme === 'light'
   const sportColor = getSportColor(a.sport_type)
@@ -34,14 +108,19 @@ function ActivityCard({ activity: a }: { activity: Activity }) {
   const elevGain = a.total_elevation_gain
   const avgHR = a.average_heartrate
   const dateStr = a.start_date_local
-    ? parseLocalDate(a.start_date_local).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+    ? parseLocalDate(a.start_date_local).toLocaleDateString(
+        undefined,
+        compactDate
+          ? { weekday: 'short', day: 'numeric' }
+          : { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' },
+      )
     : ''
 
   return (
     <Link
       to={`/activities/${a.id}`}
       className={clsx(
-        'group block rounded-xl border card-glow transition-all duration-200',
+        'group flex items-center gap-3.5 rounded-xl border card-glow transition-all duration-200 p-3.5',
         isLight
           ? 'bg-white border-gray-200 hover:border-gray-300'
           : 'bg-surface-800 border-surface-600 hover:border-surface-500',
@@ -52,7 +131,9 @@ function ActivityCard({ activity: a }: { activity: Activity }) {
         '--card-accent': sportColor,
       } as React.CSSProperties}
     >
-      <div className="p-4">
+      <RouteThumbnail encodedPolyline={a.summary_polyline} color={sportColor} />
+
+      <div className="min-w-0 flex-1">
         {/* Top row: name + sport pill + date */}
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
@@ -261,6 +342,14 @@ export default function ActivitiesPage() {
     return nick || found.name || gearId
   }, [gearId, profileForGear])
 
+  // Week grouping only holds under a date sort — any other order interleaves
+  // weeks, so those sorts keep the flat list.
+  const weekGroups = useMemo(() => {
+    if (sortBy !== 'date' || !data?.items?.length) return null
+    const lastPage = Math.ceil(data.total / data.per_page)
+    return groupByWeek(data.items, data.page > 1, data.page < lastPage)
+  }, [sortBy, data])
+
   // Page range for pagination
   const pageRange = useMemo(() => {
     const range: number[] = []
@@ -462,10 +551,44 @@ export default function ActivitiesPage() {
         </div>
       ) : (
         <>
-          <div className={clsx('space-y-2 transition-opacity duration-200 stagger-children', isFetching && !isLoading && 'opacity-60')}>
-            {data?.items?.map(a => (
-              <ActivityCard key={a.id} activity={a} />
-            ))}
+          <div className={clsx('transition-opacity duration-200', isFetching && !isLoading && 'opacity-60')}>
+            {weekGroups ? (
+              <div className="space-y-6">
+                {weekGroups.map(group => (
+                  <section key={group.key} className="space-y-2.5">
+                    <div className="sticky top-0 z-10 flex flex-wrap items-center gap-x-3 gap-y-0.5 py-2 bg-surface-900/85 backdrop-blur-sm">
+                      <span className="eyebrow shrink-0">{group.label} · {group.range}</span>
+                      <div
+                        className="hidden sm:block flex-1 h-px"
+                        style={{ background: 'linear-gradient(to right, var(--color-surface-600) 0%, transparent 75%)' }}
+                      />
+                      <span
+                        className="shrink-0 text-[11px] text-gray-500 font-mono tabular-nums"
+                        title={group.partial ? 'This week continues on an adjacent page — totals cover the shown activities only' : undefined}
+                      >
+                        {group.activities.length} {group.activities.length === 1 ? 'activity' : 'activities'}
+                        {group.totalKm > 0 && (
+                          <> · <span className={isLight ? 'text-gray-900' : 'text-gray-100'}>{group.totalKm.toFixed(1)} km</span></>
+                        )}
+                        {group.totalSeconds > 0 && <> · {formatHours(group.totalSeconds)}</>}
+                        {group.partial && <span className={isLight ? 'text-gray-400' : 'text-gray-600'}> · shown</span>}
+                      </span>
+                    </div>
+                    <div className="space-y-2 stagger-children">
+                      {group.activities.map(a => (
+                        <ActivityCard key={a.id} activity={a} compactDate />
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-2 stagger-children">
+                {data?.items?.map(a => (
+                  <ActivityCard key={a.id} activity={a} />
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Pagination */}
