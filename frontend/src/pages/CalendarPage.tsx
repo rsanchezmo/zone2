@@ -1404,26 +1404,22 @@ function SessionModal({
   )
 }
 
-/* ── Upcoming Plan (expandable) ─────────────────────── */
-interface UpcomingPlanProps {
+/* ── Planned sessions for the inspected week (expandable) ── */
+interface PlannedSessionsProps {
   sessions: TrainingSession[] | undefined
   todayStr: string
-  /** Drop the card chrome so the panel can sit as a section inside another one. */
-  bare?: boolean
-  /** Offered in place of the empty state's dead end. */
-  onPlan?: () => void
+  /** Monday of the week these sessions belong to. */
+  weekStart: string
+  /** Opens the day the athlete picked to plan on. */
+  onPickDay: (date: string) => void
 }
 
-function UpcomingPlan({ sessions, todayStr, bare, onPlan }: UpcomingPlanProps) {
-  const { theme } = useTheme()
-  const isLight = theme === 'light'
+function PlannedSessions({ sessions, todayStr, weekStart, onPickDay }: PlannedSessionsProps) {
   const [expandedId, setExpandedId] = useState<number | null>(null)
 
   return (
-    <div className={clsx(!bare && ['rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600'])}>
-      <div className={clsx('eyebrow', bare ? 'mb-2 !text-[9px]' : 'mb-3')}>
-        {bare ? 'Next 7 days' : 'Upcoming Plan (7 days)'}
-      </div>
+    <div>
+      <div className="eyebrow !text-[9px] mb-2">Planned this week</div>
       {sessions && sessions.length > 0 ? (
         <div className="space-y-2">
           {sessions.map(s => {
@@ -1478,22 +1474,41 @@ function UpcomingPlan({ sessions, todayStr, bare, onPlan }: UpcomingPlanProps) {
         </div>
       ) : (
         <div>
-          <div className={clsx(bare ? 'text-xs' : 'text-sm', 'text-gray-500')}>
-            {bare ? 'No sessions planned yet.' : 'No upcoming sessions'}
-          </div>
-          {onPlan && (
-            <button
-              onClick={onPlan}
-              className="action-link mt-2 text-xs font-semibold text-blue-400 hover:text-blue-300"
-            >
-              <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" aria-hidden="true">
-                <path d="M7 1v12M1 7h12" />
-              </svg>
-              Plan a session
-            </button>
-          )}
+          <div className="text-xs text-gray-500">Nothing planned this week.</div>
         </div>
       )}
+
+      {/* Pick the day to plan on rather than guessing one — every day of the
+          week on screen is one click from its session form. */}
+      <div className="mt-2.5">
+        <div className="text-[10px] uppercase tracking-[0.12em] text-gray-500 mb-1.5">Add to</div>
+        <div className="grid grid-cols-7 gap-1">
+          {Array.from({ length: 7 }, (_, i) => i).map(offset => {
+            const day = addDays(parseISO(weekStart), offset)
+            const dateStr = format(day, 'yyyy-MM-dd')
+            const isTodayCell = dateStr === todayStr
+            const planned = (sessions ?? []).some(s => s.date === dateStr)
+            return (
+              <button
+                key={dateStr}
+                onClick={() => onPickDay(dateStr)}
+                title={`Plan a session on ${format(day, 'EEEE, MMM d')}`}
+                aria-label={`Plan a session on ${format(day, 'EEEE, MMM d')}`}
+                className={clsx(
+                  'flex flex-col items-center justify-center rounded-lg border py-1 min-h-[44px] transition-colors',
+                  isTodayCell
+                    ? 'border-blue-400/40 bg-blue-400/10 text-blue-300'
+                    : 'border-surface-600 text-gray-400 hover:border-surface-500 hover:text-gray-100',
+                )}
+              >
+                <span className="text-[9px] uppercase tracking-wider leading-none">{WEEKDAY_LETTERS[offset]}</span>
+                <span className="text-xs font-mono tabular-nums font-semibold leading-tight mt-0.5">{format(day, 'd')}</span>
+                <span className={clsx('w-1 h-1 rounded-full mt-0.5', planned ? 'bg-blue-400' : 'bg-transparent')} />
+              </button>
+            )
+          })}
+        </div>
+      </div>
     </div>
   )
 }
@@ -1508,22 +1523,23 @@ interface WeekInspectorProps {
   loading: boolean
   activities: Activity[] | undefined
   goals: GoalProgress[] | undefined
-  upcoming: TrainingSession[] | undefined
+  /** Sessions planned inside this week. */
+  planned: TrainingSession[] | undefined
   todayStr: string
   atCurrentWeek: boolean
   /** Week-over-week change per report key, as the stat cards used to show. */
   delta: (key: string) => number | string | null
   onPrev: () => void
   onNext: () => void
-  onPlan: () => void
+  onPickDay: (date: string) => void
 }
 
 const INSPECTOR_ACTIVITY_LIMIT = 6
 
 function WeekInspector(props: WeekInspectorProps) {
   const {
-    weekStart, report, loading, activities, goals, upcoming, todayStr,
-    atCurrentWeek, delta, onPrev, onNext, onPlan,
+    weekStart, report, loading, activities, goals, planned, todayStr,
+    atCurrentWeek, delta, onPrev, onNext, onPickDay,
   } = props
   const { theme } = useTheme()
   const isLight = theme === 'light'
@@ -1577,7 +1593,7 @@ function WeekInspector(props: WeekInspectorProps) {
           <InspectorKpi label="Activities" value={String(report?.total_activities ?? 0)} delta={delta('total_activities')} />
           <InspectorKpi label="Active days" value={String(report?.active_days ?? 0)} unit="/ 7" />
           <InspectorKpi label="Elevation" value={String(Math.round(report?.total_elevation_m ?? 0))} unit="m" delta={delta('total_elevation_m')} />
-          <InspectorKpi label="Planned" value={String(upcoming?.length ?? 0)} unit="sessions" />
+          <InspectorKpi label="Planned" value={String(planned?.length ?? 0)} unit="sessions" />
         </div>
       )}
 
@@ -1665,7 +1681,7 @@ function WeekInspector(props: WeekInspectorProps) {
       </section>
 
       <div className={clsx('mt-auto pt-3 border-t border-dashed', isLight ? 'border-gray-300' : 'border-surface-500')}>
-        <UpcomingPlan sessions={upcoming} todayStr={todayStr} bare onPlan={onPlan} />
+        <PlannedSessions sessions={planned} todayStr={todayStr} weekStart={weekStart} onPickDay={onPickDay} />
       </div>
     </aside>
   )
@@ -2199,10 +2215,10 @@ export default function CalendarPage() {
   const { data: weekActivities } = useActivitiesByDateRange(weekStart, weekEndStr)
   const { data: goalProgressData } = useGoalProgress(weekStart)
 
-  // Upcoming planned sessions (next 7 days)
+  // Sessions planned in the week being inspected. Keyed on the week rather than
+  // the grid's range so it stays right when the month moves off that week.
   const todayStr = format(new Date(), 'yyyy-MM-dd')
-  const next7 = format(addDays(new Date(), 7), 'yyyy-MM-dd')
-  const { data: upcomingSessions } = useCalendarSessionsByRange(todayStr, next7)
+  const { data: weekPlanned } = useCalendarSessionsByRange(weekStart, weekEndStr)
 
   // Shared sport color map for weekly section
   const weekSportColors = useMemo(() => {
@@ -2891,7 +2907,7 @@ export default function CalendarPage() {
           loading={weekLoading}
           activities={weekActivities?.items}
           goals={goalProgressData?.goals}
-          upcoming={upcomingSessions}
+          planned={weekPlanned}
           todayStr={todayStr}
           atCurrentWeek={isCurrentWeek}
           delta={delta}
@@ -2900,7 +2916,7 @@ export default function CalendarPage() {
             const next = format(addDays(parseISO(weekStart), 7), 'yyyy-MM-dd')
             return next > thisWeekStart ? thisWeekStart : next
           })}
-          onPlan={() => openDay(todayStr)}
+          onPickDay={openDay}
         />
       </div>
 
