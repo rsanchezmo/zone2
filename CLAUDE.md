@@ -36,6 +36,7 @@ docker-compose up
 - `STRAVA_WEB_*` — backend config (loaded via Pydantic settings in `backend/config.py`)
 - `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` — optional, for the Telegram bot
 - `CLOUDFLARE_TUNNEL_TOKEN` — optional, for Docker deployment with Cloudflare Tunnel
+- `STRAVA_WEB_CARTO_API_KEY` — optional; without it Leaflet basemaps fall back to OSM, since unkeyed CARTO tiles are watermarked
 
 There are no tests or CI configured. The frontend has ESLint (react-hooks v7 / React Compiler rules) — keep `cd frontend && npm run lint` and `npx tsc -b` at zero errors.
 

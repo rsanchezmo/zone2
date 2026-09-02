@@ -672,6 +672,20 @@ export interface AthleteProfile {
   [key: string]: unknown;
 }
 
+export interface AppConfig {
+  carto_api_key: string | null;
+}
+
+/** Runtime backend settings. Effectively immutable for the life of the tab,
+ * so it never refetches — every map mounts against the same cached value. */
+export function useAppConfig() {
+  return useQuery<AppConfig>({
+    queryKey: ['app-config'],
+    queryFn: () => api.get('/config').then(r => r.data),
+    staleTime: Infinity,
+  });
+}
+
 export function useAthleteProfile() {
   return useQuery<AthleteProfile>({
     queryKey: ['athlete-profile'],

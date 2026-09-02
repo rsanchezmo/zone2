@@ -6,9 +6,10 @@ import type { LatLngBoundsExpression } from 'leaflet'
 import clsx from 'clsx'
 
 import { getSportColor } from '../../constants/sportColors'
+import { useAppConfig } from '../../api/hooks'
 import { useTheme } from '../../hooks/useTheme'
 import { useExitFullscreenOnEscape } from '../../hooks/useExitFullscreenOnEscape'
-import { tileLayerUrl } from '../../utils/mapTiles'
+import { tileLayerAttribution, tileLayerClass, tileLayerUrl } from '../../utils/mapTiles'
 import { InvalidateSize } from './leafletHelpers'
 import { FullscreenIcon } from './mapChrome'
 import { MapStyleToggle, SATELLITE_ATTR, SATELLITE_TILES, type MapStyle } from './MapStyleToggle'
@@ -74,7 +75,9 @@ export default function RoutesMap({
 
   useExitFullscreenOnEscape(expanded, () => setFullscreen(false))
 
-  const tileUrl = mapStyle === 'satellite' ? SATELLITE_TILES : tileLayerUrl(isLight)
+  const cartoApiKey = useAppConfig().data?.carto_api_key
+  const isSatellite = mapStyle === 'satellite'
+  const tileUrl = isSatellite ? SATELLITE_TILES : tileLayerUrl(isLight, cartoApiKey)
   const allBounds = useMemo(() => routeBounds(routes), [routes])
   const signature = useMemo(() => routesSignature(routes), [routes])
 
@@ -105,9 +108,9 @@ export default function RoutesMap({
         >
           <TileLayer
             key={tileUrl}
-            attribution={mapStyle === 'satellite' ? SATELLITE_ATTR : '&copy; CartoDB'}
+            attribution={isSatellite ? SATELLITE_ATTR : tileLayerAttribution(cartoApiKey)}
             url={tileUrl}
-            className={mapStyle === 'satellite' ? 'satellite-tiles' : undefined}
+            className={isSatellite ? 'satellite-tiles' : tileLayerClass(cartoApiKey)}
           />
           {routes.map(route => {
             const color = colorFor ? colorFor(route) : getSportColor(route.sport_type)

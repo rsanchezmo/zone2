@@ -43,6 +43,11 @@ body::before {
 .leaflet-tile-pane .satellite-tiles { filter: brightness(0.55) saturate(0.6) contrast(1.1); }
 .light .leaflet-tile-pane .satellite-tiles { filter: brightness(0.7) saturate(0.7); }
 
+/* Keyless OSM basemap, used when no CARTO key is configured. OSM ships one
+   light style only, so dark mode inverts it into a CARTO-dark stand-in. */
+.leaflet-tile-pane .osm-fallback-tiles { filter: invert(1) hue-rotate(180deg) brightness(0.72) contrast(0.95) saturate(0.35); }
+.light .leaflet-tile-pane .osm-fallback-tiles { filter: saturate(0.45) brightness(1.05); }
+
 /* District hover tooltip on the coverage map */
 .district-tip {
   background: rgba(12, 12, 12, 0.92);

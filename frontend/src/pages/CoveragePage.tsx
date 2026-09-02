@@ -8,13 +8,14 @@ import {
   useCoverageCities, useCoverageEdges, useCoverageDistricts, useCoverageArea,
   useCoverageSyncStatus, useTriggerCoverageSync, useUncoveredEdges,
   useAddCity, useAddCityStatus, useGeocodeCity, useDeleteCity,
+  useAppConfig,
   type AreaCoverage, type CoverageSummary, type DistrictCoverage,
 } from '../api/hooks'
 import { useNow } from '../hooks/useNow'
 import { useTheme } from '../hooks/useTheme'
 import { InvalidateSize } from '../components/shared/leafletHelpers'
 import { FullscreenIcon } from '../components/shared/mapChrome'
-import { tileLayerUrl } from '../utils/mapTiles'
+import { tileLayerAttribution, tileLayerClass, tileLayerUrl } from '../utils/mapTiles'
 import { useExitFullscreenOnEscape } from '../hooks/useExitFullscreenOnEscape'
 import { MapStyleToggle, SATELLITE_ACCENT, SATELLITE_ATTR, SATELLITE_TILES, type MapStyle } from '../components/shared/MapStyleToggle'
 
@@ -363,7 +364,9 @@ export default function CoveragePage() {
     })
   }, [districtColor, districtStyle])
 
-  const tileUrl = mapStyle === 'satellite' ? SATELLITE_TILES : tileLayerUrl(isLight)
+  const cartoApiKey = useAppConfig().data?.carto_api_key
+  const isSatellite = mapStyle === 'satellite'
+  const tileUrl = isSatellite ? SATELLITE_TILES : tileLayerUrl(isLight, cartoApiKey)
 
   const overlayClass = clsx(
     'rounded-lg border backdrop-blur-md',
@@ -457,9 +460,9 @@ export default function CoveragePage() {
         >
           <TileLayer
             key={tileUrl}
-            attribution={mapStyle === 'satellite' ? SATELLITE_ATTR : '&copy; CartoDB'}
+            attribution={isSatellite ? SATELLITE_ATTR : tileLayerAttribution(cartoApiKey)}
             url={tileUrl}
-            className={mapStyle === 'satellite' ? 'satellite-tiles' : undefined}
+            className={isSatellite ? 'satellite-tiles' : tileLayerClass(cartoApiKey)}
           />
           {showDistricts && districtFC && (
             <GeoJSON

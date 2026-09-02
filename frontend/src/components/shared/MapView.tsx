@@ -3,11 +3,12 @@ import { memo, useState, useEffect, useMemo } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { LatLngBoundsExpression } from 'leaflet'
+import { useAppConfig } from '../../api/hooks'
 import { useTheme } from '../../hooks/useTheme'
 import clsx from 'clsx'
 import { MapStyleToggle, SATELLITE_ACCENT, SATELLITE_ATTR, SATELLITE_TILES, type MapStyle } from './MapStyleToggle'
 import { InvalidateSize } from './leafletHelpers'
-import { tileLayerUrl } from '../../utils/mapTiles'
+import { tileLayerAttribution, tileLayerClass, tileLayerUrl } from '../../utils/mapTiles'
 
 function FitBounds({ positions }: { positions: [number, number][] }) {
   const map = useMap()
@@ -97,6 +98,7 @@ const GRADIENT_STEPS = 16
 function MapView({ positions, color = '#ef4444', showMarkers = true, kmMarkers, velocities, invertGradient = true, gradientFastLabel, gradientSlowLabel }: MapViewProps) {
   const { theme, colors } = useTheme()
   const isLight = theme === 'light'
+  const cartoApiKey = useAppConfig().data?.carto_api_key
   const [expanded, setExpanded] = useState(false)
   const [gradientMode, setGradientMode] = useState(false)
   const [mapStyle, setMapStyle] = useState<MapStyle>('street')
@@ -175,9 +177,10 @@ function MapView({ positions, color = '#ef4444', showMarkers = true, kmMarkers, 
   const center = positions[Math.floor(positions.length / 2)]
   const startPos = positions[0]
   const endPos = positions[positions.length - 1]
-  const tileUrl = mapStyle === 'satellite' ? SATELLITE_TILES : tileLayerUrl(isLight)
-  const attribution = mapStyle === 'satellite' ? SATELLITE_ATTR : '&copy; CartoDB'
-  const routeColor = mapStyle === 'satellite' ? SATELLITE_ACCENT : color
+  const isSatellite = mapStyle === 'satellite'
+  const tileUrl = isSatellite ? SATELLITE_TILES : tileLayerUrl(isLight, cartoApiKey)
+  const attribution = isSatellite ? SATELLITE_ATTR : tileLayerAttribution(cartoApiKey)
+  const routeColor = isSatellite ? SATELLITE_ACCENT : color
 
   return (
     <div className={expanded ? 'fixed inset-0 z-50 w-screen h-screen' : 'relative h-full w-full'}>
@@ -191,7 +194,7 @@ function MapView({ positions, color = '#ef4444', showMarkers = true, kmMarkers, 
           key={tileUrl}
           attribution={attribution}
           url={tileUrl}
-          className={mapStyle === 'satellite' ? 'satellite-tiles' : undefined}
+          className={isSatellite ? 'satellite-tiles' : tileLayerClass(cartoApiKey)}
         />
         {gradientMode && gradientSegments.length > 0 ? (
           <>

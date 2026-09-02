@@ -31,7 +31,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.config import settings
 from backend.dependencies import set_zone2
-from backend.routers import activities, stats, exports, calendar, calendar_feed, sync, athlete, gear, goals, workouts, races, health, garmin, coverage
+from backend.routers import activities, stats, exports, calendar, calendar_feed, sync, athlete, gear, goals, workouts, races, health, garmin, coverage, config as config_router
 from backend.routers.sync import _try_claim_sync, _run_sync
 from backend.db import init_db
 from zone2.core import Zone2
@@ -210,6 +210,7 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 app.include_router(health.router, prefix="/api/health", tags=["health"])
+app.include_router(config_router.router, prefix="/api/config", tags=["config"])
 app.include_router(activities.router, prefix="/api/activities", tags=["activities"])
 app.include_router(stats.router, prefix="/api/stats", tags=["stats"])
 app.include_router(exports.router, prefix="/api/exports", tags=["exports"])
