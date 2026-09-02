@@ -75,7 +75,7 @@ export default function RoutesMap({
 
   useExitFullscreenOnEscape(expanded, () => setFullscreen(false))
 
-  const cartoApiKey = useAppConfig().data?.carto_api_key
+  const { cartoApiKey, pending: configPending } = useAppConfig()
   const isSatellite = mapStyle === 'satellite'
   const tileUrl = isSatellite ? SATELLITE_TILES : tileLayerUrl(isLight, cartoApiKey)
   const allBounds = useMemo(() => routeBounds(routes), [routes])
@@ -106,12 +106,14 @@ export default function RoutesMap({
           style={{ height: '100%', width: '100%', background: colors.mapBg }}
           zoomControl={false}
         >
-          <TileLayer
-            key={tileUrl}
-            attribution={isSatellite ? SATELLITE_ATTR : tileLayerAttribution(cartoApiKey)}
-            url={tileUrl}
-            className={isSatellite ? 'satellite-tiles' : tileLayerClass(cartoApiKey)}
-          />
+          {!configPending && (
+            <TileLayer
+              key={tileUrl}
+              attribution={isSatellite ? SATELLITE_ATTR : tileLayerAttribution(cartoApiKey)}
+              url={tileUrl}
+              className={isSatellite ? 'satellite-tiles' : tileLayerClass(cartoApiKey)}
+            />
+          )}
           {routes.map(route => {
             const color = colorFor ? colorFor(route) : getSportColor(route.sport_type)
             return (

@@ -364,7 +364,7 @@ export default function CoveragePage() {
     })
   }, [districtColor, districtStyle])
 
-  const cartoApiKey = useAppConfig().data?.carto_api_key
+  const { cartoApiKey, pending: configPending } = useAppConfig()
   const isSatellite = mapStyle === 'satellite'
   const tileUrl = isSatellite ? SATELLITE_TILES : tileLayerUrl(isLight, cartoApiKey)
 
@@ -458,12 +458,14 @@ export default function CoveragePage() {
           zoomControl={false}
           style={{ height: '100%', width: '100%', background: colors.mapBg, cursor: selectMode ? 'crosshair' : undefined }}
         >
-          <TileLayer
-            key={tileUrl}
-            attribution={isSatellite ? SATELLITE_ATTR : tileLayerAttribution(cartoApiKey)}
-            url={tileUrl}
-            className={isSatellite ? 'satellite-tiles' : tileLayerClass(cartoApiKey)}
-          />
+          {!configPending && (
+            <TileLayer
+              key={tileUrl}
+              attribution={isSatellite ? SATELLITE_ATTR : tileLayerAttribution(cartoApiKey)}
+              url={tileUrl}
+              className={isSatellite ? 'satellite-tiles' : tileLayerClass(cartoApiKey)}
+            />
+          )}
           {showDistricts && districtFC && (
             <GeoJSON
               key={`districts-${activeSlug}-${districtsAt}-${districtColor}-${selectMode}`}

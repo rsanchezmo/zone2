@@ -677,13 +677,16 @@ export interface AppConfig {
 }
 
 /** Runtime backend settings. Effectively immutable for the life of the tab,
- * so it never refetches — every map mounts against the same cached value. */
+ * so it never refetches — every map mounts against the same cached value.
+ * `pending` distinguishes "key not fetched yet" from "no key configured", so
+ * a keyed setup doesn't paint the OSM fallback for one frame on first load. */
 export function useAppConfig() {
-  return useQuery<AppConfig>({
+  const { data, isPending } = useQuery<AppConfig>({
     queryKey: ['app-config'],
     queryFn: () => api.get('/config').then(r => r.data),
     staleTime: Infinity,
   });
+  return { cartoApiKey: data?.carto_api_key, pending: isPending };
 }
 
 export function useAthleteProfile() {

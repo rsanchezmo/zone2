@@ -98,7 +98,7 @@ const GRADIENT_STEPS = 16
 function MapView({ positions, color = '#ef4444', showMarkers = true, kmMarkers, velocities, invertGradient = true, gradientFastLabel, gradientSlowLabel }: MapViewProps) {
   const { theme, colors } = useTheme()
   const isLight = theme === 'light'
-  const cartoApiKey = useAppConfig().data?.carto_api_key
+  const { cartoApiKey, pending: configPending } = useAppConfig()
   const [expanded, setExpanded] = useState(false)
   const [gradientMode, setGradientMode] = useState(false)
   const [mapStyle, setMapStyle] = useState<MapStyle>('street')
@@ -190,12 +190,14 @@ function MapView({ positions, color = '#ef4444', showMarkers = true, kmMarkers, 
         style={{ height: '100%', width: '100%', background: colors.mapBg }}
         zoomControl={false}
       >
-        <TileLayer
-          key={tileUrl}
-          attribution={attribution}
-          url={tileUrl}
-          className={isSatellite ? 'satellite-tiles' : tileLayerClass(cartoApiKey)}
-        />
+        {!configPending && (
+          <TileLayer
+            key={tileUrl}
+            attribution={attribution}
+            url={tileUrl}
+            className={isSatellite ? 'satellite-tiles' : tileLayerClass(cartoApiKey)}
+          />
+        )}
         {gradientMode && gradientSegments.length > 0 ? (
           <>
             {/* Glow layer for gradient */}
