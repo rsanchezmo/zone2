@@ -706,7 +706,6 @@ class StravaAnalytics:
     def _best_effort_times(
         dist_col: list,
         time_col: list,
-        moving_col: list | None,
         targets: list[int],
         max_speed: float,
     ) -> dict[int, float]:
@@ -714,29 +713,20 @@ class StravaAnalytics:
         streams. Returns {target_m: best_time_s}. Shared kernel for
         get_personal_records / _scan_best_efforts_in / _get_per_activity_bests_df.
 
-        Two accuracy details over a naive searchsorted scan:
-        - Stopped time is excluded: when a `moving` stream is present, a
-          sample's time gap only counts while the athlete was moving (same
-          semantics as Strava's moving_time). A traffic-light stop inside the
-          fastest window no longer slows the effort.
-        - The window end is linearly interpolated between the two samples
-          bracketing the exact target distance, instead of charging the full
-          gap to the effort — GPS samples can be many metres apart, which
-          systematically overestimated best times.
+        Efforts are continuous elapsed time. Excluding stops would stitch
+        separate interval reps (6×400 with standing rests) into a fake 1K,
+        and streams can't tell a rest from a traffic light.
+
+        The window end is linearly interpolated between the two samples
+        bracketing the exact target distance, instead of charging the full
+        gap to the effort — GPS samples can be many metres apart, which
+        systematically overestimated best times.
         """
         distances = np.asarray(dist_col, dtype=np.float64)
         times = np.asarray(time_col, dtype=np.float64)
         n = len(distances)
         if n < 2:
             return {}
-
-        # Effective elapsed time: collapse non-moving gaps when usable.
-        if moving_col is not None and len(moving_col) == n:
-            moving = np.asarray([bool(m) for m in moving_col])
-            gaps = np.diff(times)
-            eff_times = np.concatenate(([0.0], np.cumsum(np.where(moving[1:], gaps, 0.0))))
-        else:
-            eff_times = times
 
         out: dict[int, float] = {}
         total_d = distances[-1]
@@ -758,8 +748,8 @@ class StravaAnalytics:
             seg_safe = np.where(seg > 0, seg, 1.0)
             frac = np.where(seg > 0, (thresholds[left_idx] - distances[prev_idx]) / seg_safe, 1.0)
             frac = np.clip(frac, 0.0, 1.0)
-            cross_t = eff_times[prev_idx] + frac * (eff_times[right_idx] - eff_times[prev_idx])
-            elapsed = cross_t - eff_times[left_idx]
+            cross_t = times[prev_idx] + frac * (times[right_idx] - times[prev_idx])
+            elapsed = cross_t - times[left_idx]
             speeds = target_m / np.maximum(elapsed, 1e-9)
             ok = (elapsed > 0) & (speeds <= max_speed)
             if not np.any(ok):
@@ -811,7 +801,7 @@ class StravaAnalytics:
             activity_date = str(row.get("start_date_local", ""))
 
             efforts = self._best_effort_times(
-                dist_col, time_col, streams.get("moving"),
+                dist_col, time_col,
                 [t for t, _ in sport_configs[category]],
                 self.MAX_SPEED_MS[category],
             )
@@ -885,7 +875,7 @@ class StravaAnalytics:
             activity_date = str(row.get("start_date_local", ""))
 
             efforts = self._best_effort_times(
-                dist_col, time_col, streams.get("moving"),
+                dist_col, time_col,
                 [t for t, _ in target_distances], max_speed,
             )
             for target_m, best_time in efforts.items():
@@ -959,7 +949,7 @@ class StravaAnalytics:
             avg_hr = float(avg_hr) if avg_hr is not None and not pd.isna(avg_hr) else None
 
             efforts = self._best_effort_times(
-                dist_col, time_col, streams.get("moving"),
+                dist_col, time_col,
                 [t for t, _ in target_distances], max_speed,
             )
             for target_m, best_time in efforts.items():
