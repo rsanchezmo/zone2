@@ -10,7 +10,7 @@ A "slice" is the same shape with shorter arrays. Helpers `_len`, `_get`, and
 from __future__ import annotations
 
 from zone2.utils import convert_speed, get_sport_category
-from zone2.streams_store import slice_streams as _slice, stream_length as _len
+from zone2.streams_store import moving_time, slice_streams as _slice, stream_length as _len
 
 
 def match_activity(
@@ -88,7 +88,12 @@ def _score_pace(
     actual_pace: float,
     unit: str,
 ) -> dict:
-    """Score pace/speed against a target range (either or both sides optional)."""
+    """Score pace/speed against a target range (either or both sides optional).
+
+    Inside the range scores 100; outside, the penalty grows with the relative
+    deviation from the nearest bound — the same rule as `target_avg_pace`, so
+    a single-value target (min == max) isn't judged by an arbitrary width.
+    """
     result = {
         "target_min": target_min,
         "target_max": target_max,
@@ -98,33 +103,22 @@ def _score_pace(
     }
 
     if target_min is not None and target_max is not None:
-        lo = min(target_min, target_max)
-        hi = max(target_min, target_max)
-        range_width = hi - lo if hi > lo else 1.0
+        lo, hi = min(target_min, target_max), max(target_min, target_max)
+    else:
+        lo, hi = target_min, target_max
+    if lo is None and hi is None:
+        return result
 
-        if lo <= actual_pace <= hi:
-            result["score"] = 100
-        else:
-            overshoot = min(abs(actual_pace - lo), abs(actual_pace - hi))
-            deviation = overshoot / range_width
-            result["score"] = round(_clamp(100 - _pace_penalty(deviation, unit)))
+    if lo is not None and actual_pace < lo:
+        bound = lo
+    elif hi is not None and actual_pace > hi:
+        bound = hi
+    else:
+        result["score"] = 100
+        return result
 
-    elif target_min is not None:
-        if actual_pace >= target_min:
-            result["score"] = 100
-        else:
-            ref = target_min if target_min != 0 else 1.0
-            deviation = abs(actual_pace - target_min) / ref
-            result["score"] = round(_clamp(100 - _pace_penalty(deviation, unit)))
-
-    elif target_max is not None:
-        if actual_pace <= target_max:
-            result["score"] = 100
-        else:
-            ref = target_max if target_max != 0 else 1.0
-            deviation = abs(actual_pace - target_max) / ref
-            result["score"] = round(_clamp(100 - _pace_penalty(deviation, unit)))
-
+    deviation = abs(actual_pace - bound) / (bound if bound != 0 else 1.0)
+    result["score"] = round(_clamp(100 - _pace_penalty(deviation, unit)))
     return result
 
 
@@ -567,15 +561,16 @@ def slice_streams_by_segments(
 
 
 def _avg_speed_from_points(points: dict) -> float:
-    """Compute average speed (m/s) from a columnar stream slice."""
+    """Average moving speed (m/s) of a columnar stream slice. Stops inside a
+    rep don't count, so pace matches the watch's lap pace."""
     n = _len(points)
     if n < 2:
         return 0.0
     dist = _get(points, "distance", n - 1) - _get(points, "distance", 0)
-    elapsed = _get(points, "time", n - 1) - _get(points, "time", 0)
-    if elapsed <= 0:
+    moving_s = moving_time(points)
+    if moving_s <= 0:
         return 0.0
-    return dist / elapsed
+    return dist / moving_s
 
 
 def _score_segment_slice(
@@ -660,11 +655,13 @@ def _compute_segmented_score(
             end_m = _get(pts, "distance", n_pts - 1)
             actual_dist_m = end_m - start_m
             actual_time_s = _get(pts, "time", n_pts - 1) - _get(pts, "time", 0)
+            stopped_s = actual_time_s - moving_time(pts)
         else:
             start_m = 0
             end_m = 0
             actual_dist_m = 0
             actual_time_s = 0
+            stopped_s = 0
 
         entry = {
             "segment_idx": sl["segment_idx"],
@@ -678,6 +675,7 @@ def _compute_segmented_score(
             "end_km": round(end_m / 1000, 3),
             "actual_distance_km": round(actual_dist_m / 1000, 3),
             "actual_duration_mins": round(actual_time_s / 60, 2),
+            "stopped_s": round(stopped_s),
             **score_data,
         }
         segment_scores.append(entry)

@@ -1,4 +1,4 @@
-import { AreaChart, Area, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea } from 'recharts'
+import { AreaChart, Area, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea, ReferenceLine } from 'recharts'
 import { memo, useMemo, Component, type ReactNode } from 'react'
 import { useTheme } from '../../hooks/useTheme'
 import { useIsMobile } from '../../hooks/useIsMobile'
@@ -9,6 +9,12 @@ export interface ChartZone {
   color: string
   label?: string
   opacity?: number
+}
+
+export interface ChartMarker {
+  x: number  // distance (km)
+  label: string
+  color: string
 }
 
 interface StreamChartProps {
@@ -25,6 +31,9 @@ interface StreamChartProps {
   secondaryLabel?: string
   /** Colored background zones (e.g. workout segments) */
   zones?: ChartZone[]
+  /** Point events drawn as vertical lines (e.g. stops), with an optional legend entry */
+  markers?: ChartMarker[]
+  markersLegend?: { label: string; color: string }
   /** X-axis unit label (defaults to "km"). Pass "m" for swim streams with a matching xFormatter. */
   xUnit?: string
   /** Formatter for the X-axis values (stored in km). Defaults to `v.toFixed(1)`. */
@@ -105,6 +114,8 @@ function StreamChart({
   reversed = false, yDomain, formatValue,
   secondaryData, secondaryColor, secondaryLabel,
   zones,
+  markers,
+  markersLegend,
   xUnit = 'km',
   xFormatter = (v: number) => v.toFixed(1),
 }: StreamChartProps) {
@@ -203,6 +214,17 @@ function StreamChart({
     return items
   }, [zones, hasZones])
 
+  const visibleMarkers = useMemo(() => {
+    if (!markers || chartData.length === 0) return []
+    const dataMin = chartData[0].distance
+    const dataMax = chartData[chartData.length - 1].distance
+    // Labels sit right of their line; near the right edge they'd be clipped, so flip them.
+    const flipAt = dataMin + (dataMax - dataMin) * 0.95
+    return markers
+      .filter(m => m.x >= dataMin && m.x <= dataMax)
+      .map(m => ({ ...m, labelPosition: m.x > flipAt ? 'insideTopRight' as const : 'insideTopLeft' as const }))
+  }, [markers, chartData])
+
   if (chartData.length === 0) {
     return (
       <div className="bg-surface-800 border border-surface-600 rounded-xl p-4">
@@ -231,6 +253,12 @@ function StreamChart({
             <span className="text-xs flex items-center gap-1">
               <span className="inline-block w-4 border-t-2 border-dashed" style={{ borderColor: secondaryColor }} />
               <span style={{ color: secondaryColor }}>{secondaryLabel}</span>
+            </span>
+          )}
+          {markersLegend && visibleMarkers.length > 0 && hasDistanceRange && (
+            <span className="text-[10px] flex items-center gap-1">
+              <span className="inline-block h-2.5 border-l border-dashed" style={{ borderColor: markersLegend.color }} />
+              <span style={{ color: markersLegend.color }}>{markersLegend.label}</span>
             </span>
           )}
           {zoneLegend.map(z => (
@@ -290,6 +318,16 @@ function StreamChart({
                 fill={z.color}
                 fillOpacity={z.opacity ?? 0.12}
                 strokeOpacity={0}
+              />
+            ))}
+            {hasDistanceRange && visibleMarkers.map((m, i) => (
+              <ReferenceLine
+                key={`marker-${i}`}
+                x={m.x}
+                stroke={m.color}
+                strokeDasharray="3 3"
+                strokeOpacity={0.8}
+                label={{ value: m.label, position: m.labelPosition, fill: m.color, fontSize: 9 }}
               />
             ))}
             <Area
