@@ -9,7 +9,7 @@ import StatCard from '../components/shared/StatCard'
 import MapView from '../components/shared/MapView'
 import type { KmMarker } from '../components/shared/MapView'
 import StreamChart from '../components/shared/StreamChart'
-import type { ChartZone } from '../components/shared/StreamChart'
+import type { ChartMarker, ChartZone } from '../components/shared/StreamChart'
 import polyline from '@mapbox/polyline'
 import ExportButton from '../components/shared/ExportButton'
 import ResyncActivityButton from '../components/shared/ResyncActivityButton'
@@ -227,6 +227,10 @@ function computeSplits(streams: StreamPoint[], sportType: string | undefined, ga
   return splits
 }
 
+// A single slow sample gap (tight turn, GPS jitter) isn't worth flagging.
+const MIN_STOPPED_S_SHOWN = 10
+const STOP_COLOR = '#f59e0b'
+
 /* Collapsible execution score section */
 function ExecutionScoreCollapsible({
   overall, isSegmented, session, sessionSegments, segmentScores, metrics,
@@ -325,6 +329,15 @@ function ExecutionScoreCollapsible({
                           {detected && (
                             <span className="text-[10px] text-gray-500 font-mono">
                               ({detected})
+                            </span>
+                          )}
+                          {ss.stopped_s >= MIN_STOPPED_S_SHOWN && (
+                            <span
+                              className="text-[10px] font-mono"
+                              style={{ color: STOP_COLOR }}
+                              title="Stopped inside this segment — excluded from its pace"
+                            >
+                              ⏸ {formatClockDuration(ss.stopped_s)} stopped
                             </span>
                           )}
                         </div>
@@ -661,6 +674,24 @@ function ActivityDetailPageInner() {
         }
       })
   }, [activityScore])
+
+  const stopMarkers = useMemo<ChartMarker[]>(
+    () => (activity?.stops ?? []).map(stop => ({
+      x: stop.start_km,
+      label: formatClockDuration(stop.duration_s),
+      color: STOP_COLOR,
+    })),
+    [activity],
+  )
+  const stopsLegend = useMemo(() => {
+    const stops = activity?.stops ?? []
+    if (stops.length === 0) return undefined
+    const total = stops.reduce((sum, stop) => sum + stop.duration_s, 0)
+    return {
+      label: `${stops.length} ${stops.length === 1 ? 'stop' : 'stops'} · ${formatClockDuration(total)}`,
+      color: STOP_COLOR,
+    }
+  }, [activity])
 
   if (isLoading) return <div className="text-gray-500">Loading...</div>
   if (!activity) return <div className="text-gray-500">Activity not found</div>
@@ -1177,6 +1208,8 @@ function ActivityDetailPageInner() {
                 unit="m"
                 yDomain={ELEVATION_Y_DOMAIN}
                 zones={segmentZones.length > 0 ? segmentZones : undefined}
+                markers={stopMarkers}
+                markersLegend={stopsLegend}
                 xUnit={streamXUnit}
                 xFormatter={streamXFormatter}
               />
@@ -1195,6 +1228,8 @@ function ActivityDetailPageInner() {
                 secondaryColor="#f97316"
                 secondaryLabel="GAP"
                 zones={segmentZones.length > 0 ? segmentZones : undefined}
+                markers={stopMarkers}
+                markersLegend={stopsLegend}
                 xUnit={streamXUnit}
                 xFormatter={streamXFormatter}
               />
@@ -1208,6 +1243,8 @@ function ActivityDetailPageInner() {
                 gradientId="hrGrad"
                 unit="bpm"
                 zones={segmentZones.length > 0 ? segmentZones : undefined}
+                markers={stopMarkers}
+                markersLegend={stopsLegend}
                 xUnit={streamXUnit}
                 xFormatter={streamXFormatter}
               />
@@ -1221,6 +1258,8 @@ function ActivityDetailPageInner() {
                 gradientId="cadGrad"
                 unit="spm"
                 zones={segmentZones.length > 0 ? segmentZones : undefined}
+                markers={stopMarkers}
+                markersLegend={stopsLegend}
                 xUnit={streamXUnit}
                 xFormatter={streamXFormatter}
               />

@@ -7,7 +7,7 @@ from backend.dependencies import get_z2
 from zone2.activities_cache import _has_full_photo_list
 from zone2.core import Zone2
 from zone2.utils import format_pace_or_speed
-from zone2.streams_store import columnar_to_points
+from zone2.streams_store import columnar_to_points, detect_stops
 
 router = APIRouter()
 
@@ -78,6 +78,7 @@ def _activity_to_dict(row: pd.Series, include_streams: bool = False, streams: di
 
     if include_streams:
         d["streams"] = columnar_to_points(streams) if streams else None
+        d["stops"] = detect_stops(streams) if streams else []
 
         # Include detail-only fields when showing full activity
         for field in ("photos", "splits_metric", "best_efforts", "laps", "gear", "segment_efforts", "similar_activities"):

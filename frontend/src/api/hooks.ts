@@ -160,9 +160,18 @@ export interface Activity {
   [key: string]: unknown;
 }
 
-/** Detail endpoint adds streams and the raw Strava detail sub-payloads. */
+/** A stop inside the activity (traffic light, auto-pause), excluded from moving time. */
+export interface ActivityStop {
+  start_km: number;
+  /** Elapsed seconds from the activity start. */
+  start_s: number;
+  duration_s: number;
+}
+
+/** Detail endpoint adds streams, detected stops and the raw Strava detail sub-payloads. */
 export interface ActivityDetail extends Activity {
   streams?: ActivityStreamPoint[] | null;
+  stops?: ActivityStop[];
   photos?: ActivityPhoto[] | null;
   splits_metric?: ActivitySplitMetric[] | null;
   best_efforts?: ActivityBestEffort[] | null;
@@ -1127,6 +1136,8 @@ export interface SegmentScore {
   end_km: number;
   actual_distance_km: number;
   actual_duration_mins: number;
+  /** Stopped time inside the segment (lights, auto-pause); excluded from pace. */
+  stopped_s: number;
   overall_score: number | null;
   metrics: Record<string, ScoreMetric>;
   actual_pace?: number | null;

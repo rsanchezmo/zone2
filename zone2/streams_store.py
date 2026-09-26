@@ -31,6 +31,8 @@ import tempfile
 from pathlib import Path
 from typing import Iterable
 
+import numpy as np
+
 logger = logging.getLogger(__name__)
 
 
@@ -268,6 +270,76 @@ def slice_streams(streams: dict, start: int, end: int) -> dict:
     if not streams:
         return {}
     return {k: v[start:end] for k, v in streams.items()}
+
+
+# Below this implied speed a sample gap counts as stopped (traffic light,
+# auto-pause). Walking is ~1.3 m/s, so walked recoveries still count as moving.
+STOPPED_SPEED_MS = 0.5
+# Sparser streams (pool swims log a sample every few minutes) mix movement and
+# rest inside one gap, so stops can't be told apart from slow movement.
+MAX_MEDIAN_GAP_S = 60
+
+
+def _gap_times(streams: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Per sample gap: (elapsed seconds, seconds spent stopped).
+
+    A stopped gap still carries the distance covered before halting, so it's
+    charged that distance at the pace of the last moving gap rather than
+    zero, which would credit free distance."""
+    times = np.asarray(streams.get("time") or [], dtype=np.float64)
+    n = len(times)
+    if n < 2:
+        return np.zeros(0), np.zeros(0)
+    gaps = np.diff(times)
+    elapsed = np.where(gaps > 0, gaps, 0.0)
+    stopped_s = np.zeros(n - 1)
+
+    dist_col = streams.get("distance")
+    if dist_col is not None and len(dist_col) == n and np.median(gaps) <= MAX_MEDIAN_GAP_S:
+        steps = np.diff(np.asarray(dist_col, dtype=np.float64))
+        stopped = (gaps > 0) & (steps < STOPPED_SPEED_MS * gaps)
+        speeds = np.divide(steps, gaps, out=np.zeros_like(steps), where=gaps > 0)
+        last_moving = np.maximum.accumulate(np.where(stopped, 0, np.arange(n - 1)))
+        ref_speed = np.where(stopped[last_moving], 0.0, speeds[last_moving])
+        charged = np.divide(np.maximum(steps, 0.0), ref_speed,
+                            out=elapsed.copy(), where=ref_speed > 0)
+        stopped_s = np.where(stopped, elapsed - np.minimum(elapsed, charged), 0.0)
+
+    return elapsed, stopped_s
+
+
+def moving_time(streams: dict) -> float:
+    """Seconds spent moving across a columnar stream, with Strava's
+    moving_time semantics: time spent stopped doesn't count."""
+    elapsed, stopped_s = _gap_times(streams)
+    return float(elapsed.sum() - stopped_s.sum())
+
+
+def detect_stops(streams: dict, min_duration_s: float = 10) -> list[dict]:
+    """Stops long enough to matter, as `{start_km, start_s, duration_s}`.
+    Consecutive stopped gaps (a watch still recording while standing) form
+    one stop; `start_s` is elapsed time from the start of the stream."""
+    _, stopped_s = _gap_times(streams)
+    times = streams.get("time") or []
+    dists = streams.get("distance") or []
+    stops: list[dict] = []
+    i = 0
+    while i < len(stopped_s):
+        if stopped_s[i] <= 0:
+            i += 1
+            continue
+        j = i
+        while j + 1 < len(stopped_s) and stopped_s[j + 1] > 0:
+            j += 1
+        duration = float(stopped_s[i:j + 1].sum())
+        if duration >= min_duration_s:
+            stops.append({
+                "start_km": round((dists[i] or 0) / 1000, 3),
+                "start_s": round(times[i] - times[0]),
+                "duration_s": round(duration),
+            })
+        i = j + 1
+    return stops
 
 
 def from_strava_api(api_streams: dict) -> dict:
