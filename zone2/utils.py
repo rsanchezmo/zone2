@@ -130,27 +130,31 @@ def format_pace_or_speed(avg_speed: float, sport_type: str | None = None) -> str
         return f"{pace_mins}:{pace_secs:02d} /km"
 
 
+def _summary_polyline_geometry(map_cell) -> LineString | None:
+    """Decode an activity's `map` cell to its summary-polyline LineString.
+
+    The cell may be a dict (already-decoded view from analytics) or a JSON
+    string (raw from parquet via the activities cache).
+    """
+    if isinstance(map_cell, str):
+        try:
+            map_cell = json.loads(map_cell)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    if isinstance(map_cell, dict) and map_cell.get('summary_polyline'):
+        decoded_points = polyline.decode(map_cell['summary_polyline'], geojson=True)
+        if len(decoded_points) >= 2:
+            return LineString(decoded_points)
+    return None
+
+
 def get_activities_as_gdf(activities: pd.DataFrame) -> gpd.GeoDataFrame:
     """Convert a pd.Dataframes with strava activities to a GeoDataFrame with LineString geometries."""
 
     # Drop activities without map data
     activities = activities.dropna(subset=['map'])
 
-    # Parse polylines into LineString geometries. The `map` column may arrive
-    # as either a dict (already-decoded view from analytics) or a JSON string
-    # (raw from parquet via cache.load_activities). Handle both.
-    def _parse_map(map_activity):
-        if isinstance(map_activity, str):
-            try:
-                map_activity = json.loads(map_activity)
-            except (json.JSONDecodeError, TypeError):
-                return None
-        if isinstance(map_activity, dict) and map_activity.get('summary_polyline'):
-            decoded_points = polyline.decode(map_activity['summary_polyline'], geojson=True)
-            return LineString(decoded_points)
-        return None
-
-    activities['geometry'] = activities['map'].apply(_parse_map)
+    activities['geometry'] = activities['map'].apply(_summary_polyline_geometry)
     activities = activities.dropna(subset=['geometry'])
 
     if activities.empty:
@@ -159,13 +163,17 @@ def get_activities_as_gdf(activities: pd.DataFrame) -> gpd.GeoDataFrame:
     return gpd.GeoDataFrame(activities, geometry='geometry', crs=BASE_CRS)
 
 
-def get_activities_as_gdf_from_streams(activities: pd.DataFrame, streams_store=None) -> gpd.GeoDataFrame:
+def get_activities_as_gdf_from_streams(activities: pd.DataFrame, streams_store=None,
+                                       polyline_fallback: bool = True) -> gpd.GeoDataFrame:
     """Convert activities to a GeoDataFrame using high-resolution GPS streams (lat/lng).
 
-    Falls back to summary_polyline for activities without cached streams.
-    `streams_store` is a StreamsStore (typically `cache.streams`). If omitted,
-    only summary polylines are used.
+    With polyline_fallback, activities without cached GPS streams use their
+    summary_polyline; otherwise they are dropped. `streams_store` is a
+    StreamsStore (typically `cache.streams`). If omitted, only summary
+    polylines are used.
     """
+    if activities.empty:
+        return gpd.GeoDataFrame(geometry=[], crs=BASE_CRS)
     activities = activities.copy()
 
     streams_map = {}
@@ -183,11 +191,8 @@ def get_activities_as_gdf_from_streams(activities: pd.DataFrame, streams_store=N
                 if len(coords) >= 2:
                     return LineString(coords)
 
-        # Fallback to summary polyline
-        map_data = row.get('map')
-        if isinstance(map_data, dict) and map_data.get('summary_polyline'):
-            decoded = polyline.decode(map_data['summary_polyline'], geojson=True)
-            return LineString(decoded)
+        if polyline_fallback or streams_store is None:
+            return _summary_polyline_geometry(row.get('map'))
         return None
 
     activities['geometry'] = activities.apply(_parse_streams, axis=1)

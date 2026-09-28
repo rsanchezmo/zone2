@@ -191,7 +191,7 @@ def delete_city(slug: str):
     suffixes = [
         "nodes.parquet", "edges.parquet", "boundary.parquet", "meta.json",
         "covered_edges.parquet", "matched_activities.parquet", "stats.json",
-        "inmem", "inmem.pkl", "inmem.dat", "inmem.idx",
+        *(f"matchgraph{s}" for s in StravaMapMatcher.MATCHER_MAP_SUFFIXES),
     ]
     paths = [_osm_dir() / f"{slug}_{s}" for s in suffixes]
     paths += _osm_dir().glob(f"{slug}_districts_*.parquet")
@@ -295,12 +295,13 @@ def _run_coverage_sync(slug: str, z2: Zone2, sport_types: list[str]):
     err = None
     try:
         matcher = _get_matcher(slug)
-        # High-resolution GPS streams (falls back to summary polyline per
-        # activity when a stream isn't cached); the matcher thins them to
-        # ~20 m so density stays comparable to polylines.
+        # High-resolution GPS streams, which the matcher thins to ~20 m. No
+        # summary-polyline fallback: a match is persisted once and never
+        # redone, so an activity whose streams aren't cached yet waits for a
+        # later sync instead of being frozen at polyline resolution.
         cache = z2.strava_activities_cache
-        gdf = get_activities_as_gdf_from_streams(cache.activities, cache.streams)
-        gdf = gdf[gdf["sport_type"].isin(sport_types)]
+        activities = cache.activities[cache.activities["sport_type"].isin(sport_types)]
+        gdf = get_activities_as_gdf_from_streams(activities, cache.streams, polyline_fallback=False)
         stats = matcher.match_incremental(gdf)
         logger.info("Coverage sync for %s done: %s%%", slug, stats.get("coverage_pct"))
     except Exception as e:
