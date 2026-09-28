@@ -586,7 +586,7 @@ export default function CoveragePage() {
             </span>
           </div>
           <div className="flex flex-col gap-0.5">
-            <span className="eyebrow text-[9px]">Streets</span>
+            <span className="eyebrow text-[9px]">Segments</span>
             <span className={clsx('text-sm font-mono tabular-nums font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>
               {city?.num_unique_streets.toLocaleString()}
             </span>
@@ -699,7 +699,7 @@ export default function CoveragePage() {
                     {areaStats.covered_km} / {areaStats.total_km} km
                   </span>
                   <span className="text-[11px] text-gray-500">
-                    {areaStats.num_covered_streets}/{areaStats.num_streets} streets
+                    {areaStats.num_covered_streets}/{areaStats.num_streets} segments
                   </span>
                 </>
               )}

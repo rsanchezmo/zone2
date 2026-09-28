@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import pickle
 import threading
 from leuvenmapmatching.matcher.distance import DistanceMatcher
 from leuvenmapmatching.map.inmem import InMemMap
@@ -9,12 +10,13 @@ import geopandas as gpd
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
+import shapely
 from pathlib import Path
 from shapely.geometry import LineString, MultiLineString, Point, Polygon as ShapelyPolygon, mapping as shapely_mapping
 from shapely.ops import linemerge
 from shapely.prepared import prep
 import numpy as np
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -88,13 +90,26 @@ _dist_euclidean.project = _project
 _dist_euclidean.distance_segment_to_segment = _distance_segment_to_segment
 
 
+def _import_osmnx():
+    """osmnx set up for one-off city downloads. Imported lazily because it
+    pulls in a heavy dependency stack (~140 MB RSS), never needed to serve a
+    city that is already on disk."""
+    import osmnx as ox
+    # Each city is downloaded once; the on-disk response cache would only
+    # keep tens of MB of Overpass JSON around.
+    ox.settings.use_cache = False
+    return ox
+
+
 @dataclass
 class MatchResult:
     """Result of map matching a single activity."""
     activity_id: int | str
     original_geometry: LineString  # Original GPS track (projected CRS)
-    matched_geometry: LineString | MultiLineString | None  # Real OSM edge geometries merged
-    matched_edges_gdf: gpd.GeoDataFrame  # Individual matched OSM edges with attributes
+    matched_geometry: LineString | MultiLineString | None  # HMM-matched OSM edge geometries merged
+    # Credited OSM edges; `source` is 'matched' (HMM path) or 'corridor'
+    # (a parallel way the track ran along, see StravaMapMatcher.CORRIDOR_BUFFER_M).
+    matched_edges_gdf: gpd.GeoDataFrame
     matching_details: gpd.GeoDataFrame   # Per-observation: obs point, snapped point, edge, distance
     quality: dict = field(default_factory=dict)
 
@@ -103,7 +118,7 @@ class MatchResult:
         """Plot the match result: GPS track, matched OSM edges, and snapped points.
 
         Three layers are drawn:
-        1. Matched OSM edges (solid, single colour)
+        1. Credited OSM edges (solid; HMM-matched and corridor in distinct colours)
         2. Original GPS track (dashed)
         3. Observation → snapped-point connections with points
 
@@ -116,6 +131,7 @@ class MatchResult:
         """
         BG = '#0d1117'
         CLR_EDGES = '#58a6ff'
+        CLR_CORRIDOR = '#f0883e'
         CLR_GPS_LINE = '#ff6b6b'
         CLR_GPS_PT = '#ff6b6b'
         CLR_SNAP_PT = '#7ee787'
@@ -126,18 +142,19 @@ class MatchResult:
         fig, ax = plt.subplots(figsize=figsize, facecolor=BG)
         ax.set_facecolor(BG)
 
-        # --- 1. Matched OSM edges ---
+        # --- 1. Credited OSM edges ---
         if not self.matched_edges_gdf.empty:
             for _, edge_row in self.matched_edges_gdf.iterrows():
                 geom = edge_row.geometry
+                color = CLR_CORRIDOR if edge_row.get('source') == 'corridor' else CLR_EDGES
                 if isinstance(geom, LineString):
                     xs, ys = geom.xy
-                    ax.plot(xs, ys, color=CLR_EDGES, linewidth=2.5, alpha=0.8,
+                    ax.plot(xs, ys, color=color, linewidth=2.5, alpha=0.8,
                             solid_capstyle='round', zorder=2)
                 elif isinstance(geom, MultiLineString):
                     for part in geom.geoms:
                         xs, ys = part.xy
-                        ax.plot(xs, ys, color=CLR_EDGES, linewidth=2.5, alpha=0.8,
+                        ax.plot(xs, ys, color=color, linewidth=2.5, alpha=0.8,
                                 solid_capstyle='round', zorder=2)
 
         # --- 2. Original GPS track ---
@@ -180,6 +197,7 @@ class MatchResult:
             mlines.Line2D([], [], color=CLR_GPS_LINE, linestyle='--', linewidth=1.2,
                           alpha=0.7, label='GPS track'),
             mlines.Line2D([], [], color=CLR_EDGES, linewidth=2.5, label='Matched OSM edges'),
+            mlines.Line2D([], [], color=CLR_CORRIDOR, linewidth=2.5, label='Corridor-credited edges'),
             mlines.Line2D([], [], marker='o', color='none', markerfacecolor=CLR_GPS_PT,
                           markersize=5, label='GPS points'),
             mlines.Line2D([], [], marker='o', color='none', markerfacecolor=CLR_SNAP_PT,
@@ -196,14 +214,15 @@ class MatchResult:
         q = self.quality
         title = (
             f"Activity {self.activity_id}  \u2014  "
-            f"{q.get('num_matched_edges', '?')} edges, "
+            f"{q.get('num_matched_edges', '?')} edges "
+            f"(+{q.get('num_corridor_edges', 0)} corridor), "
             f"avg snap {q.get('avg_dist_obs_m', '?')} m, "
             f"max snap {q.get('max_dist_obs_m', '?')} m"
         )
         subtitle = (
-            f"Obs: {q.get('num_observations', '?')}  |  "
+            f"Obs: {q.get('num_observations_in_coverage', '?')}  |  "
             f"Matched: {q.get('num_matched', '?')}  |  "
-            f"Early stop: {q.get('early_stop_idx', None)}"
+            f"Sub-segments: {q.get('num_sub_segments_matched', '?')}/{q.get('num_sub_segments', '?')}"
         )
         ax.set_title(title, color=CLR_TEXT, fontsize=10, fontweight='bold', pad=14)
         ax.text(0.5, 1.01, subtitle, transform=ax.transAxes, ha='center',
@@ -235,6 +254,13 @@ class StravaMapMatcher:
     # the street covers them implicitly.
     EXCLUDED_FOOTWAY_TYPES = {'sidewalk', 'crossing', 'traffic_island', 'access_aisle'}
     EXCLUDED_ACCESS = {'private', 'no'}
+    # Pedestrian streets are commonly `access=no` + `foot=yes`, so an explicit
+    # foot permission overrides EXCLUDED_ACCESS.
+    FOOT_ALLOWED = {'yes', 'designated', 'permissive'}
+    # `foot=no` on a surface road usually means its sidewalk is mapped as a
+    # separate way, and running that sidewalk credits the road. Only in a
+    # tunnel does it mean there is nowhere to run.
+    TUNNEL_TAGS = {'yes', 'building_passage'}
     # Runnable classes that are paths/trails rather than streets. Still part
     # of the matching target (running them is recorded), but excluded from
     # the denominator in the streets-only coverage view.
@@ -243,6 +269,25 @@ class StravaMapMatcher:
     # treated as a real subdivision. Below this the city isn't administratively
     # mapped in OSM (e.g. Palma) and we fall back to a single whole-city district.
     MIN_DISTRICT_COVERAGE = 0.4
+    # Per-segment attributes persisted per city; everything else OSM carries
+    # (footway, access, foot, ...) only feeds _filter_runnable at download.
+    EDGE_COLUMNS = ('u', 'v', 'key', 'highway', 'name', 'length', 'geometry')
+    # Way tags read from Overpass: EDGE_COLUMNS' attributes plus what
+    # _filter_runnable decides on.
+    WAY_TAGS = ('highway', 'name', 'footway', 'access', 'foot', 'tunnel')
+    # The matcher only sees straight segments between graph nodes, so each
+    # edge's shape points (simplified to this tolerance) become synthetic
+    # nodes; otherwise GPS on a curved path can lie beyond max_dist of its
+    # u-v chord.
+    MATCH_GRAPH_SIMPLIFY_M: float = 5.0
+    # OSM maps a road, its cycle path and its footway as separate ways metres
+    # apart, and the HMM credits only the one it snapped to. An edge lying
+    # almost entirely within this buffer of the GPS track was run along too.
+    # The minimum length keeps junction stubs, which a passing track swallows
+    # whole, from being credited.
+    CORRIDOR_BUFFER_M: float = 12.0
+    CORRIDOR_MIN_FRACTION: float = 0.9
+    CORRIDOR_MIN_EDGE_M: float = 20.0
 
     def __init__(self, city_name: str, workdir: Path, force_reload: bool = False,
                  on_progress: Callable[[str], None] | None = None):
@@ -261,6 +306,8 @@ class StravaMapMatcher:
         self._nodes_gdf: gpd.GeoDataFrame = None  # type: ignore[assignment]
         self._edges_gdf: gpd.GeoDataFrame = None  # type: ignore[assignment]
         self._map_con: InMemMap | None = None
+        # Row i is the OSM edge (u, v) that synthetic matcher node -(i + 1) lies on
+        self._synthetic_parents: np.ndarray | None = None
         self._city_boundary: gpd.GeoDataFrame = None  # type: ignore[assignment]
         self._und_gdf: gpd.GeoDataFrame | None = None
         # Serializes state-file reads/writes so a background sync rewriting the
@@ -268,13 +315,9 @@ class StravaMapMatcher:
         self._state_lock = threading.RLock()
 
         self._load_map(force_reload=force_reload)
-
-        # Build a lookup for edges by (u, v) ignoring key — for fast edge geometry retrieval
-        self._edge_lookup: dict[tuple[int, int], tuple] = {}
-        for idx_tuple in self._edges_gdf.index:
-            u, v = idx_tuple[0], idx_tuple[1]
-            if (u, v) not in self._edge_lookup:
-                self._edge_lookup[(u, v)] = idx_tuple
+        # (u, v) -> full (u, v, key) index; only matching needs it, so it is
+        # built on first use and released with the matcher map after a sync.
+        self._edge_lookup: dict[tuple[int, int], tuple] | None = None
 
         logger.info(
             "Map for %s loaded with %d edges and %d nodes",
@@ -282,42 +325,62 @@ class StravaMapMatcher:
         )
 
     def _matcher_map_name(self) -> str:
-        return f"{self._slug()}_inmem"
+        return f"{self._slug()}_matchgraph"
+
+    # Files making up the cached matcher map, as suffixes of _matcher_map_name()
+    MATCHER_MAP_SUFFIXES = ('', '.pkl', '.dat', '.idx', '_parents.npy')
 
     def _build_matcher_map(self):
         """
         Build the InMemMap required for the DistanceMatcher, cached on disk.
 
-        The graph dict is built vectorized and handed to InMemMap whole so the
-        rtree is bulk-loaded from a generator instead of one insert per edge,
-        then persisted (pickle + file-based rtree) for fast reloads. Edges are
+        Nodes are the OSM intersections plus synthetic nodes (negative ids)
+        tracing each edge's shape; _synthetic_parents maps them back to their
+        edge. The graph dict is handed to InMemMap whole so the rtree is
+        bulk-loaded from a generator instead of one insert per edge, then
+        persisted (pickle + file-based rtree) for fast reloads. Edges are
         bidirectional to allow matching against traffic.
         """
         map_name = self._matcher_map_name()
         pkl_path = self.workdir / f"{map_name}.pkl"
+        parents_path = self.workdir / f"{map_name}_parents.npy"
         # setup_index() only reuses the on-disk rtree if this marker exists
         # (the rtree itself lives in <map_name>.idx/.dat).
         rtree_marker = self.workdir / map_name
 
-        if pkl_path.exists() and rtree_marker.exists():
-            self._map_con = InMemMap.from_pickle(pkl_path)
+        if pkl_path.exists() and parents_path.exists() and rtree_marker.exists():
+            with pkl_path.open('rb') as f:
+                data = pickle.load(f)
+            # The pickle records the directory it was built from, which may be
+            # relative to another cwd or a since-moved workdir.
+            data['dir'] = self.workdir
+            self._map_con = InMemMap.deserialize(data)
+            self._synthetic_parents = np.load(parents_path)
             logger.info("Loaded matcher map from %s", pkl_path)
             return
 
-        neighbors: dict[int, set[int]] = defaultdict(set)
-        us = self._edges_gdf.index.get_level_values(0).to_numpy().tolist()
-        vs = self._edges_gdf.index.get_level_values(1).to_numpy().tolist()
-        for u, v in zip(us, vs):
-            neighbors[u].add(v)
-            neighbors[v].add(u)
+        edges = self._edges_gdf.reset_index()
+        shapes = shapely.simplify(edges.geometry.to_numpy(), self.MATCH_GRAPH_SIMPLIFY_M)
 
-        node_ids = self._nodes_gdf.index.to_numpy().tolist()
-        xs = self._nodes_gdf['x'].to_numpy().tolist()
-        ys = self._nodes_gdf['y'].to_numpy().tolist()
-        graph = {
-            nid: ((x, y), sorted(neighbors[nid]))
-            for nid, x, y in zip(node_ids, xs, ys)
-        }
+        locs: dict[int, tuple[float, float]] = dict(zip(
+            self._nodes_gdf.index.tolist(),
+            zip(self._nodes_gdf['x'].tolist(), self._nodes_gdf['y'].tolist()),
+        ))
+        neighbors: dict[int, set[int]] = defaultdict(set)
+        parents: list[tuple[int, int]] = []
+        for u, v, shape in zip(edges['u'].tolist(), edges['v'].tolist(), shapes):
+            chain = [u]
+            for x, y in shapely.get_coordinates(shape)[1:-1].tolist():
+                node_id = -(len(parents) + 1)
+                parents.append((u, v))
+                locs[node_id] = (x, y)
+                chain.append(node_id)
+            chain.append(v)
+            for a, b in zip(chain, chain[1:]):
+                if a != b:
+                    neighbors[a].add(b)
+                    neighbors[b].add(a)
+        graph = {nid: (locs[nid], sorted(nbrs)) for nid, nbrs in neighbors.items()}
 
         # Stale rtree files would otherwise be reopened by the bulk loader
         for suffix in ('.dat', '.idx'):
@@ -326,9 +389,20 @@ class StravaMapMatcher:
         map_con = InMemMap(map_name, use_latlon=False, index_edges=True,
                            use_rtree=True, dir=self.workdir, graph=graph)
         map_con.dump()
+        self._synthetic_parents = np.asarray(parents, dtype=np.int64).reshape(-1, 2)
+        np.save(parents_path, self._synthetic_parents)
         rtree_marker.touch()
         self._map_con = map_con
-        logger.info("Built matcher map and cached to %s", pkl_path)
+        logger.info("Built matcher map (%d nodes, %d synthetic) and cached to %s",
+                    len(graph), len(parents), pkl_path)
+
+    def _parent_edge(self, a: int, b: int) -> tuple[int, int]:
+        """The OSM edge (u, v) that matcher-graph segment (a, b) lies on."""
+        synthetic = a if a < 0 else b if b < 0 else None
+        if synthetic is None:
+            return a, b
+        u, v = self._synthetic_parents[-synthetic - 1]
+        return int(u), int(v)
 
     def _slug(self) -> str:
         return self.city_name.replace(', ', '_').lower()
@@ -346,17 +420,21 @@ class StravaMapMatcher:
             return {c.strip(" '\"") for c in s.strip('[]').split(',')}
         return {s}
 
-    def _filter_runnable(self, edges_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-        """Reduce the raw OSM network to runnable streets.
+    def _filter_runnable(self, edges_gdf: pd.DataFrame) -> pd.DataFrame:
+        """Reduce OSM ways (one row of tags each) to runnable streets.
 
         This subset is both the matching target and the coverage denominator:
         matching directly against it makes a sidewalk run snap to (and credit)
         the street itself. Excluded: sidewalks and crossings mapped as
         separate ways, motorways, service roads (parking aisles, driveways),
-        steps, and private-access ways.
+        steps, restricted-access ways without a foot permission, and road
+        tunnels closed to pedestrians.
         """
-        def keep(highway, footway, access) -> bool:
-            if self._as_tags(access) & self.EXCLUDED_ACCESS:
+        def keep(highway, footway, access, foot, tunnel) -> bool:
+            foot_tags = self._as_tags(foot)
+            if self._as_tags(access) & self.EXCLUDED_ACCESS and not foot_tags & self.FOOT_ALLOWED:
+                return False
+            if 'no' in foot_tags and self._as_tags(tunnel) & self.TUNNEL_TAGS:
                 return False
             hw = self._as_tags(highway)
             if hw & self.RUNNABLE_HIGHWAYS:
@@ -365,11 +443,13 @@ class StravaMapMatcher:
                 return not (self._as_tags(footway) & self.EXCLUDED_FOOTWAY_TYPES)
             return False
 
-        footway_col = edges_gdf['footway'] if 'footway' in edges_gdf.columns else pd.Series(None, index=edges_gdf.index)
-        access_col = edges_gdf['access'] if 'access' in edges_gdf.columns else pd.Series(None, index=edges_gdf.index)
+        def col(name: str) -> pd.Series:
+            return edges_gdf[name] if name in edges_gdf.columns else pd.Series(None, index=edges_gdf.index)
+
         mask = [
-            keep(h, f, a)
-            for h, f, a in zip(edges_gdf['highway'], footway_col, access_col)
+            keep(h, f, a, ft, t)
+            for h, f, a, ft, t in zip(edges_gdf['highway'], col('footway'), col('access'),
+                                      col('foot'), col('tunnel'))
         ]
         return edges_gdf[mask]
 
@@ -388,7 +468,8 @@ class StravaMapMatcher:
         meta_fp = self.workdir / f"{slug}_meta.json"
 
         if not force_reload and nodes_fp.exists() and edges_fp.exists() and boundary_fp.exists():
-            self._edges_gdf = gpd.read_parquet(edges_fp).set_index(['u', 'v', 'key'])
+            edges = gpd.read_parquet(edges_fp, columns=list(self.EDGE_COLUMNS))
+            self._edges_gdf = self._one_row_per_segment(edges).set_index(['u', 'v', 'key'])
             nodes = pd.read_parquet(nodes_fp).set_index('osmid')
             self._nodes_gdf = nodes  # type: ignore[assignment]
             self._city_boundary = gpd.read_parquet(boundary_fp)
@@ -397,47 +478,38 @@ class StravaMapMatcher:
             return
 
         logger.info("Downloading map for %s from OSM...", self.city_name)
-        # osmnx pulls in a heavy dependency stack (~140 MB RSS); import it only
-        # on the first-time download path, never on the cache-hit path above.
-        import osmnx as ox
-        # The footway subtag distinguishes sidewalks/crossings (excluded)
-        # from real park paths (kept); it is not in osmnx defaults.
-        if 'footway' not in ox.settings.useful_tags_way:
-            ox.settings.useful_tags_way = list(ox.settings.useful_tags_way) + ['footway']
-        # Geocode once and download within that polygon, so the graph and the
+        ox = _import_osmnx()
+        from osmnx import _overpass
+        # Geocode once and download within that polygon, so the network and the
         # boundary can never come from different geocoder results.
         self._on_progress('resolving the city with OSM')
         city_boundary = ox.geocode_to_gdf(self.city_name)
         display_name = str(city_boundary.iloc[0].get('display_name', self.city_name))
         logger.info("Geocoded %s to %s", self.city_name, display_name)
+        polygon = city_boundary.union_all()
+        utm_crs = ox.projection.project_gdf(city_boundary).crs
+        city_boundary_gdf = city_boundary.to_crs(utm_crs)
+
         self._on_progress(f'downloading the street network of {display_name}')
-        # retain_all: exclaves (e.g. Amsterdam Zuidoost) connect to the rest
-        # of the city only through roads outside the polygon, so they are not
-        # part of the largest component and would be silently dropped.
-        graph = ox.graph_from_polygon(city_boundary.union_all(), network_type='all',
-                                      retain_all=True)
-        self._on_progress('projecting and building the graph')
-        graph_proj = ox.project_graph(graph)
-        nodes_gdf, edges_gdf = ox.graph_to_gdfs(graph_proj, edges=True, nodes=True)
-        city_boundary_gdf = city_boundary.to_crs(edges_gdf.crs)
+        # osmnx's own Overpass client (query subdivision, rate-limit pauses,
+        # retries on busy servers); private, so it is pinned by poetry.lock.
+        responses = _overpass._download_overpass_network(polygon, 'all', self._overpass_filters())
+        self._on_progress('building street segments')
+        edges_4326, nodes_4326 = self._segments_from_overpass(responses, polygon)
 
-        self._on_progress('filtering to runnable streets')
-        edges_gdf = self._filter_runnable(edges_gdf)
-        used_nodes = set(edges_gdf.index.get_level_values(0)) | set(edges_gdf.index.get_level_values(1))
-        nodes_gdf = nodes_gdf[nodes_gdf.index.isin(used_nodes)]
-
-        # Slim to what matching/coverage needs; 2m geometry tolerance is well
-        # below GPS accuracy.
-        slim_edges = edges_gdf.reset_index()[
-            [c for c in ('u', 'v', 'key', 'highway', 'name', 'footway', 'length', 'geometry')
-             if c in edges_gdf.reset_index().columns]
-        ].copy()
+        slim_edges = edges_4326.to_crs(utm_crs)
+        # Length of the full shape; the 2 m simplification below is well
+        # under GPS accuracy but still shortens curves slightly.
+        slim_edges['length'] = slim_edges.length
+        lo = np.minimum(slim_edges['u'], slim_edges['v'])
+        hi = np.maximum(slim_edges['u'], slim_edges['v'])
+        slim_edges['key'] = slim_edges.groupby([lo, hi]).cumcount()
+        slim_edges = slim_edges[list(self.EDGE_COLUMNS)].copy()
         slim_edges['geometry'] = slim_edges['geometry'].simplify(2.0)
-        for col in ('highway', 'name', 'footway'):
-            if col in slim_edges.columns:
-                slim_edges[col] = slim_edges[col].apply(
-                    lambda v: str(v) if isinstance(v, (list, tuple)) else v)
-        slim_nodes = nodes_gdf.reset_index()[['osmid', 'x', 'y']]
+        points = gpd.GeoSeries(gpd.points_from_xy(nodes_4326['lon'], nodes_4326['lat']),
+                               crs='EPSG:4326').to_crs(utm_crs)
+        slim_nodes = pd.DataFrame({'osmid': nodes_4326['osmid'].to_numpy(),
+                                   'x': points.x.to_numpy(), 'y': points.y.to_numpy()})
 
         self._on_progress('saving the city map')
         slim_edges.to_parquet(edges_fp)
@@ -456,19 +528,105 @@ class StravaMapMatcher:
 
         # Invalidate the cached matcher map — it derives from this graph
         map_name = self._matcher_map_name()
-        for suffix in ('.pkl', '.dat', '.idx', ''):
+        for suffix in self.MATCHER_MAP_SUFFIXES:
             (self.workdir / (map_name + suffix)).unlink(missing_ok=True)
 
-    def _get_edge_geometry(self, u: int, v: int) -> LineString | None:
-        """Look up the real OSM edge geometry for (u, v), trying reverse direction too."""
-        for key in [(u, v), (v, u)]:
-            if key in self._edge_lookup:
-                full_key = self._edge_lookup[key]
-                return self._edges_gdf.loc[full_key, 'geometry']
-        return None
+    def _overpass_filters(self) -> list[str]:
+        """Overpass way filters for the runnable classes, one query each.
+
+        Sidewalks, crossings and service roads are most of a city's raw ways
+        and are dropped anyway, so they are excluded server-side; the access,
+        foot and tunnel rules stay in _filter_runnable.
+        """
+        classes = '|'.join(sorted(self.RUNNABLE_HIGHWAYS))
+        footway_types = '|'.join(sorted(self.EXCLUDED_FOOTWAY_TYPES))
+        return [
+            f'["highway"~"^({classes})$"]["area"!~"yes"]',
+            f'["highway"="footway"]["footway"!~"^({footway_types})$"]["area"!~"yes"]',
+        ]
+
+    def _segments_from_overpass(self, responses, polygon) -> tuple[gpd.GeoDataFrame, pd.DataFrame]:
+        """Runnable street segments (EPSG:4326) and their end nodes from raw
+        Overpass responses.
+
+        Built directly rather than through an osmnx graph, whose per-node
+        Python objects need ~3 GB for a city like Madrid. Ways are cut at
+        every node another runnable way also uses (and at their ends), and
+        segments with an end outside the city are dropped.
+        """
+        coords: dict[int, tuple[float, float]] = {}
+        ways: list[list[int]] = []
+        tags: list[dict] = []
+        for response in responses:
+            for element in response['elements']:
+                if element['type'] == 'node':
+                    coords[element['id']] = (element['lon'], element['lat'])
+                elif element['type'] == 'way' and len(element['nodes']) >= 2:
+                    ways.append(element['nodes'])
+                    way_tags = element.get('tags', {})
+                    tags.append({t: way_tags.get(t) for t in self.WAY_TAGS})
+        if not ways:
+            raise ValueError(f"No streets found in OSM for {self.city_name}")
+        keep = self._filter_runnable(pd.DataFrame(tags)).index
+        ways = [ways[i] for i in keep]
+        tags = [tags[i] for i in keep]
+
+        uses: Counter[int] = Counter()
+        for nodes in ways:
+            uses.update(nodes)
+            uses.update((nodes[0], nodes[-1]))
+        node_ids = np.fromiter(uses, dtype=np.int64, count=len(uses))
+        lon, lat = np.array([coords[n] for n in node_ids.tolist()]).T
+        inside = dict(zip(node_ids.tolist(), shapely.contains_xy(polygon, lon, lat).tolist()))
+
+        us: list[int] = []
+        vs: list[int] = []
+        seg_tags: list[dict] = []
+        shapes: list[LineString] = []
+        for nodes, way_tags in zip(ways, tags):
+            start = 0
+            for i in range(1, len(nodes)):
+                if uses[nodes[i]] < 2 and i < len(nodes) - 1:
+                    continue
+                u, v = nodes[start], nodes[i]
+                if inside[u] and inside[v]:
+                    us.append(u)
+                    vs.append(v)
+                    seg_tags.append(way_tags)
+                    shapes.append(LineString([coords[n] for n in nodes[start:i + 1]]))
+                start = i
+        edges = gpd.GeoDataFrame(
+            {
+                'u': np.asarray(us, dtype=np.int64),
+                'v': np.asarray(vs, dtype=np.int64),
+                'highway': [t['highway'] for t in seg_tags],
+                'name': [t['name'] for t in seg_tags],
+            },
+            geometry=shapes, crs='EPSG:4326',
+        )
+        end_nodes = sorted(set(us) | set(vs))
+        nodes_lonlat = np.array([coords[n] for n in end_nodes]).reshape(-1, 2)
+        nodes = pd.DataFrame({'osmid': np.asarray(end_nodes, dtype=np.int64),
+                              'lon': nodes_lonlat[:, 0], 'lat': nodes_lonlat[:, 1]})
+        return edges, nodes
+
+    @staticmethod
+    def _one_row_per_segment(edges: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        """OSM gives two-way streets as (u, v, k) and (v, u, k) with the same
+        geometry reversed; keep one row per undirected segment. Length is
+        part of the identity because two distinct one-way ways between the
+        same nodes can share (u, v, k) in opposite directions."""
+        lo = np.minimum(edges['u'], edges['v'])
+        hi = np.maximum(edges['u'], edges['v'])
+        ident = pd.DataFrame({'lo': lo, 'hi': hi, 'key': edges['key'], 'len': edges['length'].round(1)})
+        return edges[~ident.duplicated().to_numpy()]
 
     def _get_edge_row(self, u: int, v: int) -> pd.Series | None:
         """Look up full edge data for (u, v), trying reverse direction too."""
+        if self._edge_lookup is None:
+            self._edge_lookup = {}
+            for idx_tuple in self._edges_gdf.index:
+                self._edge_lookup.setdefault((idx_tuple[0], idx_tuple[1]), idx_tuple)
         for key in [(u, v), (v, u)]:
             if key in self._edge_lookup:
                 full_key = self._edge_lookup[key]
@@ -598,7 +756,9 @@ class StravaMapMatcher:
                                 utm_crs) -> gpd.GeoDataFrame:
         """Build per-observation matching table from lattice_best.
 
-        Each row maps a lattice state to its matched OSM edge and snapped point.
+        Each row maps a lattice state to its matched OSM edge and snapped
+        point. The snapped point is the matcher's own projection, which lies on
+        the edge's shape to within MATCH_GRAPH_SIMPLIFY_M.
         """
         records = []
 
@@ -608,23 +768,12 @@ class StravaMapMatcher:
             is_emitting = obs_ne == 0
 
             obs_coord = path[obs_idx] if obs_idx < len(path) else None
-            edge_u = m.edge_m.l1
-            edge_v = m.edge_m.l2
-            matcher_snapped = m.edge_m.pi if m.edge_m.pi is not None else m.edge_m.p1
-
-            # Re-project onto real curved OSM edge geometry
-            snapped_point = None
-            if edge_v is not None:
-                real_geom = self._get_edge_geometry(edge_u, edge_v)
-                if real_geom is not None and obs_coord is not None:
-                    obs_point_geom = Point(obs_coord)
-                    frac = real_geom.project(obs_point_geom, normalized=True)
-                    snapped_point = real_geom.interpolate(frac, normalized=True)
-                else:
-                    snapped_point = Point(matcher_snapped) if matcher_snapped is not None else None
+            if m.edge_m.l2 is not None:
+                edge_u, edge_v = self._parent_edge(m.edge_m.l1, m.edge_m.l2)
             else:
-                node_coords = self._nodes_gdf.loc[edge_u, ['x', 'y']].values
-                snapped_point = Point(node_coords)
+                edge_u, edge_v = m.edge_m.l1, None
+            matcher_snapped = m.edge_m.pi if m.edge_m.pi is not None else m.edge_m.p1
+            snapped_point = Point(matcher_snapped) if matcher_snapped is not None else None
 
             obs_point_geom = Point(obs_coord) if obs_coord is not None else None
             dist_to_snapped = (obs_point_geom.distance(snapped_point)
@@ -660,13 +809,13 @@ class StravaMapMatcher:
         ordered_edges = []
 
         for m in matcher.lattice_best:
-            u, v = m.edge_m.l1, m.edge_m.l2
-            if v is None:
+            if m.edge_m.l2 is None:
                 continue
-            edge_key = (u, v)
+            u, v = self._parent_edge(m.edge_m.l1, m.edge_m.l2)
+            edge_key = (min(u, v), max(u, v))
             if edge_key not in seen_edges:
                 seen_edges.add(edge_key)
-                ordered_edges.append(edge_key)
+                ordered_edges.append((u, v))
 
         if not ordered_edges:
             return gpd.GeoDataFrame(), None
@@ -683,8 +832,8 @@ class StravaMapMatcher:
             if geom is None or geom.is_empty:
                 continue
 
-            record = {'edge_u': u, 'edge_v': v, 'geometry': geom}
-            for col in ['highway', 'name', 'length', 'oneway', 'maxspeed', 'osmid']:
+            record = {'edge_u': u, 'edge_v': v, 'geometry': geom, 'source': 'matched'}
+            for col in ['highway', 'name', 'length']:
                 if col in edge_row.index:
                     record[col] = edge_row[col]
 
@@ -698,6 +847,31 @@ class StravaMapMatcher:
         merged = linemerge(MultiLineString(edge_geoms))
 
         return edges_gdf, merged
+
+    def _corridor_edges(self, track: LineString, credited: set[tuple[int, int]]) -> gpd.GeoDataFrame:
+        """Runnable edges the track ran along that aren't already credited,
+        i.e. parallel siblings of the HMM path (see CORRIDOR_BUFFER_M)."""
+        und = self._undirected_gdf()
+        zone = track.simplify(2.0).buffer(self.CORRIDOR_BUFFER_M)
+        cand = und.iloc[und.sindex.query(zone, predicate='intersects')]
+        geoms = cand.geometry.to_numpy()
+        lengths = shapely.length(geoms)
+        inside = shapely.length(shapely.intersection(geoms, zone))
+        along = (lengths >= self.CORRIDOR_MIN_EDGE_M) & (inside >= self.CORRIDOR_MIN_FRACTION * lengths)
+        new = np.array([(u, v) not in credited for u, v in zip(cand['u'].tolist(), cand['v'].tolist())],
+                       dtype=bool)
+        picked = cand[along & new]
+        return gpd.GeoDataFrame(
+            {
+                'edge_u': picked['u'].to_numpy(),
+                'edge_v': picked['v'].to_numpy(),
+                'source': 'corridor',
+                'name': picked['name'].to_numpy(),
+                'length': picked['length'].to_numpy(),
+            },
+            geometry=picked.geometry.to_numpy(),
+            crs=und.crs,
+        )
 
     def match(self, activities: gpd.GeoDataFrame) -> tuple[gpd.GeoDataFrame, dict[int | str, MatchResult]]:
         """Map match activities to the OSM street network.
@@ -794,13 +968,24 @@ class StravaMapMatcher:
                     resume_at = matched_count + SKIP_ON_FAILURE
                     remaining = remaining[resume_at:]
 
-            if not all_edges_gdfs or all(df.empty for df in all_edges_gdfs):
+            hmm_edges = [df for df in all_edges_gdfs if not df.empty]
+            credited = {
+                (min(u, v), max(u, v))
+                for df in hmm_edges for u, v in zip(df['edge_u'].tolist(), df['edge_v'].tolist())
+            }
+            corridor_gdf = self._corridor_edges(geom, credited)
+            if not hmm_edges and corridor_gdf.empty:
                 logger.warning("No match found for activity %s", activity_id)
                 continue
 
             # Merge all segments
-            matched_edges_gdf = pd.concat(all_edges_gdfs, ignore_index=True)  # type: ignore[assignment]
-            matching_details = pd.concat(all_details_dfs, ignore_index=True)  # type: ignore[assignment]
+            matched_edges_gdf = gpd.GeoDataFrame(
+                pd.concat([df for df in hmm_edges + [corridor_gdf] if not df.empty], ignore_index=True),
+                geometry='geometry', crs=utm_crs,
+            )
+            details = [df for df in all_details_dfs if not df.empty]
+            matching_details = (pd.concat(details, ignore_index=True) if details
+                                else gpd.GeoDataFrame({'is_emitting': [], 'dist_obs': []}))
 
             # Flatten any MultiLineStrings before merging
             flat_lines: list[LineString] = []
@@ -825,10 +1010,13 @@ class StravaMapMatcher:
                 'num_sub_segments': sub_id,
                 'num_sub_segments_matched': sum(1 for df in all_edges_gdfs if not df.empty),
                 'num_emitting_states': n_emitting,
-                'num_matched_edges': len(matched_edges_gdf),
+                'num_matched_edges': len(credited),
+                'num_corridor_edges': len(corridor_gdf),
                 'avg_dist_obs_m': round(float(avg_dist), 2) if avg_dist is not None else None,
                 'max_dist_obs_m': round(float(max_dist), 2) if max_dist is not None else None,
-                'coverage_pct': round(100 * total_matched / len(full_path), 1) if full_path else 0,
+                # Share of the (thinned) in-city observations the HMM consumed
+                'coverage_pct': (round(100 * total_matched / total_observations, 1)
+                                 if total_observations else 0),
             }
 
             match_results[activity_id] = MatchResult(
@@ -850,9 +1038,10 @@ class StravaMapMatcher:
             matched_rows.append(result)
 
             logger.info(
-                "Activity %s: %d edges, avg snap %sm, %d/%d sub-segments, coverage %s%%",
+                "Activity %s: %d edges (+%d corridor), avg snap %sm, %d/%d sub-segments, coverage %s%%",
                 activity_id,
                 quality['num_matched_edges'],
+                quality['num_corridor_edges'],
                 quality['avg_dist_obs_m'],
                 quality['num_sub_segments_matched'],
                 quality['num_sub_segments'],
@@ -979,9 +1168,11 @@ class StravaMapMatcher:
             logger.info("Matching %d new activities for %s", len(todo), self.city_name)
             _, results = self.match(todo)
             self.save_match_state(results, attempted_ids=list(todo['id']))
-        # Release the InMemMap + rtree (tens of MB) held only for matching; it
-        # reloads from the on-disk pickle in ~0.1 s when the next sync needs it.
+        # Release what only matching needs (the InMemMap + rtree and the edge
+        # lookup, tens of MB each); the map reloads from its on-disk pickle in
+        # ~0.1 s when the next sync needs it.
         self._map_con = None
+        self._edge_lookup = None
         stats = self.coverage_stats_from_state()
         self.write_stats_cache()
         return stats
@@ -1130,7 +1321,7 @@ class StravaMapMatcher:
                 return self._with_city_fallback(cached)
 
         logger.info("Downloading admin_level=%d boundaries for %s...", admin_level, self.city_name)
-        import osmnx as ox
+        ox = _import_osmnx()
         boundary_4326 = self._city_boundary.to_crs('EPSG:4326').union_all()
         try:
             # osmnx ORs the tags dict, so admin_level must be filtered afterwards
