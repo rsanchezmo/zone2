@@ -39,6 +39,7 @@ from backend.dependencies import set_zone2
 from backend.routers import activities, stats, exports, calendar, calendar_feed, sync, athlete, gear, goals, workouts, races, health, garmin, coverage, config as config_router
 from backend.routers.coverage import unload_idle_cities
 from backend.routers.sync import _try_claim_sync, _run_sync
+from backend.services.races import refresh_race_activities
 from backend.db import init_db
 from zone2.core import Zone2
 
@@ -145,6 +146,7 @@ async def _periodic_garmin_sync_loop(
 
 def _warm_stats_caches(z2: Zone2) -> None:
     try:
+        refresh_race_activities(z2)
         z2.strava_analytics.warm_caches()
     except Exception:
         logging.getLogger("backend.startup").exception("Warming the stats caches failed")

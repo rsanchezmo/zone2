@@ -8,6 +8,7 @@ from backend.routers.coverage import sync_all_cities
 from backend.routers.exports import clear_export_cache
 from backend.routers.gear import clear_gear_cache
 from backend.routers.stats import clear_stats_cache
+from backend.services.races import refresh_race_activities
 from zone2.core import Zone2
 
 router = APIRouter()
@@ -49,6 +50,8 @@ def _finalize_sync(z2: Zone2, error: str | None, version_before: int) -> str | N
         # Eagerly warm the in-memory cache so the first post-sync read doesn't
         # pay the full parquet reload cost on the user's request.
         z2.strava_activities_cache._load_to_memory()
+        # A new activity may be the one of a race event
+        refresh_race_activities(z2)
     except Exception as e:
         logger.exception("Sync cleanup failed")
         cleanup_error = f"cleanup failed: {type(e).__name__}: {e}"
