@@ -62,6 +62,8 @@ class StravaAnalytics:
         # avoid re-scanning streams on every history step.
         self._per_activity_bests_cache: dict[str, pd.DataFrame] = {}
         self._ranked_bests_cache: dict[str, dict[str, np.ndarray]] = {}
+        # Races the user keeps outside Strava's race flag (see set_race_activity_ids)
+        self.race_activity_ids: frozenset[int] = frozenset()
         # Request threads share these caches: one build at a time, the rest reuse it.
         self._lock = RLock()
 
@@ -110,6 +112,29 @@ class StravaAnalytics:
         self._fitness_trend_cache = {}
         self._per_activity_bests_cache = {}
         self._ranked_bests_cache = {}
+
+    def set_race_activity_ids(self, ids: frozenset[int]) -> bool:
+        """Activities to treat as races besides the ones Strava flags as such
+        (workout_type 1 / 11): race efforts weigh more in the predictions and
+        calibrate them. Returns whether the set changed (race-based results are
+        then recomputed)."""
+        with self._lock:
+            if ids == self.race_activity_ids:
+                return False
+            self.race_activity_ids = ids
+            self._per_activity_bests_cache = {}
+            self._ranked_bests_cache = {}
+            self._race_predictions_cache = {}
+            self._race_residuals_cache = {}
+            self._fitness_trend_cache = {}
+            return True
+
+    def _race_mask(self, activities: pd.DataFrame) -> pd.Series:
+        """Races: flagged on Strava (workout_type 1 = run race, 11 = ride race)
+        or in race_activity_ids."""
+        flagged = (activities['workout_type'].isin([1, 11]) if 'workout_type' in activities.columns
+                   else pd.Series(False, index=activities.index))
+        return flagged | activities['id'].isin(self.race_activity_ids)
 
     def warm_caches(self) -> None:
         """Build the history-wide caches, and any missing per-activity stream
@@ -859,9 +884,10 @@ class StravaAnalytics:
 
             cat_ids = cat_acts['id'].astype('int64').tolist() if 'id' in cat_acts.columns else []
             efforts_by_id = self._activity_best_efforts(sport_category, cat_ids)
+            race_ids = set(cat_acts.loc[self._race_mask(cat_acts), 'id'].tolist())
 
             rows: list[dict] = []
-            for row in df_rows(cat_acts, "id", "name", "start_date_local", "workout_type", "average_heartrate"):
+            for row in df_rows(cat_acts, "id", "name", "start_date_local", "average_heartrate"):
                 efforts = efforts_by_id.get(int(row.get("id"))) if row.get("id") is not None else None
                 if not efforts:
                     continue
@@ -869,9 +895,7 @@ class StravaAnalytics:
                 activity_id = row.get("id")
                 activity_name = row.get("name", "")
                 act_date = row.get("start_date_local")
-                # Strava workout_type: 1 = run race, 11 = ride race.
-                wt = row.get("workout_type")
-                is_race = (not pd.isna(wt)) and int(wt) in (1, 11)
+                is_race = activity_id in race_ids
                 avg_hr = row.get("average_heartrate")
                 avg_hr = float(avg_hr) if avg_hr is not None and not pd.isna(avg_hr) else None
 
@@ -1294,12 +1318,12 @@ class StravaAnalytics:
         targets = sorted((d for d, _ in sport_configs.get(sport_category, [])), reverse=True)
         residuals: list[tuple[pd.Timestamp, float]] = []
         activities = self._get_prepared_activities()
-        if not targets or activities.empty or "workout_type" not in activities.columns:
+        if not targets or activities.empty:
             self._race_residuals_cache[sport_category] = residuals
             return residuals
 
         cat_mask = activities["sport_type"].apply(lambda st: get_sport_category(st) == sport_category)
-        races = activities[cat_mask & activities["workout_type"].isin([1, 11])]
+        races = activities[cat_mask & self._race_mask(activities)]
         bests = self._get_per_activity_bests_df(sport_category)
         if races.empty or bests.empty:
             self._race_residuals_cache[sport_category] = residuals
