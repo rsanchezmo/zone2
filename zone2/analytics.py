@@ -1769,7 +1769,7 @@ class StravaAnalytics:
 
         trimp_map = {d["date"]: d["trimp"] for d in daily_load}
         trimp_series = pd.Series(
-            [trimp_map.get(d.strftime('%Y-%m-%d'), 0.0) for d in date_range],
+            [trimp_map.get(ds, 0.0) for ds in date_range.strftime('%Y-%m-%d')],
             index=date_range,
         )
 
@@ -1792,16 +1792,14 @@ class StravaAnalytics:
         if end_date:
             mask = mask & (date_range <= pd.to_datetime(end_date))
 
-        data = []
-        for d in date_range[mask]:
-            ds = d.strftime('%Y-%m-%d')
-            data.append({
-                "date": ds,
-                "trimp": round(float(trimp_series[d]), 1),
-                "ctl": round(float(ctl[d]), 1),
-                "atl": round(float(atl[d]), 1),
-                "tsb": round(float(tsb[d]), 1),
-            })
+        shown = np.flatnonzero(mask.to_numpy())
+        data = [
+            {"date": ds, "trimp": round(tr, 1), "ctl": round(c, 1), "atl": round(a, 1), "tsb": round(b, 1)}
+            for ds, tr, c, a, b in zip(
+                date_range[shown].strftime('%Y-%m-%d'),
+                *(series.to_numpy()[shown].tolist() for series in (trimp_series, ctl, atl, tsb)),
+            )
+        ]
 
         # Peak fitness
         peak_idx = ctl.idxmax()

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import geopandas as gpd
 import matplotlib.lines as mlines
+import pyarrow.parquet as pq
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -807,7 +808,7 @@ class StravaMapMatcher:
         when the city hasn't matched it. Reads only the routes file, so it
         never builds a matcher."""
         routes_fp = cls.artifact_path(osm_dir, slug, 'routes.parquet')
-        if not routes_fp.exists():
+        if activity_id not in cls._route_ids(routes_fp):
             return None
         hit = gpd.read_parquet(routes_fp, filters=[('activity_id', '==', activity_id)])
         if hit.empty:
@@ -816,6 +817,23 @@ class StravaMapMatcher:
         lines = [geom] if isinstance(geom, LineString) else list(geom.geoms)
         return {'type': 'MultiLineString', 'coordinates': [cls._round_coords(shapely_mapping(ln)['coordinates'])
                                                            for ln in lines]}
+
+    # routes file -> (mtime, activity ids in it)
+    _route_ids_cache: dict[Path, tuple[int, frozenset[int]]] = {}
+
+    @classmethod
+    def _route_ids(cls, routes_fp: Path) -> frozenset[int]:
+        """Activities with a route in `routes_fp`, so a route lookup opens only
+        the city that has it (the activity page asks every city)."""
+        try:
+            mtime = routes_fp.stat().st_mtime_ns
+        except FileNotFoundError:
+            return frozenset()
+        cached = cls._route_ids_cache.get(routes_fp)
+        if cached is None or cached[0] != mtime:
+            ids = pq.read_table(routes_fp, columns=['activity_id']).column('activity_id').to_pylist()
+            cached = cls._route_ids_cache[routes_fp] = (mtime, frozenset(ids))
+        return cached[1]
 
     def match_incremental(self, activities: gpd.GeoDataFrame) -> dict:
         """Match only activities not yet in the persisted state, then return
