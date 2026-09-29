@@ -1,6 +1,8 @@
+import functools
 import json
 from datetime import datetime, timedelta, date
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
+from starlette.concurrency import run_in_threadpool
 import aiosqlite
 import pandas as pd
 import numpy as np
@@ -19,6 +21,25 @@ router = APIRouter()
 # (endpoint, *params, cache_version) so entries self-invalidate when the
 # underlying activities dataset changes.
 _stats_cache = TTLCache(maxsize=256, ttl_seconds=900)
+
+
+def _cached_json(endpoint):
+    """Serve a sync endpoint's JSON from _stats_cache, keyed by its query
+    parameters, the activities version and the day (results that count up to
+    today roll over at midnight)."""
+    @functools.wraps(endpoint)
+    def cached(**kwargs) -> Response:
+        z2: Zone2 = kwargs["z2"]
+        params = tuple(sorted((k, v) for k, v in kwargs.items() if k != "z2"))
+        key = (endpoint.__name__, params, z2.strava_activities_cache.cache_version, date.today())
+        return _stats_cache.json_response(key, lambda: endpoint(**kwargs))
+    return cached
+
+
+async def _cached_json_in_threadpool(key: tuple, build) -> Response:
+    """_stats_cache.json_response for async endpoints: the build is blocking
+    pandas work, so it runs off the event loop."""
+    return await run_in_threadpool(_stats_cache.json_response, key + (date.today(),), build)
 
 
 def clear_stats_cache():
@@ -62,32 +83,38 @@ async def weekly_report(
 ):
     resolved = await resolve_hr_zones(z2, db)
     hr_zones = resolved["zones"]
-    report = _get_weekly_report_cached(z2, week_start, hr_zones=hr_zones)
-    # Previous week for deltas — with same day-of-week cutoff for fairness
-    week_start_str = report.get("week_start")
-    prev_report = None
-    if week_start_str:
-        current_monday = datetime.strptime(week_start_str, "%Y-%m-%d").date()
-        prev_monday = current_monday - timedelta(days=7)
 
-        # If this is the current (incomplete) week, truncate previous week to same day
-        today = date.today()
-        current_week_end = current_monday + timedelta(days=6)
-        if today <= current_week_end:
-            days_elapsed = (today - current_monday).days
-            cutoff_day_prev = prev_monday + timedelta(days=days_elapsed)
-            prev_report = _get_weekly_report_cached(
-                z2, prev_monday.strftime("%Y-%m-%d"),
-                cutoff_date=cutoff_day_prev.strftime("%Y-%m-%d"),
-                hr_zones=hr_zones,
-            )
-        else:
-            prev_report = _get_weekly_report_cached(z2, prev_monday.strftime("%Y-%m-%d"), hr_zones=hr_zones)
+    def build() -> dict:
+        report = _get_weekly_report_cached(z2, week_start, hr_zones=hr_zones)
+        # Previous week for deltas — with same day-of-week cutoff for fairness
+        week_start_str = report.get("week_start")
+        prev_report = None
+        if week_start_str:
+            current_monday = datetime.strptime(week_start_str, "%Y-%m-%d").date()
+            prev_monday = current_monday - timedelta(days=7)
 
-    return {
-        "current": _serialize_enum_dict(report),
-        "previous": _serialize_enum_dict(prev_report) if prev_report else None,
-    }
+            # If this is the current (incomplete) week, truncate previous week to same day
+            today = date.today()
+            current_week_end = current_monday + timedelta(days=6)
+            if today <= current_week_end:
+                days_elapsed = (today - current_monday).days
+                cutoff_day_prev = prev_monday + timedelta(days=days_elapsed)
+                prev_report = _get_weekly_report_cached(
+                    z2, prev_monday.strftime("%Y-%m-%d"),
+                    cutoff_date=cutoff_day_prev.strftime("%Y-%m-%d"),
+                    hr_zones=hr_zones,
+                )
+            else:
+                prev_report = _get_weekly_report_cached(z2, prev_monday.strftime("%Y-%m-%d"), hr_zones=hr_zones)
+
+        return {
+            "current": _serialize_enum_dict(report),
+            "previous": _serialize_enum_dict(prev_report) if prev_report else None,
+        }
+
+    key = ("weekly_report_response", week_start, _zones_signature(hr_zones),
+           z2.strava_activities_cache.cache_version)
+    return await _cached_json_in_threadpool(key, build)
 
 
 def _get_year_in_sport_cached(z2: Zone2, year: int, main_sport: str, cutoff):
@@ -104,6 +131,7 @@ def _get_year_in_sport_cached(z2: Zone2, year: int, main_sport: str, cutoff):
 
 
 @router.get("/year-in-sport")
+@_cached_json
 def year_in_sport(
     year: int | None = None,
     main_sport: str = Query(default="Run"),
@@ -138,16 +166,12 @@ def year_in_sport(
 
 
 @router.get("/efficiency-factor")
+@_cached_json
 def efficiency_factor(
     sport_type: str = Query(default="Run"),
     window: int = Query(default=14, ge=3, le=90),
     z2: Zone2 = Depends(get_z2),
 ):
-    key = ("efficiency_factor", sport_type, window, z2.strava_activities_cache.cache_version)
-    cached = _stats_cache.get(key)
-    if cached is not None:
-        return cached
-
     activities = z2.strava_analytics._get_prepared_activities()
     filtered = activities[activities["sport_type"] == sport_type].copy()
 
@@ -182,20 +206,15 @@ def efficiency_factor(
             d["ef_rolling"] = d["ef"]
 
     result = {"data": ef_data, "sport_type": sport_type, "window": window}
-    _stats_cache.set(key, result)
     return result
 
 
 @router.get("/performance-frontier")
+@_cached_json
 def performance_frontier(
     sport_types: str = Query(default="Run"),
     z2: Zone2 = Depends(get_z2),
 ):
-    key = ("performance_frontier", sport_types, z2.strava_activities_cache.cache_version)
-    cached = _stats_cache.get(key)
-    if cached is not None:
-        return cached
-
     sport_list = [s.strip() for s in sport_types.split(",")]
     activities = z2.strava_analytics._get_prepared_activities()
     filtered = activities[activities["sport_type"].isin(sport_list)].copy()
@@ -243,20 +262,15 @@ def performance_frontier(
         frontier = []
 
     result = {"data": points, "frontier": frontier, "sport_types": sport_list}
-    _stats_cache.set(key, result)
     return result
 
 
 @router.get("/activity-clock")
+@_cached_json
 def activity_clock(
     sport_types: str = Query(default="Run"),
     z2: Zone2 = Depends(get_z2),
 ):
-    key = ("activity_clock", sport_types, z2.strava_activities_cache.cache_version)
-    cached = _stats_cache.get(key)
-    if cached is not None:
-        return cached
-
     sport_list = [s.strip() for s in sport_types.split(",")]
     activities = z2.strava_analytics._get_prepared_activities()
     filtered = activities[activities["sport_type"].isin(sport_list)].copy()
@@ -277,11 +291,11 @@ def activity_clock(
         })
 
     result = {"data": points, "sport_types": sport_list}
-    _stats_cache.set(key, result)
     return result
 
 
 @router.get("/cumulative-distance")
+@_cached_json
 def cumulative_distance(
     year: int | None = None,
     main_sport: str = Query(default="Run"),
@@ -293,8 +307,7 @@ def cumulative_distance(
     import calendar as cal
 
     year = year or date.today().year
-    activities = z2.strava_activities_cache.activities_raw.copy()
-    activities["start_date_local"] = pd.to_datetime(activities["start_date_local"])
+    activities = z2.strava_activities_cache.get_prepared_view()
 
     days_in_year = 366 if cal.isleap(year) else 365
 
@@ -332,12 +345,12 @@ def cumulative_distance(
 
 
 @router.get("/streaks")
+@_cached_json
 def streaks(
     z2: Zone2 = Depends(get_z2),
 ):
     """Compute current and longest activity streaks (consecutive days with activities)."""
-    activities = z2.strava_activities_cache.activities_raw.copy()
-    activities["start_date_local"] = pd.to_datetime(activities["start_date_local"])
+    activities = z2.strava_activities_cache.get_prepared_view()
     active_dates = sorted(activities["start_date_local"].dt.date.unique())
 
     if not len(active_dates):
@@ -445,7 +458,7 @@ def streaks(
 
 def _compute_sport_totals(z2: Zone2) -> dict:
     """Compute total distance (km) and time (seconds) per sport category."""
-    activities = z2.strava_activities_cache.activities
+    activities = z2.strava_activities_cache.activities_raw
     if activities.empty:
         return {}
     RUNNING_TYPES = {"run", "trailrun", "virtualrun"}
@@ -480,39 +493,30 @@ def _compute_sport_totals(z2: Zone2) -> dict:
 
 
 @router.get("/personal-records")
-def personal_records(
-    z2: Zone2 = Depends(get_z2),
-    bust_cache: bool = Query(default=False),
-):
+@_cached_json
+def personal_records(z2: Zone2 = Depends(get_z2)):
     """Personal records (best efforts) at standard distances for running, cycling, and swimming."""
-    key = ("personal_records", z2.strava_activities_cache.cache_version)
-    if not bust_cache:
-        cached = _stats_cache.get(key)
-        if cached is not None:
-            return cached
-    result = z2.strava_analytics.get_personal_records()
-    _stats_cache.set(key, result)
-    return result
+    return z2.strava_analytics.get_personal_records()
 
 
 @router.get("/sport-totals")
+@_cached_json
 def sport_totals(z2: Zone2 = Depends(get_z2)):
     """Overall totals (distance, time, count) per sport category."""
     return _compute_sport_totals(z2)
 
 
 @router.get("/weekly-totals")
+@_cached_json
 def weekly_totals(
     weeks: int = Query(default=12, ge=1, le=52),
     sport_type: str | None = None,
     z2: Zone2 = Depends(get_z2),
 ):
     """Total distance (km) and activity count per week for the last N weeks."""
-    activities = z2.strava_activities_cache.activities_raw.copy()
+    activities = z2.strava_activities_cache.get_prepared_view()
     if activities.empty:
         return {"data": [], "weeks": weeks, "sport_type": sport_type}
-
-    activities["start_date_local"] = pd.to_datetime(activities["start_date_local"])
 
     if sport_type:
         activities = activities[activities["sport_type"] == sport_type]
@@ -546,16 +550,12 @@ def weekly_totals(
 
 
 @router.get("/race-predictions")
+@_cached_json
 def race_predictions(
     sport_category: str = Query(default="running"),
     z2: Zone2 = Depends(get_z2),
 ):
-    key = ("race_predictions", sport_category, z2.strava_activities_cache.cache_version)
-    cached = _stats_cache.get(key)
-    if cached is not None:
-        return cached
     result = z2.strava_analytics.get_race_predictions(sport_category)
-    _stats_cache.set(key, result)
     return result
 
 
@@ -585,6 +585,7 @@ def race_predictions_window_inputs(
 
 
 @router.get("/race-predictions/history")
+@_cached_json
 def race_predictions_history(
     sport_category: str = Query(default="running"),
     weeks: int = Query(default=52, ge=1, le=520),
@@ -597,21 +598,10 @@ def race_predictions_history(
     ending at that step's date. Used to drive the evolution chart on the
     Analytics page.
     """
-    key = (
-        "race_predictions_history",
-        sport_category,
-        weeks,
-        step_days,
-        z2.strava_activities_cache.cache_version,
-    )
-    cached = _stats_cache.get(key)
-    if cached is not None:
-        return cached
     points = z2.strava_analytics.get_race_predictions_history(
         sport_category, weeks=weeks, step_days=step_days
     )
     result = {"sport_category": sport_category, "weeks": weeks, "points": points}
-    _stats_cache.set(key, result)
     return result
 
 
@@ -623,15 +613,18 @@ async def training_load(
     db: aiosqlite.Connection = Depends(get_db),
 ):
     resolved = await resolve_hr_zones(z2, db)
-    data = z2.strava_analytics.get_daily_training_load(hr_zones=resolved["zones"])
-    if start_date or end_date:
-        filtered = data
+
+    def build() -> dict:
+        data = z2.strava_analytics.get_daily_training_load(hr_zones=resolved["zones"])
         if start_date:
-            filtered = [d for d in filtered if d["date"] >= start_date]
+            data = [d for d in data if d["date"] >= start_date]
         if end_date:
-            filtered = [d for d in filtered if d["date"] <= end_date]
-        return {"data": filtered}
-    return {"data": data}
+            data = [d for d in data if d["date"] <= end_date]
+        return {"data": data}
+
+    key = ("training_load", start_date, end_date, _zones_signature(resolved["zones"]),
+           z2.strava_activities_cache.cache_version)
+    return await _cached_json_in_threadpool(key, build)
 
 
 @router.get("/relative-effort/weekly")
@@ -661,44 +654,31 @@ async def relative_effort_weekly(
         round(resolved_rhr["value"], 1),
         z2.strava_activities_cache.cache_version,
     )
-    cached = _stats_cache.get(key)
-    if cached is not None:
-        return cached
-    result = z2.strava_analytics.get_weekly_relative_effort(
+    return await _cached_json_in_threadpool(key, lambda: z2.strava_analytics.get_weekly_relative_effort(
         hr_zones=resolved_zones["zones"],
         hr_rest=resolved_rhr["value"],
         sports=sports,
-    )
-    _stats_cache.set(key, result)
-    return result
+    ))
 
 
 @router.get("/fitness-chart")
+@_cached_json
 def fitness_chart(
     start_date: str | None = None,
     end_date: str | None = None,
     z2: Zone2 = Depends(get_z2),
 ):
-    key = ("fitness_chart", start_date, end_date, z2.strava_activities_cache.cache_version)
-    cached = _stats_cache.get(key)
-    if cached is not None:
-        return cached
     result = z2.strava_analytics.get_pmc_chart(start_date, end_date)
-    _stats_cache.set(key, result)
     return result
 
 
 @router.get("/fitness-trend")
+@_cached_json
 def fitness_trend(
     sport_type: str = Query(default="Run"),
     start_date: str | None = None,
     end_date: str | None = None,
     z2: Zone2 = Depends(get_z2),
 ):
-    key = ("fitness_trend", sport_type, start_date, end_date, z2.strava_activities_cache.cache_version)
-    cached = _stats_cache.get(key)
-    if cached is not None:
-        return cached
     result = z2.strava_analytics.get_fitness_trend(sport_type, start_date, end_date)
-    _stats_cache.set(key, result)
     return result

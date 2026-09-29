@@ -1,6 +1,10 @@
 import time
 from threading import Lock
-from typing import Any, Hashable
+from typing import Any, Callable, Hashable
+
+from fastapi import Response
+
+from backend._serialize import json_bytes
 
 
 class TTLCache:
@@ -34,6 +38,15 @@ class TTLCache:
                 oldest = min(self._store, key=lambda k: self._store[k][0])
                 del self._store[oldest]
             self._store[key] = (time.monotonic(), value)
+
+    def json_response(self, key: Hashable, build: Callable[[], Any]) -> Response:
+        """JSON response for `key`, serializing `build()` only on a miss: hits
+        serve the stored bytes without encoding anything again."""
+        body = self.get(key)
+        if body is None:
+            body = json_bytes(build())
+            self.set(key, body)
+        return Response(body, media_type="application/json")
 
     def clear(self) -> None:
         with self._lock:

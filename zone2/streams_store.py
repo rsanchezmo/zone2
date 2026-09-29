@@ -29,56 +29,84 @@ import os
 import pickle
 import tempfile
 from pathlib import Path
-from typing import Iterable
+from threading import RLock
+from typing import Any, Callable, Iterable
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 
-# Loaded year-file LRU cap. Each year holds streams for ~150 activities at
-# ~75 KB columnar (~30 MB serialized / ~200 MB resident). Keeping a few
-# years hot is fine on a Pi.
-_MAX_LOADED_YEARS = 4
+# Loaded year-file LRU cap. A year is up to ~8 MB pickled and several times
+# that resident; history-wide stats read per-activity summaries instead of
+# streams, so only single-activity views and summary builds load years.
+_MAX_LOADED_YEARS = 2
+
+_INDEX_FILE = "index.pkl"
+_SUMMARIES_FILE = "summaries.pkl"
 
 
 class StreamsStore:
     def __init__(self, store_dir: Path):
         self.store_dir = Path(store_dir)
         self.store_dir.mkdir(parents=True, exist_ok=True)
+        # Request threads, syncs and summary builds share the store.
+        self._lock = RLock()
         # year -> {activity_id: columnar_streams}
         self._loaded: "OrderedDict[int, dict[int, dict]]" = OrderedDict()
-        # Index of which year each activity_id lives in, built from filenames
-        # on first lookup. Avoids opening every pickle just to find one id.
+        # activity_id -> year, persisted as year -> (file mtime, ids) so a
+        # lookup never has to open every pickle to find one id.
         self._index: dict[int, int] | None = None
+        self._index_years: dict[int, tuple[int, list[int]]] = {}
+        # summary name -> {activity_id: value}
+        self._summaries: dict[str, dict[int, Any]] | None = None
 
     # ── public API ────────────────────────────────────────────────────
 
     def get(self, activity_id: int) -> dict | None:
-        year = self._year_for(activity_id)
-        if year is None:
-            return None
-        return self._load_year(year).get(int(activity_id))
+        with self._lock:
+            year = self._year_for(activity_id)
+            if year is None:
+                return None
+            return self._load_year(year).get(int(activity_id))
 
     def get_many(self, activity_ids: Iterable[int]) -> dict[int, dict]:
-        out: dict[int, dict] = {}
-        # Group by year to load each year-pickle at most once
-        by_year: dict[int, list[int]] = {}
-        for aid in activity_ids:
-            year = self._year_for(int(aid))
-            if year is None:
-                continue
-            by_year.setdefault(year, []).append(int(aid))
-        for year, ids in by_year.items():
-            year_map = self._load_year(year)
-            for aid in ids:
-                streams = year_map.get(aid)
-                if streams is not None:
-                    out[aid] = streams
-        return out
+        with self._lock:
+            out: dict[int, dict] = {}
+            # Group by year to load each year-pickle at most once
+            by_year: dict[int, list[int]] = {}
+            for aid in activity_ids:
+                year = self._year_for(int(aid))
+                if year is None:
+                    continue
+                by_year.setdefault(year, []).append(int(aid))
+            for year, ids in by_year.items():
+                year_map = self._load_year(year)
+                for aid in ids:
+                    streams = year_map.get(aid)
+                    if streams is not None:
+                        out[aid] = streams
+            return out
 
     def has(self, activity_id: int) -> bool:
-        return self._year_for(int(activity_id)) is not None
+        with self._lock:
+            return self._year_for(int(activity_id)) is not None
+
+    def summaries(self, name: str, activity_ids: Iterable[int],
+                  compute: Callable[[dict], Any]) -> dict[int, Any]:
+        """Per-activity values derived from streams by `compute`, persisted
+        under `name` and computed only for activities not summarized yet, so
+        history-wide stats never reload every year of streams. `name` must
+        change whenever `compute` does. Activities without streams are absent."""
+        with self._lock:
+            table = self._load_summaries().setdefault(name, {})
+            ids = [int(a) for a in activity_ids]
+            missing = [a for a in ids if a not in table and self._year_for(a) is not None]
+            if missing:
+                for aid, streams in self.get_many(missing).items():
+                    table[aid] = compute(streams)
+                self._write_atomic(self.store_dir / _SUMMARIES_FILE, self._summaries)
+            return {a: table[a] for a in ids if a in table}
 
     def save(self, streams_by_id: dict[int, dict | None], activity_year: dict[int, int]):
         """Persist a batch of streams, grouped by their activity year.
@@ -98,37 +126,53 @@ class StreamsStore:
                 continue
             by_year.setdefault(year, {})[aid] = streams
 
-        for year, updates in by_year.items():
-            existing = self._load_year(year, missing_ok=True) if self._year_file(year).exists() else {}
-            # Apply updates: None means delete
-            for aid, streams in updates.items():
-                if streams is None:
-                    existing.pop(aid, None)
-                else:
-                    existing[aid] = streams
-            self._write_year(year, existing)
-            # Refresh cached copy and index
-            self._loaded[year] = existing
-            self._loaded.move_to_end(year)
-            self._trim_lru()
-            if self._index is not None:
-                # Patch the year index for the changed ids
+        with self._lock:
+            self._ensure_index()
+            # Drop stale summaries before the streams change on disk: a crash
+            # in between only costs recomputing them from the old streams.
+            summaries = self._load_summaries()
+            stale = [t for t in summaries.values() if any(aid in t for aid in streams_by_id)]
+            for table in stale:
+                for aid in streams_by_id:
+                    table.pop(aid, None)
+            if stale:
+                self._write_atomic(self.store_dir / _SUMMARIES_FILE, summaries)
+
+            for year, updates in by_year.items():
+                existing = self._load_year(year, missing_ok=True) if self._year_file(year).exists() else {}
+                # Apply updates: None means delete
+                for aid, streams in updates.items():
+                    if streams is None:
+                        existing.pop(aid, None)
+                    else:
+                        existing[aid] = streams
+                self._write_atomic(self._year_file(year), existing)
+                # Refresh cached copy and index
+                self._loaded[year] = existing
+                self._loaded.move_to_end(year)
+                self._trim_lru()
                 for aid, streams in updates.items():
                     if streams is None:
                         self._index.pop(aid, None)
                     else:
                         self._index[aid] = year
+                self._index_years[year] = (self._year_file(year).stat().st_mtime_ns, list(existing))
+            self._write_atomic(self.store_dir / _INDEX_FILE, self._index_years)
 
     def all_activity_ids(self) -> set[int]:
         """Set of every activity id that has streams in the store."""
-        self._ensure_index()
-        return set(self._index.keys()) if self._index else set()
+        with self._lock:
+            self._ensure_index()
+            return set(self._index.keys())
 
     def clear(self):
-        for f in self.store_dir.glob("*.pkl"):
-            f.unlink()
-        self._loaded.clear()
-        self._index = None
+        with self._lock:
+            for f in self.store_dir.glob("*.pkl"):
+                f.unlink()
+            self._loaded.clear()
+            self._index = None
+            self._index_years = {}
+            self._summaries = None
 
     # ── internals ─────────────────────────────────────────────────────
 
@@ -136,26 +180,39 @@ class StreamsStore:
         return self.store_dir / f"{year}.pkl"
 
     def _ensure_index(self):
+        """Build the id -> year index from the persisted one, reopening only
+        the year files that changed since it was written."""
         if self._index is not None:
             return
-        index: dict[int, int] = {}
+        saved: dict[int, tuple[int, list[int]]] = self._read_pickle(self.store_dir / _INDEX_FILE) or {}
+        years: dict[int, tuple[int, list[int]]] = {}
         for f in sorted(self.store_dir.glob("*.pkl")):
             try:
                 year = int(f.stem)
             except ValueError:
                 continue
-            try:
-                year_map = self._load_year(year)
-            except Exception as e:
-                logger.warning("Skipping corrupt streams file %s: %s", f, e)
-                continue
-            for aid in year_map.keys():
-                index[int(aid)] = year
-        self._index = index
+            mtime = f.stat().st_mtime_ns
+            entry = saved.get(year)
+            if entry is None or entry[0] != mtime:
+                try:
+                    entry = (mtime, list(self._load_year(year)))
+                except Exception as e:
+                    logger.warning("Skipping corrupt streams file %s: %s", f, e)
+                    continue
+            years[year] = entry
+        if years != saved:
+            self._write_atomic(self.store_dir / _INDEX_FILE, years)
+        self._index_years = years
+        self._index = {aid: year for year, (_, ids) in years.items() for aid in ids}
 
     def _year_for(self, activity_id: int) -> int | None:
         self._ensure_index()
-        return self._index.get(int(activity_id)) if self._index else None
+        return self._index.get(int(activity_id))
+
+    def _load_summaries(self) -> dict[str, dict[int, Any]]:
+        if self._summaries is None:
+            self._summaries = self._read_pickle(self.store_dir / _SUMMARIES_FILE) or {}
+        return self._summaries
 
     def _load_year(self, year: int, missing_ok: bool = False) -> dict[int, dict]:
         cached = self._loaded.get(year)
@@ -178,14 +235,25 @@ class StreamsStore:
         self._trim_lru()
         return data
 
-    def _write_year(self, year: int, year_map: dict[int, dict]):
-        path = self._year_file(year)
+    @staticmethod
+    def _read_pickle(path: Path) -> Any | None:
+        if not path.exists():
+            return None
+        try:
+            with open(path, "rb") as f:
+                return pickle.load(f)
+        except Exception as e:
+            logger.warning("Ignoring unreadable %s: %s", path, e)
+            return None
+
+    @staticmethod
+    def _write_atomic(path: Path, obj: Any):
         path.parent.mkdir(parents=True, exist_ok=True)
-        # Atomic write: temp file in same dir, then rename
-        fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), prefix=f".{year}.", suffix=".pkl.tmp")
+        # Temp file in the same dir, then rename
+        fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.stem}.", suffix=".pkl.tmp")
         try:
             with os.fdopen(fd, "wb") as f:
-                pickle.dump(year_map, f, protocol=pickle.HIGHEST_PROTOCOL)
+                pickle.dump(obj, f, protocol=pickle.HIGHEST_PROTOCOL)
             os.replace(tmp_path, path)
         except Exception:
             if os.path.exists(tmp_path):

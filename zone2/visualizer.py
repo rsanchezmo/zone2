@@ -7,12 +7,10 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
 import geopandas as gpd
-import contextily as ctx
 import pandas as pd
 from pathlib import Path
 from shapely.geometry import Point, LineString
 import numpy as np
-from scipy.optimize import curve_fit
 import matplotlib.ticker as ticker
 from datetime import datetime
 import logging
@@ -162,6 +160,8 @@ class StravaVisualizer:
         # Optional Basemap
         if add_basemap:
             try:
+                # Imported here: contextily (and rasterio under it) is heavy and only maps need it.
+                import contextily as ctx
                 # DarkMatterOnlyLabels places street names *on top* of the glow, which looks cool
                 # DarkMatterNoLabels places just the map background
                 ctx.add_basemap(
@@ -337,6 +337,7 @@ class StravaVisualizer:
 
         # 7. Basemap
         try:
+            import contextily as ctx
             ctx.add_basemap(
                 ax,
                 source=ctx.providers.CartoDB.DarkMatter,
@@ -1714,7 +1715,8 @@ class StravaVisualizer:
         def power_law(x, c, b):
             return c * np.power(x, b)
 
-        # Fit curve to the frontier data
+        # Fit curve to the frontier data (scipy imported here: heavy, and only this plot needs it)
+        from scipy.optimize import curve_fit
         popt, _ = curve_fit(power_law, frontier['dist_km'], frontier['speed_m_s'], 
                             p0=[6.0, -0.07], maxfev=5000)
         c_fit, b_fit = popt

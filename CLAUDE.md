@@ -58,7 +58,7 @@ Zone2
 ### Data Flow
 
 1. **Sync**: `StravaEndpoint` fetches activities from Strava API → `StravaActivitiesCache` stores them as monthly Parquet files under `.strava/activities/{year}/{YYYY-MM}.parquet`
-2. **Streams**: High-res GPS/HR data is fetched separately per-activity and stored as JSON within the Parquet columns
+2. **Streams**: High-res GPS/HR data is fetched separately per-activity and stored by `StreamsStore` in yearly pickles (`.strava/streams/{year}.pkl`, with a persisted id → year index). History-wide stats (records, race predictions, training load) never read raw streams: they use per-activity summaries (best efforts, HR sample counts) that `StreamsStore.summaries()` computes once per activity and persists in `summaries.pkl`
 3. **Analysis**: `StravaAnalytics` reads from the cache and computes aggregated stats (returns plain dicts keyed by `StrEnum` feature classes: `YearInSportFeatures`, `AllYearInSportFeatures`, `WeeklyReportFeatures`)
 4. **Visualization**: `StravaVisualizer` takes analytics output and generates PNG files in `{workdir}/` subdirectories
 5. **Web API**: FastAPI backend (`backend/`) exposes analytics and cache data as REST endpoints consumed by the React frontend

@@ -4,7 +4,6 @@ import calendar
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 import aiosqlite
-import pandas as pd
 
 from backend.db import get_db
 from backend.dependencies import get_z2
@@ -122,8 +121,7 @@ async def goal_progress(
     if not goals:
         return {"goals": []}
 
-    activities = z2.strava_activities_cache.activities_raw.copy()
-    activities["start_date_local"] = pd.to_datetime(activities["start_date_local"])
+    activities = z2.strava_activities_cache.get_prepared_view()
 
     result = []
     for goal in goals:

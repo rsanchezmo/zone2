@@ -3,6 +3,7 @@ from enum import StrEnum
 import json
 import logging
 import math
+from threading import RLock
 import pandas as pd
 import numpy as np
 from zone2.activities_cache import StravaActivitiesCache
@@ -60,6 +61,9 @@ class StravaAnalytics:
         # from the sliding-window scan, reused across windowed queries to
         # avoid re-scanning streams on every history step.
         self._per_activity_bests_cache: dict[str, pd.DataFrame] = {}
+        self._ranked_bests_cache: dict[str, dict[str, np.ndarray]] = {}
+        # Request threads share these caches: one build at a time, the rest reuse it.
+        self._lock = RLock()
 
     def _get_prepared_activities(self) -> pd.DataFrame:
         """Return activities DF with parsed dates and parsed map JSON, cached
@@ -69,16 +73,18 @@ class StravaAnalytics:
         StreamsStore. Call `strava_activities_cache.get_streams(activity_id)`
         when stream data is needed.
         """
-        raw = self.strava_activities_cache._load_to_memory()
-        current_version = self.strava_activities_cache.cache_version
-        if self._prepared_activities is None or current_version != self._prepared_activities_version:
-            df = raw.copy()
-            df['start_date_local'] = pd.to_datetime(df['start_date_local'], utc=True)
-            if 'map' in df.columns:
-                df['map'] = df['map'].apply(self._parse_json_cell)
-            self._prepared_activities = df
-            self._prepared_activities_version = current_version
-        return self._prepared_activities
+        with self._lock:
+            raw = self.strava_activities_cache._load_to_memory()
+            current_version = self.strava_activities_cache.cache_version
+            if self._prepared_activities is None or current_version != self._prepared_activities_version:
+                # Shallow: only the replaced columns are new, the rest share the raw cache's data.
+                df = raw.copy(deep=False)
+                df['start_date_local'] = pd.to_datetime(df['start_date_local'], utc=True)
+                if 'map' in df.columns:
+                    df['map'] = df['map'].apply(self._parse_json_cell)
+                self._prepared_activities = df
+                self._prepared_activities_version = current_version
+            return self._prepared_activities
 
     @staticmethod
     def _parse_json_cell(val):
@@ -103,6 +109,16 @@ class StravaAnalytics:
         self._pmc_cache = {}
         self._fitness_trend_cache = {}
         self._per_activity_bests_cache = {}
+        self._ranked_bests_cache = {}
+
+    def warm_caches(self) -> None:
+        """Build the history-wide caches, and any missing per-activity stream
+        summaries, ahead of the first request that needs them."""
+        activities = self._get_prepared_activities()
+        for category in ("running", "cycling", "swimming"):
+            self._ranked_bests(category)
+        if not activities.empty:
+            self._activity_heartrate_counts(activities['id'].astype('int64').tolist())
 
     def _get_hr_zones_cached(self):
         """Cache HR zones to avoid repeated user cache reads."""
@@ -586,35 +602,29 @@ class StravaAnalytics:
         hr_histogram: dict | None = None
 
         if not activities_week.empty and hr_athlete_zones:
-            # Collect all HR values from streams into a single numpy array.
-            # Streams are lazy-loaded per-id from the StreamsStore.
+            # Every HR sample of the week, as distinct values and their counts.
             ids_in_week = activities_week['id'].astype('int64').tolist()
-            streams_map = self.strava_activities_cache.get_streams_bulk(ids_in_week)
-            all_hr: list = []
-            for streams in streams_map.values():
-                hr_arr_col = streams.get('heartrate') if isinstance(streams, dict) else None
-                if not hr_arr_col:
-                    continue
-                all_hr.extend(v for v in hr_arr_col if v is not None)
+            hr_counts = [c for c in self._activity_heartrate_counts(ids_in_week).values() if c is not None]
 
-            if all_hr:
-                hr_arr = np.array(all_hr, dtype=np.float64)
-                total = len(hr_arr)
+            if hr_counts:
+                hr_values = np.concatenate([values for values, _ in hr_counts])
+                hr_weights = np.concatenate([counts for _, counts in hr_counts])
+                total = int(hr_weights.sum())
                 # Build zone boundaries: [z1_min, z1_max, z2_max, z3_max, z4_max]
                 boundaries = [z['max'] for z in hr_athlete_zones[:4]]
                 # np.digitize bins: < z1_max → 0, < z2_max → 1, etc.
-                bins = np.digitize(hr_arr, boundaries, right=False)
+                in_zone = np.bincount(np.digitize(hr_values, boundaries, right=False),
+                                      weights=hr_weights, minlength=5)
                 for zone_idx in range(5):
-                    count = int(np.sum(bins == zone_idx))
-                    hr_zone_distribution[zone_idx + 1] = round((count / total) * 100, 1)
+                    hr_zone_distribution[zone_idx + 1] = round((float(in_zone[zone_idx]) / total) * 100, 1)
 
                 # 1 bpm-resolution histogram for the multi-zone density chart.
                 # Snap range to a small margin around min/max so the curve doesn't
                 # get clipped at the edges by the renderer.
-                lo = int(np.floor(hr_arr.min())) - 2
-                hi = int(np.ceil(hr_arr.max())) + 2
+                lo = int(np.floor(hr_values.min())) - 2
+                hi = int(np.ceil(hr_values.max())) + 2
                 if hi > lo:
-                    counts, _ = np.histogram(hr_arr, bins=np.arange(lo, hi + 1))
+                    counts, _ = np.histogram(hr_values, bins=np.arange(lo, hi + 1), weights=hr_weights)
                     hr_histogram = {"min_bpm": int(lo), "counts": counts.astype(int).tolist()}
         
         # Most active day
@@ -702,6 +712,47 @@ class StravaAnalytics:
         "swimming": 2.0,
     }
 
+    # Part of the persisted best-effort summaries' name: bump it whenever
+    # _best_effort_times changes so they are recomputed.
+    BEST_EFFORTS_VERSION = 1
+
+    def _sport_distances(self, sport_category: str) -> list[tuple[int, str]]:
+        return {
+            "running": self.RUNNING_DISTANCES,
+            "cycling": self.CYCLING_DISTANCES,
+            "swimming": self.SWIMMING_DISTANCES,
+        }.get(sport_category, [])
+
+    def _activity_best_efforts(self, sport_category: str, activity_ids: list[int]) -> dict[int, dict[int, float]]:
+        """{activity_id: {target_m: best_time_s}} for activities with streams,
+        from summaries persisted in the StreamsStore (computed once per activity)."""
+        targets = [t for t, _ in self._sport_distances(sport_category)]
+        max_speed = self.MAX_SPEED_MS[sport_category]
+
+        def compute(streams: dict) -> dict[int, float]:
+            dist_col = streams.get("distance")
+            time_col = streams.get("time")
+            if not dist_col or not time_col or len(dist_col) < 2:
+                return {}
+            return self._best_effort_times(dist_col, time_col, targets, max_speed)
+
+        name = f"best_efforts:v{self.BEST_EFFORTS_VERSION}:{sport_category}:{max_speed}:{targets}"
+        return self.strava_activities_cache.get_stream_summaries(name, activity_ids, compute)
+
+    def _activity_heartrate_counts(self, activity_ids: list[int]) -> dict[int, tuple[np.ndarray, np.ndarray] | None]:
+        """{activity_id: (distinct HR values, samples at each)}, None without HR
+        samples. Time in any zones follows from these without the streams."""
+        def compute(streams: dict) -> tuple[np.ndarray, np.ndarray] | None:
+            hr_col = streams.get("heartrate")
+            if not hr_col:
+                return None
+            values = np.asarray([v for v in hr_col if v is not None], dtype=np.float64)
+            if not len(values):
+                return None
+            return np.unique(values, return_counts=True)
+
+        return self.strava_activities_cache.get_stream_summaries("heartrate_counts:v1", activity_ids, compute)
+
     @staticmethod
     def _best_effort_times(
         dist_col: list,
@@ -710,8 +761,8 @@ class StravaAnalytics:
         max_speed: float,
     ) -> dict[int, float]:
         """Sliding-window best effort per target distance for one activity's
-        streams. Returns {target_m: best_time_s}. Shared kernel for
-        get_personal_records / _scan_best_efforts_in / _get_per_activity_bests_df.
+        streams. Returns {target_m: best_time_s}. The kernel behind the
+        persisted per-activity best efforts (`_activity_best_efforts`).
 
         Efforts are continuous elapsed time. Excluding stops would stitch
         separate interval reps (6×400 with standing rests) into a fake 1K,
@@ -758,216 +809,88 @@ class StravaAnalytics:
         return out
 
     def get_personal_records(self) -> dict:
-        """Compute best efforts at standard distances for running, cycling, and swimming.
-
-        Uses a sliding window over each activity's distance/time streams to find
-        the fastest elapsed time for each standard distance. Numpy searchsorted
-        replaces the inner Python loop for speed.
-        """
-        from zone2.utils import get_sport_category
-
-        activities = self._get_prepared_activities()
-
-        sport_configs = {
-            "running": self.RUNNING_DISTANCES,
-            "cycling": self.CYCLING_DISTANCES,
-            "swimming": self.SWIMMING_DISTANCES,
-        }
-
-        # best[category][distance_m] = {time_s, activity_id, activity_name, date}
-        best: dict[str, dict[int, dict]] = {cat: {} for cat in sport_configs}
-
-        # Bulk-load streams for the relevant rows so we hit each year-pickle once.
-        relevant_ids = activities['id'].astype('int64').tolist()
-        streams_map = self.strava_activities_cache.get_streams_bulk(relevant_ids)
-
-        for _, row in activities.iterrows():
-            sport_type = row.get("sport_type", "")
-            category = get_sport_category(sport_type)
-            if category not in sport_configs:
-                continue
-
-            streams = streams_map.get(int(row.get("id"))) if row.get("id") is not None else None
-            if not streams:
-                continue
-
-            dist_col = streams.get("distance")
-            time_col = streams.get("time")
-            if not dist_col or not time_col or len(dist_col) < 2:
-                continue
-
-            activity_id = row.get("id")
-            activity_name = row.get("name", "")
-            activity_date = str(row.get("start_date_local", ""))
-
-            efforts = self._best_effort_times(
-                dist_col, time_col,
-                [t for t, _ in sport_configs[category]],
-                self.MAX_SPEED_MS[category],
-            )
-            for target_m, best_time in efforts.items():
-                if best_time > 0:
-                    current_best = best[category].get(target_m)
-                    if current_best is None or best_time < current_best["time_s"]:
-                        best[category][target_m] = {
-                            "time_s": best_time,
-                            "activity_id": activity_id,
-                            "activity_name": activity_name,
-                            "date": activity_date,
-                        }
-
-        # Format results
+        """Fastest best effort at each standard distance for running, cycling
+        and swimming: the per-activity sliding-window bests, minimised over
+        every activity (the earliest wins a tie)."""
         result = {}
-        for category, target_distances in sport_configs.items():
+        for category in ("running", "cycling", "swimming"):
+            bests = self._get_per_activity_bests_df(category)
             records = []
-            for target_m, label in target_distances:
-                record = best[category].get(target_m)
-                if record:
-                    records.append({
-                        "distance_m": target_m,
-                        "label": label,
-                        "time_s": record["time_s"],
-                        "activity_id": record["activity_id"],
-                        "activity_name": record["activity_name"],
-                        "date": record["date"],
-                    })
+            for target_m, label in self._sport_distances(category):
+                at_distance = bests[bests["distance_m"] == target_m]
+                if at_distance.empty:
+                    continue
+                r = at_distance.loc[at_distance["time_s"].idxmin()]
+                records.append({
+                    "distance_m": target_m,
+                    "label": label,
+                    "time_s": float(r["time_s"]),
+                    "activity_id": int(r["activity_id"]),
+                    "activity_name": r["activity_name"],
+                    "date": str(r["date"]),
+                })
             if records:
                 result[category] = records
-
         return result
-
-    # ── Sliding-window best efforts (shared core) ─────────────────────
-
-    def _scan_best_efforts_in(
-        self,
-        activities_df: pd.DataFrame,
-        sport_category: str,
-    ) -> dict[int, dict]:
-        """Sliding-window scan over a pre-filtered activities DataFrame, returning
-        best time per standard distance. Same numpy-backed logic as
-        `get_personal_records`, but scoped to whatever subset the caller passes
-        (e.g. a rolling window of recent activities).
-        """
-        sport_configs = {
-            "running": self.RUNNING_DISTANCES,
-            "cycling": self.CYCLING_DISTANCES,
-            "swimming": self.SWIMMING_DISTANCES,
-        }
-        if sport_category not in sport_configs:
-            return {}
-        target_distances = sport_configs[sport_category]
-        max_speed = self.MAX_SPEED_MS[sport_category]
-
-        best: dict[int, dict] = {}
-        relevant_ids = activities_df['id'].astype('int64').tolist() if 'id' in activities_df.columns else []
-        streams_map = self.strava_activities_cache.get_streams_bulk(relevant_ids)
-        for _, row in activities_df.iterrows():
-            streams = streams_map.get(int(row.get("id"))) if row.get("id") is not None else None
-            if not streams:
-                continue
-            dist_col = streams.get("distance")
-            time_col = streams.get("time")
-            if not dist_col or not time_col or len(dist_col) < 2:
-                continue
-
-            activity_id = row.get("id")
-            activity_name = row.get("name", "")
-            activity_date = str(row.get("start_date_local", ""))
-
-            efforts = self._best_effort_times(
-                dist_col, time_col,
-                [t for t, _ in target_distances], max_speed,
-            )
-            for target_m, best_time in efforts.items():
-                cur = best.get(target_m)
-                if cur is None or best_time < cur["time_s"]:
-                    best[target_m] = {
-                        "distance_m": target_m,
-                        "time_s": best_time,
-                        "activity_id": activity_id,
-                        "activity_name": activity_name,
-                        "date": activity_date,
-                    }
-        return best
 
     def _get_per_activity_bests_df(self, sport_category: str) -> pd.DataFrame:
         """Return a table of per-activity best efforts for the given sport:
             columns = activity_id, activity_name, date (pd.Timestamp UTC),
                       distance_m, time_s.
-        Computed once from the full activity history and cached; windowed
-        queries filter by date and take a groupby-min, avoiding repeat stream
-        scans. Invalidated on sync via `invalidate_caches`.
+        Built from the persisted per-activity best efforts and cached;
+        windowed queries filter by date and take a groupby-min. Invalidated
+        on sync via `invalidate_caches`.
         """
-        cached = self._per_activity_bests_cache.get(sport_category)
-        if cached is not None:
-            return cached
+        with self._lock:
+            cached = self._per_activity_bests_cache.get(sport_category)
+            if cached is not None:
+                return cached
 
-        sport_configs = {
-            "running": self.RUNNING_DISTANCES,
-            "cycling": self.CYCLING_DISTANCES,
-            "swimming": self.SWIMMING_DISTANCES,
-        }
-        bests_columns = ["activity_id", "activity_name", "date", "distance_m", "time_s",
-                         "is_race", "avg_hr"]
-        if sport_category not in sport_configs:
-            empty = pd.DataFrame(columns=bests_columns)
-            self._per_activity_bests_cache[sport_category] = empty
-            return empty
-        target_distances = sport_configs[sport_category]
-        max_speed = self.MAX_SPEED_MS[sport_category]
+            bests_columns = ["activity_id", "activity_name", "date", "distance_m", "time_s",
+                             "is_race", "avg_hr"]
+            activities = self._get_prepared_activities()
+            if not self._sport_distances(sport_category) or activities.empty:
+                empty = pd.DataFrame(columns=bests_columns)
+                self._per_activity_bests_cache[sport_category] = empty
+                return empty
 
-        activities = self._get_prepared_activities()
-        if activities.empty:
-            empty = pd.DataFrame(columns=bests_columns)
-            self._per_activity_bests_cache[sport_category] = empty
-            return empty
+            cat_mask = activities["sport_type"].apply(lambda st: get_sport_category(st) == sport_category)
+            cat_acts = activities[cat_mask]
 
-        cat_mask = activities["sport_type"].apply(lambda st: get_sport_category(st) == sport_category)
-        cat_acts = activities[cat_mask]
+            cat_ids = cat_acts['id'].astype('int64').tolist() if 'id' in cat_acts.columns else []
+            efforts_by_id = self._activity_best_efforts(sport_category, cat_ids)
 
-        # Bulk-load streams for this sport category, then iterate.
-        cat_ids = cat_acts['id'].astype('int64').tolist() if 'id' in cat_acts.columns else []
-        streams_map = self.strava_activities_cache.get_streams_bulk(cat_ids)
+            rows: list[dict] = []
+            for _, row in cat_acts.iterrows():
+                efforts = efforts_by_id.get(int(row.get("id"))) if row.get("id") is not None else None
+                if not efforts:
+                    continue
 
-        rows: list[dict] = []
-        for _, row in cat_acts.iterrows():
-            streams = streams_map.get(int(row.get("id"))) if row.get("id") is not None else None
-            if not streams:
-                continue
-            dist_col = streams.get("distance")
-            time_col = streams.get("time")
-            if not dist_col or not time_col or len(dist_col) < 2:
-                continue
+                activity_id = row.get("id")
+                activity_name = row.get("name", "")
+                act_date = row.get("start_date_local")
+                # Strava workout_type: 1 = run race, 11 = ride race.
+                wt = row.get("workout_type")
+                is_race = (not pd.isna(wt)) and int(wt) in (1, 11)
+                avg_hr = row.get("average_heartrate")
+                avg_hr = float(avg_hr) if avg_hr is not None and not pd.isna(avg_hr) else None
 
-            activity_id = row.get("id")
-            activity_name = row.get("name", "")
-            act_date = row.get("start_date_local")
-            # Strava workout_type: 1 = run race, 11 = ride race.
-            wt = row.get("workout_type")
-            is_race = (not pd.isna(wt)) and int(wt) in (1, 11)
-            avg_hr = row.get("average_heartrate")
-            avg_hr = float(avg_hr) if avg_hr is not None and not pd.isna(avg_hr) else None
+                for target_m, best_time in efforts.items():
+                    rows.append({
+                        "activity_id": activity_id,
+                        "activity_name": activity_name,
+                        "date": act_date,
+                        "distance_m": target_m,
+                        "time_s": best_time,
+                        "is_race": is_race,
+                        "avg_hr": avg_hr,
+                    })
 
-            efforts = self._best_effort_times(
-                dist_col, time_col,
-                [t for t, _ in target_distances], max_speed,
-            )
-            for target_m, best_time in efforts.items():
-                rows.append({
-                    "activity_id": activity_id,
-                    "activity_name": activity_name,
-                    "date": act_date,
-                    "distance_m": target_m,
-                    "time_s": best_time,
-                    "is_race": is_race,
-                    "avg_hr": avg_hr,
-                })
-
-        df = pd.DataFrame(rows, columns=bests_columns)
-        if not df.empty:
-            df["date"] = pd.to_datetime(df["date"], utc=True, errors="coerce")
-        self._per_activity_bests_cache[sport_category] = df
-        return df
+            df = pd.DataFrame(rows, columns=bests_columns)
+            if not df.empty:
+                df["date"] = pd.to_datetime(df["date"], utc=True, errors="coerce")
+            self._per_activity_bests_cache[sport_category] = df
+            return df
 
     def _recent_best_efforts_list(
         self,
@@ -990,8 +913,8 @@ class StravaAnalytics:
         Also marks `is_top1=True` on the per-distance fastest, so UI cards
         can surface it as the displayed PR.
         """
-        df = self._get_per_activity_bests_df(sport_category)
-        if df.empty:
+        ranked = self._ranked_bests(sport_category)
+        if not len(ranked["time_s"]):
             return []
 
         if end_date is None:
@@ -1001,37 +924,64 @@ class StravaAnalytics:
             end_ts = ts.tz_localize("UTC") if ts.tz is None else ts.tz_convert("UTC")
         start_ts = end_ts - pd.Timedelta(days=within_days)
 
-        in_window = df[(df["date"] >= start_ts) & (df["date"] <= end_ts)]
-        if in_window.empty:
+        in_window = np.nonzero((ranked["date_ns"] >= start_ts.value) & (ranked["date_ns"] <= end_ts.value))[0]
+        if not len(in_window):
             return []
+        # Rows are ranked fastest-first within each distance, so the top-K of
+        # a distance are its first K rows inside the window.
+        dist = ranked["distance_m"][in_window]
+        first = np.r_[True, dist[1:] != dist[:-1]]
+        pos = np.arange(len(in_window))
+        rank = pos - np.maximum.accumulate(np.where(first, pos, 0))
 
         # Quality filter: within 120% of the per-distance top-1 time. Excludes
         # easy-run "bests" that happen to rank top-K but aren't race-quality
         # anchors. Keeps top-1 (trivially), plus any close-to-top-1 attempts.
         MAX_MULT = 1.20
         result: list[dict] = []
-        for distance_m, group in in_window.groupby("distance_m"):
-            top_sorted = group.nsmallest(top_k, "time_s")
-            if top_sorted.empty:
+        best_time = 0.0
+        for i, r in zip(in_window[rank < top_k].tolist(), rank[rank < top_k].tolist()):
+            time_s = float(ranked["time_s"][i])
+            if r == 0:
+                best_time = time_s
+            elif time_s > best_time * MAX_MULT:
                 continue
-            best_time = float(top_sorted["time_s"].iloc[0])
-            rank = 0
-            for _, r in top_sorted.iterrows():
-                rank += 1
-                if float(r["time_s"]) > best_time * MAX_MULT:
-                    continue
-                result.append({
-                    "distance_m": int(distance_m),
-                    "time_s": float(r["time_s"]),
-                    "activity_id": r["activity_id"],
-                    "activity_name": r["activity_name"],
-                    "date": str(r["date"]),
-                    "is_top1": rank == 1,
-                    "is_race": bool(r.get("is_race", False)),
-                    "avg_hr": float(r["avg_hr"]) if not pd.isna(r.get("avg_hr")) else None,
-                })
-        result.sort(key=lambda b: (b["distance_m"], b["time_s"]))
+            avg_hr = ranked["avg_hr"][i]
+            result.append({
+                "distance_m": int(ranked["distance_m"][i]),
+                "time_s": time_s,
+                "activity_id": int(ranked["activity_id"][i]),
+                "activity_name": ranked["activity_name"][i],
+                "date": ranked["date"][i],
+                "is_top1": r == 0,
+                "is_race": bool(ranked["is_race"][i]),
+                "avg_hr": float(avg_hr) if not pd.isna(avg_hr) else None,
+            })
         return result
+
+    def _ranked_bests(self, sport_category: str) -> dict[str, np.ndarray]:
+        """The per-activity bests as arrays ordered by distance, then time, then
+        activity order (the earliest wins a tie), for fast window queries."""
+        with self._lock:
+            cached = self._ranked_bests_cache.get(sport_category)
+            if cached is not None:
+                return cached
+            df = self._get_per_activity_bests_df(sport_category)
+            order = np.lexsort((np.arange(len(df)), df["time_s"].to_numpy(dtype=np.float64),
+                                df["distance_m"].to_numpy(dtype=np.int64)))
+            ranked_df = df.iloc[order]
+            ranked = {
+                "distance_m": ranked_df["distance_m"].to_numpy(dtype=np.int64),
+                "time_s": ranked_df["time_s"].to_numpy(dtype=np.float64),
+                "date_ns": ranked_df["date"].to_numpy(dtype="datetime64[ns]").view(np.int64),
+                "date": np.array([str(d) for d in ranked_df["date"]], dtype=object),
+                "activity_id": ranked_df["activity_id"].to_numpy(),
+                "activity_name": ranked_df["activity_name"].to_numpy(dtype=object),
+                "is_race": ranked_df["is_race"].to_numpy(),
+                "avg_hr": ranked_df["avg_hr"].to_numpy(dtype=object),
+            }
+            self._ranked_bests_cache[sport_category] = ranked
+            return ranked
 
     # ── Race Predictions ──────────────────────────────────────────────
 
@@ -1122,7 +1072,9 @@ class StravaAnalytics:
 
         def _recency_w(date_str: str) -> float:
             try:
-                pr_date = pd.to_datetime(date_str, utc=True)
+                pr_date = datetime.fromisoformat(date_str)
+                if pr_date.tzinfo is None:
+                    pr_date = pr_date.replace(tzinfo=timezone.utc)
                 age_days = max(0.0, (ref_ts - pr_date).total_seconds() / 86400.0)
             except Exception:
                 return 0.1
@@ -1689,29 +1641,25 @@ class StravaAnalytics:
         trimps = banister.copy()
         methods = np.full(len(valid), 'banister', dtype=object)
 
-        # Zone-weighted override for rows that have usable stream data. This
-        # stays per-row because stream length varies per activity, but it
-        # only runs for activities that actually have streams — a huge win
-        # when most of the cache is stream-less.
+        # Zone-weighted override for rows with HR streams, from the persisted
+        # per-activity HR sample counts (each sample weighs an equal share of
+        # the moving time).
         if hr_zones:
             boundaries = [z['max'] for z in hr_zones[:4]]
-            valid_ids = valid['id'].astype('int64').tolist() if 'id' in valid.columns else []
-            streams_map = self.strava_activities_cache.get_streams_bulk(valid_ids)
-            id_list = valid['id'].astype('int64').to_numpy() if 'id' in valid.columns else np.array([], dtype=np.int64)
-            for idx in range(len(valid)):
-                streams = streams_map.get(int(id_list[idx])) if idx < len(id_list) else None
-                if not streams:
+            id_list = valid['id'].astype('int64').tolist() if 'id' in valid.columns else []
+            hr_counts = self._activity_heartrate_counts(id_list)
+            for idx, activity_id in enumerate(id_list):
+                counts = hr_counts.get(activity_id)
+                if counts is None:
                     continue
-                hr_col = streams.get('heartrate')
-                if not hr_col:
+                hr_values, hr_weights = counts
+                n_samples = int(hr_weights.sum())
+                if n_samples <= 10:
                     continue
-                hr_vals = [v for v in hr_col if v is not None]
-                if len(hr_vals) <= 10:
-                    continue
-                hr_arr = np.asarray(hr_vals, dtype=np.float64)
-                bins = np.digitize(hr_arr, boundaries, right=False)
-                time_per_pt = duration_min_arr[idx] / len(hr_arr)
-                time_in_zones = [float(np.sum(bins == i)) * time_per_pt for i in range(5)]
+                in_zone = np.bincount(np.digitize(hr_values, boundaries, right=False),
+                                      weights=hr_weights, minlength=5)
+                time_per_pt = duration_min_arr[idx] / n_samples
+                time_in_zones = [float(in_zone[i]) * time_per_pt for i in range(5)]
                 zw = compute_trimp_zone_weighted(time_in_zones)
                 if zw > 0:
                     trimps[idx] = zw
@@ -1974,8 +1922,8 @@ class StravaAnalytics:
         if len(rolling_avg) >= 2:
             recent = rolling_avg[-1]["vdot"]
             # Find entry ~56 days ago
-            target_date = pd.to_datetime(rolling_avg[-1]["date"]) - pd.Timedelta(days=56)
-            older = [r for r in rolling_avg if pd.to_datetime(r["date"]) <= target_date]
+            target_date = (pd.to_datetime(rolling_avg[-1]["date"]) - pd.Timedelta(days=56)).strftime('%Y-%m-%d')
+            older = [r for r in rolling_avg if r["date"] <= target_date]
             if older:
                 diff = recent - older[-1]["vdot"]
                 if diff > 0.5:

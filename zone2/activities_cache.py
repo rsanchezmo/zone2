@@ -1,9 +1,10 @@
 import logging
 from pathlib import Path
 import pandas as pd
+import pyarrow.parquet as pq
 import json
 from datetime import datetime, timedelta
-from typing import Iterable
+from typing import Any, Callable, Iterable
 
 from zone2.endpoint import StravaRateLimitError, StravaStreamFetchError
 from zone2.streams_store import (
@@ -33,6 +34,10 @@ def _has_full_photo_list(raw) -> bool:
 
 
 class StravaActivitiesCache:
+    # Detail JSON only the activity page reads: most of the table's size, so it
+    # stays on disk and get_activity_by_id(include_detail=True) reads it per activity.
+    DETAIL_ONLY_COLUMNS = ('segment_efforts', 'laps', 'splits_metric', 'similar_activities')
+
     def __init__(self, cache_dir: Path = Path("./.strava")):
         self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -73,7 +78,8 @@ class StravaActivitiesCache:
         if raw.empty:
             self._prepared_view = raw
         else:
-            view = raw.copy()
+            # Shallow: only start_date_local is new, the rest shares the raw cache's data.
+            view = raw.copy(deep=False)
             view["start_date_local"] = pd.to_datetime(view["start_date_local"])
             self._prepared_view = view
         self._prepared_view_version = self._cache_version
@@ -89,6 +95,12 @@ class StravaActivitiesCache:
         """Columnar streams for many activities, keyed by id. Only ids with
         cached streams appear in the result."""
         return self.streams.get_many(activity_ids)
+
+    def get_stream_summaries(self, name: str, activity_ids: Iterable[int],
+                             compute: Callable[[dict], Any]) -> dict[int, Any]:
+        """Per-activity values derived from streams, computed once and persisted
+        (see StreamsStore.summaries)."""
+        return self.streams.summaries(name, activity_ids, compute)
 
     def has_streams(self, activity_id: int) -> bool:
         return self.streams.has(int(activity_id))
@@ -134,19 +146,18 @@ class StravaActivitiesCache:
             self._cache_loaded_at = datetime.now()
             return self._memory_cache
 
-        # Load yearly files, skipping the 'streams' column when present
-        # (legacy parquets before the StreamsStore migration). Each file's
-        # schema may differ, so we drop after read rather than passing a
-        # `columns=` filter that would reject when 'streams' isn't in the file.
+        # Load yearly files without the detail-only columns and the 'streams'
+        # column of legacy parquets (before the StreamsStore migration). Each
+        # file's schema may differ, so the columns are picked per file.
+        skipped = {'streams', *self.DETAIL_ONLY_COLUMNS}
         dfs = []
         for f in parquet_files:
             try:
-                df = pd.read_parquet(f, engine='pyarrow')
+                columns = [c for c in pq.read_schema(f).names if c not in skipped]
+                df = pd.read_parquet(f, engine='pyarrow', columns=columns)
             except Exception as e:
                 logger.warning("Skipping corrupt parquet file %s: %s", f, e)
                 continue
-            if 'streams' in df.columns:
-                df = df.drop(columns=['streams'])
             dfs.append(df)
         self._memory_cache = pd.concat(dfs, ignore_index=True)
         self._memory_cache['start_date'] = pd.to_datetime(self._memory_cache['start_date_local'])
@@ -387,8 +398,9 @@ class StravaActivitiesCache:
         WARNING: Do not modify the returned DataFrame — it's the live cache."""
         return self._load_to_memory()
 
-    def get_activity_by_id(self, activity_id: int) -> pd.Series | None:
-        """Look up a single activity by ID from the in-memory metadata cache.
+    def get_activity_by_id(self, activity_id: int, include_detail: bool = False) -> pd.Series | None:
+        """Look up a single activity by ID from the in-memory metadata cache,
+        plus its DETAIL_ONLY_COLUMNS (read from its year file) when include_detail.
 
         Streams are NOT attached — fetch them separately via get_streams(activity_id)."""
         df = self._load_to_memory()
@@ -397,7 +409,15 @@ class StravaActivitiesCache:
         match = df[df["id"] == activity_id]
         if match.empty:
             return None
-        return match.iloc[0].copy()
+        row = match.iloc[0].copy()
+        if include_detail:
+            year_file = self.activities_dir / f"{row['start_date'].year}.parquet"
+            columns = [c for c in pq.read_schema(year_file).names if c in self.DETAIL_ONLY_COLUMNS]
+            detail = pd.read_parquet(year_file, engine='pyarrow', columns=['id', *columns],
+                                     filters=[('id', '==', int(activity_id))])
+            if not detail.empty:
+                row = pd.concat([row, detail.iloc[0].drop('id')])
+        return row
     
     # Fields that come from the detail endpoint (not the list/summary endpoint)
     DETAIL_FIELDS = ['description', 'calories', 'splits_metric', 'best_efforts', 'laps', 'gear',
