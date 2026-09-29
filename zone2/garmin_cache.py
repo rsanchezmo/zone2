@@ -1,9 +1,9 @@
 """SQLite-backed cache for Garmin daily wellness payloads + sync orchestration.
 
 The cache stores one row per (date, metric) holding the raw JSON payload from
-`garminconnect`. Charts pluck fields from the payload at read time — keeping
-the schema generic means new fields from Garmin firmware updates appear
-without migrations.
+`garminconnect`, zlib-compressed (a fifth of the size). Charts pluck fields
+from the payload at read time — keeping the schema generic means new fields
+from Garmin firmware updates appear without migrations.
 
 Why plain `sqlite3` (not aiosqlite)?
 - The sync worker runs in a thread pool (FastAPI BackgroundTasks with a sync
@@ -21,6 +21,7 @@ import logging
 import sqlite3
 import threading
 import time
+import zlib
 from datetime import date as date_t, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,15 @@ _RACE_PREDICTIONS_CHUNK_DAYS = 28
 # history) backwards until this many consecutive days have no data, so a
 # non-wear gap shorter than a year can't truncate the detected history.
 _SCAN_EMPTY_DAYS_TO_STOP = 365
+
+
+def _encode_payload(payload: Any) -> bytes:
+    return zlib.compress(json.dumps(payload, default=str).encode(), 6)
+
+
+def _decode_payload(stored: bytes | str) -> Any:
+    # Rows not yet migrated by compress_stored_payloads hold plain JSON text
+    return json.loads(zlib.decompress(stored) if isinstance(stored, bytes) else stored)
 
 
 def _conn() -> sqlite3.Connection:
@@ -117,7 +127,7 @@ class GarminDailyStatsCache:
         for d, m, p in rows:
             if p is None:
                 continue
-            items.append((d, m, json.dumps(p, default=str)))
+            items.append((d, m, _encode_payload(p)))
             slim = extract(m, p)
             if slim is not None:
                 summaries.append((d, m, json.dumps(slim, default=str)))
@@ -150,7 +160,7 @@ class GarminDailyStatsCache:
                 "SELECT payload FROM garmin_daily_stats WHERE date = ? AND metric = ?",
                 (iso, metric),
             ).fetchone()
-            return json.loads(row["payload"]) if row else None
+            return _decode_payload(row["payload"]) if row else None
 
     def get_range(self, metric: str, start: date_t | str, end: date_t | str) -> list[dict]:
         """Returns list of {date, payload} ordered by date ascending."""
@@ -163,7 +173,7 @@ class GarminDailyStatsCache:
                    ORDER BY date ASC""",
                 (metric, s, e),
             ).fetchall()
-            return [{"date": r["date"], "payload": json.loads(r["payload"])} for r in rows]
+            return [{"date": r["date"], "payload": _decode_payload(r["payload"])} for r in rows]
 
     def get_summary_range(self, metric: str, start: date_t | str, end: date_t | str) -> list[dict]:
         """Slim chart summaries for a metric over [start, end], date-ascending.
@@ -197,7 +207,7 @@ class GarminDailyStatsCache:
                 ).fetchall()
                 slim = []
                 for r in rows:
-                    out = extract(metric, json.loads(r["payload"]))
+                    out = extract(metric, _decode_payload(r["payload"]))
                     if out is not None:
                         slim.append((r["date"], metric, json.dumps(out, default=str)))
                 if slim:
@@ -213,6 +223,29 @@ class GarminDailyStatsCache:
             logger.info("Garmin: backfilled %d derived daily summaries", written)
         return written
 
+    def compress_stored_payloads(self) -> int:
+        """One-time migration: zlib-compress payloads still stored as JSON
+        text, then VACUUM so the file actually shrinks. Idempotent — a no-op
+        once every payload is compressed. Returns rows converted."""
+        converted = 0
+        with _conn() as c:
+            while rows := c.execute(
+                "SELECT rowid, payload FROM garmin_daily_stats WHERE typeof(payload) = 'text' LIMIT 2000"
+            ).fetchall():
+                c.executemany("UPDATE garmin_daily_stats SET payload = ? WHERE rowid = ?",
+                              [(zlib.compress(r["payload"].encode(), 6), r["rowid"]) for r in rows])
+                c.commit()
+                converted += len(rows)
+        if converted:
+            c = _conn()
+            try:
+                c.execute("VACUUM")
+                c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            finally:
+                c.close()
+            logger.info("Garmin: compressed %d stored payloads", converted)
+        return converted
+
     def get_latest(self, metric: str) -> dict | None:
         with _conn() as c:
             row = c.execute(
@@ -220,7 +253,7 @@ class GarminDailyStatsCache:
                    WHERE metric = ? ORDER BY date DESC LIMIT 1""",
                 (metric,),
             ).fetchone()
-            return {"date": row["date"], "payload": json.loads(row["payload"])} if row else None
+            return {"date": row["date"], "payload": _decode_payload(row["payload"])} if row else None
 
     def status(self) -> dict[str, Any]:
         with _conn() as c:
