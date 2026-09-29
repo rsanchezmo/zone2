@@ -2113,25 +2113,27 @@ class StravaVisualizer:
             ax_dist_pie = fig.add_subplot(gs_pies[1, 0])
             ax_dist_pie.set_facecolor('black')
 
-            # Create pie with neon style - show actual km values
-            wedges, texts = ax_dist_pie.pie(
-                sport_distances,
-                labels=None,
-                radius=1.2,
-                colors=colors,
-                wedgeprops=dict(width=0.9, edgecolor='black', linewidth=2, alpha=0.6),
-                startangle=90
-            )
-            
-            # Add actual value labels manually
-            for i, (wedge, dist) in enumerate(zip(wedges, sport_distances)):
-                ang = (wedge.theta2 - wedge.theta1) / 2.0 + wedge.theta1
-                x = 0.75 * np.cos(np.radians(ang))
-                y = 0.75 * np.sin(np.radians(ang))
-                if dist > 0:
-                    ax_dist_pie.text(x, y, f'{dist:.1f}', ha='center', va='center',
-                                    color='white', fontsize=9, fontfamily='monospace', fontweight='bold')
-            
+            # A week of only distance-less sessions (gym) has no wedges to draw
+            if sum(sport_distances) > 0:
+                # Create pie with neon style - show actual km values
+                wedges, texts = ax_dist_pie.pie(
+                    sport_distances,
+                    labels=None,
+                    radius=1.2,
+                    colors=colors,
+                    wedgeprops=dict(width=0.9, edgecolor='black', linewidth=2, alpha=0.6),
+                    startangle=90
+                )
+
+                # Add actual value labels manually
+                for i, (wedge, dist) in enumerate(zip(wedges, sport_distances)):
+                    ang = (wedge.theta2 - wedge.theta1) / 2.0 + wedge.theta1
+                    x = 0.75 * np.cos(np.radians(ang))
+                    y = 0.75 * np.sin(np.radians(ang))
+                    if dist > 0:
+                        ax_dist_pie.text(x, y, f'{dist:.1f}', ha='center', va='center',
+                                        color='white', fontsize=9, fontfamily='monospace', fontweight='bold')
+
             # Title for distance pie
             ax_dist_pie.text(
                 0.5, 1.15, "DISTANCE (KM)",
