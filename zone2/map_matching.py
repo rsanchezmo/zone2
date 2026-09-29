@@ -11,6 +11,7 @@ from pathlib import Path
 import geopandas as gpd
 import matplotlib.lines as mlines
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import matplotlib.pyplot as plt
 import numpy as np
@@ -1017,20 +1018,48 @@ class StravaMapMatcher:
     # viewport response is joined bytes, with no per-coordinate work.
     VIEWPORT_CELL_DEG = 0.002
     VIEWPORT_ROW_GROUP = 1024
-    VIEWPORT_INDEX_VERSION = b'2'   # bump when the index layout or rendering changes
+    VIEWPORT_INDEX_VERSION = b'3'   # bump when the index layout or rendering changes
 
     @classmethod
     def _viewport_index_path(cls, osm_dir: Path, slug: str) -> Path:
         return cls.artifact_path(osm_dir, slug, 'viewport.parquet')
 
+    # index path -> ((index mtime, map mtime), (footer, bounds of each row group) or None if not current)
+    _viewport_meta_cache: dict[Path, tuple[tuple[int, int], tuple[pq.FileMetaData, np.ndarray] | None]] = {}
+
+    @classmethod
+    def _viewport_meta(cls, osm_dir: Path, slug: str) -> tuple[pq.FileMetaData, np.ndarray] | None:
+        """The current viewport index's footer and per-row-group [minx, miny,
+        maxx, maxy], read once per index file; None when it is missing, older
+        than the street map or of another layout."""
+        fp = cls._viewport_index_path(osm_dir, slug)
+        edges_fp = cls.artifact_path(osm_dir, slug, 'edges.parquet')
+        if not fp.exists() or not edges_fp.exists():
+            return None
+        mtimes = (fp.stat().st_mtime_ns, edges_fp.stat().st_mtime_ns)
+        cached = cls._viewport_meta_cache.get(fp)
+        if cached is None or cached[0] != mtimes:
+            meta = None
+            footer = pq.read_metadata(fp)
+            current = (footer.metadata or {}).get(b'viewport_index_version') == cls.VIEWPORT_INDEX_VERSION
+            if current and mtimes[0] >= mtimes[1]:
+                names = footer.schema.to_arrow_schema().names
+                bounds = np.empty((footer.num_row_groups, 4))
+                for g in range(footer.num_row_groups):
+                    group = footer.row_group(g)
+                    for i, (col, use_min) in enumerate((('minx', True), ('miny', True), ('maxx', False), ('maxy', False))):
+                        stats = group.column(names.index(col)).statistics
+                        bound = (stats.min if use_min else stats.max) if stats is not None and stats.has_min_max else np.nan
+                        # A group without usable statistics is always read
+                        bounds[g, i] = bound if np.isfinite(bound) else (-np.inf if use_min else np.inf)
+                meta = (footer, bounds)
+            cached = cls._viewport_meta_cache[fp] = (mtimes, meta)
+        return cached[1]
+
     @classmethod
     def has_viewport_index(cls, osm_dir: Path, slug: str) -> bool:
         """Whether the viewport index is current: this layout, newer than the street map."""
-        fp = cls._viewport_index_path(osm_dir, slug)
-        edges_fp = cls.artifact_path(osm_dir, slug, 'edges.parquet')
-        if not fp.exists() or not edges_fp.exists() or fp.stat().st_mtime_ns < edges_fp.stat().st_mtime_ns:
-            return False
-        return (pq.read_schema(fp).metadata or {}).get(b'viewport_index_version') == cls.VIEWPORT_INDEX_VERSION
+        return cls._viewport_meta(osm_dir, slug) is not None
 
     def write_viewport_index(self) -> None:
         """Write the city's viewport index (see viewport_geojson). It depends on
@@ -1058,7 +1087,7 @@ class StravaMapMatcher:
             'minx': bounds[order, 0], 'miny': bounds[order, 1],
             'maxx': bounds[order, 2], 'maxy': bounds[order, 3],
             'geometry': pa.array(shapely.to_wkb(geoms), pa.binary()),
-            'feature': pa.array(features, pa.binary()),
+            'feature': pa.array([f.decode() if f is not None else None for f in features], pa.string()),
         }).replace_schema_metadata({'viewport_index_version': self.VIEWPORT_INDEX_VERSION})
         fp = self._viewport_index_path(self.workdir, self._slug())
         tmp = fp.parent / f"{fp.name}.tmp{os.getpid()}"
@@ -1106,28 +1135,40 @@ class StravaMapMatcher:
         order and in EPSG:4326, whose geometry intersects `bbox` (south, west,
         north, east), read from the viewport index without loading the city.
         None when the index isn't current: build it with write_viewport_index."""
-        if not cls.has_viewport_index(osm_dir, slug):
+        meta = cls._viewport_meta(osm_dir, slug)
+        if meta is None:
             return None
+        footer, group_bounds = meta
         south, west, north, east = bbox
-        near = pq.read_table(cls._viewport_index_path(osm_dir, slug),
-                             columns=['order', 'street', 'geometry', 'feature'],
-                             filters=[('minx', '<=', east), ('maxx', '>=', west),
-                                      ('miny', '<=', north), ('maxy', '>=', south)])
+        groups = np.flatnonzero((group_bounds[:, 0] <= east) & (group_bounds[:, 2] >= west)
+                                & (group_bounds[:, 1] <= north) & (group_bounds[:, 3] >= south))
+        near = pq.ParquetFile(cls._viewport_index_path(osm_dir, slug), metadata=footer).read_row_groups(
+            groups.tolist(), columns=['order', 'street', 'minx', 'miny', 'maxx', 'maxy', 'geometry', 'feature'])
+        minx, miny, maxx, maxy = (near.column(c).to_numpy() for c in ('minx', 'miny', 'maxx', 'maxy'))
+        overlaps = (minx <= east) & (maxx >= west) & (miny <= north) & (maxy >= south)
+        # An edge whose bounds lie inside the bbox intersects it; only the ones
+        # crossing its border need their geometry decoded.
+        hit = overlaps & (minx >= west) & (maxx <= east) & (miny >= south) & (maxy <= north)
+        crossing = np.flatnonzero(overlaps & ~hit)
+        geoms = shapely.from_wkb(near.column('geometry').take(crossing).to_numpy(zero_copy_only=False))
+        hit[crossing] = shapely.intersects(geoms, shapely.box(west, south, east, north))
+
         order = near.column('order').to_numpy()
         times = cls._viewport_times_by_order(osm_dir, slug)[order]
-        geoms = shapely.from_wkb(near.column('geometry').to_numpy(zero_copy_only=False))
-        keep = (shapely.intersects(geoms, shapely.box(west, south, east, north))
-                & ((times > 0) == covered) & near.column('feature').is_valid().to_numpy(zero_copy_only=False))
+        keep = hit & ((times > 0) == covered) & near.column('feature').is_valid().to_numpy(zero_copy_only=False)
         if streets_only:
             keep &= near.column('street').to_numpy()
         rows = np.flatnonzero(keep)
         rows = rows[np.argsort(order[rows], kind='stable')]
-        features = near.column('feature').take(rows).to_pylist()
+        features = near.column('feature').take(rows).combine_chunks()
         if with_counts:
-            parts = [f + b',"times":%d}}' % t for f, t in zip(features, times[rows].tolist())]
+            features = pc.binary_join_element_wise(
+                features, ',"times":', pc.cast(pa.array(times[rows]), pa.string()), '}}', '')
+            separator, tail = ',', b''
         else:
-            parts = [f + b'}}' for f in features]
-        return b'{"type":"FeatureCollection","features":[' + b','.join(parts) + b']}'
+            separator, tail = '}},', b'}}' if len(rows) else b''
+        joined = pc.binary_join(pa.ListArray.from_arrays(pa.array([0, len(rows)], pa.int32()), features), separator)
+        return b'{"type":"FeatureCollection","features":[' + joined[0].as_buffer().to_pybytes() + tail + b']}'
 
     @staticmethod
     def _named_polygons(feats: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
