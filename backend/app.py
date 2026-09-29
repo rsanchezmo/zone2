@@ -254,11 +254,19 @@ class _SPAStaticFiles(StaticFiles):
 
     async def get_response(self, path: str, scope):
         try:
-            return await super().get_response(path, scope)
+            response = await super().get_response(path, scope)
         except StarletteHTTPException as ex:
-            if ex.status_code == 404:
-                return await super().get_response("index.html", scope)
-            raise
+            if ex.status_code != 404:
+                raise
+            response = await super().get_response("index.html", scope)
+            path = "index.html"
+        if path.startswith("assets/"):
+            # Vite names these by content hash: a changed file gets a new name
+            response.headers["cache-control"] = "public, max-age=31536000, immutable"
+        else:
+            # index.html points at the current assets: revalidate (ETag) every load
+            response.headers["cache-control"] = "no-cache"
+        return response
 
 
 frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
