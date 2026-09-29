@@ -1679,11 +1679,31 @@ export type CoverageEdges = GeoJSON.FeatureCollection<
   { name: string | null; times?: number }
 >;
 
-/** An activity's route matched to a coverage city's streets; lines run in travel order. */
+/** An activity's route matched to a coverage city's streets; lines run in
+ * travel order. `new_km`: the streets it walked for the first time there. */
 export type ActivityRoute = GeoJSON.FeatureCollection<
   GeoJSON.MultiLineString,
-  { slug: string; city_name: string }
+  { slug: string; city_name: string; new_km: number }
 >;
+
+/** One month of a city's coverage growth: km of streets walked for the first
+ * time, the runs matched that month, and the running total. */
+export interface CoverageTimelineMonth {
+  month: string; // YYYY-MM
+  new_km: number;
+  runs: number;
+  cumulative_km: number;
+}
+
+export function useCoverageTimeline(slug?: string) {
+  return useQuery<{ months: CoverageTimelineMonth[] }>({
+    queryKey: ['coverage-timeline', slug],
+    queryFn: () => api.get(`/coverage/${slug}/timeline`).then(r => r.data),
+    enabled: !!slug,
+    staleTime: 5 * 60 * 1000,
+    placeholderData: keepPreviousData,
+  });
+}
 
 /** The activity's matched route, or null when no coverage city has matched it. */
 export function useActivityRoute(id: number) {

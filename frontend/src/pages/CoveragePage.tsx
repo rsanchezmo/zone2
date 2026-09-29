@@ -18,6 +18,7 @@ import { FullscreenIcon } from '../components/shared/mapChrome'
 import { tileLayerAttribution, tileLayerClass, tileLayerUrl } from '../utils/mapTiles'
 import { useExitFullscreenOnEscape } from '../hooks/useExitFullscreenOnEscape'
 import { MapStyleToggle, SATELLITE_ACCENT, SATELLITE_ATTR, SATELLITE_TILES, type MapStyle } from '../components/shared/MapStyleToggle'
+import NewStreetsPanel from '../components/shared/NewStreetsPanel'
 
 const COVERED_ACCENT = '#fb2c36'
 
@@ -337,6 +338,7 @@ export default function CoveragePage() {
       qc.invalidateQueries({ queryKey: ['coverage-cities'] })
       qc.invalidateQueries({ queryKey: ['coverage-edges'] })
       qc.invalidateQueries({ queryKey: ['coverage-districts'] })
+      qc.invalidateQueries({ queryKey: ['coverage-timeline'] })
     }
     prevRunning.current = syncRunning
   }, [syncRunning, qc, resetSyncMutation])
@@ -776,6 +778,8 @@ export default function CoveragePage() {
           </div>
         )}
       </div>
+
+      {!expanded && <NewStreetsPanel slug={activeSlug} accent={COVERED_ACCENT} />}
     </div>
   )
 }
