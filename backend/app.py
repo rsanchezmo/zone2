@@ -36,6 +36,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from backend.config import settings
 from backend.dependencies import set_zone2
 from backend.routers import activities, stats, exports, calendar, calendar_feed, sync, athlete, gear, goals, workouts, races, health, garmin, coverage, config as config_router
+from backend.routers.coverage import unload_idle_cities
 from backend.routers.sync import _try_claim_sync, _run_sync
 from backend.db import init_db
 from zone2.core import Zone2
@@ -148,6 +149,19 @@ def _warm_stats_caches(z2: Zone2) -> None:
         logging.getLogger("backend.startup").exception("Warming the stats caches failed")
 
 
+async def _unload_idle_cities_loop(every_s: int = 60) -> None:
+    """Unload coverage cities nobody used for a while (see unload_idle_cities)."""
+    log = logging.getLogger("backend.coverage")
+    while True:
+        try:
+            await asyncio.sleep(every_s)
+            await asyncio.to_thread(unload_idle_cities)
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            log.exception("Unloading idle coverage cities failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: initialize Zone2 singleton
@@ -190,6 +204,7 @@ async def lifespan(app: FastAPI):
     # Stats caches (and stream summaries missing after a deploy) build in the
     # background, so startup isn't held up by a first full pass over streams.
     warm_task = asyncio.create_task(asyncio.to_thread(_warm_stats_caches, z2))
+    unload_task = asyncio.create_task(_unload_idle_cities_loop())
 
     sync_task: asyncio.Task | None = None
     if settings.auto_sync_hours > 0:
@@ -204,7 +219,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        for task in (sync_task, garmin_sync_task, warm_task):
+        for task in (sync_task, garmin_sync_task, warm_task, unload_task):
             if task is not None:
                 task.cancel()
                 try:
