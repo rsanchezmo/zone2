@@ -49,6 +49,11 @@ def _finalize_sync(z2: Zone2, error: str | None) -> str | None:
         logger.exception("Sync cleanup failed")
         cleanup_error = f"cleanup failed: {type(e).__name__}: {e}"
         error = f"{error}; {cleanup_error}" if error else cleanup_error
+    else:
+        try:
+            z2.strava_analytics.warm_caches()
+        except Exception:
+            logger.exception("Warming the stats caches after the sync failed")
     finally:
         _release_sync(error)
     return error

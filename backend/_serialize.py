@@ -1,5 +1,9 @@
+import json
+from typing import Any
+
 import numpy as np
 import pandas as pd
+from fastapi.encoders import jsonable_encoder
 
 
 def sanitize(val):
@@ -17,3 +21,12 @@ def sanitize(val):
     if hasattr(val, "isoformat"):
         return val.isoformat()
     return val
+
+
+def json_bytes(content: Any) -> bytes:
+    """`content` rendered exactly as FastAPI's default JSON response would,
+    without first walking all of it through jsonable_encoder (slow on large
+    payloads): only values json can't encode natively go through it."""
+    return json.dumps(
+        content, ensure_ascii=False, allow_nan=False, separators=(",", ":"), default=jsonable_encoder,
+    ).encode("utf-8")

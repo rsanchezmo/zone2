@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 import pandas as pd
 
 from backend._serialize import sanitize as _sanitize
+from backend._ttl_cache import TTLCache
 from backend.dependencies import get_z2
 from zone2.activities_cache import _has_full_photo_list
 from zone2.core import Zone2
@@ -184,6 +185,11 @@ def activities_on_dates(
     return {"items": items}
 
 
+# Keyed by the filters and the activities version: the full history is a large
+# payload the maps request on every visit.
+_polylines_cache = TTLCache(maxsize=32, ttl_seconds=24 * 3600)
+
+
 @router.get("/polylines")
 def get_polylines(
     sport_type: str | None = None,
@@ -192,6 +198,11 @@ def get_polylines(
     z2: Zone2 = Depends(get_z2),
 ):
     """Return lightweight polyline data for all activities (for world map view)."""
+    key = (sport_type, year, gear_id, z2.strava_activities_cache.cache_version)
+    return _polylines_cache.json_response(key, lambda: _polylines(z2, sport_type, year, gear_id))
+
+
+def _polylines(z2: Zone2, sport_type: str | None, year: int | None, gear_id: str | None) -> list[dict]:
     activities = z2.strava_analytics._get_prepared_activities()
     if activities.empty:
         return []
@@ -258,7 +269,7 @@ def recent_photos(
 
 @router.get("/{activity_id}")
 def get_activity(activity_id: int, z2: Zone2 = Depends(get_z2)):
-    row = z2.strava_activities_cache.get_activity_by_id(activity_id)
+    row = z2.strava_activities_cache.get_activity_by_id(activity_id, include_detail=True)
     if row is None:
         raise HTTPException(status_code=404, detail="Activity not found")
     streams = z2.strava_activities_cache.get_streams(activity_id)

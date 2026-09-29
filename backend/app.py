@@ -8,6 +8,10 @@ _mpl_config_dir = Path(os.environ.get(
 _mpl_config_dir.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("MPLCONFIGDIR", str(_mpl_config_dir))
 
+# Before pyarrow loads: its default mimalloc pool keeps ~45 MB of freed parquet
+# read buffers resident on the Pi; the system allocator hands them back.
+os.environ.setdefault("ARROW_DEFAULT_MEMORY_POOL", "system")
+
 _xdg_cache_home = Path(os.environ.get(
     "XDG_CACHE_HOME",
     Path(__file__).resolve().parent.parent / ".strava" / "cache",
@@ -137,6 +141,13 @@ async def _periodic_garmin_sync_loop(
             log.exception("Garmin auto-sync errored, will retry next interval")
 
 
+def _warm_stats_caches(z2: Zone2) -> None:
+    try:
+        z2.strava_analytics.warm_caches()
+    except Exception:
+        logging.getLogger("backend.startup").exception("Warming the stats caches failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: initialize Zone2 singleton
@@ -170,6 +181,9 @@ async def lifespan(app: FastAPI):
     startup_log.info("warming activities cache…")
     await asyncio.to_thread(z2.strava_activities_cache._load_to_memory)
     startup_log.info("activities cache warm")
+    # Stats caches (and stream summaries missing after a deploy) build in the
+    # background, so startup isn't held up by a first full pass over streams.
+    warm_task = asyncio.create_task(asyncio.to_thread(_warm_stats_caches, z2))
 
     sync_task: asyncio.Task | None = None
     if settings.auto_sync_hours > 0:
@@ -184,7 +198,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        for task in (sync_task, garmin_sync_task):
+        for task in (sync_task, garmin_sync_task, warm_task):
             if task is not None:
                 task.cancel()
                 try:
@@ -207,7 +221,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_middleware(GZipMiddleware, minimum_size=1024)
+# Level 5: within a few % of level 9's size at a third of its CPU on the Pi.
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
 
 app.include_router(health.router, prefix="/api/health", tags=["health"])
 app.include_router(config_router.router, prefix="/api/config", tags=["config"])

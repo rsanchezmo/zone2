@@ -70,6 +70,8 @@ CREATE TABLE IF NOT EXISTS garmin_daily_stats (
 );
 CREATE INDEX IF NOT EXISTS idx_garmin_date ON garmin_daily_stats(date);
 CREATE INDEX IF NOT EXISTS idx_garmin_metric_date ON garmin_daily_stats(metric, date);
+-- Covers the /garmin/status aggregates, which would otherwise read every payload.
+CREATE INDEX IF NOT EXISTS idx_garmin_date_fetched ON garmin_daily_stats(date, fetched_at);
 
 -- Slim per-day chart projections derived from garmin_daily_stats payloads at
 -- sync time, so /trends reads a few hundred bytes/day instead of deserializing
