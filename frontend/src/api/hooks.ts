@@ -1752,12 +1752,22 @@ export function useAddCity() {
   });
 }
 
+export interface GeocodeSuggestion {
+  query: string;
+  display_name: string;
+  area_km2: number;
+}
+
 export interface GeocodeResult {
   query: string;
   display_name: string;
   lat: number;
   lon: number;
   bbox: { south: number; west: number; north: number; east: number };
+  /** The place is only a point in OSM, so it has no area to cover */
+  point_only?: boolean;
+  /** For a point-only place, the area around it that can be added instead */
+  suggestion?: GeocodeSuggestion | null;
 }
 
 /** Resolve a city query to its OSM location before downloading or flying to it. */

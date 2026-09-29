@@ -7,7 +7,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import {
   useCoverageCities, useCoverageEdges, useCoverageDistricts, useCoverageArea,
   useCoverageSyncStatus, useTriggerCoverageSync, useUncoveredEdges,
-  useAddCity, useAddCityStatus, useGeocodeCity, useDeleteCity,
+  useAddCity, useAddCityStatus, useGeocodeCity, useDeleteCity, type GeocodeSuggestion,
   useAppConfig,
   type AreaCoverage, type CoverageSummary, type DistrictCoverage,
 } from '../api/hooks'
@@ -189,6 +189,9 @@ function AddCityForm({ onAdded }: { onAdded: (slug: string) => void }) {
   const [open, setOpen] = useState(false)
   const [value, setValue] = useState('')
   const [resolved, setResolved] = useState<string | null>(null)
+  // A village mapped only as a point has no boundary; the area around it is offered instead
+  const [suggestion, setSuggestion] = useState<GeocodeSuggestion | null>(null)
+  const [noArea, setNoArea] = useState(false)
   const geocodeMutation = useGeocodeCity()
   const addMutation = useAddCity()
   // The hook keeps polling on its own while a download reports running.
@@ -231,13 +234,19 @@ function AddCityForm({ onAdded }: { onAdded: (slug: string) => void }) {
         const name = value.trim()
         if (!name) return
         if (resolved) addMutation.mutate(name)
-        else geocodeMutation.mutate(name, { onSuccess: d => setResolved(d.display_name) })
+        else geocodeMutation.mutate(name, {
+          onSuccess: d => {
+            if (!d.point_only) setResolved(d.display_name)
+            else if (d.suggestion) setSuggestion(d.suggestion)
+            else setNoArea(true)
+          },
+        })
       }}
     >
       <input
         autoFocus
         value={value}
-        onChange={e => { setValue(e.target.value); setResolved(null) }}
+        onChange={e => { setValue(e.target.value); setResolved(null); setSuggestion(null); setNoArea(false) }}
         onKeyDown={e => { if (e.key === 'Escape') setOpen(false) }}
         placeholder="Amsterdam, Netherlands"
         className="input !text-xs !py-1 !px-2 w-44"
@@ -252,6 +261,23 @@ function AddCityForm({ onAdded }: { onAdded: (slug: string) => void }) {
       </button>
       {resolved && (
         <span className="text-[10px] text-gray-400 max-w-52 truncate" title={resolved}>→ {resolved}</span>
+      )}
+      {suggestion && !resolved && (
+        <span className="flex items-center gap-1.5 text-[10px] text-gray-400">
+          <span className="max-w-64 truncate" title={suggestion.display_name}>
+            not an area in OSM — it lies in {suggestion.display_name.split(',')[0]} ({Math.round(suggestion.area_km2)} km²)
+          </span>
+          <button
+            type="button"
+            className="btn !text-[10px] !py-0.5 !px-1.5"
+            onClick={() => { setValue(suggestion.query); setResolved(suggestion.display_name); setSuggestion(null) }}
+          >
+            Use it
+          </button>
+        </span>
+      )}
+      {noArea && (
+        <span className="text-[10px] text-red-400">not an area in OSM, and nothing around it to add</span>
       )}
       {geocodeMutation.isError && !resolved && (
         <span className="text-[10px] text-red-400">place not found</span>
