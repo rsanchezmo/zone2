@@ -1401,8 +1401,10 @@ class StravaAnalytics:
           • Uncertainty band is the weighted p25–p75 (IQR) of the projection
             pool.
         """
-        if sport_category in self._race_predictions_cache:
-            return self._race_predictions_cache[sport_category]
+        # Recency weights count from today, so the result is per day
+        cache_key = (sport_category, datetime.now(timezone.utc).date())
+        if cache_key in self._race_predictions_cache:
+            return self._race_predictions_cache[cache_key]
 
         recent = self._recent_best_efforts_list(
             sport_category, within_days=self.PREDICTIONS_WINDOW_DAYS
@@ -1487,7 +1489,7 @@ class StravaAnalytics:
                 "window_days": self.PREDICTIONS_WINDOW_DAYS,
             },
         }
-        self._race_predictions_cache[sport_category] = result
+        self._race_predictions_cache[cache_key] = result
         return result
 
     def get_race_predictions_history(
@@ -1750,7 +1752,8 @@ class StravaAnalytics:
 
     def get_pmc_chart(self, start_date: str | None = None, end_date: str | None = None) -> dict:
         """Compute Performance Management Chart (CTL/ATL/TSB) from daily TRIMP."""
-        cache_key = f"{start_date}|{end_date}"
+        # The series runs up to today
+        cache_key = f"{start_date}|{end_date}|{_utc_now_naive().date()}"
         if cache_key in self._pmc_cache:
             return self._pmc_cache[cache_key]
 

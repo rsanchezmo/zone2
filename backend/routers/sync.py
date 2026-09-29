@@ -35,9 +35,13 @@ def _release_sync(error: str | None) -> None:
         _sync_status["last_error"] = error
 
 
-def _finalize_sync(z2: Zone2, error: str | None) -> str | None:
-    """Invalidate/warm dependent caches and always release the sync slot."""
+def _finalize_sync(z2: Zone2, error: str | None, version_before: int) -> str | None:
+    """Invalidate/warm dependent caches when the sync changed the data (its
+    version moved past `version_before`), and always release the sync slot."""
     try:
+        if z2.strava_activities_cache.cache_version == version_before:
+            logger.info("Sync changed nothing: caches kept")
+            return error
         z2.strava_analytics.invalidate_caches()
         clear_stats_cache()
         clear_export_cache()
@@ -61,12 +65,13 @@ def _finalize_sync(z2: Zone2, error: str | None) -> str | None:
 
 def _run_sync(z2: Zone2, full_sync: bool, include_streams: bool):
     err: str | None = None
+    version = z2.strava_activities_cache.cache_version
     try:
         z2.sync_activities(full_sync=full_sync, include_streams=include_streams)
     except Exception as e:
         err = str(e)
     finally:
-        err = _finalize_sync(z2, err)
+        err = _finalize_sync(z2, err, version)
     if err is None:
         # New runs show up on the coverage map without a manual per-city sync
         try:
@@ -90,12 +95,13 @@ def trigger_sync(
 
 def _run_backfill_streams(z2: Zone2):
     err: str | None = None
+    version = z2.strava_activities_cache.cache_version
     try:
         z2.ensure_activities_with_streams()
     except Exception as e:
         err = str(e)
     finally:
-        _finalize_sync(z2, err)
+        _finalize_sync(z2, err, version)
 
 
 @router.post("/backfill-streams")
@@ -120,6 +126,7 @@ def resync_activity(
         return {"status": "already_running"}
     err: str | None = None
     found = False
+    version = z2.strava_activities_cache.cache_version
     try:
         found = z2.strava_activities_cache.resync_activity(
             activity_id=activity_id,
@@ -129,7 +136,7 @@ def resync_activity(
     except Exception as e:
         err = str(e)
     finally:
-        err = _finalize_sync(z2, err)
+        err = _finalize_sync(z2, err, version)
     if err:
         raise HTTPException(status_code=502, detail=err)
     if not found:
