@@ -1,3 +1,4 @@
+import ctypes
 import hashlib
 import json
 import logging
@@ -512,6 +513,15 @@ def _warm_map_layers(slug: str) -> None:
         coverage_districts(slug, admin_level=9, geometry=True, streets_only=False)
 
 
+def _return_freed_memory() -> None:
+    """Hand freed heap back to the OS, which glibc otherwise keeps: releasing
+    a city after matching frees its network, ~140 MB for Madrid."""
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        pass  # not glibc (e.g. macOS)
+
+
 def sync_all_cities(z2: Zone2, sport_types: tuple[str, ...] = ("Run",)) -> None:
     """Match new activities in every coverage city, one city at a time,
     skipping cities already syncing. Next to free when nothing is new."""
@@ -521,6 +531,7 @@ def sync_all_cities(z2: Zone2, sport_types: tuple[str, ...] = ("Run",)) -> None:
                 continue
             _sync_status[slug] = {"running": True, "last_error": None}
         _run_coverage_sync(slug, z2, list(sport_types), keep_loaded=False)
+    _return_freed_memory()
 
 
 @router.post("/{slug}/sync")
