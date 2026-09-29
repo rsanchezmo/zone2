@@ -238,6 +238,9 @@ class StravaActivitiesCache:
 
         yearly_counts = self.metadata.setdefault('yearly_counts', {})
 
+        # Incremental syncs re-fetch the latest activities: when nothing changed
+        # the files and the data version (every cache keyed on it) stay as they are.
+        changed = bool(streams_by_id)
         for year, group in df.groupby('year_bucket'):
             year_file = self.activities_dir / f"{int(year)}.parquet"
             year_key = str(int(year))
@@ -256,13 +259,17 @@ class StravaActivitiesCache:
                 existing_indexed = existing_clean.set_index('id')
                 group_indexed = group_clean.set_index('id')
                 combined = group_indexed.combine_first(existing_indexed).reset_index()
-                combined.to_parquet(year_file, index=False, engine='pyarrow')
                 yearly_counts[year_key] = len(combined)
+                if self._same_rows(combined, existing_df):
+                    continue
+                combined.to_parquet(year_file, index=False, engine='pyarrow')
+                changed = True
                 logger.info("Updated %s (%d activities)", year_file.name, len(combined))
             else:
                 group = group.drop(columns=['year_bucket'])
                 group.to_parquet(year_file, index=False, engine='pyarrow')
                 yearly_counts[year_key] = len(group)
+                changed = True
                 logger.info("Created %s (%d activities)", year_file.name, len(group))
 
         # Persist any extracted streams. Backfill missing years from the
@@ -289,8 +296,24 @@ class StravaActivitiesCache:
             self.metadata['latest_activity'] = max(batch_latest, existing_latest).isoformat() if existing_latest else batch_latest.isoformat()
 
         self.__save_metadata()
-        self._invalidate_memory_cache()
+        if changed:
+            self._invalidate_memory_cache()
 
+    @staticmethod
+    def _same_rows(a: pd.DataFrame, b: pd.DataFrame) -> bool:
+        """Whether two activity tables hold the same values, whatever their
+        row or column order and dtypes (1 == 1.0, None == NaN)."""
+        if len(a) != len(b) or set(a.columns) != set(b.columns):
+            return False
+        try:
+            pd.testing.assert_frame_equal(
+                a.set_index('id').sort_index().sort_index(axis=1),
+                b.set_index('id').sort_index().sort_index(axis=1),
+                check_dtype=False, check_index_type=False, check_column_type=False, check_exact=True,
+            )
+        except AssertionError:
+            return False
+        return True
 
     def load_activities(
         self,
@@ -571,7 +594,6 @@ class StravaActivitiesCache:
             logger.debug("Rate-limit pre-check skipped: %s", e)  # Non-critical
 
         # Load raw activities (without parsing streams JSON — we only need metadata here)
-        self._invalidate_memory_cache()
         df = self._load_to_memory().copy()
 
         if df.empty:
