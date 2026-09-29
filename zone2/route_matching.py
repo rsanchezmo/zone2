@@ -28,6 +28,39 @@ class Candidate:
     dist: float      # snap distance to the observation
 
 
+class _Search:
+    """Dijkstra from one node that can be resumed: a later call settles more
+    targets or reaches further without redoing the work already done, so
+    neighbouring observations (which share most of their candidates' nodes)
+    reuse each other's searches. Distances of settled nodes are final."""
+    __slots__ = ('dist', 'pred', 'heap', 'done')
+
+    def __init__(self, src: int):
+        self.dist: dict[int, float] = {src: 0.0}
+        self.pred: dict[int, tuple[int, int]] = {}
+        self.heap: list[tuple[float, int]] = [(0.0, src)]
+        self.done: set[int] = set()
+
+    def settle(self, adj, targets: set[int], limit: float) -> None:
+        dist, pred, heap, done = self.dist, self.pred, self.heap, self.done
+        left = targets - done
+        while heap and left:
+            d, node = heap[0]
+            if d > limit:
+                break
+            heapq.heappop(heap)
+            if node in done:
+                continue
+            done.add(node)
+            left.discard(node)
+            for nb, ln, e in adj[node]:
+                nd = d + ln
+                if nd < dist.get(nb, math.inf):
+                    dist[nb] = nd
+                    pred[nb] = (node, e)
+                    heapq.heappush(heap, (nd, nb))
+
+
 # (segment row, from offset, to offset): a stretch of one segment walked in
 # travel order; from > to means it was walked against the geometry.
 Piece = tuple[int, float, float]
@@ -93,31 +126,75 @@ class RouteMatcher:
         observations as outliers."""
         cands = self.candidates(pts)
         emis = [[-0.5 * (c.dist / self.SIGMA_M) ** 2 - self.penalty[c.edge] for c in cs] for cs in cands]
+        u, v, length = self.u, self.v, self.length
         n = len(pts)
         score: list[list[float] | None] = [None] * n
         back: list[list[tuple | None] | None] = [None] * n   # (prev obs, prev candidate, pieces)
-        searches: dict[int, dict] = {}
+        # Searches depend only on their source node, so neighbouring observations
+        # sharing candidate segments share them; each is extended only as far as
+        # the observation being scored needs.
+        searches: dict[int, _Search] = {}                    # source node -> its resumable search
+        reached: dict[tuple[int, int], float] = {}           # (source node, target obs) -> limit searched to
+        last_used: dict[int, int] = {}                       # source node -> latest target obs
         route = MatchedRoute()
         chain_start = None
         for t in range(n):
             cs = cands[t]
             if not cs:
                 continue
+            # how each candidate is entered from its segment's ends: (node, metres to the candidate)
+            entries = [((u[c.edge], c.offset), (v[c.edge], length[c.edge] - c.offset)) for c in cs]
+            targets = {nd for entry in entries for nd, _ in entry}
             best_s = [-math.inf] * len(cs)
             best_b: list[tuple | None] = [None] * len(cs)
-            for k in range(max(0, t - self.MAX_SKIP - 1), t):
+            # Most recent predecessor first: a transition only ever loses score,
+            # so a candidate whose score minus the skip cost can't beat the best
+            # found so far needs no routing (that prunes almost every skip).
+            for k in range(t - 1, max(-1, t - self.MAX_SKIP - 2), -1):
                 if score[k] is None or chain_start is None or k < chain_start:
                     continue
-                straight = float(np.hypot(*(pts[t] - pts[k])))
                 skip_cost = self.OUTLIER_COST * (t - k - 1)
+                if max(score[k]) - skip_cost <= min(best_s):
+                    continue
+                straight = float(np.hypot(*(pts[t] - pts[k])))
+                max_route = straight + self.MAX_DETOUR_M
+                limit = max_route + 2 * self.RADIUS_M
                 for i, ca in enumerate(cands[k]):
-                    if score[k][i] == -math.inf:
+                    prev = score[k][i]
+                    if prev == -math.inf or prev - skip_cost <= min(best_s):
                         continue
+                    # the two ways out of a's segment, each with the search from that end
+                    exits = []
+                    for na, out_cost, to_off in ((u[ca.edge], ca.offset, 0.0),
+                                                 (v[ca.edge], length[ca.edge] - ca.offset, length[ca.edge])):
+                        if out_cost <= limit:
+                            search = searches.get(na)
+                            if search is None:
+                                search = searches[na] = _Search(na)
+                            if reached.get((na, t), -1.0) < limit:
+                                search.settle(self.adj, targets, limit)
+                                reached[(na, t)] = limit
+                                last_used[na] = t
+                            exits.append((na, out_cost, to_off, search))
                     for j, cb in enumerate(cs):
-                        r, how = self._route_length(k, ca, cb, pts, cands, searches)
-                        if how is None or r > straight + self.MAX_DETOUR_M:
+                        if prev - skip_cost <= best_s[j]:
                             continue
-                        sc = score[k][i] - abs(r - straight) / self.BETA_M - skip_cost
+                        if cb.edge == ca.edge:
+                            r, how = abs(cb.offset - ca.offset), 'same'
+                        else:
+                            r, how = math.inf, None
+                            for na, out_cost, to_off, search in exits:
+                                dist, done = search.dist, search.done
+                                for nb, in_cost in entries[j]:
+                                    if nb in done:
+                                        total = out_cost + dist[nb] + in_cost
+                                        if total < r:
+                                            r, how = total, (na, to_off, nb, search.pred)
+                            if how is None:
+                                continue
+                        if r > max_route:
+                            continue
+                        sc = prev - abs(r - straight) / self.BETA_M - skip_cost
                         if sc > best_s[j]:
                             best_s[j], best_b[j] = sc, (k, i, self._pieces(ca, cb, how))
             if all(b is None for b in best_b):
@@ -131,56 +208,11 @@ class RouteMatcher:
                 continue
             score[t] = [s + e if b is not None else -math.inf for s, e, b in zip(best_s, emis[t], best_b)]
             back[t] = best_b
-            for k in [k for k in searches if k < t - self.MAX_SKIP - 1]:
-                del searches[k]
+            horizon = t - self.MAX_SKIP - 1
+            for node in [nd for nd, used in last_used.items() if used < horizon]:
+                del searches[node], last_used[node]
         self._backtrack(score, back, cands, route)
         return route
-
-    def _dijkstra(self, src: int, limit: float, targets: set[int]):
-        dist = {src: 0.0}
-        pred: dict[int, tuple[int, int]] = {}
-        heap = [(0.0, src)]
-        left = set(targets)
-        while heap and left:
-            d, node = heapq.heappop(heap)
-            if d > dist.get(node, math.inf):
-                continue
-            left.discard(node)
-            for nb, ln, e in self.adj[node]:
-                nd = d + ln
-                if nd <= limit and nd < dist.get(nb, math.inf):
-                    dist[nb] = nd
-                    pred[nb] = (node, e)
-                    heapq.heappush(heap, (nd, nb))
-        return dist, pred
-
-    def _route_length(self, k: int, a: Candidate, b: Candidate, pts, cands, searches):
-        """Shortest walk from a (observation k) to b and how to rebuild it.
-        One search per source node serves every observation within k's skip
-        window, run until all their candidates' end nodes are settled."""
-        if a.edge == b.edge:
-            return abs(b.offset - a.offset), 'same'
-        if k not in searches:
-            window = range(k + 1, min(len(pts), k + self.MAX_SKIP + 2))
-            reach = max((float(np.hypot(*(pts[w] - pts[k]))) for w in window), default=0.0)
-            searches[k] = {
-                'limit': reach + self.MAX_DETOUR_M + 2 * self.RADIUS_M,
-                'targets': {nd for w in window for c in cands[w] for nd in (self.u[c.edge], self.v[c.edge])},
-            }
-        cache = searches[k]
-        la, lb = self.length[a.edge], self.length[b.edge]
-        ends_b = {self.u[b.edge]: b.offset, self.v[b.edge]: lb - b.offset}
-        best, best_how = math.inf, None
-        for na, ca, to_off in ((self.u[a.edge], a.offset, 0.0), (self.v[a.edge], la - a.offset, la)):
-            if ca > cache['limit']:
-                continue
-            if na not in cache:
-                cache[na] = self._dijkstra(na, cache['limit'], cache['targets'])
-            dist, pred = cache[na]
-            for nb, cb in ends_b.items():
-                if nb in dist and ca + dist[nb] + cb < best:
-                    best, best_how = ca + dist[nb] + cb, (na, to_off, nb, pred)
-        return best, best_how
 
     def _pieces(self, a: Candidate, b: Candidate, how) -> list[Piece]:
         if how == 'same':
