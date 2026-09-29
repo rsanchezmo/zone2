@@ -4,6 +4,7 @@ from threading import Lock
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, Query
 
 from backend.dependencies import get_z2
+from backend.routers.coverage import sync_all_cities
 from backend.routers.exports import clear_export_cache
 from backend.routers.gear import clear_gear_cache
 from backend.routers.stats import clear_stats_cache
@@ -60,7 +61,13 @@ def _run_sync(z2: Zone2, full_sync: bool, include_streams: bool):
     except Exception as e:
         err = str(e)
     finally:
-        _finalize_sync(z2, err)
+        err = _finalize_sync(z2, err)
+    if err is None:
+        # New runs show up on the coverage map without a manual per-city sync
+        try:
+            sync_all_cities(z2)
+        except Exception:
+            logger.exception("Coverage sync after the Strava sync failed")
 
 
 @router.post("")

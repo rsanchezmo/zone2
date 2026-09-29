@@ -130,7 +130,7 @@ def format_pace_or_speed(avg_speed: float, sport_type: str | None = None) -> str
         return f"{pace_mins}:{pace_secs:02d} /km"
 
 
-def _summary_polyline_geometry(map_cell) -> LineString | None:
+def summary_polyline_geometry(map_cell) -> LineString | None:
     """Decode an activity's `map` cell to its summary-polyline LineString.
 
     The cell may be a dict (already-decoded view from analytics) or a JSON
@@ -154,7 +154,7 @@ def get_activities_as_gdf(activities: pd.DataFrame) -> gpd.GeoDataFrame:
     # Drop activities without map data
     activities = activities.dropna(subset=['map'])
 
-    activities['geometry'] = activities['map'].apply(_summary_polyline_geometry)
+    activities['geometry'] = activities['map'].apply(summary_polyline_geometry)
     activities = activities.dropna(subset=['geometry'])
 
     if activities.empty:
@@ -192,7 +192,7 @@ def get_activities_as_gdf_from_streams(activities: pd.DataFrame, streams_store=N
                     return LineString(coords)
 
         if polyline_fallback or streams_store is None:
-            return _summary_polyline_geometry(row.get('map'))
+            return summary_polyline_geometry(row.get('map'))
         return None
 
     activities['geometry'] = activities.apply(_parse_streams, axis=1)
