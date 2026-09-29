@@ -30,6 +30,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+import starlette.middleware.gzip
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -244,6 +245,10 @@ app.add_middleware(
 )
 # Level 5: within a few % of level 9's size at a third of its CPU on the Pi.
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
+# Images are compressed already: gzipping a multi-MB PNG export cost seconds on
+# the Pi for no size gain. Starlette reads its exclusion list from this default.
+starlette.middleware.gzip.DEFAULT_EXCLUDED_CONTENT_TYPES = (
+    *starlette.middleware.gzip.DEFAULT_EXCLUDED_CONTENT_TYPES, "image/")
 
 app.include_router(health.router, prefix="/api/health", tags=["health"])
 app.include_router(config_router.router, prefix="/api/config", tags=["config"])

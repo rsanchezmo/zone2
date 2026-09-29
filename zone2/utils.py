@@ -1,3 +1,5 @@
+import functools
+
 import geopandas as gpd
 from shapely.geometry import LineString, Polygon, box
 import polyline
@@ -339,7 +341,18 @@ def compute_trimp_zone_weighted(time_in_zones_min: list[float], zone_weights: li
 def get_region_coordinates(region_name: str) -> dict | None:
     """
     Get the latitude and longitude of a city using OSM Nominatim API.
+    Found places are cached for the process: they don't move, and Nominatim
+    asks clients not to repeat queries. Callers must not modify the result.
     """
+    try:
+        return _geocode(region_name)
+    except LookupError:
+        return None
+
+
+@functools.lru_cache(maxsize=128)
+def _geocode(region_name: str) -> dict:
+    """Raises LookupError when the place isn't found, so failures aren't cached."""
     import requests
 
     url = "https://nominatim.openstreetmap.org/search"
@@ -353,8 +366,8 @@ def get_region_coordinates(region_name: str) -> dict | None:
     try:
         response = requests.get(url, headers=headers, params=params, timeout=(5, 15))
         response.raise_for_status()
-    except requests.RequestException:
-        return None
+    except requests.RequestException as e:
+        raise LookupError(region_name) from e
     data = response.json()
     if data:
         lat = float(data[0]['lat'])
@@ -364,5 +377,4 @@ def get_region_coordinates(region_name: str) -> dict | None:
         min_lon, max_lon = float(bbox[2]), float(bbox[3])
         bbox_polygon = box(min_lon, min_lat, max_lon, max_lat)
         return {'lat': lat, 'lon': lon, 'boundingbox': bbox_polygon}
-    
-    return None
+    raise LookupError(region_name)

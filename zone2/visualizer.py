@@ -29,6 +29,19 @@ class StravaVisualizer:
         self.workdir = workdir
         self.output_dir = self.workdir / "visualizations"
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        # (activities version, activities with their summary routes, EPSG:4326)
+        self._activities_gdf: tuple[int, gpd.GeoDataFrame] | None = None
+
+    def _activities_with_routes(self) -> gpd.GeoDataFrame:
+        """Every activity with a summary route, decoded once per activities
+        version (every map export filters these). Callers must not modify it."""
+        cache = self.strava_analytics.strava_activities_cache
+        if self._activities_gdf is None or self._activities_gdf[0] != cache.cache_version:
+            gdf = get_activities_as_gdf(cache.activities)
+            if 'start_date_local' in gdf.columns:
+                gdf['start_date_local'] = pd.to_datetime(gdf['start_date_local'])
+            self._activities_gdf = (cache.cache_version, gdf)
+        return self._activities_gdf[1]
 
     def _finalize_figure(
         self,
@@ -73,14 +86,12 @@ class StravaVisualizer:
                             filter_by_boundary: bool = False,
                             year: int | None = None) -> tuple[gpd.GeoDataFrame | None, dict | None]:
         """Filters by sport/year, projects to WebMercator, and spatially filters by radius or boundary."""
-        activities = self.strava_analytics.strava_activities_cache.activities
-        gdf = get_activities_as_gdf(activities)
+        gdf = self._activities_with_routes()
 
         if sport_types:
             gdf = gdf[gdf['sport_type'].isin(sport_types)]
 
         if year and 'start_date_local' in gdf.columns:
-            gdf['start_date_local'] = pd.to_datetime(gdf['start_date_local'])
             gdf = gdf[gdf['start_date_local'].dt.year == year]
             
         if gdf.empty:
