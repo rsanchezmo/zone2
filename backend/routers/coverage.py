@@ -10,10 +10,10 @@ from threading import Lock
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
-import geopandas as gpd
+import numpy as np
 import shapely
 
-from backend._serialize import PackedJSON, PackedJSONResponse
+from backend._serialize import PackedJSON, PackedJSONResponse, json_bytes
 from backend.config import settings
 from backend.dependencies import get_z2
 from zone2.core import Zone2
@@ -195,8 +195,10 @@ def _run_add_city(city_name: str):
         slug = matcher._slug()
         with _matchers_lock:
             _remember_matcher_locked(slug, matcher)
-        # Seed the stats cache so the first /cities call needn't build a matcher.
+        # Seed the stats cache and viewport index so the first /cities call
+        # and map pans needn't build a matcher.
         matcher.write_stats_cache()
+        matcher.write_viewport_index()
         logger.info("City map for %s ready (%s)", city_name, slug)
     except Exception as e:
         logger.exception("Adding city %s failed", city_name)
@@ -366,16 +368,29 @@ def coverage_summary(slug: str, streets_only: bool = Query(False)):
     return _cached_json(("summary", slug, streets_only), _state_version(slug), build)
 
 
-def _clip_to_bbox(gdf, bbox: str):
-    """Edges intersecting the lat/lon bbox, in EPSG:4326. Only edges near it
-    (within a margin, in gdf's own CRS) are reprojected, not the whole city."""
+_viewport_index_lock = Lock()
+
+
+def _viewport_edges(slug: str, bbox: str, covered: bool, streets_only: bool, counts: bool):
+    """Edges intersecting the lat/lon bbox, from the city's viewport index:
+    a pan reads only the index rows around it and never loads the city, except
+    to build the index on the first pan of a city (or of a new street map)."""
     try:
         south, west, north, east = (float(x) for x in bbox.split(","))
     except ValueError:
         raise HTTPException(status_code=400, detail="bbox must be south,west,north,east")
-    near = gpd.GeoSeries([shapely.box(west, south, east, north)], crs="EPSG:4326").to_crs(gdf.crs).iloc[0]
-    subset = gdf[gdf.intersects(near.buffer(50))]
-    return subset.to_crs("EPSG:4326").cx[west:east, south:north]
+
+    def query():
+        return StravaMapMatcher.viewport_edges(_osm_dir(), slug, (south, west, north, east), covered=covered,
+                                               streets_only=streets_only, with_counts=counts)
+    edges = query()
+    if edges is None:
+        with _viewport_index_lock:
+            edges = query()
+            if edges is None:
+                _get_matcher(slug).write_viewport_index()
+                edges = query()
+    return edges
 
 
 def _edges_to_geojson(subset, include_times: bool = False) -> dict:
@@ -383,10 +398,16 @@ def _edges_to_geojson(subset, include_times: bool = False) -> dict:
     names = subset["name"].tolist()
     times = (subset["times"].tolist() if include_times and "times" in subset.columns
              else [None] * len(subset))
-    for geom, name, t in zip(subset.geometry, names, times):
-        if geom is None or geom.is_empty:
+    # Every vertex in one array: far cheaper than walking each geometry's coords
+    geoms = subset.geometry.values
+    xy, owner = shapely.get_coordinates(geoms, return_index=True)
+    ends = np.cumsum(np.bincount(owner, minlength=len(geoms))).tolist()
+    rounded = [[round(x, 6), round(y, 6)] for x, y in xy.tolist()]
+    starts = [0, *ends[:-1]]
+    for start, end, name, t in zip(starts, ends, names, times):
+        if start == end:
             continue
-        coords = [[round(x, 6), round(y, 6)] for x, y in geom.coords]
+        coords = rounded[start:end]
         props = {"name": None if name is None or str(name) == "nan" else str(name)}
         if t is not None:
             props["times"] = int(t)
@@ -411,14 +432,15 @@ def coverage_edges(
     if not covered and not bbox:
         raise HTTPException(status_code=400, detail="bbox is required for covered=false")
 
+    if bbox:
+        # A new bbox on every pan: not worth caching. Pre-rendered, since
+        # FastAPI's encoder would walk every coordinate.
+        geojson = _edges_to_geojson(_viewport_edges(slug, bbox, covered, streets_only, counts), include_times=counts)
+        return Response(json_bytes(geojson), media_type="application/json")
+
     def build():
         und = _get_matcher(slug).undirected_with_covered(streets_only=streets_only, with_counts=counts)
-        subset = und[und["covered"] == covered]
-        subset = _clip_to_bbox(subset, bbox) if bbox else subset.to_crs("EPSG:4326")
-        return _edges_to_geojson(subset, include_times=counts)
-    if bbox:
-        # a new bbox on every pan: not worth caching
-        return build()
+        return _edges_to_geojson(und[und["covered"] == covered].to_crs("EPSG:4326"), include_times=counts)
     return _cached_json(("edges", slug, covered, streets_only, counts), _state_version(slug), build)
 
 
@@ -450,7 +472,9 @@ def coverage_area(slug: str, payload: AreaRequest):
     return matcher.coverage_in_polygon(payload.points, streets_only=payload.streets_only)
 
 
-def _run_coverage_sync(slug: str, z2: Zone2, sport_types: list[str]):
+def _run_coverage_sync(slug: str, z2: Zone2, sport_types: list[str], keep_loaded: bool = True):
+    """Match the city's new activities. Without keep_loaded (background syncs)
+    the city is released afterwards: the page's layers are cached by then."""
     err = None
     try:
         cache = z2.strava_activities_cache
@@ -467,6 +491,9 @@ def _run_coverage_sync(slug: str, z2: Zone2, sport_types: list[str]):
         stats = _get_matcher(slug).match_incremental(gdf)
         logger.info("Coverage sync for %s done: %s%%", slug, stats.get("coverage_pct"))
         _warm_map_layers(slug)
+        if not keep_loaded:
+            with _matchers_lock:
+                _matchers.pop(slug, None)
     except Exception as e:
         logger.exception("Coverage sync for %s failed", slug)
         err = f"{type(e).__name__}: {e}"
@@ -479,6 +506,8 @@ def _warm_map_layers(slug: str) -> None:
     """Build the layers the coverage page opens with, so the first visit after
     new runs doesn't wait for them."""
     coverage_edges(slug, covered=True, bbox=None, streets_only=False, counts=True)
+    if not StravaMapMatcher.has_viewport_index(_osm_dir(), slug):
+        _get_matcher(slug).write_viewport_index()
     # Districts only when already downloaded: fetching them is the page's call.
     if StravaMapMatcher.artifact_path(_osm_dir(), slug, "districts_9.parquet").exists():
         coverage_districts(slug, admin_level=9, geometry=True, streets_only=False)
@@ -492,7 +521,7 @@ def sync_all_cities(z2: Zone2, sport_types: tuple[str, ...] = ("Run",)) -> None:
             if _sync_status.get(slug, {}).get("running"):
                 continue
             _sync_status[slug] = {"running": True, "last_error": None}
-        _run_coverage_sync(slug, z2, list(sport_types))
+        _run_coverage_sync(slug, z2, list(sport_types), keep_loaded=False)
 
 
 @router.post("/{slug}/sync")

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import geopandas as gpd
 import matplotlib.lines as mlines
+import pyarrow as pa
 import pyarrow.parquet as pq
 import matplotlib.pyplot as plt
 import numpy as np
@@ -209,7 +210,6 @@ class StravaMapMatcher:
         self._walkable: gpd.GeoDataFrame | None = None
         self._matcher: RouteMatcher | None = None
         # Coverage derived from the persisted state, reused until a sync rewrites it
-        self._counts_cache: tuple[tuple, dict[tuple[int, int], int]] | None = None
         self._flagged_cache: dict[tuple[bool, bool], tuple[tuple, gpd.GeoDataFrame]] = {}
         # Serializes state-file reads/writes so a background sync rewriting the
         # coverage parquet can't be observed mid-write by request threads.
@@ -714,15 +714,25 @@ class StravaMapMatcher:
     def covered_edge_counts(self) -> dict[tuple[int, int], int]:
         """Per undirected edge, how many distinct activities traversed it —
         the traversal-frequency signal behind the coverage heatmap."""
-        version = self.state_version()
-        if self._counts_cache is None or self._counts_cache[0] != version:
-            edges_fp, _ = self._state_paths()
-            with self._state_lock:
-                df = pd.read_parquet(edges_fp) if edges_fp.exists() else None
+        return self.covered_edge_counts_of(self.workdir, self._slug())
+
+    # (osm_dir, slug) -> (state version, covered edge counts)
+    _counts_by_city: dict[tuple[Path, str], tuple[tuple, dict[tuple[int, int], int]]] = {}
+
+    @classmethod
+    def covered_edge_counts_of(cls, osm_dir: Path, slug: str) -> dict[tuple[int, int], int]:
+        """covered_edge_counts of city `slug` from its state file alone, so
+        callers needn't load the city. Reused until a sync rewrites the state
+        (state files are replaced atomically, never seen half-written)."""
+        version = cls.state_version_of(osm_dir, slug)
+        cached = cls._counts_by_city.get((osm_dir, slug))
+        if cached is None or cached[0] != version:
+            edges_fp = cls.artifact_path(osm_dir, slug, 'covered_edges.parquet')
+            df = pd.read_parquet(edges_fp) if edges_fp.exists() else None
             counts = {} if df is None else {
                 (int(u), int(v)): int(c) for (u, v), c in df.groupby(['u', 'v'])['activity_id'].nunique().items()}
-            self._counts_cache = (version, counts)
-        return self._counts_cache[1]
+            cached = cls._counts_by_city[(osm_dir, slug)] = (version, counts)
+        return cached[1]
 
     def save_match_state(
         self,
@@ -990,6 +1000,87 @@ class StravaMapMatcher:
             covered = self.covered_edge_set()
             out['covered'] = [(u, v) in covered for u, v in zip(us, vs)]
         self._flagged_cache[(streets_only, with_counts)] = (version, out)
+        return out
+
+    # Viewport index: the undirected edges in EPSG:4326, ordered along a
+    # Z-order curve of ~200 m cells and stored in small row groups, so the
+    # row-group bounds statistics let a viewport query skip most of the city.
+    VIEWPORT_CELL_DEG = 0.002
+    VIEWPORT_ROW_GROUP = 1024
+
+    @classmethod
+    def _viewport_index_path(cls, osm_dir: Path, slug: str) -> Path:
+        return cls.artifact_path(osm_dir, slug, 'viewport.parquet')
+
+    @classmethod
+    def has_viewport_index(cls, osm_dir: Path, slug: str) -> bool:
+        """Whether the viewport index exists and is newer than the street map."""
+        fp = cls._viewport_index_path(osm_dir, slug)
+        edges_fp = cls.artifact_path(osm_dir, slug, 'edges.parquet')
+        return fp.exists() and edges_fp.exists() and fp.stat().st_mtime_ns >= edges_fp.stat().st_mtime_ns
+
+    def write_viewport_index(self) -> None:
+        """Write the city's viewport index (see viewport_edges). It depends on
+        the street map only, not on coverage, so it is built once per map."""
+        und = self._undirected_gdf()
+        geoms = und.geometry.to_crs('EPSG:4326').values
+        bounds = shapely.bounds(geoms)
+        cells = ((bounds[:, :2] + bounds[:, 2:]) / 2 - bounds[:, :2].min(axis=0)) // self.VIEWPORT_CELL_DEG
+        order = np.argsort(self._z_order(cells[:, 0].astype(np.uint32), cells[:, 1].astype(np.uint32)), kind='stable')
+        table = pa.table({
+            'order': pa.array(order, pa.int32()),
+            'u': und['u'].to_numpy()[order],
+            'v': und['v'].to_numpy()[order],
+            'street': und['street'].to_numpy(dtype=bool)[order],
+            'name': pa.array(und['name'].to_numpy()[order], pa.string(), from_pandas=True),
+            'minx': bounds[order, 0], 'miny': bounds[order, 1],
+            'maxx': bounds[order, 2], 'maxy': bounds[order, 3],
+            'geometry': pa.array(shapely.to_wkb(geoms[order]), pa.binary()),
+        })
+        fp = self._viewport_index_path(self.workdir, self._slug())
+        tmp = fp.parent / f"{fp.name}.tmp{os.getpid()}"
+        pq.write_table(table, tmp, row_group_size=self.VIEWPORT_ROW_GROUP)
+        os.replace(tmp, fp)
+
+    @staticmethod
+    def _z_order(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """Morton code of 16-bit cell coordinates: nearby cells get nearby codes."""
+        def spread(n: np.ndarray) -> np.ndarray:
+            n = n & 0xFFFF
+            n = (n | (n << 8)) & 0x00FF00FF
+            n = (n | (n << 4)) & 0x0F0F0F0F
+            n = (n | (n << 2)) & 0x33333333
+            return (n | (n << 1)) & 0x55555555
+        return spread(x) | (spread(y) << 1)
+
+    @classmethod
+    def viewport_edges(cls, osm_dir: Path, slug: str, bbox: tuple[float, float, float, float],
+                       covered: bool, streets_only: bool = False,
+                       with_counts: bool = False) -> gpd.GeoDataFrame | None:
+        """The rows of undirected_with_covered (in its order, as EPSG:4326)
+        whose geometry intersects `bbox` (south, west, north, east), read from
+        the viewport index without loading the city. None when the index is
+        missing or older than the street map: build it with write_viewport_index."""
+        if not cls.has_viewport_index(osm_dir, slug):
+            return None
+        south, west, north, east = bbox
+        near = pq.read_table(cls._viewport_index_path(osm_dir, slug), filters=[('minx', '<=', east), ('maxx', '>=', west),
+                                          ('miny', '<=', north), ('maxy', '>=', south)])
+        geoms = shapely.from_wkb(near.column('geometry').to_numpy(zero_copy_only=False))
+        u = near.column('u').to_numpy()
+        v = near.column('v').to_numpy()
+        counts = cls.covered_edge_counts_of(osm_dir, slug)
+        times = np.array([counts.get((a, b), 0) for a, b in zip(u.tolist(), v.tolist())], dtype=np.int64)
+        keep = shapely.intersects(geoms, shapely.box(west, south, east, north)) & ((times > 0) == covered)
+        if streets_only:
+            keep &= near.column('street').to_numpy()
+        rows = np.flatnonzero(keep)
+        rows = rows[np.argsort(near.column('order').to_numpy()[rows], kind='stable')]
+        out = gpd.GeoDataFrame(
+            {'name': near.column('name').to_numpy(zero_copy_only=False)[rows]},
+            geometry=geoms[rows], crs='EPSG:4326')
+        if with_counts:
+            out['times'] = times[rows]
         return out
 
     @staticmethod
