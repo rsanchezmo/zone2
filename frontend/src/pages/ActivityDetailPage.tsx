@@ -1,7 +1,7 @@
 import { useMemo, useState, Component, type ReactNode } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
-  useActivity, useAthleteZones, useSimilarActivities, useActivityScore,
+  useActivity, useAthleteZones, useSimilarActivities, useActivityScore, useActivityRoute,
   type ActivityStreamPoint as StreamPoint, type ActivityPhoto as StravaPhoto,
   type ScoreMetric, type SegmentScore, type TrainingSession,
 } from '../api/hooks'
@@ -462,8 +462,15 @@ function ActivityDetailPageInner() {
   const { data: athleteZones } = useAthleteZones()
   const { data: similarActivities } = useSimilarActivities(Number(id))
   const { data: activityScore } = useActivityScore(Number(id))
+  const { data: matched } = useActivityRoute(Number(id))
   const { theme, colors } = useTheme()
   const isLight = theme === 'light'
+
+  // GeoJSON is [lon, lat]; Leaflet wants [lat, lon]
+  const matchedRoute = useMemo(
+    () => matched?.features.flatMap(f => f.geometry.coordinates.map(line => line.map(([lon, lat]) => [lat, lon] as [number, number]))),
+    [matched],
+  )
 
   const sportCategory = getSportCategory(activity?.sport_type)
   const useSpeedUnit = isSpeedSport(activity?.sport_type)
@@ -812,6 +819,8 @@ function ActivityDetailPageInner() {
               invertGradient={!useSpeedUnit}
               gradientFastLabel={gradientFastLabel}
               gradientSlowLabel={gradientSlowLabel}
+              matchedRoute={matchedRoute}
+              matchedLabel={matched?.features.map(f => f.properties.city_name).join(', ')}
             />
           </div>
         </section>

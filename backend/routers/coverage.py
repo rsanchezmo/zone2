@@ -189,9 +189,8 @@ def delete_city(slug: str):
     # Explicit artifact names — a bare glob on the slug prefix could match
     # another city whose slug extends this one.
     suffixes = [
-        "nodes.parquet", "edges.parquet", "boundary.parquet", "meta.json",
-        "covered_edges.parquet", "matched_activities.parquet", "stats.json",
-        *(f"matchgraph{s}" for s in StravaMapMatcher.MATCHER_MAP_SUFFIXES),
+        "edges.parquet", "connectors.parquet", "boundary.parquet", "meta.json",
+        "covered_edges.parquet", "matched_activities.parquet", "routes.parquet", "stats.json",
     ]
     paths = [_osm_dir() / f"{slug}_{s}" for s in suffixes]
     paths += _osm_dir().glob(f"{slug}_districts_*.parquet")
@@ -202,6 +201,20 @@ def delete_city(slug: str):
             removed += 1
     logger.info("Deleted city %s (%d files)", slug, removed)
     return {"status": "deleted", "files_removed": removed}
+
+
+@router.get("/routes/{activity_id}")
+def activity_route(activity_id: int):
+    """The activity's matched route in every coverage city that matched it,
+    as GeoJSON features (lines oriented in travel order); no features when
+    none has."""
+    features = []
+    for slug, city_name in _known_cities().items():
+        geometry = StravaMapMatcher.read_route(_osm_dir(), slug, activity_id)
+        if geometry is not None:
+            features.append({"type": "Feature", "geometry": geometry,
+                             "properties": {"slug": slug, "city_name": city_name}})
+    return {"type": "FeatureCollection", "features": features}
 
 
 @router.get("/{slug}/summary")

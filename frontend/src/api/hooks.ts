@@ -1679,6 +1679,23 @@ export type CoverageEdges = GeoJSON.FeatureCollection<
   { name: string | null; times?: number }
 >;
 
+/** An activity's route matched to a coverage city's streets; lines run in travel order. */
+export type ActivityRoute = GeoJSON.FeatureCollection<
+  GeoJSON.MultiLineString,
+  { slug: string; city_name: string }
+>;
+
+/** The activity's matched route, or null when no coverage city has matched it. */
+export function useActivityRoute(id: number) {
+  return useQuery<ActivityRoute | null>({
+    queryKey: ['activity-route', id],
+    queryFn: () => api.get<ActivityRoute>(`/coverage/routes/${id}`)
+      .then(r => (r.data.features.length > 0 ? r.data : null)),
+    enabled: !!id,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
 export function useCoverageCities() {
   return useQuery<CoverageSummary[]>({
     queryKey: ['coverage-cities'],

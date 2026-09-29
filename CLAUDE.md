@@ -89,7 +89,7 @@ Zone2
 
 ### Map Matching (separate entry point)
 
-`StravaMapMatcher` uses OSMnx + LeuvenMapMatching to match GPS tracks to OSM road networks. It operates on GeoDataFrames built from streams via `get_activities_as_gdf_from_streams()`. Returns `MatchResult` dataclass per activity.
+`StravaMapMatcher` (`zone2/map_matching.py`) matches each activity to one continuous route with the route-based HMM in `zone2/route_matching.py` (Newson & Krumm style: candidates per GPS point, transitions scored by network route vs straight distance, outliers skipped instead of breaking the chain). It routes on a walkable network: streets (`{slug}_edges.parquet`, the credited coverage network) plus connectors such as sidewalks, crossings and steps (`{slug}_connectors.parquet`, never credited), both built straight from Overpass (via OSMnx's client, no OSMnx graph). Streets are credited when the route walks half of them, beside sidewalks the route used, or as parallel ways alongside the GPS track; each activity's route is stored in `{slug}_routes.parquet` and served at `/api/coverage/routes/{activity_id}` for the activity map. Input comes from `get_activities_as_gdf_from_streams()`; `match()` returns a `MatchResult` per activity.
 
 ### Key Conventions
 
