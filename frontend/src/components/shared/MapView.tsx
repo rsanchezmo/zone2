@@ -76,20 +76,21 @@ function routeArrows(lines: [number, number][][], count: number): { position: [n
   return arrows
 }
 
-function createArrowIcon(heading: number, color: string) {
+/** White heads with a dark edge read as annotation on top of any route colour or basemap. */
+function createArrowIcon(heading: number) {
   return L.divIcon({
     className: '',
-    iconSize: [14, 14],
-    iconAnchor: [7, 7],
-    html: `<svg width="14" height="14" viewBox="0 0 14 14" style="transform: rotate(${heading}deg)" xmlns="http://www.w3.org/2000/svg">
-      <path d="M7 1 L12.5 12 L7 9 L1.5 12 Z" fill="${color}" stroke="#fff" stroke-width="1.2" stroke-linejoin="round"/>
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+    html: `<svg width="16" height="16" viewBox="0 0 14 14" style="transform: rotate(${heading}deg)" xmlns="http://www.w3.org/2000/svg">
+      <path d="M7 1 L12.5 12 L7 9 L1.5 12 Z" fill="#fff" stroke="rgba(13,17,23,0.85)" stroke-width="1.2" stroke-linejoin="round"/>
     </svg>`,
   })
 }
 
 /** Direction arrows along the matched route, spaced by screen distance so
  *  they stay readable at any zoom. */
-function RouteArrows({ lines, color }: { lines: [number, number][][]; color: string }) {
+function RouteArrows({ lines }: { lines: [number, number][][] }) {
   const map = useMap()
   const [zoom, setZoom] = useState(() => map.getZoom())
   const [bounds, setBounds] = useState(() => map.getBounds())
@@ -111,7 +112,7 @@ function RouteArrows({ lines, color }: { lines: [number, number][][]; color: str
   return (
     <>
       {arrows.map((a, i) => nearView.contains(a.position) && (
-        <Marker key={`${zoom}-${i}`} position={a.position} icon={createArrowIcon(a.heading, color)} interactive={false} />
+        <Marker key={`${zoom}-${i}`} position={a.position} icon={createArrowIcon(a.heading)} interactive={false} />
       ))}
     </>
   )
@@ -287,7 +288,7 @@ function MapView({ positions, color = '#ef4444', showMarkers = true, kmMarkers, 
             {matchedRoute!.map((line, i) => (
               <Polyline key={i} positions={line} pathOptions={{ color: routeColor, weight: 4, opacity: 0.95 }} />
             ))}
-            <RouteArrows lines={matchedRoute!} color={routeColor} />
+            <RouteArrows lines={matchedRoute!} />
           </>
         ) : gradientMode && gradientSegments.length > 0 ? (
           <>
