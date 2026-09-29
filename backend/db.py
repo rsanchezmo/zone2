@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
 CREATE TABLE IF NOT EXISTS garmin_daily_stats (
     date TEXT NOT NULL,
     metric TEXT NOT NULL,
-    payload TEXT NOT NULL,
+    payload TEXT NOT NULL,  -- zlib-compressed JSON (a BLOB), see zone2/garmin_cache.py
     fetched_at TEXT DEFAULT (datetime('now')),
     PRIMARY KEY (date, metric)
 );
