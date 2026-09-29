@@ -371,6 +371,10 @@ def coverage_summary(slug: str, streets_only: bool = Query(False)):
 
 _viewport_index_lock = Lock()
 
+# Part of the map layers' cache version: bump when their content changes for
+# the same coverage state, so responses persisted by older code aren't served.
+_LAYERS_FORMAT = 2
+
 
 def _parse_bbox(bbox: str) -> tuple[float, float, float, float]:
     try:
@@ -441,7 +445,8 @@ def coverage_edges(
         south, west, north, east = _parse_bbox(bbox)
         layer = _get_matcher(slug).walked_layer(streets_only=streets_only).cx[west:east, south:north]
         return _edges_to_geojson(layer, include_times=counts)
-    return _cached_json(("edges", slug, covered, streets_only, counts), _state_version(slug), build)
+    return _cached_json(("edges", slug, covered, streets_only, counts),
+                        _state_version(slug) + (_LAYERS_FORMAT,), build)
 
 
 @router.get("/{slug}/districts")
@@ -457,7 +462,7 @@ def coverage_districts(
         )
     districts_fp = StravaMapMatcher.artifact_path(_osm_dir(), slug, f"districts_{admin_level}.parquet")
     return _cached_json(("districts", slug, admin_level, geometry, streets_only),
-                        _state_version(slug, districts_fp), build)
+                        _state_version(slug, districts_fp) + (_LAYERS_FORMAT,), build)
 
 
 class AreaRequest(BaseModel):

@@ -360,6 +360,14 @@ export default function CoveragePage() {
     return features.length ? { type: 'FeatureCollection' as const, features } : null
   }, [districts])
 
+  // Shaded relative to the best-covered district (square root, so the low end
+  // still differs): every district is far from complete, and the tooltip has
+  // the real percentage.
+  const maxDistrictPct = useMemo(
+    () => (districts ?? []).reduce((m: number, d: DistrictCoverage) => Math.max(m, d.coverage_pct), 0),
+    [districts],
+  )
+
   const districtStyle = useCallback((feature?: GeoJSON.Feature): L.PathOptions => {
     const pct = (feature?.properties as { pct?: number } | null)?.pct ?? 0
     return {
@@ -367,9 +375,9 @@ export default function CoveragePage() {
       weight: 1,
       opacity: 0.35,
       fillColor: districtColor,
-      fillOpacity: 0.04 + 0.4 * Math.min(1, pct / 100),
+      fillOpacity: 0.04 + 0.42 * (maxDistrictPct > 0 ? Math.sqrt(Math.min(1, pct / maxDistrictPct)) : 0),
     }
-  }, [districtColor])
+  }, [districtColor, maxDistrictPct])
 
   const onDistrictFeature = useCallback((feature: GeoJSON.Feature, layer: L.Layer) => {
     const p = feature.properties as {
