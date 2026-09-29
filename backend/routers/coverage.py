@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 import numpy as np
 import shapely
 
-from backend._serialize import PackedJSON, PackedJSONResponse, json_bytes
+from backend._serialize import PackedJSON, PackedJSONResponse
 from backend.config import settings
 from backend.dependencies import get_z2
 from zone2.core import Zone2
@@ -371,8 +371,8 @@ def coverage_summary(slug: str, streets_only: bool = Query(False)):
 _viewport_index_lock = Lock()
 
 
-def _viewport_edges(slug: str, bbox: str, covered: bool, streets_only: bool, counts: bool):
-    """Edges intersecting the lat/lon bbox, from the city's viewport index:
+def _viewport_geojson(slug: str, bbox: str, covered: bool, streets_only: bool, counts: bool) -> bytes:
+    """GeoJSON of the edges intersecting the lat/lon bbox, from the city's viewport index:
     a pan reads only the index rows around it and never loads the city, except
     to build the index on the first pan of a city (or of a new street map)."""
     try:
@@ -381,16 +381,16 @@ def _viewport_edges(slug: str, bbox: str, covered: bool, streets_only: bool, cou
         raise HTTPException(status_code=400, detail="bbox must be south,west,north,east")
 
     def query():
-        return StravaMapMatcher.viewport_edges(_osm_dir(), slug, (south, west, north, east), covered=covered,
-                                               streets_only=streets_only, with_counts=counts)
-    edges = query()
-    if edges is None:
+        return StravaMapMatcher.viewport_geojson(_osm_dir(), slug, (south, west, north, east), covered=covered,
+                                                 streets_only=streets_only, with_counts=counts)
+    body = query()
+    if body is None:
         with _viewport_index_lock:
-            edges = query()
-            if edges is None:
+            body = query()
+            if body is None:
                 _get_matcher(slug).write_viewport_index()
-                edges = query()
-    return edges
+                body = query()
+    return body
 
 
 def _edges_to_geojson(subset, include_times: bool = False) -> dict:
@@ -405,17 +405,8 @@ def _edges_to_geojson(subset, include_times: bool = False) -> dict:
     rounded = [[round(x, 6), round(y, 6)] for x, y in xy.tolist()]
     starts = [0, *ends[:-1]]
     for start, end, name, t in zip(starts, ends, names, times):
-        if start == end:
-            continue
-        coords = rounded[start:end]
-        props = {"name": None if name is None or str(name) == "nan" else str(name)}
-        if t is not None:
-            props["times"] = int(t)
-        features.append({
-            "type": "Feature",
-            "geometry": {"type": "LineString", "coordinates": coords},
-            "properties": props,
-        })
+        if start < end:
+            features.append(StravaMapMatcher.edge_feature(rounded[start:end], name, t))
     return {"type": "FeatureCollection", "features": features}
 
 
@@ -433,10 +424,8 @@ def coverage_edges(
         raise HTTPException(status_code=400, detail="bbox is required for covered=false")
 
     if bbox:
-        # A new bbox on every pan: not worth caching. Pre-rendered, since
-        # FastAPI's encoder would walk every coordinate.
-        geojson = _edges_to_geojson(_viewport_edges(slug, bbox, covered, streets_only, counts), include_times=counts)
-        return Response(json_bytes(geojson), media_type="application/json")
+        # A new bbox on every pan: not cached, served from the viewport index
+        return Response(_viewport_geojson(slug, bbox, covered, streets_only, counts), media_type="application/json")
 
     def build():
         und = _get_matcher(slug).undirected_with_covered(streets_only=streets_only, with_counts=counts)
