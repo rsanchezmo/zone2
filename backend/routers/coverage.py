@@ -154,15 +154,67 @@ def add_city_status():
         return dict(_add_status)
 
 
+def _nominatim(endpoint: str, **params) -> list | dict:
+    import requests
+    import osmnx as ox
+
+    return requests.get(f"{ox.settings.nominatim_url.rstrip('/')}/{endpoint}", params={"format": "json", **params},
+                        headers={"User-Agent": ox.settings.http_user_agent}, timeout=30).json()
+
+
+def _containing_area(point: dict) -> dict | None:
+    """For a place Nominatim has only as a point (e.g. a village), the
+    smallest boundary around it that can be added instead: town, then city,
+    then county level. Only a name that geocodes back to that same boundary
+    is suggested, since cities are added (and later re-geocoded) by name."""
+    import osmnx as ox
+
+    seen: set[int] = set()
+    for zoom in (12, 10, 8):  # Nominatim reverse zoom levels for town, city, county
+        time.sleep(1)  # Nominatim usage policy: at most one request per second
+        area = _nominatim("reverse", lat=point["lat"], lon=point["lon"], zoom=zoom, addressdetails=1)
+        if area.get("osm_type") != "relation" or area.get("osm_id") in seen:
+            continue
+        seen.add(area["osm_id"])
+        address = area.get("address", {})
+        name = ", ".join(p for p in (area.get("name"), address.get("state"), address.get("country")) if p)
+        try:
+            gdf = ox.geocode_to_gdf(name)
+        except Exception:
+            continue
+        if int(gdf.iloc[0].get("osm_id", -1)) != int(area["osm_id"]):
+            continue
+        km2 = float(gdf.to_crs(gdf.estimate_utm_crs()).area.iloc[0]) / 1e6
+        return {"query": name, "display_name": str(gdf.iloc[0].get("display_name", name)), "area_km2": round(km2, 1)}
+    return None
+
+
 @router.get("/geocode")
 def geocode_city(q: str = Query(min_length=3)):
     """Preview what a city query resolves to before downloading it.
     Guards against Nominatim surprises (bare 'Amsterdam' → New York City,
-    whose historical name is New Amsterdam)."""
+    whose historical name is New Amsterdam). A place mapped only as a point
+    has no boundary to cover, so the preview then carries `point_only` and
+    suggests the area around it (`suggestion`, None when there is none)."""
     import osmnx as ox
 
     try:
         gdf = ox.geocode_to_gdf(q)
+    except TypeError:
+        # osmnx raises TypeError when the place's geometry isn't a (Multi)Polygon
+        hits = _nominatim("search", q=q, limit=1)
+        if not hits:
+            raise HTTPException(status_code=404, detail=f"'{q}' not found")
+        south, north, west, east = (float(v) for v in hits[0]["boundingbox"])
+        return {
+            "query": q,
+            "display_name": hits[0]["display_name"],
+            "lat": float(hits[0]["lat"]),
+            "lon": float(hits[0]["lon"]),
+            "bbox": {"south": south, "west": west, "north": north, "east": east},
+            "point_only": True,
+            "suggestion": _containing_area(hits[0]),
+        }
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"{type(e).__name__}: {e}")
     west, south, east, north = (float(v) for v in gdf.total_bounds)
