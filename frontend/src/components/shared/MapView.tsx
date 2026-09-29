@@ -1,4 +1,4 @@
-import { MapContainer, TileLayer, Polyline, Marker, Tooltip, CircleMarker, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Polyline, Marker, Tooltip, CircleMarker, useMap, useMapEvents } from 'react-leaflet'
 import { memo, useState, useEffect, useMemo } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -43,6 +43,81 @@ function createEndIcon() {
     </svg>`,
   })
 }
+
+/** Evenly spaced arrows along the lines, each with its heading of travel in
+ *  degrees clockwise from north. */
+function routeArrows(lines: [number, number][][], count: number): { position: [number, number]; heading: number }[] {
+  const step = (a: [number, number], b: [number, number]) => {
+    const dLat = b[0] - a[0]
+    const dLon = (b[1] - a[1]) * Math.cos((a[0] * Math.PI) / 180)
+    return { dLat, dLon, len: Math.hypot(dLat, dLon) }
+  }
+  let total = 0
+  for (const line of lines) for (let i = 1; i < line.length; i++) total += step(line[i - 1], line[i]).len
+  if (total === 0) return []
+  const spacing = total / count
+  const arrows: { position: [number, number]; heading: number }[] = []
+  let next = spacing / 2
+  let walked = 0
+  for (const line of lines) {
+    for (let i = 1; i < line.length; i++) {
+      const { dLat, dLon, len } = step(line[i - 1], line[i])
+      while (len > 0 && walked + len >= next) {
+        const t = (next - walked) / len
+        arrows.push({
+          position: [line[i - 1][0] + t * (line[i][0] - line[i - 1][0]), line[i - 1][1] + t * (line[i][1] - line[i - 1][1])],
+          heading: (Math.atan2(dLon, dLat) * 180) / Math.PI,
+        })
+        next += spacing
+      }
+      walked += len
+    }
+  }
+  return arrows
+}
+
+function createArrowIcon(heading: number, color: string) {
+  return L.divIcon({
+    className: '',
+    iconSize: [14, 14],
+    iconAnchor: [7, 7],
+    html: `<svg width="14" height="14" viewBox="0 0 14 14" style="transform: rotate(${heading}deg)" xmlns="http://www.w3.org/2000/svg">
+      <path d="M7 1 L12.5 12 L7 9 L1.5 12 Z" fill="${color}" stroke="#fff" stroke-width="1.2" stroke-linejoin="round"/>
+    </svg>`,
+  })
+}
+
+/** Direction arrows along the matched route, spaced by screen distance so
+ *  they stay readable at any zoom. */
+function RouteArrows({ lines, color }: { lines: [number, number][][]; color: string }) {
+  const map = useMap()
+  const [zoom, setZoom] = useState(() => map.getZoom())
+  const [bounds, setBounds] = useState(() => map.getBounds())
+  useMapEvents({
+    zoomend: () => setZoom(map.getZoom()),
+    moveend: () => setBounds(map.getBounds()),
+  })
+  const arrows = useMemo(() => {
+    let px = 0
+    for (const line of lines) {
+      for (let i = 1; i < line.length; i++) {
+        px += map.project(line[i - 1], zoom).distanceTo(map.project(line[i], zoom))
+      }
+    }
+    return routeArrows(lines, Math.max(2, Math.round(px / ARROW_SPACING_PX)))
+  }, [lines, map, zoom])
+  // Only the arrows around the viewport are rendered, so zooming in on a long run stays light
+  const nearView = bounds.pad(0.5)
+  return (
+    <>
+      {arrows.map((a, i) => nearView.contains(a.position) && (
+        <Marker key={`${zoom}-${i}`} position={a.position} icon={createArrowIcon(a.heading, color)} interactive={false} />
+      ))}
+    </>
+  )
+}
+
+const ARROW_SPACING_PX = 80
 
 export interface KmMarker {
   position: [number, number]
@@ -90,19 +165,26 @@ interface MapViewProps {
   gradientFastLabel?: string
   /** Formatted slow pace/speed label for legend, e.g. "6:20 min/km" */
   gradientSlowLabel?: string
+  /** The route matched to OSM streets, lines in travel order, when a coverage city matched the activity */
+  matchedRoute?: [number, number][][]
+  /** Where the route was matched, e.g. "Madrid, Spain" */
+  matchedLabel?: string
 }
 
 /** Number of quantized gradient colors; consecutive same-color spans merge into one polyline layer. */
 const GRADIENT_STEPS = 16
 
-function MapView({ positions, color = '#ef4444', showMarkers = true, kmMarkers, velocities, invertGradient = true, gradientFastLabel, gradientSlowLabel }: MapViewProps) {
+function MapView({ positions, color = '#ef4444', showMarkers = true, kmMarkers, velocities, invertGradient = true, gradientFastLabel, gradientSlowLabel, matchedRoute, matchedLabel }: MapViewProps) {
   const { theme, colors } = useTheme()
   const isLight = theme === 'light'
   const { cartoApiKey, pending: configPending } = useAppConfig()
   const [expanded, setExpanded] = useState(false)
   const [gradientMode, setGradientMode] = useState(false)
   const [mapStyle, setMapStyle] = useState<MapStyle>('street')
+  const [showMatched, setShowMatched] = useState(true)
   const hasVelocities = velocities && velocities.length === positions.length
+  const hasMatched = !!matchedRoute && matchedRoute.length > 0
+  const matchedMode = hasMatched && showMatched
 
   const startIcon = useMemo(() => createStartIcon(), [])
   const endIcon = useMemo(() => createEndIcon(), [])
@@ -198,7 +280,16 @@ function MapView({ positions, color = '#ef4444', showMarkers = true, kmMarkers, 
             className={isSatellite ? 'satellite-tiles' : tileLayerClass(cartoApiKey)}
           />
         )}
-        {gradientMode && gradientSegments.length > 0 ? (
+        {matchedMode ? (
+          <>
+            {/* The raw GPS stays as a faint reference under the matched route */}
+            <Polyline positions={positions} pathOptions={{ color: routeColor, weight: 3, opacity: 0.25 }} />
+            {matchedRoute!.map((line, i) => (
+              <Polyline key={i} positions={line} pathOptions={{ color: routeColor, weight: 4, opacity: 0.95 }} />
+            ))}
+            <RouteArrows lines={matchedRoute!} color={routeColor} />
+          </>
+        ) : gradientMode && gradientSegments.length > 0 ? (
           <>
             {/* Glow layer for gradient */}
             <Polyline
@@ -288,8 +379,28 @@ function MapView({ positions, color = '#ef4444', showMarkers = true, kmMarkers, 
           )}
         />
 
+        {/* Matched route toggle */}
+        {hasMatched && (
+          <button
+            onClick={() => setShowMatched(m => !m)}
+            className={clsx(
+              'bg-surface-800/90 border rounded-lg p-2 transition-colors backdrop-blur-sm',
+              showMatched
+                ? 'border-sky-500/50 text-sky-400 hover:bg-surface-700'
+                : 'border-surface-600 text-gray-400 hover:bg-surface-700',
+              isLight ? 'hover:text-gray-900' : 'hover:text-white'
+            )}
+            title={showMatched ? 'Show the raw GPS track' : 'Show the route matched to streets'}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M2 13 L6 5 L10 10 L14 3" />
+              <path d="M11 3 L14 3 L14 6" />
+            </svg>
+          </button>
+        )}
+
         {/* Gradient toggle */}
-        {hasVelocities && (
+        {hasVelocities && !matchedMode && (
           <button
             onClick={() => setGradientMode(g => !g)}
             className={clsx(
@@ -335,8 +446,17 @@ function MapView({ positions, color = '#ef4444', showMarkers = true, kmMarkers, 
         </button>
       </div>
 
+      {/* Matched route legend */}
+      {matchedMode && (
+        <div className="absolute bottom-3 left-3 z-[1000] bg-surface-800/90 border border-surface-600 rounded-lg px-3 py-1.5 backdrop-blur-sm">
+          <span className="text-[10px] text-gray-300 whitespace-nowrap">
+            Matched to streets{matchedLabel ? ` · ${matchedLabel}` : ''}
+          </span>
+        </div>
+      )}
+
       {/* Gradient legend */}
-      {gradientMode && hasVelocities && (
+      {gradientMode && hasVelocities && !matchedMode && (
         <div className="absolute bottom-3 left-3 z-[1000] bg-surface-800/90 border border-surface-600 rounded-lg px-3 py-2 backdrop-blur-sm">
           <div className="flex items-center gap-2">
             <span className="text-[10px] text-green-400 font-medium whitespace-nowrap">
