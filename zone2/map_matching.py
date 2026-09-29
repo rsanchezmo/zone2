@@ -914,6 +914,8 @@ class StravaMapMatcher:
         if cached is not None and cached[0] == version:
             return cached[1]
         stretches, _ = self.walked_state_of(self.workdir, self._slug())
+        # Least run first, so where lines touch the busiest stretch is drawn on top
+        stretches = stretches.sort_values('times', kind='stable')
         walk = self._walkable_network()
         ways = stretches['way'].to_numpy()
         if streets_only:
@@ -1210,34 +1212,31 @@ class StravaMapMatcher:
         logger.info("Downloading admin_level=%d boundaries for %s...", admin_level, self.city_name)
         ox = _import_osmnx()
         boundary_4326 = self._city_boundary.to_crs('EPSG:4326').union_all()
-        try:
-            # osmnx ORs the tags dict, so admin_level must be filtered afterwards
-            feats = ox.features_from_polygon(
-                boundary_4326,
-                tags={'boundary': 'administrative', 'admin_level': str(admin_level)},
-            )
-            if 'admin_level' in feats.columns:
-                feats = feats[feats['admin_level'] == str(admin_level)]
-            polys = self._named_polygons(feats)
-        except ox._errors.InsufficientResponseError:
-            polys = None
+        city = self._city_boundary.union_all()
 
-        if polys is None or len(polys) < 2:
+        def fetch(tags: dict, admin_level_tag: str | None = None) -> gpd.GeoDataFrame:
+            """Named polygons within the city (the query polygon is a bbox-ish
+            hull, so polygons merely touching it are dropped), same-named parts merged."""
+            try:
+                feats = ox.features_from_polygon(boundary_4326, tags=tags)
+            except ox._errors.InsufficientResponseError:
+                return gpd.GeoDataFrame({'name': []}, geometry=[], crs=self._edges_gdf.crs)
+            if admin_level_tag is not None and 'admin_level' in feats.columns:
+                # osmnx ORs the tags dict, so admin_level must be filtered afterwards
+                feats = feats[feats['admin_level'] == admin_level_tag]
+            polys = self._named_polygons(feats)
+            polys = gpd.GeoDataFrame({'name': polys['name'].to_numpy() if 'name' in polys else []},
+                                     geometry=polys.geometry.values, crs=polys.crs).to_crs(self._edges_gdf.crs)
+            polys = polys[polys.representative_point().within(city)]
+            return polys.dissolve(by='name', as_index=False)[['name', 'geometry']]
+
+        polys = fetch({'boundary': 'administrative', 'admin_level': str(admin_level)}, str(admin_level))
+        if len(polys) < 2 or not self._subdivides_city(polys):
             place_values = (['borough', 'suburb', 'city_district'] if admin_level <= 9
                             else ['quarter', 'neighbourhood'])
-            logger.info("No admin boundaries at level %d for %s; falling back to place=%s",
-                        admin_level, self.city_name, place_values)
-            try:
-                feats = ox.features_from_polygon(boundary_4326, tags={'place': place_values})
-                polys = self._named_polygons(feats)
-            except ox._errors.InsufficientResponseError:
-                polys = gpd.GeoDataFrame({'name': []}, geometry=[], crs='EPSG:4326')
-
-        polys = polys[['name', 'geometry']].reset_index(drop=True)
-        polys = polys.to_crs(self._edges_gdf.crs)
-        # The query polygon is a bbox-ish hull; drop polygons merely touching it
-        polys = polys[polys.representative_point().within(self._city_boundary.union_all())]
-        polys = polys.drop_duplicates('name').reset_index(drop=True)
+            logger.info("No admin boundaries subdividing %s at level %d; falling back to place=%s",
+                        self.city_name, admin_level, place_values)
+            polys = fetch({'place': place_values})
         # Persist the whole-city fallback when OSM has nothing, so we don't
         # re-hit Overpass on every request; a real but sparse set is kept as-is
         # and collapsed at read time by _with_city_fallback.
@@ -1253,28 +1252,54 @@ class StravaMapMatcher:
         geom = self._city_boundary.union_all()
         return gpd.GeoDataFrame({'name': [name]}, geometry=[geom], crs=self._city_boundary.crs)
 
+    def _subdivides_city(self, polys: gpd.GeoDataFrame) -> bool:
+        """Whether the polygons (in the city's CRS) cover enough of it to be a real subdivision."""
+        city = self._city_boundary.union_all()
+        return (len(polys) > 0 and city.area > 0
+                and polys.union_all().intersection(city).area / city.area >= self.MIN_DISTRICT_COVERAGE)
+
     def _with_city_fallback(self, polys: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         """Collapse to a whole-city district when the mapped polygons cover too
         little of the city to be a real subdivision. Applied to both freshly
         fetched and cached polygons, so cities OSM doesn't subdivide (and any
         stale sparse cache) stay usable without re-querying OSM."""
-        if len(polys):
-            city_area = self._city_boundary.union_all().area
-            if city_area > 0 and polys.union_all().area / city_area >= self.MIN_DISTRICT_COVERAGE:
-                return polys
-        return self._city_polygon_fallback()
+        return polys if self._subdivides_city(polys) else self._city_polygon_fallback()
 
     @staticmethod
-    def _scoped_stats(scoped: gpd.GeoDataFrame) -> dict:
-        total_m = float(scoped['length'].sum())
-        covered_m = float(scoped['covered_m'].sum())
+    def _scoped_stats(total_m: float, covered_m: float, num_streets: float, num_covered: float) -> dict:
+        total_m, covered_m = float(total_m), float(covered_m)
         return {
             'total_km': round(total_m / 1000, 2),
             'covered_km': round(covered_m / 1000, 2),
             'coverage_pct': round(100 * covered_m / total_m, 2) if total_m > 0 else 0.0,
-            'num_streets': int(len(scoped)),
-            'num_covered_streets': int(scoped['covered'].sum()),
+            'num_streets': int(round(num_streets)),
+            'num_covered_streets': int(round(num_covered)),
         }
+
+    # A segment whose midpoint lies within this distance of a district border
+    # is on it (district borders mostly run along streets).
+    DISTRICT_BORDER_M = 1.0
+
+    def _district_shares(self, und: gpd.GeoDataFrame, districts: gpd.GeoDataFrame) -> pd.DataFrame:
+        """Each segment's share of each district (columns seg: row of und,
+        district, share): all of it for the district containing its midpoint
+        (the smallest, where place polygons nest); a street on a border is
+        split evenly between the districts it borders; the few outside every
+        polygon go to the nearest. A segment's shares sum to 1, so the
+        districts add up to the city."""
+        pts = gpd.GeoDataFrame({'seg': np.arange(len(und))}, geometry=und.representative_point().values, crs=und.crs)
+        polys = gpd.GeoDataFrame({'district': districts['name'].to_numpy(), 'area': districts.area.to_numpy()},
+                                 geometry=districts.geometry.values, crs=districts.crs)
+        inside = (gpd.sjoin(pts, polys, predicate='within', how='inner')
+                  .sort_values('area').drop_duplicates('seg')[['seg', 'district']])
+        rest = pts[~pts['seg'].isin(inside['seg'])]
+        border = gpd.sjoin(rest, polys.assign(geometry=polys.buffer(self.DISTRICT_BORDER_M)),
+                           predicate='within', how='inner')[['seg', 'district']]
+        rest = rest[~rest['seg'].isin(border['seg'])]
+        nearest = gpd.sjoin_nearest(rest, polys, how='inner').drop_duplicates('seg')[['seg', 'district']]
+        shares = pd.concat([inside, border, nearest], ignore_index=True)
+        shares['share'] = 1.0 / shares.groupby('seg')['seg'].transform('size')
+        return shares
 
     @staticmethod
     def _round_coords(obj: list | float) -> list | float:
@@ -1286,24 +1311,29 @@ class StravaMapMatcher:
                              streets_only: bool = False) -> list[dict]:
         """Coverage stats per administrative district, best-covered first.
 
-        Edges are assigned to the district containing their representative
-        point, so border streets count exactly once. With include_geometry,
+        Segments count for their district, border streets split between the
+        districts they border (see _district_shares). With include_geometry,
         each district carries its simplified boundary as a GeoJSON geometry.
         """
         districts = self.load_districts(admin_level)
         und = self.undirected_with_covered(streets_only=streets_only)
-        pts = und.copy()
-        pts['geometry'] = und.representative_point()
-        joined = gpd.sjoin(pts, districts[['name', 'geometry']],
-                           predicate='within', how='inner')
+        shares = self._district_shares(und, districts)
+        seg, share = shares['seg'].to_numpy(), shares['share'].to_numpy()
+        per_district = pd.DataFrame({
+            'district': shares['district'].to_numpy(),
+            'total_m': und['length'].to_numpy()[seg] * share,
+            'covered_m': und['covered_m'].to_numpy()[seg] * share,
+            'num_streets': share,
+            'num_covered': und['covered'].to_numpy()[seg] * share,
+        }).groupby('district').sum()
 
         geoms_4326 = None
         if include_geometry:
             geoms_4326 = districts.set_index('name').geometry.simplify(20).to_crs('EPSG:4326')
 
         results = []
-        for name, group in joined.groupby('name_right' if 'name_right' in joined.columns else 'name'):
-            stats = self._scoped_stats(group)
+        for name, row in per_district.iterrows():
+            stats = self._scoped_stats(row['total_m'], row['covered_m'], row['num_streets'], row['num_covered'])
             geom = districts.loc[districts['name'] == name, 'geometry']
             bounds = gpd.GeoSeries(geom, crs=districts.crs).to_crs('EPSG:4326').total_bounds
             entry = {
@@ -1329,7 +1359,7 @@ class StravaMapMatcher:
         poly_proj = gpd.GeoSeries([poly], crs='EPSG:4326').to_crs(self._edges_gdf.crs).iloc[0]
         und = self.undirected_with_covered(streets_only=streets_only)
         inside = und[und.representative_point().within(poly_proj)]
-        return self._scoped_stats(inside)
+        return self._scoped_stats(inside['length'].sum(), inside['covered_m'].sum(), len(inside), inside['covered'].sum())
 
     def plot_coverage(
         self,
