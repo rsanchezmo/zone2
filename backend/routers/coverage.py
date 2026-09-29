@@ -325,8 +325,8 @@ def delete_city(slug: str):
     # Explicit artifact names — a bare glob on the slug prefix could match
     # another city whose slug extends this one.
     suffixes = [
-        "edges.parquet", "connectors.parquet", "boundary.parquet", "meta.json",
-        "covered_edges.parquet", "matched_activities.parquet", "routes.parquet", "stats.json",
+        "edges.parquet", "connectors.parquet", "boundary.parquet", "meta.json", "viewport.parquet",
+        "walked.parquet", "covered_edges.parquet", "matched_activities.parquet", "routes.parquet", "stats.json",
     ]
     paths = [_osm_dir() / f"{slug}_{s}" for s in suffixes]
     paths += _osm_dir().glob(f"{slug}_districts_*.parquet")
@@ -371,18 +371,24 @@ def coverage_summary(slug: str, streets_only: bool = Query(False)):
 _viewport_index_lock = Lock()
 
 
-def _viewport_geojson(slug: str, bbox: str, covered: bool, streets_only: bool, counts: bool) -> bytes:
-    """GeoJSON of the edges intersecting the lat/lon bbox, from the city's viewport index:
-    a pan reads only the index rows around it and never loads the city, except
-    to build the index on the first pan of a city (or of a new street map)."""
+def _parse_bbox(bbox: str) -> tuple[float, float, float, float]:
     try:
         south, west, north, east = (float(x) for x in bbox.split(","))
     except ValueError:
         raise HTTPException(status_code=400, detail="bbox must be south,west,north,east")
+    return south, west, north, east
+
+
+def _missing_geojson(slug: str, bbox: str, streets_only: bool, counts: bool) -> bytes:
+    """GeoJSON of what is left to run in the lat/lon bbox, from the city's
+    viewport index: a pan reads only the index rows around it and never loads
+    the city, except to build the index on the first pan of a city (or of a
+    new street map)."""
+    box = _parse_bbox(bbox)
 
     def query():
-        return StravaMapMatcher.viewport_geojson(_osm_dir(), slug, (south, west, north, east), covered=covered,
-                                                 streets_only=streets_only, with_counts=counts)
+        return StravaMapMatcher.viewport_missing_geojson(_osm_dir(), slug, box, streets_only=streets_only,
+                                                         with_counts=counts)
     body = query()
     if body is None:
         with _viewport_index_lock:
@@ -416,20 +422,24 @@ def coverage_edges(
     covered: bool = Query(True),
     bbox: str | None = Query(None, description="south,west,north,east — required for covered=false"),
     streets_only: bool = Query(False),
-    counts: bool = Query(False, description="Include per-edge traversal count as `times`"),
+    counts: bool = Query(False, description="Include per-stretch run count as `times`"),
 ):
-    """Runnable edges as GeoJSON. Covered edges are few; uncovered edges are
-    the whole city, so they must be bounded by a bbox."""
+    """covered: the stretches the matched routes walked, exactly as run
+    (sidewalks and crossings included), with how many runs walked each.
+    Otherwise what is left to run: street-network edges minus their walked
+    stretches, which is most of the city, so it must be bounded by a bbox."""
     if not covered and not bbox:
         raise HTTPException(status_code=400, detail="bbox is required for covered=false")
-
-    if bbox:
+    if not covered:
         # A new bbox on every pan: not cached, served from the viewport index
-        return Response(_viewport_geojson(slug, bbox, covered, streets_only, counts), media_type="application/json")
+        return Response(_missing_geojson(slug, bbox, streets_only, counts), media_type="application/json")
 
     def build():
-        und = _get_matcher(slug).undirected_with_covered(streets_only=streets_only, with_counts=counts)
-        return _edges_to_geojson(und[und["covered"] == covered].to_crs("EPSG:4326"), include_times=counts)
+        return _edges_to_geojson(_get_matcher(slug).walked_layer(streets_only=streets_only), include_times=counts)
+    if bbox:
+        south, west, north, east = _parse_bbox(bbox)
+        layer = _get_matcher(slug).walked_layer(streets_only=streets_only).cx[west:east, south:north]
+        return _edges_to_geojson(layer, include_times=counts)
     return _cached_json(("edges", slug, covered, streets_only, counts), _state_version(slug), build)
 
 
