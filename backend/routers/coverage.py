@@ -1,4 +1,5 @@
 import ctypes
+import gc
 import hashlib
 import json
 import logging
@@ -29,6 +30,10 @@ logger = logging.getLogger(__name__)
 _MAX_LOADED_CITIES = 3
 _matchers: "OrderedDict[str, StravaMapMatcher]" = OrderedDict()
 _matchers_lock = Lock()
+# ...and are unloaded once unused this long: the map layers are served from
+# disk, so a city is only needed for area queries, syncs and index builds.
+_CITY_IDLE_S = 600
+_matcher_used: dict[str, float] = {}   # slug -> time.monotonic() of last use
 
 # Serialized map-layer responses, reused until a sync rewrites the city's
 # coverage state (the key's version is its state files' mtimes). They are
@@ -73,6 +78,7 @@ def _get_matcher(slug: str) -> StravaMapMatcher:
     with _matchers_lock:
         if slug in _matchers:
             _matchers.move_to_end(slug)
+            _matcher_used[slug] = time.monotonic()
             return _matchers[slug]
         matcher = StravaMapMatcher(city_name=cities[slug], workdir=Path(settings.workdir))
         _remember_matcher_locked(slug, matcher)
@@ -82,8 +88,25 @@ def _get_matcher(slug: str) -> StravaMapMatcher:
 def _remember_matcher_locked(slug: str, matcher: StravaMapMatcher) -> None:
     _matchers[slug] = matcher
     _matchers.move_to_end(slug)
+    _matcher_used[slug] = time.monotonic()
     while len(_matchers) > _MAX_LOADED_CITIES:
         _matchers.popitem(last=False)
+
+
+def unload_idle_cities() -> list[str]:
+    """Drop the cities unused for _CITY_IDLE_S (a request or sync already
+    holding one keeps it until done) and hand the memory back to the OS.
+    Returns the slugs unloaded."""
+    now = time.monotonic()
+    with _matchers_lock:
+        idle = [slug for slug in _matchers if now - _matcher_used.get(slug, 0.0) >= _CITY_IDLE_S]
+        for slug in idle:
+            del _matchers[slug]
+    if idle:
+        gc.collect()
+        _return_freed_memory()
+        logger.info("Unloaded idle coverage cities: %s", ", ".join(idle))
+    return idle
 
 
 def _responses_dir() -> Path:
