@@ -939,6 +939,10 @@ class StravaMapMatcher:
         """Whether an edge is a street (has a runnable class beyond paths/trails)."""
         return bool(self._as_tags(highway) - self.PATH_HIGHWAYS)
 
+    def _street_flags(self, highway: pd.Series) -> np.ndarray:
+        """_is_street per edge, evaluated once per distinct highway value."""
+        return highway.map({h: self._is_street(h) for h in highway.unique()}).to_numpy(dtype=bool)
+
     def _undirected_gdf(self) -> gpd.GeoDataFrame:
         """Unique undirected edges with geometry — the serving/aggregation view."""
         if self._und_gdf is None:
@@ -952,7 +956,7 @@ class StravaMapMatcher:
                     'length': self._edges_gdf['length'].to_numpy(),
                     'name': (self._edges_gdf['name'].to_numpy()
                              if 'name' in self._edges_gdf.columns else None),
-                    'street': ([self._is_street(h) for h in self._edges_gdf['highway']]
+                    'street': (self._street_flags(self._edges_gdf['highway'])
                                if 'highway' in self._edges_gdf.columns else True),
                 },
                 geometry=self._edges_gdf.geometry.values,

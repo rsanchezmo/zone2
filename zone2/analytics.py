@@ -11,7 +11,7 @@ from zone2.user_cache import StravaUserCache
 from zone2.utils import (
     vo2_max, get_sport_category, vdot_from_time_distance,
     predicted_time_from_vdot, riegel_predict, fit_riegel_exponent,
-    compute_trimp_banister, compute_trimp_zone_weighted,
+    compute_trimp_banister, compute_trimp_zone_weighted, df_rows,
 )
 
 logger = logging.getLogger(__name__)
@@ -861,7 +861,7 @@ class StravaAnalytics:
             efforts_by_id = self._activity_best_efforts(sport_category, cat_ids)
 
             rows: list[dict] = []
-            for _, row in cat_acts.iterrows():
+            for row in df_rows(cat_acts, "id", "name", "start_date_local", "workout_type", "average_heartrate"):
                 efforts = efforts_by_id.get(int(row.get("id"))) if row.get("id") is not None else None
                 if not efforts:
                     continue
@@ -1896,7 +1896,7 @@ class StravaAnalytics:
                     "activity_name": str(r.get("activity_name", "") or ""),
                     "distance_km": round(float(r["distance_m"]) / 1000, 2),
                 }
-                for _, r in per_act.iterrows()
+                for r in df_rows(per_act, "date", "vdot", "activity_name", "distance_m")
             ]
 
         # Demonstrated-fitness envelope: 28-day rolling max of best-effort

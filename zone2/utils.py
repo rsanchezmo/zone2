@@ -24,6 +24,12 @@ SPEED_SPORTS = {
 }
 
 
+def df_rows(df: pd.DataFrame, *columns: str) -> list[dict]:
+    """df's rows as dicts of the given columns (those it has): far cheaper
+    than iterrows, which builds a Series per row."""
+    return df[[c for c in columns if c in df.columns]].to_dict("records")
+
+
 def get_sport_category(sport_type: str | None) -> str:
     """
     Determine the sport category from sport type.

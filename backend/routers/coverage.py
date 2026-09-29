@@ -1,5 +1,7 @@
+import hashlib
 import json
 import logging
+import os
 import time
 from collections import OrderedDict
 from collections.abc import Callable
@@ -8,7 +10,10 @@ from threading import Lock
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
+import geopandas as gpd
+import shapely
 
+from backend._serialize import PackedJSON, PackedJSONResponse
 from backend.config import settings
 from backend.dependencies import get_z2
 from zone2.core import Zone2
@@ -18,16 +23,18 @@ from zone2.utils import get_activities_as_gdf_from_streams
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Each loaded city holds its street network in memory (~300 MB for Madrid);
+# Each loaded city holds its street network in memory (~140 MB for Madrid);
 # only the most recently used ones stay loaded.
 _MAX_LOADED_CITIES = 3
 _matchers: "OrderedDict[str, StravaMapMatcher]" = OrderedDict()
 _matchers_lock = Lock()
 
 # Serialized map-layer responses, reused until a sync rewrites the city's
-# coverage state (the key's version is its state files' mtimes).
+# coverage state (the key's version is its state files' mtimes). They are
+# also persisted under osm_maps/responses, so a restart doesn't load a city
+# just to redraw the same layers.
 _MAX_CACHED_RESPONSES = 32
-_responses: "OrderedDict[tuple, tuple[tuple, bytes]]" = OrderedDict()
+_responses: "OrderedDict[tuple, tuple[tuple, PackedJSON]]" = OrderedDict()
 _responses_lock = Lock()
 
 # Per-city sync status; matching runs in a BackgroundTasks thread.
@@ -78,19 +85,47 @@ def _remember_matcher_locked(slug: str, matcher: StravaMapMatcher) -> None:
         _matchers.popitem(last=False)
 
 
+def _responses_dir() -> Path:
+    return _osm_dir() / "responses"
+
+
+def _response_file(key: tuple, version: tuple) -> Path:
+    """`{slug}__{key digest}__{version digest}.json.gz`; key[1] is the slug."""
+    def digest(obj: tuple) -> str:
+        return hashlib.sha1(repr(obj).encode()).hexdigest()[:16]
+    return _responses_dir() / f"{key[1]}__{digest(key)}__{digest(version)}.json.gz"
+
+
+def _persist_response(fp: Path, body: bytes) -> None:
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    tmp = fp.with_name(f".{fp.name}.tmp{os.getpid()}")
+    tmp.write_bytes(body)
+    os.replace(tmp, fp)
+    # Older versions of the same layer
+    key_prefix = fp.name.rsplit("__", 1)[0] + "__"
+    for old in fp.parent.iterdir():
+        if old.name.startswith(key_prefix) and old != fp:
+            old.unlink(missing_ok=True)
+
+
 def _cached_json(key: tuple, version: tuple, build: Callable[[], dict | list]) -> Response:
     with _responses_lock:
         hit = _responses.get(key)
         if hit is not None and hit[0] == version:
             _responses.move_to_end(key)
-            return Response(hit[1], media_type="application/json")
-    body = json.dumps(build()).encode()
+            return PackedJSONResponse(hit[1])
+    fp = _response_file(key, version)
+    if fp.exists():
+        packed = PackedJSON.from_gzipped(fp.read_bytes())
+    else:
+        packed = PackedJSON(json.dumps(build()).encode())
+        _persist_response(fp, packed.to_gzipped())
     with _responses_lock:
-        _responses[key] = (version, body)
+        _responses[key] = (version, packed)
         _responses.move_to_end(key)
         while len(_responses) > _MAX_CACHED_RESPONSES:
             _responses.popitem(last=False)
-    return Response(body, media_type="application/json")
+    return PackedJSONResponse(packed)
 
 
 def _state_version(slug: str, *extra: Path) -> tuple:
@@ -281,6 +316,10 @@ def delete_city(slug: str):
     with _responses_lock:
         for key in [k for k in _responses if k[1] == slug]:
             del _responses[key]
+    if _responses_dir().exists():
+        for fp in _responses_dir().iterdir():
+            if fp.name.startswith(f"{slug}__"):
+                fp.unlink(missing_ok=True)
     # Explicit artifact names — a bare glob on the slug prefix could match
     # another city whose slug extends this one.
     suffixes = [
@@ -328,11 +367,15 @@ def coverage_summary(slug: str, streets_only: bool = Query(False)):
 
 
 def _clip_to_bbox(gdf, bbox: str):
+    """Edges intersecting the lat/lon bbox, in EPSG:4326. Only edges near it
+    (within a margin, in gdf's own CRS) are reprojected, not the whole city."""
     try:
         south, west, north, east = (float(x) for x in bbox.split(","))
     except ValueError:
         raise HTTPException(status_code=400, detail="bbox must be south,west,north,east")
-    return gdf.cx[west:east, south:north]
+    near = gpd.GeoSeries([shapely.box(west, south, east, north)], crs="EPSG:4326").to_crs(gdf.crs).iloc[0]
+    subset = gdf[gdf.intersects(near.buffer(50))]
+    return subset.to_crs("EPSG:4326").cx[west:east, south:north]
 
 
 def _edges_to_geojson(subset, include_times: bool = False) -> dict:
@@ -370,9 +413,8 @@ def coverage_edges(
 
     def build():
         und = _get_matcher(slug).undirected_with_covered(streets_only=streets_only, with_counts=counts)
-        subset = und[und["covered"] == covered].to_crs("EPSG:4326")
-        if bbox:
-            subset = _clip_to_bbox(subset, bbox)
+        subset = und[und["covered"] == covered]
+        subset = _clip_to_bbox(subset, bbox) if bbox else subset.to_crs("EPSG:4326")
         return _edges_to_geojson(subset, include_times=counts)
     if bbox:
         # a new bbox on every pan: not worth caching
@@ -412,7 +454,7 @@ def _run_coverage_sync(slug: str, z2: Zone2, sport_types: list[str]):
     err = None
     try:
         cache = z2.strava_activities_cache
-        activities = cache.activities[cache.activities["sport_type"].isin(sport_types)]
+        activities = cache.activities_raw[cache.activities_raw["sport_type"].isin(sport_types)]
         todo = StravaMapMatcher.pending_activities(_osm_dir(), slug, activities)
         # High-resolution GPS streams, which the matcher thins to ~20 m. No
         # summary-polyline fallback: a match is persisted once and never
@@ -424,12 +466,22 @@ def _run_coverage_sync(slug: str, z2: Zone2, sport_types: list[str]):
             return
         stats = _get_matcher(slug).match_incremental(gdf)
         logger.info("Coverage sync for %s done: %s%%", slug, stats.get("coverage_pct"))
+        _warm_map_layers(slug)
     except Exception as e:
         logger.exception("Coverage sync for %s failed", slug)
         err = f"{type(e).__name__}: {e}"
     finally:
         with _sync_lock:
             _sync_status[slug] = {"running": False, "last_error": err}
+
+
+def _warm_map_layers(slug: str) -> None:
+    """Build the layers the coverage page opens with, so the first visit after
+    new runs doesn't wait for them."""
+    coverage_edges(slug, covered=True, bbox=None, streets_only=False, counts=True)
+    # Districts only when already downloaded: fetching them is the page's call.
+    if StravaMapMatcher.artifact_path(_osm_dir(), slug, "districts_9.parquet").exists():
+        coverage_districts(slug, admin_level=9, geometry=True, streets_only=False)
 
 
 def sync_all_cities(z2: Zone2, sport_types: tuple[str, ...] = ("Run",)) -> None:
