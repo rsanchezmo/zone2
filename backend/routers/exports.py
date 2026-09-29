@@ -3,8 +3,7 @@ from datetime import date, datetime, timedelta
 
 import matplotlib.pyplot as plt
 import aiosqlite
-from fastapi import APIRouter, Depends, Query, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, Query, HTTPException, Response
 
 from backend.db import get_db
 from backend.dependencies import get_z2
@@ -38,8 +37,10 @@ def _png_response(buf):
             status_code=422,
             detail="No activities matched the selected filters — try a broader location, sport, or year.",
         )
-    return StreamingResponse(buf, media_type="image/png",
-                             headers={"Content-Disposition": "inline; filename=export.png"})
+    # One body: a StreamingResponse over the buffer would send it line by line,
+    # thousands of chunks for a PNG (seconds for a multi-MB export on the Pi).
+    return Response(buf.getvalue(), media_type="image/png",
+                    headers={"Content-Disposition": "inline; filename=export.png"})
 
 
 def _safe_export(fn):
