@@ -820,7 +820,9 @@ function ActivityDetailPageInner() {
               gradientFastLabel={gradientFastLabel}
               gradientSlowLabel={gradientSlowLabel}
               matchedRoute={matchedRoute}
-              matchedLabel={matched?.features.map(f => f.properties.city_name).join(', ')}
+              matchedLabel={matched?.features.map(f => f.properties.new_km >= 0.05
+                ? `${f.properties.city_name} · +${f.properties.new_km.toFixed(1)} km new streets`
+                : f.properties.city_name).join(', ')}
             />
           </div>
         </section>

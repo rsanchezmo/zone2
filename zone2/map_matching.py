@@ -988,6 +988,59 @@ class StravaMapMatcher:
         self._flagged_cache[streets_only] = (version, out)
         return out
 
+    @classmethod
+    def _new_streets_path(cls, osm_dir: Path, slug: str) -> Path:
+        return cls.artifact_path(osm_dir, slug, 'new_streets.parquet')
+
+    def write_new_streets(self, started: pd.Series) -> pd.DataFrame:
+        """Per matched activity, the metres of street network it walked that no
+        activity started earlier had (`started`: activity id -> start time):
+        its new streets. They add up to the city's covered total. Persisted
+        for the current coverage state, see new_streets_of."""
+        walked_fp, _ = self._state_paths()
+        und = self._undirected_gdf()
+        length = pd.Series(und['length'].to_numpy(), index=und['way'].to_numpy())
+        walked = (pd.read_parquet(walked_fp) if self._state_is_current(self.workdir, self._slug())
+                  else pd.DataFrame(columns=['activity_id', 'way', 'lo', 'hi']))
+        walked = walked[walked['way'].isin(length.index)]   # the street network, as the totals count it
+        start = pd.to_datetime(walked['activity_id'].map(started), utc=True)
+        # Unknown start times go last; ties by id
+        start_ns = start.astype('int64').where(start.notna(), np.iinfo(np.int64).max).to_numpy()
+        order = np.lexsort((walked['activity_id'].to_numpy(), start_ns, walked['way'].to_numpy()))
+        new_m: dict[int, float] = defaultdict(float)
+        union: list[tuple[float, float]] = []
+        last_way = None
+        for aid, way, lo, hi in zip(walked['activity_id'].to_numpy()[order].tolist(), walked['way'].to_numpy()[order].tolist(),
+                                    walked['lo'].to_numpy()[order].tolist(), walked['hi'].to_numpy()[order].tolist()):
+            if way != last_way:
+                union, last_way = [], way
+            hi = min(hi, float(length[way]))
+            if hi <= lo:
+                continue
+            seen = sum(max(0.0, min(hi, b) - max(lo, a)) for a, b in union)
+            new_m[int(aid)] += (hi - lo) - seen
+            union = _merge_intervals([*union, (lo, hi)])
+        out = pd.DataFrame({'activity_id': sorted(self.matched_activity_ids())})
+        out['new_m'] = out['activity_id'].map(new_m).fillna(0.0)
+        table = pa.Table.from_pandas(out, preserve_index=False).replace_schema_metadata(
+            {'state': repr(self.state_version()).encode()})
+        fp = self._new_streets_path(self.workdir, self._slug())
+        tmp = fp.parent / f"{fp.name}.tmp{os.getpid()}"
+        pq.write_table(table, tmp)
+        os.replace(tmp, fp)
+        return out
+
+    @classmethod
+    def new_streets_of(cls, osm_dir: Path, slug: str) -> pd.DataFrame | None:
+        """write_new_streets' result for the current coverage state, or None
+        when it hasn't been written since the state last changed."""
+        fp = cls._new_streets_path(osm_dir, slug)
+        if not fp.exists():
+            return None
+        if (pq.read_metadata(fp).metadata or {}).get(b'state') != repr(cls.state_version_of(osm_dir, slug)).encode():
+            return None
+        return pd.read_parquet(fp)
+
     @staticmethod
     def edge_feature(coords: list, name, times: int | None = None) -> dict:
         """GeoJSON feature of an edge served to the coverage map."""

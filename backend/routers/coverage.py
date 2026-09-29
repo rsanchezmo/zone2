@@ -7,12 +7,14 @@ import os
 import time
 from collections import OrderedDict
 from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 from threading import Lock
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 import numpy as np
+import pandas as pd
 import shapely
 
 from backend._serialize import PackedJSON, PackedJSONResponse
@@ -350,7 +352,8 @@ def delete_city(slug: str):
     # another city whose slug extends this one.
     suffixes = [
         "edges.parquet", "connectors.parquet", "boundary.parquet", "meta.json", "viewport.parquet",
-        "walked.parquet", "covered_edges.parquet", "matched_activities.parquet", "routes.parquet", "stats.json",
+        "walked.parquet", "new_streets.parquet", "covered_edges.parquet", "matched_activities.parquet",
+        "routes.parquet", "stats.json",
     ]
     paths = [_osm_dir() / f"{slug}_{s}" for s in suffixes]
     paths += _osm_dir().glob(f"{slug}_districts_*.parquet")
@@ -363,18 +366,68 @@ def delete_city(slug: str):
     return {"status": "deleted", "files_removed": removed}
 
 
+_new_streets_lock = Lock()
+
+
+def _start_times(z2: Zone2) -> pd.Series:
+    """Activity id -> start time, the order first-walked streets are credited in."""
+    acts = z2.strava_activities_cache.activities_raw
+    return pd.Series(pd.to_datetime(acts['start_date'], utc=True).to_numpy(), index=acts['id'].to_numpy())
+
+
+def _new_streets(slug: str, z2: Zone2) -> pd.DataFrame:
+    """Each matched activity's new streets (see StravaMapMatcher.write_new_streets),
+    written after every sync that adds runs; built here only when missing."""
+    new = StravaMapMatcher.new_streets_of(_osm_dir(), slug)
+    if new is None:
+        with _new_streets_lock:
+            new = StravaMapMatcher.new_streets_of(_osm_dir(), slug)
+            if new is None:
+                new = _get_matcher(slug).write_new_streets(_start_times(z2))
+    return new
+
+
 @router.get("/routes/{activity_id}")
-def activity_route(activity_id: int):
+def activity_route(activity_id: int, z2: Zone2 = Depends(get_z2)):
     """The activity's matched route in every coverage city that matched it,
-    as GeoJSON features (lines oriented in travel order); no features when
-    none has."""
+    as GeoJSON features (lines oriented in travel order) with the km of
+    streets it walked first (`new_km`); no features when none has."""
     features = []
     for slug, city_name in _known_cities().items():
         geometry = StravaMapMatcher.read_route(_osm_dir(), slug, activity_id)
         if geometry is not None:
+            new = _new_streets(slug, z2)
+            new_m = new.loc[new['activity_id'] == activity_id, 'new_m'].sum()
             features.append({"type": "Feature", "geometry": geometry,
-                             "properties": {"slug": slug, "city_name": city_name}})
+                             "properties": {"slug": slug, "city_name": city_name,
+                                            "new_km": round(float(new_m) / 1000, 2)}})
     return {"type": "FeatureCollection", "features": features}
+
+
+@router.get("/{slug}/timeline")
+def coverage_timeline(slug: str, z2: Zone2 = Depends(get_z2)):
+    """Streets walked for the first time per month (`new_km`, adding up to
+    the city's covered km as `cumulative_km`), from the first matched run to
+    this month, with the runs matched in the city that month."""
+    def build():
+        new = _new_streets(slug, z2)
+        started = _start_times(z2)
+        runs = new.assign(start=new['activity_id'].map(started)).dropna(subset=['start'])
+        if runs.empty:
+            return {"months": []}
+        month = pd.to_datetime(runs['start'], utc=True).dt.strftime('%Y-%m')
+        per_month = runs.groupby(month).agg(new_m=('new_m', 'sum'), runs=('activity_id', 'size'))
+        months = pd.period_range(per_month.index.min(), date.today().strftime('%Y-%m'), freq='M').strftime('%Y-%m')
+        per_month = per_month.reindex(months, fill_value=0)
+        cumulative = per_month['new_m'].cumsum()
+        return {"months": [
+            {"month": m, "new_km": round(float(row.new_m) / 1000, 2), "runs": int(row.runs),
+             "cumulative_km": round(float(total) / 1000, 2)}
+            for m, row, total in zip(per_month.index, per_month.itertuples(), cumulative)
+        ]}
+    # The months run up to this one
+    version = _state_version(slug) + (_LAYERS_FORMAT, date.today().strftime('%Y-%m'))
+    return _cached_json(("timeline", slug), version, build)
 
 
 @router.get("/{slug}/summary")
@@ -518,7 +571,7 @@ def _run_coverage_sync(slug: str, z2: Zone2, sport_types: list[str], keep_loaded
             return
         stats = _get_matcher(slug).match_incremental(gdf)
         logger.info("Coverage sync for %s done: %s%%", slug, stats.get("coverage_pct"))
-        _warm_map_layers(slug)
+        _warm_map_layers(slug, z2)
         if not keep_loaded:
             with _matchers_lock:
                 _matchers.pop(slug, None)
@@ -530,10 +583,11 @@ def _run_coverage_sync(slug: str, z2: Zone2, sport_types: list[str], keep_loaded
             _sync_status[slug] = {"running": False, "last_error": err}
 
 
-def _warm_map_layers(slug: str) -> None:
+def _warm_map_layers(slug: str, z2: Zone2) -> None:
     """Build the layers the coverage page opens with, so the first visit after
     new runs doesn't wait for them."""
     coverage_edges(slug, covered=True, bbox=None, streets_only=False, counts=True)
+    _get_matcher(slug).write_new_streets(_start_times(z2))
     if not StravaMapMatcher.has_viewport_index(_osm_dir(), slug):
         _get_matcher(slug).write_viewport_index()
     # Districts only when already downloaded: fetching them is the page's call.
