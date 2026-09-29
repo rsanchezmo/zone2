@@ -13,7 +13,7 @@ from backend.dependencies import get_z2
 from backend.services.zones import resolve_hr_zones
 from backend.services.resting_hr import resolve_resting_hr
 from zone2.core import Zone2
-from zone2.utils import convert_speed, get_sport_category
+from zone2.utils import convert_speed, df_rows, get_sport_category
 
 router = APIRouter()
 
@@ -182,7 +182,7 @@ def efficiency_factor(
 
     # EF = normalized speed / average HR
     ef_data = []
-    for _, row in filtered.iterrows():
+    for row in df_rows(filtered, "average_speed", "average_heartrate", "start_date_local", "name"):
         speed = row.get("average_speed")
         hr = row.get("average_heartrate")
         if speed and hr and not pd.isna(speed) and not pd.isna(hr) and hr > 0:
@@ -223,7 +223,7 @@ def performance_frontier(
         return {"data": [], "sport_types": sport_list}
 
     points = []
-    for _, row in filtered.iterrows():
+    for row in df_rows(filtered, "distance", "average_speed", "sport_type", "name", "start_date_local"):
         dist_km = row.get("distance", 0) / 1000.0
         speed = row.get("average_speed", 0)
         if dist_km > 0 and speed > 0:
@@ -279,7 +279,7 @@ def activity_clock(
         return {"data": [], "sport_types": sport_list}
 
     points = []
-    for _, row in filtered.iterrows():
+    for row in df_rows(filtered, "start_date_local", "distance", "name", "sport_type"):
         hour = row["start_date_local"].hour + row["start_date_local"].minute / 60
         dist_km = row.get("distance", 0) / 1000.0
         points.append({
@@ -476,7 +476,7 @@ def _compute_sport_totals(z2: Zone2) -> dict:
         return None
 
     totals: dict[str, dict] = {}
-    for _, row in activities.iterrows():
+    for row in df_rows(activities, "sport_type", "distance", "moving_time"):
         cat = _category(row.get("sport_type"))
         if cat is None:
             continue
