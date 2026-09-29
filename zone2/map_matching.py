@@ -19,6 +19,7 @@ from shapely.ops import substring
 from shapely.prepared import prep
 
 from zone2.route_matching import MatchedRoute, RouteMatcher
+from zone2.utils import summary_polyline_geometry
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +207,9 @@ class StravaMapMatcher:
         # (streets then connectors) and its matcher are only needed to match.
         self._walkable: gpd.GeoDataFrame | None = None
         self._matcher: RouteMatcher | None = None
+        # Coverage derived from the persisted state, reused until a sync rewrites it
+        self._counts_cache: tuple[tuple, dict[tuple[int, int], int]] | None = None
+        self._flagged_cache: dict[tuple[bool, bool], tuple[tuple, gpd.GeoDataFrame]] = {}
         # Serializes state-file reads/writes so a background sync rewriting the
         # coverage parquet can't be observed mid-write by request threads.
         self._state_lock = threading.RLock()
@@ -667,6 +671,33 @@ class StravaMapMatcher:
         df.to_parquet(tmp)
         os.replace(tmp, path)
 
+    @classmethod
+    def state_version_of(cls, osm_dir: Path, slug: str) -> tuple[int, int]:
+        """Changes whenever a sync rewrites the city's persisted coverage state."""
+        fps = (cls.artifact_path(osm_dir, slug, 'covered_edges.parquet'),
+               cls.artifact_path(osm_dir, slug, 'matched_activities.parquet'))
+        return tuple(fp.stat().st_mtime_ns if fp.exists() else 0 for fp in fps)
+
+    def state_version(self) -> tuple[int, int]:
+        return self.state_version_of(self.workdir, self._slug())
+
+    @classmethod
+    def pending_activities(cls, osm_dir: Path, slug: str, activities: pd.DataFrame) -> pd.DataFrame:
+        """Activities still to match against city `slug`: not in its state yet
+        and with a summary route near the city. Reads only the small state and
+        boundary files, so a sync with nothing new never loads the network or
+        any GPS stream."""
+        meta_fp = cls.artifact_path(osm_dir, slug, 'matched_activities.parquet')
+        done = set(pd.read_parquet(meta_fp, columns=['activity_id'])['activity_id']) if meta_fp.exists() else set()
+        todo = activities[~activities['id'].isin(done)]
+        if todo.empty:
+            return todo
+        boundary = gpd.read_parquet(cls.artifact_path(osm_dir, slug, 'boundary.parquet'))
+        # ~200 m of slack: summary polylines are simplified versions of the GPS track
+        near = boundary.to_crs('EPSG:4326').union_all().buffer(0.002)
+        routes = todo['map'].map(summary_polyline_geometry)
+        return todo[[g is not None and g.intersects(near) for g in routes]]
+
     def matched_activity_ids(self) -> set:
         """Ids of activities already matched (or attempted) against this city."""
         _, meta_fp = self._state_paths()
@@ -677,23 +708,20 @@ class StravaMapMatcher:
 
     def covered_edge_set(self) -> set[tuple[int, int]]:
         """Unique undirected edges covered so far, from the persisted state."""
-        edges_fp, _ = self._state_paths()
-        with self._state_lock:
-            if not edges_fp.exists():
-                return set()
-            df = pd.read_parquet(edges_fp)
-        return set(zip(df['u'].tolist(), df['v'].tolist()))
+        return set(self.covered_edge_counts())
 
     def covered_edge_counts(self) -> dict[tuple[int, int], int]:
         """Per undirected edge, how many distinct activities traversed it —
         the traversal-frequency signal behind the coverage heatmap."""
-        edges_fp, _ = self._state_paths()
-        with self._state_lock:
-            if not edges_fp.exists():
-                return {}
-            df = pd.read_parquet(edges_fp)
-        counts = df.groupby(['u', 'v'])['activity_id'].nunique()
-        return {(int(u), int(v)): int(c) for (u, v), c in counts.items()}
+        version = self.state_version()
+        if self._counts_cache is None or self._counts_cache[0] != version:
+            edges_fp, _ = self._state_paths()
+            with self._state_lock:
+                df = pd.read_parquet(edges_fp) if edges_fp.exists() else None
+            counts = {} if df is None else {
+                (int(u), int(v)): int(c) for (u, v), c in df.groupby(['u', 'v'])['activity_id'].nunique().items()}
+            self._counts_cache = (version, counts)
+        return self._counts_cache[1]
 
     def save_match_state(
         self,
@@ -920,7 +948,12 @@ class StravaMapMatcher:
         """Undirected edges flagged with whether the persisted state covers them.
 
         With with_counts, also carries a `times` column — the number of distinct
-        activities that traversed each edge (0 when uncovered)."""
+        activities that traversed each edge (0 when uncovered). Callers must not
+        modify the result, which is reused until the state changes."""
+        version = self.state_version()
+        cached = self._flagged_cache.get((streets_only, with_counts))
+        if cached is not None and cached[0] == version:
+            return cached[1]
         und = self._undirected_gdf()
         if streets_only:
             und = und[und['street']]
@@ -934,6 +967,7 @@ class StravaMapMatcher:
         else:
             covered = self.covered_edge_set()
             out['covered'] = [(u, v) in covered for u, v in zip(us, vs)]
+        self._flagged_cache[(streets_only, with_counts)] = (version, out)
         return out
 
     @staticmethod

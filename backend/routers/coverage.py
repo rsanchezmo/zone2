@@ -1,10 +1,12 @@
 import json
 import logging
 import time
+from collections import OrderedDict
+from collections.abc import Callable
 from pathlib import Path
 from threading import Lock
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from backend.config import settings
@@ -16,8 +18,17 @@ from zone2.utils import get_activities_as_gdf_from_streams
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-_matchers: dict[str, StravaMapMatcher] = {}
+# Each loaded city holds its street network in memory (~300 MB for Madrid);
+# only the most recently used ones stay loaded.
+_MAX_LOADED_CITIES = 3
+_matchers: "OrderedDict[str, StravaMapMatcher]" = OrderedDict()
 _matchers_lock = Lock()
+
+# Serialized map-layer responses, reused until a sync rewrites the city's
+# coverage state (the key's version is its state files' mtimes).
+_MAX_CACHED_RESPONSES = 32
+_responses: "OrderedDict[tuple, tuple[tuple, bytes]]" = OrderedDict()
+_responses_lock = Lock()
 
 # Per-city sync status; matching runs in a BackgroundTasks thread.
 _sync_status: dict[str, dict] = {}
@@ -50,12 +61,41 @@ def _get_matcher(slug: str) -> StravaMapMatcher:
     cities = _known_cities()
     if slug not in cities:
         raise HTTPException(status_code=404, detail=f"No coverage map for '{slug}'")
+    # Built under the lock so concurrent requests never load the same city twice
     with _matchers_lock:
-        if slug not in _matchers:
-            _matchers[slug] = StravaMapMatcher(
-                city_name=cities[slug], workdir=Path(settings.workdir)
-            )
-        return _matchers[slug]
+        if slug in _matchers:
+            _matchers.move_to_end(slug)
+            return _matchers[slug]
+        matcher = StravaMapMatcher(city_name=cities[slug], workdir=Path(settings.workdir))
+        _remember_matcher_locked(slug, matcher)
+        return matcher
+
+
+def _remember_matcher_locked(slug: str, matcher: StravaMapMatcher) -> None:
+    _matchers[slug] = matcher
+    _matchers.move_to_end(slug)
+    while len(_matchers) > _MAX_LOADED_CITIES:
+        _matchers.popitem(last=False)
+
+
+def _cached_json(key: tuple, version: tuple, build: Callable[[], dict | list]) -> Response:
+    with _responses_lock:
+        hit = _responses.get(key)
+        if hit is not None and hit[0] == version:
+            _responses.move_to_end(key)
+            return Response(hit[1], media_type="application/json")
+    body = json.dumps(build()).encode()
+    with _responses_lock:
+        _responses[key] = (version, body)
+        _responses.move_to_end(key)
+        while len(_responses) > _MAX_CACHED_RESPONSES:
+            _responses.popitem(last=False)
+    return Response(body, media_type="application/json")
+
+
+def _state_version(slug: str, *extra: Path) -> tuple:
+    return StravaMapMatcher.state_version_of(_osm_dir(), slug) + tuple(
+        fp.stat().st_mtime_ns if fp.exists() else 0 for fp in extra)
 
 
 def _read_stats_cache(slug: str) -> dict | None:
@@ -119,7 +159,7 @@ def _run_add_city(city_name: str):
         )
         slug = matcher._slug()
         with _matchers_lock:
-            _matchers[slug] = matcher
+            _remember_matcher_locked(slug, matcher)
         # Seed the stats cache so the first /cities call needn't build a matcher.
         matcher.write_stats_cache()
         logger.info("City map for %s ready (%s)", city_name, slug)
@@ -238,6 +278,9 @@ def delete_city(slug: str):
             raise HTTPException(status_code=409, detail="A sync is running for this city")
     with _matchers_lock:
         _matchers.pop(slug, None)
+    with _responses_lock:
+        for key in [k for k in _responses if k[1] == slug]:
+            del _responses[key]
     # Explicit artifact names — a bare glob on the slug prefix could match
     # another city whose slug extends this one.
     suffixes = [
@@ -271,15 +314,17 @@ def activity_route(activity_id: int):
 
 @router.get("/{slug}/summary")
 def coverage_summary(slug: str, streets_only: bool = Query(False)):
-    matcher = _get_matcher(slug)
-    stats = matcher.coverage_stats_from_state(streets_only=streets_only)
-    return {
-        "slug": slug,
-        "city_name": matcher.city_name,
-        "num_matched_activities": len(matcher.matched_activity_ids()),
-        "bbox": matcher.city_bbox(),
-        **{k: v for k, v in stats.items() if not k.startswith("_")},
-    }
+    def build():
+        matcher = _get_matcher(slug)
+        stats = matcher.coverage_stats_from_state(streets_only=streets_only)
+        return {
+            "slug": slug,
+            "city_name": matcher.city_name,
+            "num_matched_activities": len(matcher.matched_activity_ids()),
+            "bbox": matcher.city_bbox(),
+            **{k: v for k, v in stats.items() if not k.startswith("_")},
+        }
+    return _cached_json(("summary", slug, streets_only), _state_version(slug), build)
 
 
 def _clip_to_bbox(gdf, bbox: str):
@@ -323,12 +368,16 @@ def coverage_edges(
     if not covered and not bbox:
         raise HTTPException(status_code=400, detail="bbox is required for covered=false")
 
-    matcher = _get_matcher(slug)
-    und = matcher.undirected_with_covered(streets_only=streets_only, with_counts=counts)
-    subset = und[und["covered"] == covered].to_crs("EPSG:4326")
+    def build():
+        und = _get_matcher(slug).undirected_with_covered(streets_only=streets_only, with_counts=counts)
+        subset = und[und["covered"] == covered].to_crs("EPSG:4326")
+        if bbox:
+            subset = _clip_to_bbox(subset, bbox)
+        return _edges_to_geojson(subset, include_times=counts)
     if bbox:
-        subset = _clip_to_bbox(subset, bbox)
-    return _edges_to_geojson(subset, include_times=counts)
+        # a new bbox on every pan: not worth caching
+        return build()
+    return _cached_json(("edges", slug, covered, streets_only, counts), _state_version(slug), build)
 
 
 @router.get("/{slug}/districts")
@@ -338,10 +387,13 @@ def coverage_districts(
     geometry: bool = Query(False),
     streets_only: bool = Query(False),
 ):
-    matcher = _get_matcher(slug)
-    return matcher.coverage_by_district(
-        admin_level=admin_level, include_geometry=geometry, streets_only=streets_only
-    )
+    def build():
+        return _get_matcher(slug).coverage_by_district(
+            admin_level=admin_level, include_geometry=geometry, streets_only=streets_only
+        )
+    districts_fp = StravaMapMatcher.artifact_path(_osm_dir(), slug, f"districts_{admin_level}.parquet")
+    return _cached_json(("districts", slug, admin_level, geometry, streets_only),
+                        _state_version(slug, districts_fp), build)
 
 
 class AreaRequest(BaseModel):
@@ -359,15 +411,18 @@ def coverage_area(slug: str, payload: AreaRequest):
 def _run_coverage_sync(slug: str, z2: Zone2, sport_types: list[str]):
     err = None
     try:
-        matcher = _get_matcher(slug)
+        cache = z2.strava_activities_cache
+        activities = cache.activities[cache.activities["sport_type"].isin(sport_types)]
+        todo = StravaMapMatcher.pending_activities(_osm_dir(), slug, activities)
         # High-resolution GPS streams, which the matcher thins to ~20 m. No
         # summary-polyline fallback: a match is persisted once and never
         # redone, so an activity whose streams aren't cached yet waits for a
         # later sync instead of being frozen at polyline resolution.
-        cache = z2.strava_activities_cache
-        activities = cache.activities[cache.activities["sport_type"].isin(sport_types)]
-        gdf = get_activities_as_gdf_from_streams(activities, cache.streams, polyline_fallback=False)
-        stats = matcher.match_incremental(gdf)
+        gdf = get_activities_as_gdf_from_streams(todo, cache.streams, polyline_fallback=False)
+        if gdf.empty:
+            logger.info("Coverage sync for %s: nothing new to match", slug)
+            return
+        stats = _get_matcher(slug).match_incremental(gdf)
         logger.info("Coverage sync for %s done: %s%%", slug, stats.get("coverage_pct"))
     except Exception as e:
         logger.exception("Coverage sync for %s failed", slug)
@@ -375,6 +430,17 @@ def _run_coverage_sync(slug: str, z2: Zone2, sport_types: list[str]):
     finally:
         with _sync_lock:
             _sync_status[slug] = {"running": False, "last_error": err}
+
+
+def sync_all_cities(z2: Zone2, sport_types: tuple[str, ...] = ("Run",)) -> None:
+    """Match new activities in every coverage city, one city at a time,
+    skipping cities already syncing. Next to free when nothing is new."""
+    for slug in _known_cities():
+        with _sync_lock:
+            if _sync_status.get(slug, {}).get("running"):
+                continue
+            _sync_status[slug] = {"running": True, "last_error": None}
+        _run_coverage_sync(slug, z2, list(sport_types))
 
 
 @router.post("/{slug}/sync")
