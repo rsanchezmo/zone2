@@ -63,6 +63,10 @@ def _mfa_not_interactive() -> str:
     )
 
 
+class GarminUnavailable(RuntimeError):
+    """Garmin Connect isn't logged in (the reason is GarminClient.last_error)."""
+
+
 class GarminClient:
     """Lazy, optional Garmin Connect client.
 
@@ -242,6 +246,78 @@ class GarminClient:
         """Returns list[dict] — Garmin's race predictor (time5K/time10K/
         timeHalfMarathon/timeMarathon, seconds), one entry per day."""
         return self._call("get_race_predictions", self._iso(start), self._iso(end), "daily") or []
+
+    # ------------------------------------------------------------------ courses
+    # The Connect web app's course endpoints (the lib has none). User actions,
+    # so unlike the fetches above they raise instead of returning None.
+
+    def _request(self, method: str, path: str, **kwargs) -> Any:
+        if not self.ensure_logged_in():
+            raise GarminUnavailable(self.last_error or "Garmin Connect is not connected")
+        return self._client.client.request(method, "connect", path, **kwargs)
+
+    def list_courses(self) -> list[dict]:
+        return self._request("GET", "/course-service/course").json()
+
+    def course_points(self, course_id: int) -> list[tuple[float, float]]:
+        """(lat, lon) of each point of a course."""
+        course = self._request("GET", f"/course-service/course/{course_id}").json()
+        return [(pt["latitude"], pt["longitude"]) for pt in course.get("geoPoints") or []]
+
+    def create_course(self, name: str, gpx: bytes) -> dict:
+        """Save a GPX track as a private running course and return it.
+        Import only parses the file (per-point distances included); saving
+        takes the totals and bounds the web app fills in, and Garmin adds the
+        elevation itself."""
+        course = self._request("POST", "/course-service/course/import",
+                               files={"file": ("course.gpx", gpx, "application/gpx+xml")}).json()
+        points = course["geoPoints"]
+        if len(points) < 2:
+            raise ValueError("The course has fewer than 2 points")
+        total = points[-1]["distance"]
+        lats, lons = [pt["latitude"] for pt in points], [pt["longitude"] for pt in points]
+        course.update({
+            "courseName": name,
+            "activityTypePk": 1,    # running
+            "rulePK": 2,            # private
+            "sourceTypeId": 3,
+            "distanceMeter": total,
+            "startPoint": points[0],
+            "coordinateSystem": "WGS84", "targetCoordinateSystem": "WGS84", "originalCoordinateSystem": "WGS84",
+            "boundingBox": {"center": None,
+                            "lowerLeft": {"latitude": min(lats), "longitude": min(lons)},
+                            "upperRight": {"latitude": max(lats), "longitude": max(lons)},
+                            "lowerLeftLatIsSet": True, "lowerLeftLongIsSet": True,
+                            "upperRightLatIsSet": True, "upperRightLongIsSet": True},
+        })
+        for line in course.get("courseLines") or []:
+            line["distanceInMeters"] = total
+        return self._request("POST", "/course-service/course", json=course).json()
+
+    def course_devices(self) -> list[dict]:
+        """Watches that take courses, as {device_id, name, primary}; primary
+        is the primary training device."""
+        if not self.ensure_logged_in():
+            raise GarminUnavailable(self.last_error or "Garmin Connect is not connected")
+        devices = self._client.get_primary_training_device()
+        primary = (devices.get("PrimaryTrainingDevice") or {}).get("deviceId")
+        return [{"device_id": d["deviceId"], "name": d.get("productDisplayName") or d.get("displayName"),
+                 "primary": d["deviceId"] == primary}
+                for d in devices.get("RegisteredDevices") or [] if d.get("courseCapable")]
+
+    def send_course(self, course_id: int, device_id: int) -> None:
+        """Queue a saved course for the watch, which downloads it on its next sync."""
+        course = self._request("GET", f"/course-service/course/{course_id}").json()
+        self._request("POST", "/device-service/devicemessage/messages", json=[{
+            "deviceId": device_id,
+            "messageUrl": f"course-service/course/fit/{course_id}/{course['userProfilePk']}?elevation=true",
+            "messageType": "courses",
+            "messageName": course["courseName"],
+            "groupName": None,
+            "priority": 1,
+            "fileType": "FIT",
+            "metaDataId": course_id,
+        }])
 
     # ------------------------------------------------------------------ orchestration
 

@@ -55,6 +55,22 @@ CREATE TABLE IF NOT EXISTS race_events (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
+-- Loops saved from the coverage planner (see backend/routers/plans.py)
+CREATE TABLE IF NOT EXISTS planned_routes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug TEXT NOT NULL,
+    name TEXT NOT NULL,
+    distance_km REAL NOT NULL,
+    new_km REAL NOT NULL,          -- when planned
+    coordinates TEXT NOT NULL,     -- JSON [[lon, lat], ...] in running order
+    new_ways TEXT NOT NULL,        -- JSON [[network row, metres], ...] of its new streets when planned
+    network TEXT NOT NULL,         -- the street map those rows index into
+    request TEXT NOT NULL,         -- JSON of the plan request (start, via, share, avoid, seed)
+    garmin_course_id INTEGER,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_planned_routes_slug ON planned_routes(slug);
+
 CREATE TABLE IF NOT EXISTS user_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,

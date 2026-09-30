@@ -26,6 +26,16 @@ SPEED_SPORTS = {
 }
 
 
+def gpx_track(name: str, lonlat: list[list[float]]) -> bytes:
+    """A GPX 1.1 track of the points ([lon, lat], GeoJSON order)."""
+    escaped = name.replace("&", "&amp;").replace("<", "&lt;")
+    points = "\n".join(f'<trkpt lat="{lat}" lon="{lon}"/>' for lon, lat in lonlat)
+    return (f'<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<gpx version="1.1" creator="z2" xmlns="http://www.topografix.com/GPX/1/1">'
+            f'<metadata><name>{escaped}</name></metadata>'
+            f'<trk><name>{escaped}</name><trkseg>\n{points}\n</trkseg></trk></gpx>\n').encode()
+
+
 def df_rows(df: pd.DataFrame, *columns: str) -> list[dict]:
     """df's rows as dicts of the given columns (those it has): far cheaper
     than iterrows, which builds a Series per row."""

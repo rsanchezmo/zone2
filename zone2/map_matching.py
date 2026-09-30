@@ -24,6 +24,7 @@ from shapely.ops import substring
 from shapely.prepared import prep
 
 from zone2.route_matching import MatchedRoute, RouteMatcher
+from zone2.route_planner import WAY_CLASSES, ExplorationPlanner, WayClass
 from zone2.utils import summary_polyline_geometry
 
 logger = logging.getLogger(__name__)
@@ -156,6 +157,11 @@ class StravaMapMatcher:
     # of the matching target (running them is recorded), but excluded from
     # the denominator in the streets-only coverage view.
     PATH_HIGHWAYS = {'footway', 'path', 'track', 'steps', 'cycleway', 'bridleway'}
+    # Road classes a planned run can avoid (see way_classes)
+    MAIN_ROAD_HIGHWAYS = {'primary', 'secondary', 'tertiary', 'primary_link', 'secondary_link', 'tertiary_link',
+                          'trunk', 'trunk_link'}
+    # A sidewalk takes the class of the street within this distance
+    SIDEWALK_STREET_M = 30.0
     # Fraction of the city area the mapped district polygons must cover to be
     # treated as a real subdivision. Below this the city isn't administratively
     # mapped in OSM (e.g. Palma) and we fall back to a single whole-city district.
@@ -205,6 +211,7 @@ class StravaMapMatcher:
         # (streets then connectors) and its matcher are only needed to match.
         self._walkable: gpd.GeoDataFrame | None = None
         self._matcher: RouteMatcher | None = None
+        self._planner: ExplorationPlanner | None = None
         # Coverage derived from the persisted state, reused until a sync rewrites it
         self._flagged_cache: dict[bool, tuple[tuple, gpd.GeoDataFrame]] = {}
         self._layer_cache: dict[bool, tuple[tuple, gpd.GeoDataFrame]] = {}
@@ -331,7 +338,7 @@ class StravaMapMatcher:
 
         self._edges_gdf = streets.set_index(['u', 'v', 'key'])
         self._city_boundary = city_boundary_gdf
-        self._und_gdf = self._walkable = self._matcher = None
+        self._und_gdf = self._walkable = self._matcher = self._planner = None
 
     def _overpass_filters(self) -> list[str]:
         """Overpass way filter for every class that can be a street or a
@@ -851,7 +858,7 @@ class StravaMapMatcher:
             self.save_match_state(results, attempted_ids=list(todo['id']))
         # Release what only matching needs (the walkable network and its
         # routing graph, a few hundred MB for a large city)
-        self._walkable = self._matcher = None
+        self._walkable = self._matcher = self._planner = None
         stats = self.coverage_stats_from_state()
         self.write_stats_cache()
         return stats
@@ -1041,6 +1048,123 @@ class StravaMapMatcher:
             return None
         return pd.read_parquet(fp)
 
+    @classmethod
+    def _way_class(cls, highway) -> WayClass:
+        hw = cls._as_tags(highway)
+        if hw & cls.MAIN_ROAD_HIGHWAYS:
+            return WayClass.MAIN_ROAD
+        for tag, way_class in (('cycleway', WayClass.CYCLEWAY), ('track', WayClass.TRACK), ('steps', WayClass.STEPS)):
+            if tag in hw:
+                return way_class
+        if hw & {'footway', 'path', 'bridleway'}:
+            return WayClass.PATH
+        return WayClass.STREET
+
+    def way_classes(self) -> np.ndarray:
+        """WayClass code (index into WAY_CLASSES) of each walkable-network row.
+        Sidewalks take the class of the nearest street, so avoiding main roads
+        avoids their sidewalks too; crossings stay streets."""
+        w = self._walkable_network()
+        highway = w['highway'].astype(str)
+        codes = highway.map({h: WAY_CLASSES.index(self._way_class(h)) for h in highway.unique()}).to_numpy(np.int8)
+        sidewalk = np.flatnonzero(w['sidewalk'].to_numpy())
+        streets = np.flatnonzero(w['street'].to_numpy())
+        if len(sidewalk) and len(streets):
+            geoms = w.geometry.to_numpy()
+            at, nearest = shapely.STRtree(geoms[streets]).query_nearest(
+                geoms[sidewalk], max_distance=self.SIDEWALK_STREET_M, all_matches=False)
+            codes[sidewalk] = WAY_CLASSES.index(WayClass.STREET)
+            codes[sidewalk[at]] = codes[streets[nearest]]
+        return codes
+
+    def plan_loop(self, start_latlon: tuple[float, float], distance_m: float,
+                  via_latlon: list[tuple[float, float]] = (), new_share: float = 1.0,
+                  avoid: frozenset[WayClass] = frozenset(), seed: int = 0) -> tuple[dict, list[tuple[int, float]]] | None:
+        """A loop of about distance_m from the start through the via points
+        (lat, lon) over streets not run yet, new_share of it where it can (see
+        ExplorationPlanner), as a GeoJSON Feature in EPSG:4326, with the rows
+        of its new streets and their lengths, (row, metres), for new_km_now.
+        None when no loop of that length is found."""
+        # Held locally: a sync may release the network meanwhile
+        planner = self._planner
+        if planner is None:
+            w = self._walkable_network()
+            planner = self._planner = ExplorationPlanner(w['u'].to_numpy(), w['v'].to_numpy(), w.geometry.to_numpy(),
+                                                         self.way_classes())
+        und = self.undirected_with_covered()
+        ways = und['way'].to_numpy()
+        covered = np.zeros(len(planner.u))
+        covered[ways] = und['covered_m'].to_numpy()
+        missing = np.zeros(len(planner.u))
+        missing[ways] = np.maximum(0.0, planner.length[ways] - covered[ways])
+
+        to_crs = self._from_wgs84(str(self._edges_gdf.crs))
+        start_xy = to_crs.transform(start_latlon[1], start_latlon[0])
+        via_xy = [to_crs.transform(lon, lat) for lat, lon in via_latlon]
+        loop = planner.plan(start_xy, distance_m, missing, covered, via_xy=via_xy, new_share=new_share,
+                            avoid=avoid, seed=seed)
+        if loop is None:
+            return None
+        xs, ys = self._to_wgs84(str(self._edges_gdf.crs)).transform(*shapely.get_coordinates(loop.line).T)
+        feature = {"type": "Feature",
+                   "geometry": {"type": "LineString",
+                                "coordinates": [[round(x, 6), round(y, 6)] for x, y in zip(xs.tolist(), ys.tolist())]},
+                   "properties": {"length_km": round(loop.length_m / 1000, 2), "new_km": round(loop.new_m / 1000, 2)}}
+        rows = np.unique(loop.rows)
+        rows = rows[missing[rows] > 0]
+        return feature, [(int(r), round(float(planner.length[r]), 2)) for r in rows]
+
+    @classmethod
+    def network_stamp_of(cls, osm_dir: Path, slug: str) -> str:
+        """The street map that plan_loop's network rows index into."""
+        return cls._network_stamp(osm_dir, slug).decode()
+
+    @classmethod
+    def new_km_now(cls, osm_dir: Path, slug: str, new_ways: list[tuple[int, float]], network: str) -> float | None:
+        """Km of a planned loop's new streets (plan_loop's (row, metres)) still
+        not run; None when the city's street map changed since it was planned.
+        Reads only the coverage state."""
+        if network != cls.network_stamp_of(osm_dir, slug):
+            return None
+        if not new_ways:
+            return 0.0
+        rows, metres = (np.asarray(x) for x in zip(*new_ways))
+        _, covered = cls.walked_state_of(osm_dir, slug)
+        return round(float(np.maximum(0.0, metres - cls._covered_at(covered, rows.astype(np.int64))).sum()) / 1000, 2)
+
+    def new_km_along(self, latlon: list[tuple[float, float]]) -> tuple[float, float] | None:
+        """(km of streets not run yet, km of streets) along a route drawn
+        elsewhere (a Garmin course, points as (lat, lon)): its part in this
+        city, matched like a run and counted like the coverage totals. None
+        when it doesn't match here."""
+        line = LineString([(lon, lat) for lat, lon in latlon])
+        result = self.match(gpd.GeoDataFrame({'id': [0]}, geometry=[line], crs='EPSG:4326')).get(0)
+        if result is None:
+            return None
+        walked = result.walked[result.walked['way'].isin(self._undirected_gdf()['way'])]
+        stretches, _ = self.walked_state_of(self.workdir, self._slug())
+        run = {way: list(zip(g['lo'], g['hi'])) for way, g in stretches[stretches['way'].isin(walked['way'])].groupby('way')}
+        new_m = sum((hi - lo) - sum(max(0.0, min(hi, b) - max(lo, a)) for a, b in run.get(way, ()))
+                    for way, lo, hi in walked[['way', 'lo', 'hi']].itertuples(index=False))
+        return round(new_m / 1000, 2), round(float((walked['hi'] - walked['lo']).sum()) / 1000, 2)
+
+    @classmethod
+    def usual_start_of(cls, osm_dir: Path, slug: str) -> tuple[float, float] | None:
+        """(lat, lon) where the city's matched runs most often start: the mean
+        start in the ~300 m cell with the most. None before any match."""
+        routes_fp = cls.artifact_path(osm_dir, slug, 'routes.parquet')
+        if not routes_fp.exists():
+            return None
+        routes = gpd.read_parquet(routes_fp, columns=['geometry'])
+        if routes.empty:
+            return None
+        # The first line's first point; a LineString is its own first part
+        starts = shapely.get_coordinates(shapely.get_point(shapely.get_geometry(routes.geometry.values, 0), 0))
+        cells = np.round(starts / [0.004, 0.0027])   # ~300 m at mid latitudes
+        _, cell_of, counts = np.unique(cells, axis=0, return_inverse=True, return_counts=True)
+        lon, lat = starts[cell_of.ravel() == counts.argmax()].mean(axis=0)
+        return round(float(lat), 6), round(float(lon), 6)
+
     @staticmethod
     def edge_feature(coords: list, name, times: int | None = None) -> dict:
         """GeoJSON feature of an edge served to the coverage map."""
@@ -1176,6 +1300,11 @@ class StravaMapMatcher:
     @functools.lru_cache(maxsize=8)
     def _to_wgs84(crs: str) -> Transformer:
         return Transformer.from_crs(crs, 'EPSG:4326', always_xy=True)
+
+    @staticmethod
+    @functools.lru_cache(maxsize=8)
+    def _from_wgs84(crs: str) -> Transformer:
+        return Transformer.from_crs('EPSG:4326', crs, always_xy=True)
 
     @classmethod
     def viewport_missing_geojson(cls, osm_dir: Path, slug: str, bbox: tuple[float, float, float, float],

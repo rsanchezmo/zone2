@@ -19,6 +19,9 @@ import { tileLayerAttribution, tileLayerClass, tileLayerUrl } from '../utils/map
 import { useExitFullscreenOnEscape } from '../hooks/useExitFullscreenOnEscape'
 import { MapStyleToggle, SATELLITE_ACCENT, SATELLITE_ATTR, SATELLITE_TILES, type MapStyle } from '../components/shared/MapStyleToggle'
 import NewStreetsPanel from '../components/shared/NewStreetsPanel'
+import { LoopPlanLayer, LoopPlanPanel, RouteViewPanel } from '../components/shared/LoopPlanner'
+import RoutesPanel from '../components/shared/RoutesPanel'
+import { selectionKey, useLoopPlanner, type RouteSelection } from '../hooks/useLoopPlanner'
 
 const COVERED_ACCENT = '#fb2c36'
 
@@ -319,6 +322,8 @@ export default function CoveragePage() {
   const [areaRect, setAreaRect] = useState<L.LatLngBounds | null>(null)
   const [areaStats, setAreaStats] = useState<AreaCoverage | null>(null)
   const areaMutation = useCoverageArea(activeSlug)
+  const [planMode, setPlanMode] = useState(false)
+  const planner = useLoopPlanner(activeSlug, planMode)
 
   const [showMissing, setShowMissing] = useState(false)
   const [viewportBbox, setViewportBbox] = useState<string | undefined>(undefined)
@@ -339,6 +344,8 @@ export default function CoveragePage() {
       qc.invalidateQueries({ queryKey: ['coverage-edges'] })
       qc.invalidateQueries({ queryKey: ['coverage-districts'] })
       qc.invalidateQueries({ queryKey: ['coverage-timeline'] })
+      qc.invalidateQueries({ queryKey: ['coverage-plan'] })
+      qc.invalidateQueries({ queryKey: ['saved-routes'] })
     }
     prevRunning.current = syncRunning
   }, [syncRunning, qc, resetSyncMutation])
@@ -431,11 +438,20 @@ export default function CoveragePage() {
     setAreaStats(null)
   }
 
-  // Per-city UI state (delete confirmation, area selection) resets on switch.
+  const mapRef = useRef<HTMLDivElement>(null)
+  const showRoute = (selection: RouteSelection) => {
+    setSelectMode(false)
+    setPlanMode(true)
+    planner.show(selection)
+    mapRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+
+  // Per-city UI state (delete confirmation, area selection, planned loop) resets on switch.
   const switchCity = (next: string | undefined) => {
     setSlug(next)
     setConfirmingDelete(false)
     clearArea()
+    planner.reset()
   }
 
   // Highest traversal count in view — the hot end of the heatmap's log scale.
@@ -452,9 +468,11 @@ export default function CoveragePage() {
   )
 
   const edgesKey = useMemo(
-    () => `${activeSlug}-${edgesAt}-${heatmapMode ? `heat${maxTimes}` : accent}`,
-    [activeSlug, edgesAt, accent, heatmapMode, maxTimes],
+    () => `${activeSlug}-${edgesAt}-${heatmapMode ? `heat${maxTimes}` : accent}-${planMode}`,
+    [activeSlug, edgesAt, accent, heatmapMode, maxTimes, planMode],
   )
+  // Covered streets recede behind a planned loop
+  const edgesOpacity = planMode ? 0.4 : 1
 
   if (!citiesLoading && (cities?.length ?? 0) === 0) {
     return (
@@ -483,6 +501,7 @@ export default function CoveragePage() {
       )}
 
       <div
+        ref={mapRef}
         className={expanded
           ? 'fixed inset-0 z-50 w-screen h-screen'
           : clsx('relative h-[calc(100vh-8rem)] rounded-xl overflow-hidden border', isLight ? 'border-gray-200' : 'border-surface-600')}
@@ -502,11 +521,12 @@ export default function CoveragePage() {
               className={isSatellite ? 'satellite-tiles' : tileLayerClass(cartoApiKey)}
             />
           )}
-          {showDistricts && districtFC && (
+          {/* The planner shows only what a route is made of: streets run and not */}
+          {showDistricts && districtFC && !planMode && (
             <GeoJSON
-              key={`districts-${activeSlug}-${districtsAt}-${districtColor}-${selectMode}`}
+              key={`districts-${activeSlug}-${districtsAt}-${districtColor}-${selectMode || planMode}`}
               data={districtFC}
-              interactive={!selectMode}
+              interactive={!selectMode && !planMode}
               style={districtStyle}
               onEachFeature={onDistrictFeature}
             />
@@ -532,7 +552,7 @@ export default function CoveragePage() {
                 data={edges}
                 style={(f?: GeoJSON.Feature) => {
                   const n = heatNorm((f?.properties as { times?: number } | null)?.times ?? 1)
-                  return { color: heatColor(n), weight: 3 + 4 * n, opacity: 0.16 }
+                  return { color: heatColor(n), weight: 3 + 4 * n, opacity: 0.16 * edgesOpacity }
                 }}
               />
               <GeoJSON
@@ -540,7 +560,7 @@ export default function CoveragePage() {
                 data={edges}
                 style={(f?: GeoJSON.Feature) => {
                   const n = heatNorm((f?.properties as { times?: number } | null)?.times ?? 1)
-                  return { color: heatColor(n), weight: 1.2 + 2.2 * n, opacity: 0.95 }
+                  return { color: heatColor(n), weight: 1.2 + 2.2 * n, opacity: 0.95 * edgesOpacity }
                 }}
               />
               <FitToLayer data={edges} />
@@ -549,11 +569,12 @@ export default function CoveragePage() {
           {edges && !heatmapMode && (
             <>
               {/* Glow underlay + bright core */}
-              <GeoJSON key={`${edgesKey}-glow`} data={edges} style={{ color: accent, weight: 5, opacity: 0.18 }} />
-              <GeoJSON key={`${edgesKey}-core`} data={edges} style={{ color: accent, weight: 1.6, opacity: 0.95 }} />
+              <GeoJSON key={`${edgesKey}-glow`} data={edges} style={{ color: accent, weight: 5, opacity: 0.18 * edgesOpacity }} />
+              <GeoJSON key={`${edgesKey}-core`} data={edges} style={{ color: accent, weight: 1.6, opacity: 0.95 * edgesOpacity }} />
               <FitToLayer data={edges} />
             </>
           )}
+          {planMode && <LoopPlanLayer planner={planner} />}
           <ViewportTracker onChange={setViewportBbox} />
           {areaRect && (
             <Rectangle bounds={areaRect} pathOptions={{ color: '#22d3ee', weight: 1.5, fillOpacity: 0.06 }} />
@@ -677,13 +698,24 @@ export default function CoveragePage() {
           </TipButton>
           <TipButton
             tip={selectMode ? 'Cancel area selection' : 'Measure an area — drag a rectangle to get its coverage'}
-            onClick={() => { setSelectMode(m => !m); if (areaRect) clearArea() }}
+            onClick={() => { setSelectMode(m => !m); setPlanMode(false); planner.show(null); if (areaRect) clearArea() }}
             className={clsx(buttonClass, selectMode && '!text-cyan-400 !border-cyan-500/50')}
             isLight={isLight}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <rect x="3" y="3" width="10" height="10" rx="1" strokeDasharray="3 2" />
               <path d="M8 6v4M6 8h4" />
+            </svg>
+          </TipButton>
+          <TipButton
+            tip={planMode ? 'Close the run planner' : 'Plan a run — a loop through streets you haven’t run yet'}
+            onClick={() => { if (planMode) planner.show(null); setPlanMode(!planMode); setSelectMode(false) }}
+            className={clsx(buttonClass, planMode && '!text-cyan-400 !border-cyan-500/50')}
+            isLight={isLight}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="3.5" cy="12.5" r="1.5" />
+              <path d="M5 12.5h3.5a2.5 2.5 0 0 0 0-5h-2a2.5 2.5 0 0 1 0-5H12M10.5 1 12 2.5 10.5 4" />
             </svg>
           </TipButton>
           <TipButton
@@ -710,6 +742,14 @@ export default function CoveragePage() {
 
         {/* ── Bottom left: area result + district granularity ──── */}
         <div className="absolute bottom-3 left-3 z-[1000] flex flex-col gap-2 items-start">
+          {planMode && planner.view && (
+            <RouteViewPanel key={selectionKey(planner.view.selection)} planner={planner} slug={activeSlug}
+                            className={overlayClass} isLight={isLight} />
+          )}
+          {planMode && !planner.view && (
+            <LoopPlanPanel planner={planner} slug={activeSlug} className={overlayClass} isLight={isLight}
+                           onClose={() => { planner.show(null); setPlanMode(false) }} />
+          )}
           {heatmapMode && edges && (
             <div className={clsx('px-3 py-2 flex items-center gap-2', overlayClass)}>
               <span className="eyebrow text-[9px]">Runs</span>
@@ -744,7 +784,7 @@ export default function CoveragePage() {
               </button>
             </div>
           )}
-          {showDistricts && (
+          {showDistricts && !planMode && (
             <div className={clsx('flex items-center gap-0.5 px-1 py-0.5', overlayClass)}>
               {([[9, 'Districts'], [10, 'Neighborhoods']] as const).map(([lvl, label]) => (
                 <button key={lvl} onClick={() => setAdminLevel(lvl)} className="chip whitespace-nowrap" data-active={adminLevel === lvl}>
@@ -761,12 +801,12 @@ export default function CoveragePage() {
             Drag to select an area
           </div>
         )}
-        {showMissing && !viewportBbox && !selectMode && (
+        {showMissing && !viewportBbox && !selectMode && !planMode && (
           <div className={clsx('absolute bottom-3 left-1/2 -translate-x-1/2 z-[1000] px-3 py-1.5 text-[11px]', overlayClass, isLight ? 'text-gray-600' : 'text-gray-300')}>
             Zoom in to reveal missing streets
           </div>
         )}
-        {city && city.num_matched_activities === 0 && !syncRunning && !selectMode && !showMissing && (
+        {city && city.num_matched_activities === 0 && !syncRunning && !selectMode && !showMissing && !planMode && (
           <div className={clsx('absolute bottom-3 left-1/2 -translate-x-1/2 z-[1000] px-3 py-1.5 text-[11px]', overlayClass, isLight ? 'text-gray-600' : 'text-gray-300')}>
             Nothing matched yet for {city.city_name} — press Sync to match your activities
           </div>
@@ -779,6 +819,10 @@ export default function CoveragePage() {
         )}
       </div>
 
+      {!expanded && (
+        <RoutesPanel slug={activeSlug} accent={COVERED_ACCENT} onShow={showRoute}
+                     activeKey={planMode && planner.view ? selectionKey(planner.view.selection) : null} />
+      )}
       {!expanded && <NewStreetsPanel slug={activeSlug} accent={COVERED_ACCENT} />}
     </div>
   )

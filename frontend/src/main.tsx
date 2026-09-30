@@ -12,6 +12,7 @@ const queryClient = new QueryClient({
   // The toast bus dedupes, so a burst of failing queries yields one toast.
   queryCache: new QueryCache({
     onError: (_error, query) => {
+      if (query.meta?.inlineError) return
       emitToast(`Failed to load ${String(query.queryKey[0]).replaceAll('-', ' ')}`, 'error')
     },
   }),

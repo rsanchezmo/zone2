@@ -593,6 +593,12 @@ def _warm_map_layers(slug: str, z2: Zone2) -> None:
     # Districts only when already downloaded: fetching them is the page's call.
     if StravaMapMatcher.artifact_path(_osm_dir(), slug, "districts_9.parquet").exists():
         coverage_districts(slug, admin_level=9, geometry=True, streets_only=False)
+    if z2.garmin_client.enabled:
+        from backend.routers.plans import city_garmin_courses   # plans imports this module
+        try:
+            city_garmin_courses(slug, z2)
+        except Exception as e:
+            logger.warning("Garmin courses of %s not warmed: %s", slug, e)
 
 
 def _return_freed_memory() -> None:

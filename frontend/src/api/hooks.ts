@@ -1754,6 +1754,141 @@ export function useCoverageArea(slug?: string) {
   });
 }
 
+/** An exploration loop: coordinates [lon, lat] in running order, from and back to `start` ([lat, lon]). */
+export type PlannedLoop = GeoJSON.Feature<GeoJSON.LineString, {
+  length_km: number; new_km: number; start: [number, number]; plan_id: string;
+}>;
+
+/** Kinds of way a planned loop can avoid (streets are always allowed). */
+export type AvoidableWay = 'main_road' | 'cycleway' | 'path' | 'track' | 'steps';
+
+export interface LoopPlanRequest {
+  distance_km: number;
+  /** [lat, lon]; the city's usual run start when null */
+  start: [number, number] | null;
+  via: [number, number][];
+  /** Share of the loop wanted on streets not run yet */
+  new_share: number;
+  avoid: AvoidableWay[];
+  seed: number;
+}
+
+export function usePlannedLoop(slug: string | undefined, request: LoopPlanRequest | null) {
+  return useQuery<PlannedLoop>({
+    queryKey: ['coverage-plan', slug, request],
+    queryFn: () => api.post(`/coverage/${slug}/plan`, request).then(r => r.data),
+    enabled: !!slug && !!request,
+    staleTime: Infinity,
+    // No loop through the chosen points is an answer, shown by the planner
+    retry: false,
+    meta: { inlineError: true },
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** A loop saved from the planner. */
+export interface SavedRoute {
+  id: number;
+  name: string;
+  distance_km: number;
+  /** New km when planned, and still not run since (null once the city's street map changed) */
+  new_km: number;
+  new_km_now: number | null;
+  garmin_course_id: number | null;
+  created_at: string;
+  /** [lon, lat] in running order */
+  coordinates: number[][];
+}
+
+export function useSavedRoutes(slug?: string) {
+  return useQuery<SavedRoute[]>({
+    queryKey: ['saved-routes', slug],
+    queryFn: () => api.get(`/coverage/${slug}/plans`).then(r => r.data),
+    enabled: !!slug,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useSaveRoute(slug?: string) {
+  const qc = useQueryClient();
+  return useMutation<SavedRoute, unknown, { name: string; plan_id: string; request: LoopPlanRequest }>({
+    mutationFn: body => api.post(`/coverage/${slug}/plans`, body).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['saved-routes', slug] }),
+  });
+}
+
+export function useDeleteRoute(slug?: string) {
+  const qc = useQueryClient();
+  return useMutation<unknown, unknown, number>({
+    mutationFn: id => api.delete(`/coverage/${slug}/plans/${id}`).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['saved-routes', slug] }),
+  });
+}
+
+/** Creates the route's Garmin course (once) and, with a device, queues it for that watch. */
+export function useSendRouteToGarmin(slug?: string) {
+  const qc = useQueryClient();
+  return useMutation<SavedRoute, unknown, { id: number; device_id: number | null }>({
+    mutationFn: ({ id, device_id }) => api.post(`/coverage/${slug}/plans/${id}/garmin`, { device_id }).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['saved-routes', slug] });
+      qc.invalidateQueries({ queryKey: ['garmin-courses'] });
+    },
+  });
+}
+
+/** A Garmin course starting in a coverage city. */
+export interface GarminCourse {
+  course_id: number;
+  name: string;
+  distance_km: number;
+  /** [lat, lon] */
+  start: [number | null, number | null];
+  sport: string | null;
+  created_at: string | null;
+  /** Km of streets of its part in the city, and of those not run yet; null when it doesn't match the city's streets */
+  city_km: number | null;
+  new_km: number | null;
+}
+
+export interface GarminDevice {
+  device_id: number;
+  name: string;
+  primary: boolean;
+}
+
+/** The user's Garmin courses starting in the city; none when Garmin isn't connected. */
+export function useCityGarminCourses(slug?: string) {
+  return useQuery<GarminCourse[]>({
+    queryKey: ['garmin-courses', slug],
+    queryFn: () => api.get(`/coverage/${slug}/garmin-courses`).then(r => r.data),
+    enabled: !!slug,
+    retry: false,
+    meta: { inlineError: true },
+  });
+}
+
+export function useGarminDevices(enabled: boolean) {
+  return useQuery<GarminDevice[]>({
+    queryKey: ['garmin-devices'],
+    queryFn: () => api.get('/garmin/devices').then(r => r.data),
+    enabled,
+    staleTime: 60 * 60 * 1000,
+    retry: false,
+    meta: { inlineError: true },
+  });
+}
+
+/** A Garmin course's line, [lon, lat]. */
+export function useGarminCourseLine(courseId: number | null) {
+  return useQuery<{ coordinates: number[][] }>({
+    queryKey: ['garmin-course-line', courseId],
+    queryFn: () => api.get(`/garmin/courses/${courseId}/points`).then(r => r.data),
+    enabled: courseId !== null,
+    staleTime: Infinity,
+  });
+}
+
 export interface AddCityStatus {
   running: boolean;
   city_name: string | null;
