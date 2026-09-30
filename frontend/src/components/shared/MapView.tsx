@@ -1,13 +1,13 @@
-import { MapContainer, TileLayer, Polyline, Marker, Tooltip, CircleMarker, useMap, useMapEvents } from 'react-leaflet'
+import { MapContainer, TileLayer, Polyline, Marker, Tooltip, CircleMarker, useMap } from 'react-leaflet'
 import { memo, useState, useEffect, useMemo } from 'react'
-import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { LatLngBoundsExpression } from 'leaflet'
 import { useAppConfig } from '../../api/hooks'
 import { useTheme } from '../../hooks/useTheme'
 import clsx from 'clsx'
 import { MapStyleToggle, SATELLITE_ACCENT, SATELLITE_ATTR, SATELLITE_TILES, type MapStyle } from './MapStyleToggle'
-import { InvalidateSize } from './leafletHelpers'
+import { InvalidateSize, RouteArrows } from './leafletHelpers'
+import { createEndIcon, createStartIcon } from './mapIcons'
 import { tileLayerAttribution, tileLayerClass, tileLayerUrl } from '../../utils/mapTiles'
 
 function FitBounds({ positions }: { positions: [number, number][] }) {
@@ -19,106 +19,6 @@ function FitBounds({ positions }: { positions: [number, number][] }) {
   }, [map, positions])
   return null
 }
-
-function createStartIcon() {
-  return L.divIcon({
-    className: '',
-    iconSize: [22, 22],
-    iconAnchor: [11, 11],
-    html: `<svg width="22" height="22" viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="11" cy="11" r="10" fill="#16a34a" stroke="#fff" stroke-width="2"/>
-      <polygon points="9,6 17,11 9,16" fill="#fff"/>
-    </svg>`,
-  })
-}
-
-function createEndIcon() {
-  return L.divIcon({
-    className: '',
-    iconSize: [22, 22],
-    iconAnchor: [11, 11],
-    html: `<svg width="22" height="22" viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="11" cy="11" r="10" fill="#dc2626" stroke="#fff" stroke-width="2"/>
-      <rect x="7" y="7" width="8" height="8" rx="1" fill="#fff"/>
-    </svg>`,
-  })
-}
-
-/** Evenly spaced arrows along the lines, each with its heading of travel in
- *  degrees clockwise from north. */
-function routeArrows(lines: [number, number][][], count: number): { position: [number, number]; heading: number }[] {
-  const step = (a: [number, number], b: [number, number]) => {
-    const dLat = b[0] - a[0]
-    const dLon = (b[1] - a[1]) * Math.cos((a[0] * Math.PI) / 180)
-    return { dLat, dLon, len: Math.hypot(dLat, dLon) }
-  }
-  let total = 0
-  for (const line of lines) for (let i = 1; i < line.length; i++) total += step(line[i - 1], line[i]).len
-  if (total === 0) return []
-  const spacing = total / count
-  const arrows: { position: [number, number]; heading: number }[] = []
-  let next = spacing / 2
-  let walked = 0
-  for (const line of lines) {
-    for (let i = 1; i < line.length; i++) {
-      const { dLat, dLon, len } = step(line[i - 1], line[i])
-      while (len > 0 && walked + len >= next) {
-        const t = (next - walked) / len
-        arrows.push({
-          position: [line[i - 1][0] + t * (line[i][0] - line[i - 1][0]), line[i - 1][1] + t * (line[i][1] - line[i - 1][1])],
-          heading: (Math.atan2(dLon, dLat) * 180) / Math.PI,
-        })
-        next += spacing
-      }
-      walked += len
-    }
-  }
-  return arrows
-}
-
-/** White heads with a dark edge read as annotation on top of any route colour or basemap. */
-function createArrowIcon(heading: number) {
-  return L.divIcon({
-    className: '',
-    iconSize: [16, 16],
-    iconAnchor: [8, 8],
-    html: `<svg width="16" height="16" viewBox="0 0 14 14" style="transform: rotate(${heading}deg)" xmlns="http://www.w3.org/2000/svg">
-      <path d="M7 1 L12.5 12 L7 9 L1.5 12 Z" fill="#fff" stroke="rgba(13,17,23,0.85)" stroke-width="1.2" stroke-linejoin="round"/>
-    </svg>`,
-  })
-}
-
-/** Direction arrows along the matched route, spaced by screen distance so
- *  they stay readable at any zoom. */
-function RouteArrows({ lines }: { lines: [number, number][][] }) {
-  const map = useMap()
-  const [zoom, setZoom] = useState(() => map.getZoom())
-  const [bounds, setBounds] = useState(() => map.getBounds())
-  useMapEvents({
-    zoomend: () => setZoom(map.getZoom()),
-    moveend: () => setBounds(map.getBounds()),
-  })
-  const arrows = useMemo(() => {
-    let px = 0
-    for (const line of lines) {
-      for (let i = 1; i < line.length; i++) {
-        px += map.project(line[i - 1], zoom).distanceTo(map.project(line[i], zoom))
-      }
-    }
-    return routeArrows(lines, Math.max(2, Math.round(px / ARROW_SPACING_PX)))
-  }, [lines, map, zoom])
-  // Only the arrows around the viewport are rendered, so zooming in on a long run stays light
-  const nearView = bounds.pad(0.5)
-  return (
-    <>
-      {arrows.map((a, i) => nearView.contains(a.position) && (
-        <Marker key={`${zoom}-${i}`} position={a.position} icon={createArrowIcon(a.heading)} interactive={false} />
-      ))}
-    </>
-  )
-}
-
-const ARROW_SPACING_PX = 80
 
 export interface KmMarker {
   position: [number, number]

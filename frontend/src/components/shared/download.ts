@@ -9,6 +9,15 @@ export async function parseFastApiError(response: Response, fallback: string): P
   return fallback
 }
 
+/** Hand `blob` to the browser as a download named `filename`. */
+export function saveBlob(blob: Blob, filename: string): void {
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(blob)
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(link.href)
+}
+
 /** Fetch `url` and trigger a browser download as `filename`, reporting the
  *  outcome via toasts. Returns true on success; never throws. */
 export async function downloadWithToast(
@@ -22,12 +31,7 @@ export async function downloadWithToast(
       toast(await parseFastApiError(response, 'Export failed'), 'error')
       return false
     }
-    const blob = await response.blob()
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = filename
-    link.click()
-    URL.revokeObjectURL(link.href)
+    saveBlob(await response.blob(), filename)
     toast('Export downloaded', 'success')
     return true
   } catch {
