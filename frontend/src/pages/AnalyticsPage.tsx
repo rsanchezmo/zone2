@@ -2,9 +2,11 @@ import { useMemo, useState } from 'react'
 import {
   ComposedChart, Area, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
-import { useRacePredictions, useRacePredictionsHistory, type RacePrediction } from '../api/hooks'
+import {
+  useRacePredictions, useRacePredictionsHistory, type RacePrediction, type TrainingPace, type TrainingPaceZone,
+} from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
-import { formatSpeed, formatClockDuration } from '../utils/formatSpeed'
+import { formatSpeed, formatClockDuration, formatPace } from '../utils/formatSpeed'
 import { parseLocalDate } from '../utils/dates'
 import { useTheme } from '../hooks/useTheme'
 import { useIsMobile } from '../hooks/useIsMobile'
@@ -15,6 +17,19 @@ const SPORTS: { key: string; label: string; sportType: string }[] = [
   { key: 'cycling', label: 'Cycling', sportType: 'Ride' },
   { key: 'swimming', label: 'Swimming', sportType: 'Swim' },
 ]
+
+const TRAINING_PACE_META: Record<TrainingPaceZone, { label: string; use: string; splitM?: number }> = {
+  E: { label: 'Easy', use: 'Easy and long runs' },
+  M: { label: 'Marathon', use: 'Marathon pace' },
+  T: { label: 'Threshold', use: 'Tempo, cruise intervals' },
+  I: { label: 'Interval', use: '3–5 min reps', splitM: 400 },
+  R: { label: 'Repetition', use: '200–400 m reps', splitM: 200 },
+}
+
+function formatPaceRange(p: TrainingPace): string {
+  if (p.speed_min_mps === p.speed_max_mps) return formatSpeed(p.speed_max_mps, 'Run')
+  return `${formatPace(1000 / p.speed_max_mps / 60, false)}–${formatSpeed(p.speed_min_mps, 'Run')}`
+}
 
 export default function AnalyticsPage() {
   const { theme, colors } = useTheme()
@@ -197,6 +212,51 @@ export default function AnalyticsPage() {
           </div>
         )}
       </section>
+
+      {sport === 'running' && preds?.training_paces && (
+        <section className="space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="section-head flex-1">
+              <span className="eyebrow">Training paces</span>
+            </div>
+            <span className={clsx(
+              'text-[10px] uppercase tracking-[0.15em] font-semibold font-mono px-2 py-0.5 rounded-full border',
+              isLight ? 'text-gray-500 border-gray-300' : 'text-gray-400 border-surface-500',
+            )}>
+              VDOT {preds.training_paces.vdot.toFixed(1)}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            {preds.training_paces.paces.map(p => {
+              const meta = TRAINING_PACE_META[p.zone]
+              return (
+                <div
+                  key={p.zone}
+                  className={clsx(
+                    'p-3 rounded-lg border',
+                    p.zone === 'E' && 'col-span-2 md:col-span-1',
+                    isLight ? 'bg-gray-50 border-gray-200' : 'bg-surface-700/50 border-surface-600',
+                  )}
+                >
+                  <div className="flex items-baseline gap-1.5 mb-1">
+                    <span className="text-sm font-bold font-mono" style={{ color: accent }}>{p.zone}</span>
+                    <span className="eyebrow">{meta.label}</span>
+                  </div>
+                  <div className={clsx('text-lg md:text-xl font-bold font-mono tabular-nums', isLight ? 'text-gray-900' : 'text-gray-100')}>
+                    {formatPaceRange(p)}
+                  </div>
+                  <div className="text-[10px] text-gray-500 mt-1">{meta.use}</div>
+                  {meta.splitM && (
+                    <div className="text-[10px] text-gray-500 font-mono tabular-nums mt-0.5">
+                      {meta.splitM} m in {formatClockDuration(meta.splitM / p.speed_max_mps)}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )}
 
       {/* Evolution chart */}
       <section className="space-y-4">

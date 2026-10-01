@@ -550,10 +550,20 @@ export interface RacePrediction {
   garmin_time_s?: number;
 }
 
+export type TrainingPaceZone = 'E' | 'M' | 'T' | 'I' | 'R';
+
+export interface TrainingPace {
+  zone: TrainingPaceZone;
+  speed_min_mps: number;
+  speed_max_mps: number;
+}
+
 export interface RacePredictionsResponse {
   predictions: RacePrediction[];
   athlete_vdot: number | null;
   fitted_exponent: number | null;
+  /** Daniels' paces at the VDOT the calibrated predictions imply; running only. */
+  training_paces: { vdot: number; paces: TrainingPace[] } | null;
   confidence: 'high' | 'medium' | 'low';
   sport_category: string;
   garmin_predictions: Record<string, unknown> | null;
