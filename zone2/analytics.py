@@ -12,6 +12,7 @@ from zone2.utils import (
     vo2_max, get_sport_category, vdot_from_time_distance,
     predicted_time_from_vdot, riegel_predict, fit_riegel_exponent,
     compute_trimp_banister, compute_trimp_zone_weighted, df_rows,
+    training_paces_from_vdot,
 )
 
 logger = logging.getLogger(__name__)
@@ -1410,6 +1411,34 @@ class StravaAnalytics:
                     p["predicted_time_high_s"] = round(max(p["predicted_time_high_s"] * factor, central), 1)
             p["predicted_time_s"] = round(central, 1)
 
+    # The marathon prediction is usually an extrapolation, and the shortest
+    # efforts measure speed more than aerobic fitness.
+    TRAINING_PACE_DISTANCES = (5000, 10000, 21097)
+
+    def _training_paces(self, predictions: list[dict]) -> dict | None:
+        """Daniels' training paces at the VDOT the calibrated predictions
+        imply, so they follow what the athlete would race now (`athlete_vdot`
+        comes from raw training efforts, which read slow of race day)."""
+        vdots = [
+            vdot_from_time_distance(p["predicted_time_s"], p["distance_m"])
+            for p in predictions
+            if p["distance_m"] in self.TRAINING_PACE_DISTANCES and p.get("predicted_time_s")
+        ]
+        vdots = [v for v in vdots if v is not None]
+        if not vdots:
+            return None
+        vdot = sum(vdots) / len(vdots)
+        speeds = training_paces_from_vdot(vdot)
+        if speeds is None:
+            return None
+        return {
+            "vdot": round(vdot, 1),
+            "paces": [
+                {"zone": zone.value, "speed_min_mps": round(slow, 4), "speed_max_mps": round(fast, 4)}
+                for zone, (slow, fast) in speeds.items()
+            ],
+        }
+
     def get_race_predictions(self, sport_category: str = "running") -> dict:
         """Generate race predictions using a recent-bests model.
 
@@ -1495,6 +1524,9 @@ class StravaAnalytics:
             "predictions": core["predictions"],
             "athlete_vdot": core["athlete_vdot"],
             "fitted_exponent": core["fitted_exponent"],
+            "training_paces": (
+                self._training_paces(core["predictions"]) if sport_category == "running" else None
+            ),
             "confidence": confidence,
             "sport_category": sport_category,
             "garmin_predictions": garmin_preds,

@@ -1,3 +1,4 @@
+from enum import StrEnum
 import functools
 
 import geopandas as gpd
@@ -296,6 +297,47 @@ def predicted_time_from_vdot(vdot: float, distance_m: float) -> float | None:
     if check is None or abs(check - vdot) > 1.0:
         return None
     return round(result, 1)
+
+
+class TrainingPace(StrEnum):
+    EASY = "E"
+    MARATHON = "M"
+    THRESHOLD = "T"
+    INTERVAL = "I"
+    REPETITION = "R"
+
+
+# Daniels' intensities as (low, high) fractions of VDOT. With these, VDOT 50
+# reproduces his tables: E 5:07–5:38, T 4:15, I 3:55, R 3:41 /km. M is the
+# marathon race pace instead, since it hangs on the race's duration.
+TRAINING_PACE_VDOT_FRACTIONS: dict[TrainingPace, tuple[float, float]] = {
+    TrainingPace.EASY: (0.62, 0.70),
+    TrainingPace.THRESHOLD: (0.88, 0.88),
+    TrainingPace.INTERVAL: (0.975, 0.975),
+    TrainingPace.REPETITION: (1.05, 1.05),
+}
+
+
+def _speed_at_vo2(vo2: float) -> float:
+    """Running speed (m/s) whose oxygen cost is `vo2`, inverting the cost
+    curve in vdot_from_time_distance."""
+    a, b, c = 0.000104, 0.182258, -4.60 - vo2
+    return (-b + math.sqrt(b * b - 4 * a * c)) / (2 * a) / 60.0
+
+
+def training_paces_from_vdot(vdot: float) -> dict[TrainingPace, tuple[float, float]] | None:
+    """Daniels' training speeds (m/s) for a VDOT, as (slowest, fastest)."""
+    if vdot <= 0:
+        return None
+    marathon_s = predicted_time_from_vdot(vdot, 42195)
+    if marathon_s is None:
+        return None
+    speeds = {
+        zone: (_speed_at_vo2(vdot * low), _speed_at_vo2(vdot * high))
+        for zone, (low, high) in TRAINING_PACE_VDOT_FRACTIONS.items()
+    }
+    speeds[TrainingPace.MARATHON] = (42195 / marathon_s, 42195 / marathon_s)
+    return {zone: speeds[zone] for zone in TrainingPace}
 
 
 def riegel_predict(t1_s: float, d1_m: float, d2_m: float, exponent: float = 1.06) -> float:
