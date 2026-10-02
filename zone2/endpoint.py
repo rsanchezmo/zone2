@@ -199,13 +199,15 @@ class StravaEndpoint:
     # the request through and refresh the cache from its response.
     _RATE_LIMIT_CACHE_TTL_SECONDS = 900
 
+    def usage_is_fresh(self) -> bool:
+        """Whether the cached usage comes from a response recent enough to trust."""
+        return self._last_usage_at != 0.0 and (time.monotonic() - self._last_usage_at) <= self._RATE_LIMIT_CACHE_TTL_SECONDS
+
     def _ensure_rate_limit_budget(self) -> None:
         """Raise StravaRateLimitError if cached usage says we're already at
         or over a limit and the cache is fresh enough to trust. No-op when
         usage is unknown or stale."""
-        if self._last_usage_at == 0.0:
-            return
-        if (time.monotonic() - self._last_usage_at) > self._RATE_LIMIT_CACHE_TTL_SECONDS:
+        if not self.usage_is_fresh():
             return
         if self._last_usage_fifteen >= self.FIFTEEN_MIN_LIMIT:
             raise StravaRateLimitError(

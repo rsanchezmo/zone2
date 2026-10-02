@@ -215,9 +215,9 @@ class StravaAnalytics:
         Uses Strava custom zones if available (requires API call).
         Otherwise, estimates from the highest max_heartrate in activity data (no API call).
         """
-        # Try to get custom zones from Strava (only if already cached to avoid API call)
-        if self.strava_user_cache._zones_cache is not None:
-            zones = self.strava_user_cache._zones_cache
+        # Custom zones from Strava, only if already fetched (no API call)
+        zones = self.strava_user_cache.cached_athlete_zones()
+        if zones is not None:
             if zones.get('heart_rate', {}).get('custom_zones'):
                 return zones['heart_rate']['zones']
 
