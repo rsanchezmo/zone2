@@ -449,7 +449,7 @@ _viewport_index_lock = Lock()
 
 # Part of the map layers' cache version: bump when their content changes for
 # the same coverage state, so responses persisted by older code aren't served.
-_LAYERS_FORMAT = 2
+_LAYERS_FORMAT = 3
 
 
 def _parse_bbox(bbox: str) -> tuple[float, float, float, float]:
