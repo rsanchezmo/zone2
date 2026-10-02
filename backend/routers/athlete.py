@@ -173,10 +173,8 @@ async def update_resting_hr_settings(
         await set_setting(db, "manual_resting_hr", str(payload.manual_resting_hr))
     await set_setting(db, "resting_hr_source", payload.source)
 
-    # Resting HR feeds daily TRIMP → PMC / fitness trend / relative effort.
+    # Resting HR feeds daily TRIMP → relative effort.
     z2.strava_analytics._training_load_cache = {}
-    z2.strava_analytics._pmc_cache = {}
-    z2.strava_analytics._fitness_trend_cache = {}
     clear_stats_cache()
     clear_export_cache()
 

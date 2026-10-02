@@ -430,21 +430,6 @@ def coverage_timeline(slug: str, z2: Zone2 = Depends(get_z2)):
     return _cached_json(("timeline", slug), version, build)
 
 
-@router.get("/{slug}/summary")
-def coverage_summary(slug: str, streets_only: bool = Query(False)):
-    def build():
-        matcher = _get_matcher(slug)
-        stats = matcher.coverage_stats_from_state(streets_only=streets_only)
-        return {
-            "slug": slug,
-            "city_name": matcher.city_name,
-            "num_matched_activities": len(matcher.matched_activity_ids()),
-            "bbox": matcher.city_bbox(),
-            **{k: v for k, v in stats.items() if not k.startswith("_")},
-        }
-    return _cached_json(("summary", slug, streets_only), _state_version(slug), build)
-
-
 _viewport_index_lock = Lock()
 
 # Part of the map layers' cache version: bump when their content changes for

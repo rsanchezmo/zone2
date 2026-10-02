@@ -9,7 +9,7 @@ A "slice" is the same shape with shorter arrays. Helpers `_len`, `_get`, and
 
 from __future__ import annotations
 
-from zone2.utils import convert_speed, get_sport_category, hr_zone_counts
+from zone2.utils import convert_speed, hr_zone_counts
 from zone2.streams_store import moving_time, slice_streams as _slice, stream_length as _len
 
 
@@ -493,10 +493,8 @@ def slice_streams_by_segments(
     n = _len(streams)
     if n >= 2:
         total_stream_m = _get(streams, "distance", n - 1) - _get(streams, "distance", 0)
-        total_stream_s = _get(streams, "time", n - 1) - _get(streams, "time", 0)
     else:
         total_stream_m = 0
-        total_stream_s = 0
 
     leftover_m = max(0, total_stream_m - total_defined_m)
     share_m = leftover_m / undefined_count if undefined_count > 0 else 0

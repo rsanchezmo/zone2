@@ -190,12 +190,6 @@ async def lifespan(app: FastAPI):
         await asyncio.to_thread(z2.garmin_cache.backfill_missing_summaries)
     except Exception:
         logging.getLogger("backend.startup").exception("Garmin summary backfill failed")
-    # One-time: compress Garmin payloads stored as plain JSON (~5x smaller DB).
-    # Before serving, since its VACUUM locks calendar.db for a few seconds.
-    try:
-        await asyncio.to_thread(z2.garmin_cache.compress_stored_payloads)
-    except Exception:
-        logging.getLogger("backend.startup").exception("Garmin payload compression failed")
 
     # Warm the in-memory activities cache so the first request after a fresh
     # container (re)deploy doesn't pay the full parquet reload cost. Runs in
@@ -279,7 +273,8 @@ class _SPAStaticFiles(StaticFiles):
         try:
             response = await super().get_response(path, scope)
         except StarletteHTTPException as ex:
-            if ex.status_code != 404:
+            # Unknown API routes and missing assets stay 404s rather than an HTML page
+            if ex.status_code != 404 or path.startswith(("api/", "assets/")):
                 raise
             response = await super().get_response("index.html", scope)
             path = "index.html"

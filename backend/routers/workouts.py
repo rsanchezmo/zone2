@@ -53,18 +53,6 @@ async def list_templates(
     return [_row_to_dict(row) for row in rows]
 
 
-@router.get("/{template_id}")
-async def get_template(
-    template_id: int,
-    db: aiosqlite.Connection = Depends(get_db),
-):
-    cursor = await db.execute("SELECT * FROM workout_templates WHERE id = ?", (template_id,))
-    row = await cursor.fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Template not found")
-    return _row_to_dict(row)
-
-
 @router.post("", status_code=201)
 async def create_template(
     template: WorkoutTemplateCreate,

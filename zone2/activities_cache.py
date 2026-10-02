@@ -9,8 +9,6 @@ from typing import Any, Callable, Iterable
 from zone2.endpoint import StravaRateLimitError, StravaStreamFetchError
 from zone2.streams_store import (
     StreamsStore,
-    from_strava_api,
-    points_to_columnar,
     stream_length,
 )
 
@@ -53,7 +51,6 @@ class StravaActivitiesCache:
         # In-memory cache (lazy-loaded). Holds activity metadata only —
         # streams live in the separate StreamsStore.
         self._memory_cache: pd.DataFrame | None = None
-        self._cache_loaded_at: datetime | None = None
 
         # Monotonic version bumped whenever the underlying dataset changes.
         # Downstream caches (stats, prepared views) use this as a key component
@@ -102,9 +99,6 @@ class StravaActivitiesCache:
         (see StreamsStore.summaries)."""
         return self.streams.summaries(name, activity_ids, compute)
 
-    def has_streams(self, activity_id: int) -> bool:
-        return self.streams.has(int(activity_id))
-
     def __load_metadata(self):
         """Load cache metadata or initialize if missing."""
         if self.metadata_file.exists():
@@ -112,10 +106,7 @@ class StravaActivitiesCache:
                 self.metadata = json.load(f)
                 if 'last_sync' in self.metadata and self.metadata['last_sync']:
                     self.metadata['last_sync'] = datetime.fromisoformat(self.metadata['last_sync'])
-            # Back-compat: pre-migration metadata used 'monthly_counts'. We
-            # ignore stale monthly entries; yearly_counts is rebuilt on next save.
             self.metadata.setdefault('yearly_counts', {})
-            self.metadata.pop('monthly_counts', None)
         else:
             self.metadata = {
                 'last_sync': None,
@@ -128,7 +119,6 @@ class StravaActivitiesCache:
     def _invalidate_memory_cache(self):
         """Invalidate the in-memory cache after data changes."""
         self._memory_cache = None
-        self._cache_loaded_at = None
         self._cache_version += 1
 
     def _load_to_memory(self) -> pd.DataFrame:
@@ -143,7 +133,6 @@ class StravaActivitiesCache:
 
         if not parquet_files:
             self._memory_cache = pd.DataFrame()
-            self._cache_loaded_at = datetime.now()
             return self._memory_cache
 
         # Load yearly files without the detail-only columns and the 'streams'
@@ -162,7 +151,6 @@ class StravaActivitiesCache:
         self._memory_cache = pd.concat(dfs, ignore_index=True)
         self._memory_cache['start_date'] = pd.to_datetime(self._memory_cache['start_date_local'])
         self._memory_cache = self._memory_cache.sort_values('start_date')
-        self._cache_loaded_at = datetime.now()
 
         return self._memory_cache
 
@@ -191,8 +179,8 @@ class StravaActivitiesCache:
     def save_activities(self, activities: list[dict]):
         """Save activities to Parquet files, grouped by month.
 
-        If incoming activity dicts carry a 'streams' value (Strava API columnar
-        dict, legacy list-of-dicts, or JSON string), it is persisted to the
+        If incoming activity dicts carry a 'streams' value (columnar, as
+        StravaEndpoint.get_activity_streams returns it), it is persisted to the
         separate StreamsStore — never written into the activities parquet."""
         if not activities:
             return
@@ -315,42 +303,6 @@ class StravaActivitiesCache:
             return False
         return True
 
-    def load_activities(
-        self,
-        from_date: datetime | None = None,
-        to_date: datetime | None = None,
-        sports: list[str] | None = None,
-        force_reload: bool = False,
-    ) -> pd.DataFrame:
-        """
-        Load cached activities (metadata only — no streams column) with optional filters.
-
-        Streams now live in StreamsStore; use `cache.get_streams(activity_id)` to fetch them.
-
-        Args:
-            from_date: Filter activities after this date
-            to_date: Filter activities before this date
-            sports: Filter by sport types
-            force_reload: If True, bypass memory cache and reload from disk
-        """
-        if force_reload:
-            self._invalidate_memory_cache()
-
-        base = self._load_to_memory()
-        if base.empty:
-            return base.copy() if base is not None else base
-
-        df = base
-        if from_date:
-            df = df[df['start_date'] >= from_date]
-        if to_date:
-            df = df[df['start_date'] <= to_date]
-        if sports:
-            df = df[df["sport_type"].isin(sports)]
-        if df is base:
-            df = base.copy()
-        return df
-
     def get_last_activity_date(self) -> datetime | None:
         """Get the date of the most recent cached activity."""
         if self.metadata['latest_activity']:
@@ -389,31 +341,11 @@ class StravaActivitiesCache:
         self.__save_metadata()
         return self.metadata['total_activities']
     
-    def clear_cache(self):
-        """Clear all cached activities, streams, and metadata."""
-        for file in self.activities_dir.rglob("*.parquet"):
-            file.unlink()
-
-        self.streams.clear()
-
-        if self.metadata_file.exists():
-            self.metadata_file.unlink()
-
-        self.metadata = {
-            'last_sync': None,
-            'total_activities': 0,
-            'earliest_activity': None,
-            'latest_activity': None,
-            'yearly_counts': {},
-        }
-
-        self.__save_metadata()
-        self._invalidate_memory_cache()
-
     @property
     def activities(self) -> pd.DataFrame:
-        """Get all cached activities as a DataFrame."""
-        return self.load_activities()
+        """A copy of all cached activities (metadata only: streams live in the
+        StreamsStore, see get_streams)."""
+        return self._load_to_memory().copy()
 
     @property
     def activities_raw(self) -> pd.DataFrame:
@@ -445,32 +377,6 @@ class StravaActivitiesCache:
     # Fields that come from the detail endpoint (not the list/summary endpoint)
     DETAIL_FIELDS = ['description', 'calories', 'splits_metric', 'best_efforts', 'laps', 'gear',
                      'perceived_exertion', 'suffer_score', 'segment_efforts', 'similar_activities', 'device_name']
-
-    def pull_activity_detail(self, activity_id: int, strava_endpoint) -> bool:
-        """Fetch detail from Strava API for a single activity and merge into cache.
-        Returns True if new data was saved."""
-        row = self.get_activity_by_id(activity_id)
-        if row is None:
-            return False
-        # Already has detail?
-        if row.get('detail_fetched') == True:
-            return False
-
-        detail = strava_endpoint.get_activity_detail(activity_id)
-
-        activity = row.to_dict()
-        if detail:
-            for field in self.DETAIL_FIELDS:
-                val = detail.get(field)
-                if val is not None:
-                    if isinstance(val, (dict, list)):
-                        activity[field] = json.dumps(val)
-                    else:
-                        activity[field] = val
-        activity['detail_fetched'] = True
-
-        self.save_activities([activity])
-        return True
 
     def resync_activity(self, activity_id: int, strava_endpoint, include_streams: bool = False) -> bool:
         """Re-fetch a single activity from Strava and merge updates into the cached row.
@@ -510,11 +416,6 @@ class StravaActivitiesCache:
         self.save_activities([activity])
         return True
 
-    def save_activities_df(self, df: pd.DataFrame):
-        """Save a DataFrame of activities to the cache."""
-        activities = df.to_dict(orient='records')
-        self.save_activities(activities)
-    
     def get_cache_completeness(self) -> dict:
         """Return completeness stats for streams and photos across all cached activities."""
         df = self._load_to_memory()
@@ -709,32 +610,10 @@ class StravaActivitiesCache:
             logger.info("All %d activities already have the requested data", skipped_count)
 
 
-def _normalize_streams(raw) -> dict | None:
-    """Coerce any of the shapes streams arrive in into the columnar dict
-    persisted by StreamsStore. Returns None for absent / empty streams so
-    StreamsStore can treat them as a delete on save."""
+def _normalize_streams(raw: dict | None) -> dict | None:
+    """Streams as the StreamsStore persists them: the columnar dict, or {} when
+    Strava has none for the activity, which marks it fetched so backfills
+    don't ask again."""
     if raw is None:
         return None
-    # JSON string from legacy parquet
-    if isinstance(raw, str):
-        if not raw or raw == 'null':
-            return None
-        try:
-            raw = json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            return None
-    if not raw:
-        return None
-    # Strava /streams API: {type: {data: [...]}}
-    if isinstance(raw, dict):
-        first = next(iter(raw.values()), None)
-        if isinstance(first, dict) and 'data' in first:
-            return from_strava_api(raw) or None
-        # Already columnar (list values aligned to a length)
-        if all(isinstance(v, list) for v in raw.values()):
-            return raw if stream_length(raw) > 0 else None
-    # Legacy list-of-dicts shape
-    if isinstance(raw, list):
-        cols = points_to_columnar(raw)
-        return cols if cols else None
-    return None
+    return raw if stream_length(raw) > 0 else {}

@@ -1,8 +1,5 @@
 from zone2.core import Zone2
-from zone2.map_matching import StravaMapMatcher
 from pathlib import Path
-
-from zone2.utils import get_activities_as_gdf, get_activities_as_gdf_from_streams
 
 
 if __name__ == "__main__":
@@ -17,44 +14,6 @@ if __name__ == "__main__":
         show_title=False,
     )
 
-
-    # # --- Map matching ---
-    # strava_map_matcher = StravaMapMatcher(
-    #     city_name="Madrid, Spain",
-    #     workdir=workdir,
-    #     force_reload=False,
-    # )
-    
-    # activities_gdf = get_activities_as_gdf_from_streams(
-    #     z2.strava_activities_cache.activities
-    # )
-    
-    # # get a dataframe with the activity id == 17316072532
-    # # activities_gdf = activities_gdf[activities_gdf["id"] == 17316072532]
-
-    # # filter activities for only runs
-    # activities_gdf = activities_gdf[activities_gdf["type"] == "Run"]
-
-    # matched_gdf, match_details = strava_map_matcher.match(activities_gdf)
-    
-    # # Save matched routes (real OSM edge geometries)
-    # if not matched_gdf.empty:
-    #     matched_gdf.to_file(
-    #         strava_map_matcher.workdir / "madrid_matched_activities.gpkg", driver="GPKG"
-    #     )
-    
-    # # Inspect per-activity matching details
-    # # create the dir 
-    # (workdir / 'madrid').mkdir(parents=True, exist_ok=True)
-    # for activity_id, result in match_details.items():
-    #     print(f"\nActivity {activity_id} — quality: {result.quality}")
-    #     result.plot(save_path=workdir / 'madrid' / f"map_match_{activity_id}.png")
-
-    # # --- Coverage analysis ---
-    # strava_map_matcher.plot_coverage(
-    #     match_details,
-    #     save_path=workdir / "osm_maps" / "madrid_coverage.png",
-    # )
 
     weekly_data = z2.get_weekly_report()
     # z2.get_weekly_report('2026-02-11')

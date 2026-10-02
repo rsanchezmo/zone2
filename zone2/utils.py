@@ -3,7 +3,7 @@ from enum import StrEnum
 import functools
 
 import geopandas as gpd
-from shapely.geometry import LineString, Polygon, box
+from shapely.geometry import LineString, box
 import polyline
 import pandas as pd
 import json
@@ -17,7 +17,6 @@ CYCLING_SPORTS = {
     'gravelride', 'mountainbikeride', 'emountainbikeride', 'rollerski',
 }
 SWIMMING_SPORTS = {'swim'}
-RUNNING_SPORTS = {'run', 'trailrun', 'virtualrun', 'walk', 'hike', 'snowshoe'}
 WATER_SPORTS = {'canoeing', 'standuppaddling', 'kayaking', 'surfing', 'kitesurf', 'rowing', 'windsurf', 'sail'}
 SPEED_SPORTS = {
     'squash', 'tennis', 'pickleball', 'racquetball', 'badminton', 'tabletennis', 'padel',
@@ -67,6 +66,11 @@ def get_sport_category(sport_type: str | None) -> str:
         return 'speed'
     else:
         return 'running'
+
+
+def is_speed_sport(sport_type: str | None) -> bool:
+    """Whether the sport reads as speed (km/h) rather than pace."""
+    return get_sport_category(sport_type) in ('cycling', 'water', 'speed')
 
 
 def convert_speed(speed_ms: float, sport_type: str | None = None) -> tuple[float, str]:
@@ -224,14 +228,6 @@ def get_activities_as_gdf_from_streams(activities: pd.DataFrame, streams_store=N
     return gpd.GeoDataFrame(activities, geometry='geometry', crs=BASE_CRS)
 
 
-def vo2_max(hr_max: float, hr_rest: float) -> float:
-    """
-    Calculate VO2 Max based on Uth-Sørensen-Overgaard-Pedersen estimation:
-        VO2 Max = 15.3 x (HR_max / HR_rest)
-    """
-    return 15.3 * (hr_max / hr_rest)
-
-
 # ── Advanced analytics helpers ─────────────────────────────────────
 
 import math
@@ -365,18 +361,15 @@ def fit_riegel_exponent(prs: list[dict]) -> float | None:
     return round(exponent, 4)
 
 
-def compute_trimp_banister(duration_min: float, avg_hr: float, hr_rest: float, hr_max: float, gender: str = 'male') -> float:
-    """Compute Banister TRIMP from average HR and duration.
-
-    Uses gender-specific exponential weighting.
-    """
-    if hr_max <= hr_rest or avg_hr < hr_rest:
-        return 0.0
-    delta = (avg_hr - hr_rest) / (hr_max - hr_rest)
-    delta = max(0.0, min(delta, 1.0))
-    if gender == 'female':
-        return duration_min * delta * 0.86 * math.exp(1.67 * delta)
-    return duration_min * delta * 0.64 * math.exp(1.92 * delta)
+def compute_trimp_banister(duration_min: np.ndarray, avg_hr: np.ndarray, hr_rest: float, hr_max: float,
+                           gender: str = 'male') -> np.ndarray:
+    """Banister TRIMP per activity from average HR and duration, with
+    gender-specific exponential weighting."""
+    if hr_max <= hr_rest:
+        return np.zeros(len(avg_hr), dtype=np.float64)
+    delta = np.clip((avg_hr - hr_rest) / (hr_max - hr_rest), 0.0, 1.0)
+    a, b = (0.86, 1.67) if gender == 'female' else (0.64, 1.92)
+    return duration_min * delta * a * np.exp(b * delta)
 
 
 def hr_zone_counts(hr_values, zones: list[dict], weights=None) -> np.ndarray:

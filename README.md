@@ -27,10 +27,6 @@ A Python toolkit for analyzing and visualizing your Strava activities without pa
 - **Activity Sync**: Automatically sync and cache your Strava activities locally using Parquet files
 - **Cool Visualizations**: Generate visualizations including:
   - ⚡ **Thunderstorm Heatmap**: Neon-style activity route visualization on dark backgrounds
-  - 🕐 **Activity Clock**: Polar scatter plot showing when you train (time vs distance)
-  - 🎛️ **HUD Dashboard**: Cyberpunk-style histograms for distance, heart rate, and pace
-  - 📈 **Efficiency Factor**: Track your aerobic efficiency (speed/HR) over time
-  - 🚀 **Performance Frontier**: Pareto frontier with Riegel's fatigue model fitting
   - 📅 **Weekly Report**: Instagram Story-sized weekly training summary with HR zones, sports breakdown, and accumulated training time
   - 🎯 **Year in Sport**: Instagram Story-sized summaries of your yearly training (main sport & totals)
   - 🏆 **Activity Plots**: Neon-style individual activity visualization with elevation profile
@@ -193,20 +189,7 @@ z2.strava_visualizer.thunderstorm_heatmap(
     sport_types=['Run'],
     location="amsterdam",
     radius_km=20.0,
-    add_basemap=False
 )
-
-# Create an activity clock visualization
-z2.strava_visualizer.activity_clock(sport_types=['Run'])
-
-# Generate a HUD-style dashboard
-z2.strava_visualizer.hud_dashboard(sport_types=['Run'])
-
-# Plot efficiency factor trend
-z2.strava_visualizer.plot_efficiency_factor(sport_types=['Run'])
-
-# Plot performance frontier with fatigue model
-z2.strava_visualizer.plot_performance_frontier(sport_types=['Run'])
 
 # Generate Year in Sport summary (Instagram Story format)
 z2.get_year_in_sport(year=2025, main_sport="Run", neon_color="#fc0101")
@@ -258,24 +241,17 @@ map_matcher.plot_coverage(match_details, save_path="amsterdam_coverage.png")
 ### Thunderstorm Heatmap
 A stunning neon visualization of your activity routes on a dark canvas. Perfect for showcasing your training coverage in a specific area.
 
-| Thunderstorm Heatmap | Activity Clock |
-|:---:|:---:|
-| ![Thunderstorm Heatmap](readme_data/thunderstorm_amsterdam_run.png) | ![Activity Clock](readme_data/activity_clock_run.png) |
-| Neon-style route visualization on dark backgrounds | Polar plot showing training patterns by time of day |
+| Thunderstorm Heatmap |
+|:---:|
+| ![Thunderstorm Heatmap](readme_data/thunderstorm_amsterdam_run.png) |
+| Neon-style route visualization on dark backgrounds |
 
-### HUD Dashboard & Analytics
+### Weekly Report
 
-| HUD Dashboard | Efficiency Factor | Performance Frontier |
-|:---:|:---:|:---:|
-| ![HUD Dashboard](readme_data/hud_run.png) | ![Efficiency Factor](readme_data/efficiency_factor.png) | ![Performance Frontier](readme_data/performance_frontier.png) |
-| Distance, HR & Pace distributions | Aerobic efficiency over time | Best performances with Riegel's model |
-
-### Weekly Report & Bubble Map
-
-| Weekly Report | Bubble Map |
-|:---:|:---:|
-| ![Weekly Report](readme_data/weekly_report_2026-01-12.png) | ![Bubble Map](readme_data/bubble_map_spain.png) |
-| Instagram Story-sized weekly summary with HR zones, sport breakdowns, and training progression | Geographic bubble visualization of activity locations |
+| Weekly Report |
+|:---:|
+| ![Weekly Report](readme_data/weekly_report_2026-01-12.png) |
+| Instagram Story-sized weekly summary with HR zones, sport breakdowns, and training progression |
 
 ### Year in Sport
 Generate Instagram Story-sized (9:16) summaries of your yearly training with optional **year comparison**.
@@ -360,7 +336,7 @@ zone2/
 │   └── hooks/pre-commit            # secret-scanning pre-commit hook
 └── zone2/                          # Core Python library
     ├── activities_cache.py         # Parquet-backed cache w/ cache_version
-    ├── analytics.py                # Year-in-sport, weekly report, PRs, PMC
+    ├── analytics.py                # Year-in-sport, weekly report, PRs, race predictions
     ├── constants.py                # CRS constants
     ├── core.py                     # Main orchestrator class (Zone2)
     ├── endpoint.py                 # Strava API client w/ rate-limit pre-check
@@ -410,14 +386,9 @@ endpoints) and `dpi=<int>` (override quality).
 
 **Methods:**
 - `thunderstorm_heatmap(location, sport_types, radius_km, neon_color, show_title, year, return_buffer, dpi)` — neon route overlay
-- `activity_bubble_map(region, sport_types, min_radius_scale, grid_density, neon_color, show_title, return_buffer, dpi)` — bubble aggregation per grid cell
-- `activity_clock(sport_types, neon_color, return_buffer, dpi)` — polar plot (time-of-day × distance)
 - `plot_activity(activity_id, strava_endpoint, folder, title, neon_color, return_buffer, dpi)` — single-activity neon plot
 - `plot_year_in_sport_main(year, year_in_sport, main_sport, folder, neon_color, comparison_year, comparison_data, comparison_neon_color, return_buffer, dpi)`
 - `plot_year_in_sport_totals(year, year_in_sport, folder, neon_color, comparison_year, comparison_data, comparison_neon_color, return_buffer, dpi)`
-- `hud_dashboard(sport_type, neon_color, return_buffer, dpi)` — cyberpunk histograms
-- `plot_efficiency_factor(sport_type, window=14, return_buffer, dpi)` — aerobic efficiency over time
-- `plot_performance_frontier(sport_types, return_buffer, dpi)` — Pareto frontier + Riegel fit
 - `plot_weekly_report(weekly_report, folder, neon_color, last_week_report, return_buffer, dpi)` — Instagram-Story sized weekly summary
 
 ### StravaAnalytics
@@ -431,11 +402,9 @@ invalidate on sync via a `cache_version` token.
 - `get_all_year_in_sport(year, cutoff_month_day=None)` — cross-sport yearly aggregates
 - `get_personal_records()` — best efforts at standard distances per sport category
 - `get_race_predictions(sport_category="running")` — VDOT/Riegel-based predicted race times
-- `get_daily_training_load()` — per-day TRIMP (zone-weighted when streams available, Banister fallback)
-- `get_pmc_chart(start_date=None, end_date=None)` — Performance Management Chart (CTL / ATL / TSB)
-- `get_fitness_trend(sport_type="Run", start_date=None, end_date=None)` — VDOT trend with rolling average
-- `get_hr_zones()` / `get_max_heart_rate()` / `get_rest_heart_rate()` — HR zone configuration
-- `get_current_vo2_max()` — VO₂max estimate from recent efforts
+- `get_daily_training_load(hr_rest, hr_zones=None)` — per-day TRIMP (zone-weighted when streams available, Banister fallback)
+- `get_weekly_relative_effort(hr_rest, hr_zones=None, sports=None)` — weekly Relative Effort with a personalized range
+- `get_hr_zones()` / `get_max_heart_rate()` — HR zone configuration
 - `invalidate_caches()` — clear all memoized analytics (called on sync)
 
 ### StravaMapMatcher

@@ -126,24 +126,6 @@ def cancel_sync(z2: Zone2 = Depends(get_z2)):
     return {"status": "cancelling"}
 
 
-# ---------------------------------------------------------------------- /daily-stats
-
-
-@router.get("/daily-stats")
-def daily_stats(
-    metric: str = Query(...),
-    start_date: str = Query(...),
-    end_date: str = Query(...),
-    z2: Zone2 = Depends(get_z2),
-) -> dict[str, Any]:
-    return {
-        "metric": metric,
-        "start_date": start_date,
-        "end_date": end_date,
-        "rows": z2.garmin_cache.get_range(metric, start_date, end_date),
-    }
-
-
 # ---------------------------------------------------------------------- /latest
 
 
@@ -271,11 +253,6 @@ def course_line(z2: Zone2, course_id: int) -> dict[str, Any]:
         cached = {"coordinates": [[round(lon, 6), round(lat, 6)] for lat, lon in points]}
         _course_points_cache.set(course_id, cached)
     return cached
-
-
-@router.get("/courses")
-def courses(z2: Zone2 = Depends(get_z2)) -> list[dict[str, Any]]:
-    return course_list(z2)
 
 
 @router.get("/courses/{course_id}/points")

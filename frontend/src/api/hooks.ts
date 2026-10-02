@@ -1014,15 +1014,6 @@ export interface TrainingSession {
   created_at: string;
 }
 
-export function useCalendarSessions(month?: number, year?: number) {
-  return useQuery<TrainingSession[]>({
-    queryKey: ['calendar-sessions', month, year],
-    queryFn: () =>
-      api.get('/calendar/sessions', { params: { month, year } }).then(r => r.data),
-    placeholderData: keepPreviousData,
-  });
-}
-
 export function useCalendarSessionsByRange(dateFrom?: string, dateTo?: string) {
   return useQuery<TrainingSession[]>({
     queryKey: ['calendar-sessions-range', dateFrom, dateTo],
@@ -1038,7 +1029,6 @@ export function useCreateSession() {
     mutationFn: (data: Record<string, unknown>) =>
       api.post<TrainingSession>('/calendar/sessions', data).then(r => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['calendar-sessions'] });
       qc.invalidateQueries({ queryKey: ['calendar-sessions-range'] });
       qc.invalidateQueries({ queryKey: ['session-scores'] });
       qc.invalidateQueries({ queryKey: ['activity-score'] });
@@ -1053,7 +1043,6 @@ export function useUpdateSession() {
     mutationFn: ({ id, ...data }: { id: number } & Record<string, unknown>) =>
       api.put<TrainingSession>(`/calendar/sessions/${id}`, data).then(r => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['calendar-sessions'] });
       qc.invalidateQueries({ queryKey: ['calendar-sessions-range'] });
       qc.invalidateQueries({ queryKey: ['session-scores'] });
       qc.invalidateQueries({ queryKey: ['activity-score'] });
@@ -1068,7 +1057,6 @@ export function useDeleteSession() {
     // 204 No Content
     mutationFn: (id: number) => api.delete<void>(`/calendar/sessions/${id}`).then(r => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['calendar-sessions'] });
       qc.invalidateQueries({ queryKey: ['calendar-sessions-range'] });
       qc.invalidateQueries({ queryKey: ['session-scores'] });
       qc.invalidateQueries({ queryKey: ['activity-score'] });
@@ -1282,10 +1270,10 @@ export interface RaceEvent {
   created_at: string;
 }
 
-export function useRaceEvents(year?: number) {
+export function useRaceEvents() {
   return useQuery<RaceEvent[]>({
-    queryKey: ['race-events', year],
-    queryFn: () => api.get('/races/', { params: year ? { year } : {} }).then(r => r.data),
+    queryKey: ['race-events'],
+    queryFn: () => api.get('/races/').then(r => r.data),
     placeholderData: keepPreviousData,
   });
 }

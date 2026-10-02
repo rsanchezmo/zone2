@@ -4,8 +4,6 @@ from datetime import timedelta, date
 from fastapi import APIRouter, Depends, Query, Response
 from starlette.concurrency import run_in_threadpool
 import aiosqlite
-import pandas as pd
-import numpy as np
 
 from backend._ttl_cache import TTLCache
 from backend.db import get_db
@@ -13,7 +11,7 @@ from backend.dependencies import get_z2
 from backend.services.zones import resolve_hr_zones
 from backend.services.resting_hr import resolve_resting_hr
 from zone2.core import Zone2
-from zone2.utils import convert_speed, df_rows, get_sport_category, previous_week
+from zone2.utils import df_rows, get_sport_category, previous_week
 
 router = APIRouter()
 
@@ -154,135 +152,6 @@ def year_in_sport(
     return result
 
 
-@router.get("/efficiency-factor")
-@_cached_json
-def efficiency_factor(
-    sport_type: str = Query(default="Run"),
-    window: int = Query(default=14, ge=3, le=90),
-    z2: Zone2 = Depends(get_z2),
-):
-    activities = z2.strava_analytics._get_prepared_activities()
-    filtered = activities[activities["sport_type"] == sport_type].copy()
-
-    if filtered.empty:
-        return {"data": [], "sport_type": sport_type, "window": window}
-
-    filtered = filtered.sort_values("start_date_local")
-
-    # EF = normalized speed / average HR
-    ef_data = []
-    for row in df_rows(filtered, "average_speed", "average_heartrate", "start_date_local", "name"):
-        speed = row.get("average_speed")
-        hr = row.get("average_heartrate")
-        if speed and hr and not pd.isna(speed) and not pd.isna(hr) and hr > 0:
-            ef = float(speed) / float(hr)
-            ef_data.append({
-                "date": row["start_date_local"].isoformat(),
-                "ef": round(ef, 4),
-                "speed": float(speed),
-                "hr": float(hr),
-                "name": row.get("name", ""),
-            })
-
-    # Rolling average
-    if ef_data and len(ef_data) >= window:
-        ef_series = pd.Series([d["ef"] for d in ef_data])
-        rolling = ef_series.rolling(window=window, min_periods=1).mean()
-        for i, d in enumerate(ef_data):
-            d["ef_rolling"] = round(float(rolling.iloc[i]), 4)
-    else:
-        for d in ef_data:
-            d["ef_rolling"] = d["ef"]
-
-    result = {"data": ef_data, "sport_type": sport_type, "window": window}
-    return result
-
-
-@router.get("/performance-frontier")
-@_cached_json
-def performance_frontier(
-    sport_types: str = Query(default="Run"),
-    z2: Zone2 = Depends(get_z2),
-):
-    sport_list = [s.strip() for s in sport_types.split(",")]
-    activities = z2.strava_analytics._get_prepared_activities()
-    filtered = activities[activities["sport_type"].isin(sport_list)].copy()
-
-    if filtered.empty:
-        return {"data": [], "sport_types": sport_list}
-
-    points = []
-    for row in df_rows(filtered, "distance", "average_speed", "sport_type", "name", "start_date_local"):
-        dist_km = row.get("distance", 0) / 1000.0
-        speed = row.get("average_speed", 0)
-        if dist_km > 0 and speed > 0:
-            pace_value, unit = convert_speed(speed, row.get("sport_type"))
-            points.append({
-                "distance_km": round(dist_km, 2),
-                "pace": round(pace_value, 2),
-                "speed_ms": round(float(speed), 3),
-                "name": row.get("name", ""),
-                "date": str(row.get("start_date_local", "")),
-                "sport_type": row.get("sport_type", ""),
-            })
-
-    # Sort by distance for frontier
-    points.sort(key=lambda p: p["distance_km"])
-
-    # Compute frontier (best pace at each distance bin)
-    category = get_sport_category(sport_list[0])
-    is_pace_sport = category in ("running", "swimming")
-
-    if points:
-        distances = np.array([p["distance_km"] for p in points])
-        paces = np.array([p["pace"] for p in points])
-        n_bins = min(20, len(points))
-        bins = np.linspace(distances.min(), distances.max(), n_bins + 1)
-        frontier = []
-        for i in range(n_bins):
-            mask = (distances >= bins[i]) & (distances < bins[i + 1])
-            if mask.any():
-                best = paces[mask].min() if is_pace_sport else paces[mask].max()
-                frontier.append({
-                    "distance_km": round(float((bins[i] + bins[i + 1]) / 2), 2),
-                    "pace": round(float(best), 2),
-                })
-    else:
-        frontier = []
-
-    result = {"data": points, "frontier": frontier, "sport_types": sport_list}
-    return result
-
-
-@router.get("/activity-clock")
-@_cached_json
-def activity_clock(
-    sport_types: str = Query(default="Run"),
-    z2: Zone2 = Depends(get_z2),
-):
-    sport_list = [s.strip() for s in sport_types.split(",")]
-    activities = z2.strava_analytics._get_prepared_activities()
-    filtered = activities[activities["sport_type"].isin(sport_list)].copy()
-
-    if filtered.empty:
-        return {"data": [], "sport_types": sport_list}
-
-    points = []
-    for row in df_rows(filtered, "start_date_local", "distance", "name", "sport_type"):
-        hour = row["start_date_local"].hour + row["start_date_local"].minute / 60
-        dist_km = row.get("distance", 0) / 1000.0
-        points.append({
-            "hour": round(hour, 2),
-            "distance_km": round(dist_km, 2),
-            "name": row.get("name", ""),
-            "sport_type": row.get("sport_type", ""),
-            "date": row["start_date_local"].isoformat(),
-        })
-
-    result = {"data": points, "sport_types": sport_list}
-    return result
-
-
 @router.get("/cumulative-distance")
 @_cached_json
 def cumulative_distance(
@@ -351,7 +220,6 @@ def streaks(
     longest_start = active_dates[0]
     longest_end = active_dates[0]
     current = 1
-    current_start = active_dates[0]
     streak_start = active_dates[0]
 
     for i in range(1, len(active_dates)):
@@ -416,7 +284,6 @@ def streaks(
             longest_week_end = active_weeks[-1]
 
         # Current week streak: must include this week or last week
-        this_week = today.isocalendar()[:2]
         last_week_date = today - timedelta(days=7)
         last_week = last_week_date.isocalendar()[:2]
         last_active_week = active_weeks[-1]
@@ -548,31 +415,6 @@ def race_predictions(
     return result
 
 
-@router.get("/race-predictions/window-inputs")
-def race_predictions_window_inputs(
-    sport_category: str = Query(default="running"),
-    end_date: str = Query(..., description="ISO date (YYYY-MM-DD); window is 365d ending at this date"),
-    z2: Zone2 = Depends(get_z2),
-):
-    """Debug: return the raw per-distance bests that feed the race-prediction
-    model for the 52-week window ending at `end_date`. Useful to explain
-    visible features in the evolution chart (spikes, plateaus, etc.)."""
-    import pandas as pd
-    end_ts = pd.Timestamp(end_date, tz="UTC") if "T" not in end_date else pd.Timestamp(end_date)
-    if end_ts.tz is None:
-        end_ts = end_ts.tz_localize("UTC")
-    window_days = z2.strava_analytics.PREDICTIONS_WINDOW_DAYS
-    bests = z2.strava_analytics._recent_best_efforts_list(
-        sport_category, within_days=window_days, end_date=end_ts.to_pydatetime()
-    )
-    return {
-        "sport_category": sport_category,
-        "end_date": str(end_ts.date()),
-        "window_days": window_days,
-        "bests": bests,
-    }
-
-
 @router.get("/race-predictions/history")
 @_cached_json
 def race_predictions_history(
@@ -592,28 +434,6 @@ def race_predictions_history(
     )
     result = {"sport_category": sport_category, "weeks": weeks, "points": points}
     return result
-
-
-@router.get("/training-load")
-async def training_load(
-    start_date: str | None = None,
-    end_date: str | None = None,
-    z2: Zone2 = Depends(get_z2),
-    db: aiosqlite.Connection = Depends(get_db),
-):
-    resolved = await resolve_hr_zones(z2, db)
-
-    def build() -> dict:
-        data = z2.strava_analytics.get_daily_training_load(hr_zones=resolved["zones"])
-        if start_date:
-            data = [d for d in data if d["date"] >= start_date]
-        if end_date:
-            data = [d for d in data if d["date"] <= end_date]
-        return {"data": data}
-
-    key = ("training_load", start_date, end_date, _zones_signature(resolved["zones"]),
-           z2.strava_activities_cache.cache_version)
-    return await _cached_json_in_threadpool(key, build)
 
 
 @router.get("/relative-effort/weekly")
@@ -649,25 +469,3 @@ async def relative_effort_weekly(
         sports=sports,
     ))
 
-
-@router.get("/fitness-chart")
-@_cached_json
-def fitness_chart(
-    start_date: str | None = None,
-    end_date: str | None = None,
-    z2: Zone2 = Depends(get_z2),
-):
-    result = z2.strava_analytics.get_pmc_chart(start_date, end_date)
-    return result
-
-
-@router.get("/fitness-trend")
-@_cached_json
-def fitness_trend(
-    sport_type: str = Query(default="Run"),
-    start_date: str | None = None,
-    end_date: str | None = None,
-    z2: Zone2 = Depends(get_z2),
-):
-    result = z2.strava_analytics.get_fitness_trend(sport_type, start_date, end_date)
-    return result
