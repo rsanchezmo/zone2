@@ -939,6 +939,9 @@ class StravaAnalytics:
     # only applied once enough races exist.
     RACE_CALIBRATION_MIN_RACES = 3
     RACE_CALIBRATION_CLAMP = 0.05   # factor stays within [0.95, 1.05]
+    # GPS over-reads a nominal course; up to this much over, a race still counts
+    # as its standard distance (a 10-mile race's 16.3 km reads as the 15K).
+    RACE_GPS_OVERREAD_MAX = 1.10
 
     def _compute_predictions(
         self,
@@ -1203,8 +1206,7 @@ class StravaAnalytics:
         by date so callers can filter to 'races before X' leak-free.
 
         A race maps to its primary standard distance: the largest target with
-        target <= GPS distance <= target * 1.08 (GPS always over-reads the
-        nominal course). The actual time is the race's own best effort at that
+        target <= GPS distance <= target * RACE_GPS_OVERREAD_MAX. The actual time is the race's own best effort at that
         distance. Computed once per sport and cached; invalidated on sync.
         """
         cached = self._race_residuals_cache.get(sport_category)
@@ -1231,7 +1233,7 @@ class StravaAnalytics:
 
         for _, row in races.iterrows():
             gps_dist = float(row.get("distance") or 0)
-            primary = next((t for t in targets if t <= gps_dist <= t * 1.08), None)
+            primary = next((t for t in targets if t <= gps_dist <= t * self.RACE_GPS_OVERREAD_MAX), None)
             if primary is None:
                 continue
             effort = bests[
