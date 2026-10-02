@@ -84,7 +84,7 @@ export default function BackdropSettingsPanel() {
                 <span className={clsx('text-sm truncate', isLight ? 'text-gray-700' : 'text-gray-200')}>
                   {settings.city.name}
                 </span>
-                <button type="button" className="btn !text-xs ml-auto" onClick={() => update({ city: null })}>
+                <button type="button" className="btn text-xs ml-auto" onClick={() => update({ city: null })}>
                   Clear
                 </button>
               </div>
@@ -99,7 +99,7 @@ export default function BackdropSettingsPanel() {
                 />
                 <button
                   type="button"
-                  className="btn !text-xs"
+                  className="btn text-xs"
                   onClick={handleResolveCity}
                   disabled={geocode.isPending || !cityQuery.trim()}
                 >

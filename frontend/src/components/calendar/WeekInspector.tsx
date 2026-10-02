@@ -30,7 +30,7 @@ function PlannedSessions({ sessions, todayStr, weekStart, onPickDay }: PlannedSe
 
   return (
     <div>
-      <div className="eyebrow !text-[9px] mb-2">Planned this week</div>
+      <div className="eyebrow text-[9px] mb-2">Planned this week</div>
       {sessions && sessions.length > 0 ? (
         <div className="space-y-2">
           {sessions.map(s => {
@@ -174,14 +174,14 @@ export default function WeekInspector(props: WeekInspectorProps) {
     <aside className="panel p-4 flex flex-col gap-3.5 lg:sticky lg:top-4">
       <header className="flex items-start justify-between gap-2">
         <div>
-          <div className="eyebrow !text-blue-400">Week {format(parseISO(weekStart), 'w')}</div>
+          <div className="eyebrow text-blue-400">Week {format(parseISO(weekStart), 'w')}</div>
           <div className={clsx('text-[17px] font-semibold tracking-tight mt-0.5', isLight ? 'text-gray-900' : 'text-gray-100')}>
             {formatWeekRange(weekStart)}
           </div>
         </div>
         <div className="flex items-center gap-1">
-          <button onClick={onPrev} className="btn !px-2.5" aria-label="Previous week">&larr;</button>
-          <button onClick={onNext} disabled={atCurrentWeek} className="btn !px-2.5" aria-label="Next week">&rarr;</button>
+          <button onClick={onPrev} className="btn px-2.5" aria-label="Previous week">&larr;</button>
+          <button onClick={onNext} disabled={atCurrentWeek} className="btn px-2.5" aria-label="Next week">&rarr;</button>
           <ExportButton
             url={`/api/exports/weekly-report?week_start=${weekStart}`}
             label=""
@@ -210,7 +210,7 @@ export default function WeekInspector(props: WeekInspectorProps) {
 
       {weeklyGoals.length > 0 && (
         <section>
-          <div className="eyebrow !text-[9px] mb-2">Weekly goals</div>
+          <div className="eyebrow text-[9px] mb-2">Weekly goals</div>
           <div className="space-y-2.5">
             {weeklyGoals.map(g => {
               const color = getSportColor(g.sport_type)
@@ -238,7 +238,7 @@ export default function WeekInspector(props: WeekInspectorProps) {
 
       <section>
         <div className="flex items-baseline justify-between mb-1">
-          <span className="eyebrow !text-[9px]">Activities</span>
+          <span className="eyebrow text-[9px]">Activities</span>
           <span className="text-[10px] font-mono tabular-nums text-gray-600">{sorted.length}</span>
         </div>
         {sorted.length === 0 ? (

@@ -601,7 +601,7 @@ export default function SessionModal({
                             placeholder="Template name"
                             value={saveTemplateName}
                             onChange={e => setSaveTemplateName(e.target.value)}
-                            className="input flex-1 !text-xs !py-1"
+                            className="input flex-1 text-xs py-1"
                             autoFocus
                             onKeyDown={e => {
                               if (e.key === 'Enter' && saveTemplateName.trim()) {

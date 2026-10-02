@@ -504,7 +504,7 @@ export default function ActivitiesPage() {
                 setSortDir(d => d === 'desc' ? 'asc' : 'desc')
                 setPage(1)
               }}
-              className="btn flex items-center justify-center !px-2"
+              className="btn flex items-center justify-center px-2"
               title={sortDir === 'desc' ? 'Descending — click for ascending' : 'Ascending — click for descending'}
               aria-label={sortDir === 'desc' ? 'Sort ascending' : 'Sort descending'}
             >

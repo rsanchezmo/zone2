@@ -114,7 +114,7 @@ export default function DatePicker({ value, onChange, label, inputClassName }: D
         />
         <button
           onClick={() => setOpen(o => !o)}
-          className="btn !p-1.5"
+          className="btn p-1.5"
           type="button"
           aria-label="Open calendar"
         >

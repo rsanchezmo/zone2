@@ -51,10 +51,10 @@ export default function CalendarSubscription({ feedUrl }: { feedUrl: CalendarFee
                 onFocus={e => e.currentTarget.select()}
                 className={clsx('flex-1 font-mono text-[11px] px-2 py-1.5 rounded border min-w-0', isLight ? 'bg-gray-50 border-gray-200 text-gray-700' : 'bg-surface-900 border-surface-600 text-gray-300')}
               />
-              <button onClick={handleCopyFeedUrl} className="btn !text-xs" disabled={!feedUrl?.url}>Copy</button>
+              <button onClick={handleCopyFeedUrl} className="btn text-xs" disabled={!feedUrl?.url}>Copy</button>
               <button
                 onClick={handleRotateFeedToken}
-                className="btn !text-xs"
+                className="btn text-xs"
                 disabled={rotateFeedToken.isPending || feedUrl?.env_managed}
                 title={feedUrl?.env_managed ? 'Token is pinned via STRAVA_WEB_CALENDAR_FEED_TOKEN — rotate it in .env and restart' : undefined}
               >

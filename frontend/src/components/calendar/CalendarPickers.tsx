@@ -19,7 +19,7 @@ function PickerButton({ label, children }: { label: string; children: (close: ()
   useClickOutside(ref, open, close)
   return (
     <div ref={ref} className="contents">
-      <button onClick={() => setOpen(v => !v)} className="btn min-w-[150px] text-center !text-sm tabular-nums">
+      <button onClick={() => setOpen(v => !v)} className="btn min-w-[150px] text-center text-sm tabular-nums">
         {label}
       </button>
       {open && children(close)}

@@ -167,7 +167,7 @@ export default function WorkoutsPage() {
               onClick={handleSave}
               disabled={!name.trim() || segments.length === 0}
               className={clsx(
-                'btn flex-1 !text-sm !py-2',
+                'btn flex-1 text-sm py-2',
                 isLight
                   ? '!bg-gray-900 !text-white !border-gray-900 hover:!bg-gray-800'
                   : '!bg-white/10 !text-gray-200 !border-white/20 hover:!bg-white/15',
@@ -175,7 +175,7 @@ export default function WorkoutsPage() {
             >
               {editingTemplate ? 'Save changes' : 'Create template'}
             </button>
-            <button onClick={resetForm} className="btn flex-1 !text-sm !py-2">
+            <button onClick={resetForm} className="btn flex-1 text-sm py-2">
               Cancel
             </button>
           </div>
