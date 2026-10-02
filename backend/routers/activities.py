@@ -210,10 +210,11 @@ def _polylines(z2: Zone2, sport_type: str | None, year: int | None, gear_id: str
         {
             "id": _sanitize(row["id"]),
             "sport_type": row.get("sport_type", ""),
+            "year": row["start_date_local"].year,
             "polyline": row["summary_polyline"],
             "name": row.get("name", ""),
         }
-        for row in df_rows(activities[mask], "id", "sport_type", "summary_polyline", "name")
+        for row in df_rows(activities[mask], "id", "sport_type", "start_date_local", "summary_polyline", "name")
     ]
 
 

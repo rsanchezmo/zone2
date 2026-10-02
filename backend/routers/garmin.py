@@ -129,12 +129,33 @@ def cancel_sync(z2: Zone2 = Depends(get_z2)):
 # ---------------------------------------------------------------------- /latest
 
 
+# The stat cards read a few fields per metric; the payloads also carry
+# intraday arrays (sleep alone ~200 KB) they never show.
+_CARD_SUBTREES = {
+    "sleep": ("dailySleepDTO",),
+    "hrv": ("hrvSummary",),
+    "training_status": ("mostRecentVO2Max", "mostRecentTrainingLoadBalance", "mostRecentTrainingStatus"),
+}
+
+
+def _card_fields(metric: str, payload: Any) -> Any:
+    """The parts of a metric's payload the stat cards read: named subtrees, or
+    everything but the top-level arrays."""
+    if not isinstance(payload, dict):
+        return payload
+    keep = _CARD_SUBTREES.get(metric)
+    if keep is not None:
+        return {k: payload[k] for k in keep if k in payload}
+    return {k: v for k, v in payload.items() if not isinstance(v, list)}
+
+
 @router.get("/latest")
 def latest(z2: Zone2 = Depends(get_z2)) -> dict[str, Any]:
-    """Most-recent cached payload per metric — feeds the stat-card row."""
+    """Most-recent cached payload per metric, trimmed to what the stat-card row reads."""
     out: dict[str, Any] = {}
     for metric in z2.garmin_client.ALL_METRICS:
-        out[metric] = z2.garmin_cache.get_latest(metric)
+        entry = z2.garmin_cache.get_latest(metric)
+        out[metric] = {**entry, "payload": _card_fields(metric, entry["payload"])} if entry else None
     return out
 
 

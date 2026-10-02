@@ -940,7 +940,7 @@ export default function CalendarPage() {
   // The current week is empty for most of its first days, which left the whole
   // report reading as zeros. Until the athlete picks a week, follow the last one
   // that actually has activity — which is the current week once they train in it.
-  const { data: newestActivity } = useActivities(1, 1)
+  const { data: newestActivity, isFetched: newestFetched } = useActivities(1, 1)
   const latestActiveWeek = useMemo(() => {
     const newest = newestActivity?.items?.[0]?.start_date_local
     if (!newest) return null
@@ -949,6 +949,9 @@ export default function CalendarPage() {
 
   const [pickedWeek, setPickedWeek] = useState<string | null>(null)
   const weekStart = pickedWeek ?? latestActiveWeek ?? thisWeekStart
+  // Queries on the inspected week wait for the newest activity, which picks the
+  // default week: starting on this one and then moving would fetch them all twice.
+  const weekKnown = pickedWeek !== null || newestFetched
 
   const [sportFilter, setSportFilter] = useState<Set<string>>(new Set())
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
@@ -1018,14 +1021,16 @@ export default function CalendarPage() {
     setShowWeekPicker(false)
   }, [currentMonth, weekStart])
 
-  const { data: activitiesData, isLoading: activitiesLoading } = useActivitiesByDateRange(dateFrom, dateTo)
+  // The week view's grid is the inspected week, so it waits for it too
+  const gridFrom = view === 'week' && !weekKnown ? undefined : dateFrom
+  const { data: activitiesData, isLoading: activitiesLoading } = useActivitiesByDateRange(gridFrom, dateTo)
   // Fetch the full grid range so sessions on leading/trailing days of adjacent months render too
-  const { data: sessions } = useCalendarSessionsByRange(dateFrom, dateTo)
-  const { data: sessionScores } = useSessionScores(dateFrom, dateTo)
+  const { data: sessions } = useCalendarSessionsByRange(gridFrom, dateTo)
+  const { data: sessionScores } = useSessionScores(gridFrom, dateTo)
   const createSession = useCreateSession()
   const updateSession = useUpdateSession()
   const deleteSession = useDeleteSession()
-  const { data: raceEventsRange } = useRaceEventsByRange(dateFrom, dateTo)
+  const { data: raceEventsRange } = useRaceEventsByRange(gridFrom, dateTo)
   const { data: upcomingRaces } = useUpcomingRaces()
   const createRace = useCreateRaceEvent()
   const updateRace = useUpdateRaceEvent()
@@ -1034,22 +1039,37 @@ export default function CalendarPage() {
   // Weekly report — in week view the grid's own selector drives `weekStart`,
   // so the report always describes the week on screen.
   const isCurrentWeek = weekStart === thisWeekStart
-  const { data: weekData, isLoading: weekLoading } = useWeeklyReport(weekStart)
+  const inspectedWeek = weekKnown ? weekStart : undefined
+  const { data: weekData, isLoading: weekQueryLoading } = useWeeklyReport(inspectedWeek)
+  const weekLoading = weekQueryLoading || !weekKnown
   const { data: athleteZones } = useAthleteZones()
   const hrZoneBounds = athleteZones?.heart_rate?.zones ?? undefined
   const current = weekData?.current
   const previous = weekData?.previous
 
   // weekStart is always a Monday (the backend snaps to Monday too), so the range is known
-  // locally and this query can fire in parallel with the weekly report
+  // locally and these queries can fire in parallel with the weekly report
   const weekEndStr = format(addDays(parseISO(weekStart), 6), 'yyyy-MM-dd')
-  const { data: weekActivities } = useActivitiesByDateRange(weekStart, weekEndStr)
-  const { data: goalProgressData } = useGoalProgress(weekStart)
+  const { data: goalProgressData } = useGoalProgress(inspectedWeek)
+  // The week's activities and planned sessions come from the grid while it shows
+  // the week, and from their own queries once the month moves off it.
+  const weekInGrid = weekStart >= dateFrom && weekEndStr <= dateTo
+  const ownWeekFrom = weekInGrid ? undefined : inspectedWeek
+  const { data: ownWeekActivities } = useActivitiesByDateRange(ownWeekFrom, weekEndStr)
+  const { data: ownWeekPlanned } = useCalendarSessionsByRange(ownWeekFrom, weekEndStr)
+  const weekActivities = useMemo(() => {
+    if (!weekInGrid) return ownWeekActivities?.items
+    return activitiesData?.items.filter(a => {
+      const day = a.start_date_local ? localDateStr(a.start_date_local) : null
+      return day !== null && day >= weekStart && day <= weekEndStr
+    })
+  }, [weekInGrid, ownWeekActivities, activitiesData, weekStart, weekEndStr])
+  const weekPlanned = useMemo(
+    () => (weekInGrid ? sessions?.filter(s => s.date >= weekStart && s.date <= weekEndStr) : ownWeekPlanned),
+    [weekInGrid, sessions, ownWeekPlanned, weekStart, weekEndStr],
+  )
 
-  // Sessions planned in the week being inspected. Keyed on the week rather than
-  // the grid's range so it stays right when the month moves off that week.
   const todayStr = format(new Date(), 'yyyy-MM-dd')
-  const { data: weekPlanned } = useCalendarSessionsByRange(weekStart, weekEndStr)
 
   // Shared sport color map for weekly section
   const weekDetailSkeleton = (
@@ -1743,7 +1763,7 @@ export default function CalendarPage() {
           weekStart={weekStart}
           report={current}
           loading={weekLoading}
-          activities={weekActivities?.items}
+          activities={weekActivities}
           goals={goalProgressData?.goals}
           planned={weekPlanned}
           todayStr={todayStr}

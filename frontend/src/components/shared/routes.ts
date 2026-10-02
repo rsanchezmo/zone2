@@ -4,6 +4,7 @@ import type { ActivityPolyline } from '../../api/hooks'
 export interface DecodedRoute {
   id: number | string
   sport_type: string
+  year: number
   name: string
   positions: [number, number][]
 }
@@ -25,6 +26,7 @@ export function decodeRoutes(raw: ActivityPolyline[] | undefined): DecodedRoute[
     routes.push({
       id: activity.id,
       sport_type: activity.sport_type,
+      year: activity.year,
       name: activity.name,
       positions,
     })

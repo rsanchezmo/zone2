@@ -10,7 +10,7 @@ import { useIsMobile } from '../hooks/useIsMobile'
 import {
   useGarminStatus, useGarminLatest, useGarminTrends, useTriggerGarminSync, useCancelGarminSync,
   useGarminEvents, useActivitiesByDateRange,
-  type GarminTrendRow as TrendRow, type GarminAutoEvent,
+  type GarminTrendRow as TrendRow, type GarminAutoEvent, type GarminTrends,
 } from '../api/hooks'
 import { getSportColor, DEFAULT_SPORT_COLOR } from '../constants/sportColors'
 import StatCard from '../components/shared/StatCard'
@@ -354,6 +354,18 @@ function PageSkeleton({ isLight }: { isLight: boolean }) {
   )
 }
 
+/** The last `days` days of a trends payload fetched over a longer window. */
+function lastDays(trends: GarminTrends | undefined, days: number): GarminTrends | undefined {
+  if (!trends || trends.days <= days) return trends
+  const from = new Date(`${trends.end_date}T00:00:00`)
+  from.setDate(from.getDate() - (days - 1))
+  const fromIso = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, '0')}-${String(from.getDate()).padStart(2, '0')}`
+  const metrics = Object.fromEntries(
+    Object.entries(trends.metrics).map(([metric, rows]) => [metric, rows.filter(r => r.date >= fromIso)]),
+  )
+  return { ...trends, days, start_date: fromIso, metrics }
+}
+
 // ─────────────────────────────────────────── page
 
 export default function GarminPage() {
@@ -365,8 +377,11 @@ export default function GarminPage() {
   const [rhythmDays, setRhythmDays] = useState<number>(90)
   const { data: status } = useGarminStatus()
   const { data: latest, isLoading: latestLoading } = useGarminLatest()
-  const { data: trends, isLoading: trendsLoading } = useGarminTrends(days)
-  const { data: rhythmTrends, isLoading: rhythmLoading } = useGarminTrends(rhythmDays)
+  // One fetch over the longer window serves both the charts and the weekly rhythm
+  const { data: allTrends, isLoading: trendsLoading } = useGarminTrends(Math.max(days, rhythmDays))
+  const trends = useMemo(() => lastDays(allTrends, days), [allTrends, days])
+  const rhythmTrends = useMemo(() => lastDays(allTrends, rhythmDays), [allTrends, rhythmDays])
+  const rhythmLoading = trendsLoading
   const [eventRange, setEventRange] = useState<number>(14)
   const { data: eventsData } = useGarminEvents(eventRange)
   const triggerSync = useTriggerGarminSync()
@@ -712,17 +727,7 @@ export default function GarminPage() {
     tickLine: false as const,
     width: isMobile ? 42 : 60,
   }
-  const tooltipProps = {
-    contentStyle: {
-      background: colors.tooltipBg,
-      border: `1px solid ${colors.tooltipBorder}`,
-      borderRadius: 8,
-      fontSize: 12,
-    },
-    labelStyle: { color: colors.tickFillSecondary },
-    itemStyle: { color: colors.tickFillSecondary },
-    labelFormatter: fmtDate,
-  }
+  const tooltipProps = { ...colors.tooltip, labelFormatter: fmtDate }
 
   if (latestLoading || trendsLoading) return <PageSkeleton isLight={isLight} />
 

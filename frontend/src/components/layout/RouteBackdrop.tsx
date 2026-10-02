@@ -185,9 +185,14 @@ export default function RouteBackdrop() {
   const { theme } = useTheme()
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
-  const { data } = usePolylines(settings.sport || undefined, undefined, settings.enabled)
+  // The unfiltered list the Map page also uses: one request serves both
+  const { data } = usePolylines(undefined, undefined, settings.enabled)
+  const sportRoutes = useMemo(
+    () => (settings.sport ? data?.filter(p => p.sport_type === settings.sport) : data),
+    [data, settings.sport],
+  )
 
-  const { routes, bounds } = useMemo(() => project(data, settings.city), [data, settings.city])
+  const { routes, bounds } = useMemo(() => project(sportRoutes, settings.city), [sportRoutes, settings.city])
 
   // The white core is what makes the glow read as neon; on a light surface it
   // would vanish, so the accent carries the core there instead.
