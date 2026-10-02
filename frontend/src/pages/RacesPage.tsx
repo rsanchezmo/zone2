@@ -6,10 +6,11 @@ import {
   useActivitiesOnDates, type Activity, type RaceEvent,
 } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
-import { getPaceUnit, getDistUnit, getSportCategory, formatPace, isSpeedSport, parsePaceInput } from '../utils/formatSpeed'
+import { getPaceUnit, getDistUnit, formatPace, isSpeedSport, parsePaceInput, toInputDist, fromInputDist, formatDistExact } from '../utils/formatSpeed'
 import { localDateStr } from '../utils/dates'
 import SportTypeCombobox from '../components/shared/SportTypeCombobox'
 import DatePicker from '../components/shared/DatePicker'
+import RowActions from '../components/shared/RowActions'
 import { FlagIcon, CheckIcon, ExternalLinkIcon } from '../components/icons'
 import clsx from 'clsx'
 import { useTheme } from '../hooks/useTheme'
@@ -51,13 +52,7 @@ export default function RacesPage() {
     setName(r.name)
     setDate(r.date)
     setSportType(r.sport_type)
-    // User enters meters for swimming, km for others — convert km → m for swim display
-    const displayDist = r.distance_km != null
-      ? (getSportCategory(r.sport_type) === 'swimming'
-          ? r.distance_km * 1000
-          : r.distance_km)
-      : ''
-    setDistanceKm(displayDist === '' ? '' : String(displayDist))
+    setDistanceKm(r.distance_km != null ? toInputDist(r.distance_km, r.sport_type) : '')
     setTargetPace(r.target_pace != null
       ? formatPace(r.target_pace, isSpeedSport(r.sport_type))
       : '')
@@ -69,16 +64,11 @@ export default function RacesPage() {
 
   function handleSubmit() {
     if (!name.trim() || !date) return
-    // User enters meters for swimming, km for others — always store as km
-    const parsedDist = distanceKm ? parseFloat(distanceKm) : null
-    const distanceKmPayload = parsedDist !== null
-      ? (getSportCategory(sportType) === 'swimming' ? parsedDist / 1000 : parsedDist)
-      : null
     const payload: Record<string, unknown> = {
       name: name.trim(),
       date,
       sport_type: sportType,
-      distance_km: distanceKmPayload,
+      distance_km: fromInputDist(distanceKm, sportType),
       target_pace: targetPace ? parsePaceInput(targetPace, isSpeedSport(sportType)) : null,
       description: description || null,
       location: location || null,
@@ -182,7 +172,7 @@ export default function RacesPage() {
               <label className="eyebrow mb-1.5 block">Distance ({getDistUnit(sportType)})</label>
               <input
                 type="text" inputMode="decimal"
-                placeholder={getSportCategory(sportType) === 'swimming' ? '1500' : '42.195'}
+                placeholder={getDistUnit(sportType) === 'm' ? '1500' : '42.195'}
                 value={distanceKm} onChange={e => setDistanceKm(e.target.value)}
                 className="input w-full"
               />
@@ -308,11 +298,7 @@ export default function RacesPage() {
                           <div className="flex items-center gap-3 text-[11px] text-gray-500 flex-wrap font-mono tabular-nums">
                             <span>{format(parseISO(r.date), 'EEE · MMM d, yyyy')}</span>
                             {r.distance_km != null && (
-                              <span>
-                                {getSportCategory(r.sport_type) === 'swimming'
-                                  ? `${Math.round(r.distance_km * 1000)} m`
-                                  : `${r.distance_km} km`}
-                              </span>
+                              <span>{formatDistExact(r.distance_km, r.sport_type)}</span>
                             )}
                             {r.target_pace != null && <span>{formatPace(r.target_pace, isSpeedSport(r.sport_type))} {getPaceUnit(r.sport_type)}</span>}
                             {r.location != null && <span className="normal-case">{r.location}</span>}
@@ -388,11 +374,7 @@ export default function RacesPage() {
                           <div className="flex items-center gap-3 text-[11px] text-gray-500 flex-wrap font-mono tabular-nums">
                             <span>{format(parseISO(r.date), 'MMM d, yyyy')}</span>
                             {r.distance_km != null && (
-                              <span>
-                                {getSportCategory(r.sport_type) === 'swimming'
-                                  ? `${Math.round(r.distance_km * 1000)} m`
-                                  : `${r.distance_km} km`}
-                              </span>
+                              <span>{formatDistExact(r.distance_km, r.sport_type)}</span>
                             )}
                             {r.target_pace != null && <span>{formatPace(r.target_pace, isSpeedSport(r.sport_type))} {getPaceUnit(r.sport_type)}</span>}
                             {r.location != null && <span className="normal-case">{r.location}</span>}
@@ -434,45 +416,6 @@ export default function RacesPage() {
               </button>
             </div>
           )}
-        </>
-      )}
-    </div>
-  )
-}
-
-// ────────────────────────────────────────────────────────
-// RowActions — edit/delete controls (with confirm-delete state)
-// ────────────────────────────────────────────────────────
-
-function RowActions({
-  isConfirming,
-  onEdit,
-  onConfirmDelete,
-  onAskDelete,
-  onCancelDelete,
-}: {
-  isConfirming: boolean
-  onEdit: () => void
-  onConfirmDelete: () => void
-  onAskDelete: () => void
-  onCancelDelete: () => void
-}) {
-  const { theme } = useTheme()
-  const isLight = theme === 'light'
-  const actionBase = 'action-link text-[11px] uppercase tracking-[0.15em]'
-  const actionClass = clsx(actionBase, isLight ? 'text-gray-400 hover:text-gray-700' : 'text-gray-500 hover:text-gray-200')
-  return (
-    <div className="flex items-center gap-2 shrink-0">
-      {isConfirming ? (
-        <>
-          <span className="text-[11px] uppercase tracking-[0.15em] text-red-400">Delete?</span>
-          <button onClick={onConfirmDelete} className={clsx(actionBase, 'text-red-400 hover:text-red-300 font-bold')}>Yes</button>
-          <button onClick={onCancelDelete} className={actionClass}>No</button>
-        </>
-      ) : (
-        <>
-          <button onClick={onEdit} className={actionClass}>Edit</button>
-          <button onClick={onAskDelete} className={clsx(actionBase, 'text-red-400/80 hover:text-red-300')}>Delete</button>
         </>
       )}
     </div>

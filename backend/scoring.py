@@ -9,7 +9,7 @@ A "slice" is the same shape with shorter arrays. Helpers `_len`, `_get`, and
 
 from __future__ import annotations
 
-from zone2.utils import convert_speed, get_sport_category
+from zone2.utils import convert_speed, get_sport_category, hr_zone_counts
 from zone2.streams_store import moving_time, slice_streams as _slice, stream_length as _len
 
 
@@ -131,17 +131,13 @@ def _compute_hr_zone_pct(
     if not streams or not hr_zones or target_zone < 1 or target_zone > len(hr_zones):
         return None
 
-    zone = hr_zones[target_zone - 1]
-    zone_min = zone.get("min", 0)
-    zone_max = zone.get("max", 999)
-
     hr_col = streams.get("heartrate") or []
     hr_points = [hr for hr in hr_col if hr]
     if not hr_points:
         return None
 
-    in_zone = sum(1 for hr in hr_points if zone_min <= hr <= zone_max)
-    return round(in_zone / len(hr_points) * 100, 1)
+    in_zone = hr_zone_counts(hr_points, hr_zones)[target_zone - 1]
+    return round(float(in_zone) / len(hr_points) * 100, 1)
 
 
 def _score_hr_zone(target_pct: float, actual_pct: float) -> dict:

@@ -11,7 +11,7 @@ from zone2.user_cache import StravaUserCache
 from zone2.utils import (
     vo2_max, get_sport_category, vdot_from_time_distance,
     predicted_time_from_vdot, riegel_predict, fit_riegel_exponent,
-    compute_trimp_banister, compute_trimp_zone_weighted, df_rows,
+    compute_trimp_banister, compute_trimp_zone_weighted, hr_zone_counts, df_rows,
     training_paces_from_vdot,
 )
 
@@ -636,11 +636,7 @@ class StravaAnalytics:
                 hr_values = np.concatenate([values for values, _ in hr_counts])
                 hr_weights = np.concatenate([counts for _, counts in hr_counts])
                 total = int(hr_weights.sum())
-                # Build zone boundaries: [z1_min, z1_max, z2_max, z3_max, z4_max]
-                boundaries = [z['max'] for z in hr_athlete_zones[:4]]
-                # np.digitize bins: < z1_max → 0, < z2_max → 1, etc.
-                in_zone = np.bincount(np.digitize(hr_values, boundaries, right=False),
-                                      weights=hr_weights, minlength=5)
+                in_zone = hr_zone_counts(hr_values, hr_athlete_zones, hr_weights)
                 for zone_idx in range(5):
                     hr_zone_distribution[zone_idx + 1] = round((float(in_zone[zone_idx]) / total) * 100, 1)
 
@@ -1703,7 +1699,6 @@ class StravaAnalytics:
         # per-activity HR sample counts (each sample weighs an equal share of
         # the moving time).
         if hr_zones:
-            boundaries = [z['max'] for z in hr_zones[:4]]
             id_list = valid['id'].astype('int64').tolist() if 'id' in valid.columns else []
             hr_counts = self._activity_heartrate_counts(id_list)
             for idx, activity_id in enumerate(id_list):
@@ -1714,8 +1709,7 @@ class StravaAnalytics:
                 n_samples = int(hr_weights.sum())
                 if n_samples <= 10:
                     continue
-                in_zone = np.bincount(np.digitize(hr_values, boundaries, right=False),
-                                      weights=hr_weights, minlength=5)
+                in_zone = hr_zone_counts(hr_values, hr_zones, hr_weights)
                 time_per_pt = duration_min_arr[idx] / n_samples
                 time_in_zones = [float(in_zone[i]) * time_per_pt for i in range(5)]
                 zw = compute_trimp_zone_weighted(time_in_zones)

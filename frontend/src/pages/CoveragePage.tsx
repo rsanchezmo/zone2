@@ -563,7 +563,6 @@ export default function CoveragePage() {
                   return { color: heatColor(n), weight: 1.2 + 2.2 * n, opacity: 0.95 * edgesOpacity }
                 }}
               />
-              <FitToLayer data={edges} />
             </>
           )}
           {edges && !heatmapMode && (
@@ -571,9 +570,10 @@ export default function CoveragePage() {
               {/* Glow underlay + bright core */}
               <GeoJSON key={`${edgesKey}-glow`} data={edges} style={{ color: accent, weight: 5, opacity: 0.18 * edgesOpacity }} />
               <GeoJSON key={`${edgesKey}-core`} data={edges} style={{ color: accent, weight: 1.6, opacity: 0.95 * edgesOpacity }} />
-              <FitToLayer data={edges} />
             </>
           )}
+          {/* Outside the style branches so toggling heatmap doesn't re-fit the view */}
+          {edges && <FitToLayer data={edges} />}
           {planMode && <LoopPlanLayer planner={planner} />}
           <ViewportTracker onChange={setViewportBbox} />
           {areaRect && (

@@ -120,7 +120,7 @@ def list_activities(
     sdl = activities["start_date_local"]
     mask = pd.Series(True, index=activities.index)
     if search:
-        mask &= activities["name"].str.contains(search, case=False, na=False)
+        mask &= activities["name"].str.contains(search, case=False, na=False, regex=False)
     if sport_type:
         mask &= activities["sport_type"] == sport_type
     if gear_id and "gear_id" in activities.columns:

@@ -113,6 +113,23 @@ export function getDistUnit(sportType: string | undefined | null): string {
   return getSportCategory(sportType) === 'swimming' ? 'm' : 'km'
 }
 
+/** A stored km distance as the user types it: meters for swimming, km otherwise, unrounded. */
+export function toInputDist(km: number, sportType: string | undefined | null): string {
+  return getSportCategory(sportType) === 'swimming' ? String(Math.round(km * 1000)) : String(km)
+}
+
+/** Parse a distance typed in `getDistUnit(sportType)` back into km; null when empty or invalid. */
+export function fromInputDist(value: string, sportType: string | undefined | null): number | null {
+  const n = parseFloat(value)
+  if (Number.isNaN(n)) return null
+  return getSportCategory(sportType) === 'swimming' ? n / 1000 : n
+}
+
+/** A distance exactly as entered, with its unit ("1500 m", "42.195 km"). */
+export function formatDistExact(km: number, sportType: string | undefined | null): string {
+  return `${toInputDist(km, sportType)} ${getDistUnit(sportType)}`
+}
+
 /** Convert km value to the appropriate display value (meters for swimming, km otherwise). */
 export function distValue(km: number, sportType: string | undefined | null, decimals: number = 1): string {
   if (getSportCategory(sportType) === 'swimming') {

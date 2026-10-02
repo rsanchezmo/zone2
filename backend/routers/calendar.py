@@ -141,30 +141,49 @@ def _activities_by_day(z2: Zone2, date_from: str, date_to: str) -> dict[str, lis
     return activity_map
 
 
+def _session_matches(sessions: list[dict], activity_map: dict[str, list[dict]]) -> list[tuple[dict, dict]]:
+    """(session, activity) for each session an activity on its day matches."""
+    pairs = []
+    for session in sessions:
+        matched = match_activity(session, activity_map.get(session["date"], []))
+        if matched is not None:
+            pairs.append((session, matched))
+    return pairs
+
+
 def _score_sessions(z2: Zone2, sessions: list[dict], date_from: str, date_to: str,
                     hr_zones: list | None) -> dict[int, dict | None]:
     """Execution score per session, None when no activity matches it."""
-    activity_map = _activities_by_day(z2, date_from, date_to)
+    pairs = _session_matches(sessions, _activities_by_day(z2, date_from, date_to))
 
-    # Pre-resolve matches first so we can bulk-load only the matched activities' streams.
-    pending: list[tuple[int, dict, dict]] = []
-    result: dict[int, dict | None] = {}
-    for session in sessions:
-        sid = session["id"]
-        day_activities = activity_map.get(session["date"], [])
-        matched = match_activity(session, day_activities)
-        if matched is None:
-            result[sid] = None
-            continue
-        pending.append((sid, session, matched))
-
-    matched_ids = [m["id"] for _, _, m in pending if m.get("id") is not None]
+    # Bulk-load only the matched activities' streams.
+    matched_ids = [m["id"] for _, m in pairs if m.get("id") is not None]
     streams_map = z2.strava_activities_cache.get_streams_bulk(matched_ids) if matched_ids else {}
 
-    for sid, session, matched in pending:
+    result: dict[int, dict | None] = {s["id"]: None for s in sessions}
+    for session, matched in pairs:
         streams = streams_map.get(int(matched["id"])) if matched.get("id") is not None else None
-        result[sid] = compute_execution_score(session, matched, hr_zones, streams)
+        result[session["id"]] = compute_execution_score(session, matched, hr_zones, streams)
     return result
+
+
+def _activity_day(z2: Zone2, activity_id: int) -> str | None:
+    row = z2.strava_activities_cache.get_activity_by_id(activity_id)
+    if row is None or row.get("start_date_local") is None:
+        return None
+    sdt = row["start_date_local"]
+    sdt = pd.to_datetime(sdt) if not hasattr(sdt, "strftime") else sdt
+    return sdt.strftime("%Y-%m-%d")
+
+
+def _score_activity(z2: Zone2, activity_id: int, date_str: str, sessions: list[dict],
+                    hr_zones: list | None) -> dict | None:
+    """Score of the session the calendar matches this activity to, if any."""
+    for session, matched in _session_matches(sessions, _activities_by_day(z2, date_str, date_str)):
+        if matched.get("id") is not None and int(matched["id"]) == activity_id:
+            streams = z2.strava_activities_cache.get_streams(activity_id)
+            return {"session": session, "score": compute_execution_score(session, matched, hr_zones, streams)}
+    return None
 
 
 @router.get("/sessions/scores")
@@ -262,25 +281,17 @@ async def get_score_by_activity(
     z2: Zone2 = Depends(get_z2),
 ):
     """Get execution score for a specific Strava activity, if a matching session exists."""
-    row = z2.strava_activities_cache.get_activity_by_id(activity_id)
-    if row is None:
+    date_str = await run_in_threadpool(_activity_day, z2, activity_id)
+    if date_str is None:
         return None
-    sdt = row.get("start_date_local")
-    if sdt is None:
-        return None
-    sdt = pd.to_datetime(sdt) if not hasattr(sdt, "strftime") else sdt
-    date_str = sdt.strftime("%Y-%m-%d")
 
     cursor = await db.execute(
         "SELECT * FROM training_sessions WHERE date = ? ORDER BY id", (date_str,),
     )
     rows = await cursor.fetchall()
-    sessions = [_row_to_dict(r) for r in rows]
-    sessions_with_targets = [s for s in sessions if has_targets(s)]
+    sessions_with_targets = [s for s in (_row_to_dict(r) for r in rows) if has_targets(s)]
     if not sessions_with_targets:
         return None
-
-    activity_dict = _activity_row_to_dict(row)
 
     hr_zones = None
     try:
@@ -288,18 +299,7 @@ async def get_score_by_activity(
     except Exception as e:
         logger.debug("Could not load HR zones for scoring: %s", e)
 
-    streams = await run_in_threadpool(z2.strava_activities_cache.get_streams, activity_id)
-
-    for session in sessions_with_targets:
-        if session.get("sport_type") != activity_dict.get("sport_type"):
-            continue
-        score = compute_execution_score(session, activity_dict, hr_zones, streams)
-        return {
-            "session": session,
-            "score": score,
-        }
-
-    return None
+    return await run_in_threadpool(_score_activity, z2, activity_id, date_str, sessions_with_targets, hr_zones)
 
 
 @router.post("/sessions", status_code=201)
