@@ -14,11 +14,11 @@ import {
   usePlanAccomplishment,
   useRaceEventsByRange, useUpcomingRaces, useCreateRaceEvent, useUpdateRaceEvent, useDeleteRaceEvent,
   useActivities,
-  type Activity, type ExecutionScore, type Goal, type GoalProgress, type RaceEvent,
+  type Activity, type ExecutionScore, type Goal, type GoalMetric, type GoalProgress, type RaceEvent,
   type SessionScoresResponse, type TrainingSession, type WeeklyReport, type WorkoutTemplate,
 } from '../api/hooks'
 import { getSportColor, DEFAULT_SPORT_COLOR } from '../constants/sportColors'
-import { getPaceUnit, getSportCategory, formatDist, getDistUnit, formatPace, isSpeedSport, parsePaceInput, formatDurationHM } from '../utils/formatSpeed'
+import { getPaceUnit, formatDist, getDistUnit, formatPace, isSpeedSport, parsePaceInput, formatDurationHM, toInputDist, fromInputDist, formatDistExact } from '../utils/formatSpeed'
 import { localDateStr, parseLocalDate } from '../utils/dates'
 import { scoreColor } from '../utils/scoreColor'
 import { WEEKDAYS_SHORT, WEEKDAYS_MIN, WEEKDAY_LETTERS } from '../constants/weekdays'
@@ -92,6 +92,13 @@ interface GoalChip {
   icon: ReactNode
   color: string
   label: string
+}
+
+const GOAL_METRIC_VALUE: Record<GoalMetric, (a: Activity) => number> = {
+  distance_km: a => a.distance_km ?? 0,
+  time_hours: a => (a.moving_time ?? 0) / 3600,
+  activities: () => 1,
+  elevation_m: a => a.total_elevation_gain ?? 0,
 }
 
 interface WeekSummary {
@@ -605,7 +612,7 @@ function SessionModal({
     setEditingRaceId(r.id)
     setRaceName(r.name)
     setRaceSportType(r.sport_type)
-    setRaceDistanceKm(r.distance_km != null ? String(r.distance_km) : '')
+    setRaceDistanceKm(r.distance_km != null ? toInputDist(r.distance_km, r.sport_type) : '')
     // Stored decimal pace round-trips as M:SS for pace sports, plain decimal for speed sports
     setRaceTargetPace(r.target_pace != null ? formatPace(r.target_pace, isSpeedSport(r.sport_type)) : '')
     setRaceDescription(r.description || '')
@@ -623,11 +630,7 @@ function SessionModal({
     // Don't show distance as a separate goal if it was auto-computed from segments
     if (s.planned_distance_km != null && !hasSegments) {
       goals.add('distance')
-      // Convert km back to meters for swimming display
-      const displayDist = getSportCategory(s.sport_type) === 'swimming'
-        ? s.planned_distance_km * 1000
-        : s.planned_distance_km
-      setPlannedDistanceKm(String(displayDist))
+      setPlannedDistanceKm(toInputDist(s.planned_distance_km, s.sport_type))
     } else { setPlannedDistanceKm('') }
     if (s.planned_duration_mins != null) { goals.add('duration'); setPlannedDurationMins(String(s.planned_duration_mins)) } else { setPlannedDurationMins('') }
     // User enters M:SS (or decimal) for pace sports, X.X for speed sports — format stored decimal back into M:SS for display
@@ -677,13 +680,7 @@ function SessionModal({
       description: description || undefined,
     }
     // Distance
-    if (activeGoals.has('distance') && plannedDistanceKm) {
-      const raw = parseFloat(plannedDistanceKm)
-      // User enters meters for swimming, km for others — always store as km
-      data.planned_distance_km = getSportCategory(sportType) === 'swimming' ? raw / 1000 : raw
-    } else {
-      data.planned_distance_km = null
-    }
+    data.planned_distance_km = activeGoals.has('distance') ? fromInputDist(plannedDistanceKm, sportType) : null
     // Duration
     if (activeGoals.has('duration') && plannedDurationMins) {
       data.planned_duration_mins = parseFloat(plannedDurationMins)
@@ -810,7 +807,7 @@ function SessionModal({
                       <span className="text-amber-500"><FlagIcon size={11} /></span>
                       <span className="text-sm text-amber-500 font-medium">{String(r.name)}</span>
                       {r.distance_km != null && (
-                        <span className="text-xs text-gray-400">{r.distance_km as number} km</span>
+                        <span className="text-xs text-gray-400">{formatDistExact(r.distance_km, r.sport_type)}</span>
                       )}
                       {r.location != null && (
                         <span className="text-xs text-gray-500 truncate">{String(r.location)}</span>
@@ -856,9 +853,9 @@ function SessionModal({
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-gray-500 mb-1 block">Distance (km)</label>
+                    <label className="text-xs text-gray-500 mb-1 block">Distance ({getDistUnit(raceSportType)})</label>
                     <input
-                      type="text" inputMode="decimal" placeholder="42.195"
+                      type="text" inputMode="decimal" placeholder={getDistUnit(raceSportType) === 'm' ? '1500' : '42.195'}
                       value={raceDistanceKm} onChange={e => setRaceDistanceKm(e.target.value)}
                       className={clsx('w-full border rounded-lg px-3 py-2 text-sm', isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-700 border-surface-600')}
                     />
@@ -906,7 +903,7 @@ function SessionModal({
                       const payload: Record<string, unknown> = {
                         name: raceName.trim(),
                         sport_type: raceSportType,
-                        distance_km: raceDistanceKm ? parseFloat(raceDistanceKm) : null,
+                        distance_km: fromInputDist(raceDistanceKm, raceSportType),
                         target_pace: raceTargetPace ? parsePaceInput(raceTargetPace, isSpeedSport(raceSportType)) : null,
                         description: raceDescription || null,
                         location: raceLocation || null,
@@ -2000,7 +1997,7 @@ function WeekView({
                     <span className="text-amber-500 shrink-0"><FlagIcon size={10} /></span>
                     <span className="text-xs font-medium text-amber-500">{r.name}</span>
                     {r.distance_km != null && (
-                      <span className="text-[11px] font-mono tabular-nums text-gray-400">{r.distance_km} km</span>
+                      <span className="text-[11px] font-mono tabular-nums text-gray-400">{formatDistExact(r.distance_km, r.sport_type)}</span>
                     )}
                     {!!r.location && <span className="text-[11px] text-gray-500 truncate">{r.location}</span>}
                   </div>
@@ -2356,9 +2353,7 @@ export default function CalendarPage() {
           const acts = activityMap[format(wd, 'yyyy-MM-dd')] || []
           for (const a of acts) {
             if (g.sport_type !== '__all__' && a.sport_type !== g.sport_type) continue
-            if (g.metric === 'distance_km') current += a.distance_km ?? 0
-            else if (g.metric === 'time_hours') current += (a.moving_time ?? 0) / 3600
-            else if (g.metric === 'activities') current += 1
+            current += GOAL_METRIC_VALUE[g.metric](a)
           }
         }
         const target = g.target_value
@@ -2640,7 +2635,7 @@ export default function CalendarPage() {
                 </div>
                 <div className="flex items-center gap-3 text-[11px] text-gray-500 flex-wrap font-mono tabular-nums">
                   <span>{nextRace.sport_type}</span>
-                  {nextRace.distance_km && <span>{nextRace.distance_km} km</span>}
+                  {nextRace.distance_km != null && <span>{formatDistExact(nextRace.distance_km, nextRace.sport_type)}</span>}
                   {nextRace.location && <span className="normal-case">{nextRace.location}</span>}
                   <span>{format(parseISO(nextRace.date), 'MMM d, yyyy')}</span>
                 </div>
@@ -2891,7 +2886,7 @@ export default function CalendarPage() {
                                           'cursor-grab active:cursor-grabbing transition-all duration-150 hover:scale-[1.02]',
                                           'border-amber-500/60 text-amber-500/90 bg-amber-500/5',
                                         )}
-                                        title={`${r.name}${r.location ? ` — ${r.location}` : ''}${r.distance_km ? ` (${r.distance_km} km)` : ''}`}
+                                        title={`${r.name}${r.location ? ` — ${r.location}` : ''}${r.distance_km != null ? ` (${formatDistExact(r.distance_km, r.sport_type)})` : ''}`}
                                       >
                                         <span className="inline-flex items-center gap-1"><FlagIcon size={9} /> {r.name as string}</span>
                                         {matchedActivity && (

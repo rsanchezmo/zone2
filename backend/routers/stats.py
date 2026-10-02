@@ -1,6 +1,6 @@
 import functools
 import json
-from datetime import datetime, timedelta, date
+from datetime import timedelta, date
 from fastapi import APIRouter, Depends, Query, Response
 from starlette.concurrency import run_in_threadpool
 import aiosqlite
@@ -13,7 +13,7 @@ from backend.dependencies import get_z2
 from backend.services.zones import resolve_hr_zones
 from backend.services.resting_hr import resolve_resting_hr
 from zone2.core import Zone2
-from zone2.utils import convert_speed, df_rows, get_sport_category
+from zone2.utils import convert_speed, df_rows, get_sport_category, previous_week
 
 router = APIRouter()
 
@@ -75,6 +75,14 @@ def _get_weekly_report_cached(
     return result
 
 
+def _get_previous_weekly_report_cached(z2: Zone2, report: dict, hr_zones: list | None) -> dict | None:
+    """The week before `report`'s, for deltas."""
+    if not report.get("week_start"):
+        return None
+    prev_monday, cutoff = previous_week(report["week_start"])
+    return _get_weekly_report_cached(z2, prev_monday, cutoff_date=cutoff, hr_zones=hr_zones)
+
+
 @router.get("/weekly-report")
 async def weekly_report(
     week_start: str | None = None,
@@ -86,26 +94,7 @@ async def weekly_report(
 
     def build() -> dict:
         report = _get_weekly_report_cached(z2, week_start, hr_zones=hr_zones)
-        # Previous week for deltas — with same day-of-week cutoff for fairness
-        week_start_str = report.get("week_start")
-        prev_report = None
-        if week_start_str:
-            current_monday = datetime.strptime(week_start_str, "%Y-%m-%d").date()
-            prev_monday = current_monday - timedelta(days=7)
-
-            # If this is the current (incomplete) week, truncate previous week to same day
-            today = date.today()
-            current_week_end = current_monday + timedelta(days=6)
-            if today <= current_week_end:
-                days_elapsed = (today - current_monday).days
-                cutoff_day_prev = prev_monday + timedelta(days=days_elapsed)
-                prev_report = _get_weekly_report_cached(
-                    z2, prev_monday.strftime("%Y-%m-%d"),
-                    cutoff_date=cutoff_day_prev.strftime("%Y-%m-%d"),
-                    hr_zones=hr_zones,
-                )
-            else:
-                prev_report = _get_weekly_report_cached(z2, prev_monday.strftime("%Y-%m-%d"), hr_zones=hr_zones)
+        prev_report = _get_previous_weekly_report_cached(z2, report, hr_zones)
 
         return {
             "current": _serialize_enum_dict(report),

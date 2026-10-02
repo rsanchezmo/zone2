@@ -11,7 +11,7 @@ import { getSportColor } from '../constants/sportColors'
 import { SHOE_LIFE_KM, WEAR_SPENT_COLOR, shoeWear } from '../constants/gear'
 import RoutesMap from '../components/shared/RoutesMap'
 import { decodeRoutes, homeBounds } from '../components/shared/routes'
-import { convertSpeed, formatSpeed, formatClockDuration, formatDurationHM, getPaceUnit, isSpeedSport } from '../utils/formatSpeed'
+import { convertSpeed, formatSpeed, formatClockDuration, formatDurationHM, getPaceUnit, isSpeedSport, formatPace } from '../utils/formatSpeed'
 import { parseLocalDate } from '../utils/dates'
 import ChartPanel from '../components/shared/ChartPanel'
 import PageHeader from '../components/shared/PageHeader'
@@ -480,9 +480,7 @@ function PacePanel({ data, accent, colors, isLight, isMobile }: {
             axisLine={false}
             tickLine={false}
             width={isMobile ? 38 : 52}
-            tickFormatter={(v: number) => useSpeed
-              ? v.toFixed(0)
-              : `${Math.floor(v)}:${Math.round((v - Math.floor(v)) * 60).toString().padStart(2, '0')}`}
+            tickFormatter={(v: number) => useSpeed ? v.toFixed(0) : formatPace(v, false)}
           />
           <ZAxis dataKey="distance_km" range={[14, 190]} />
           <Tooltip

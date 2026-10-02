@@ -197,13 +197,10 @@ class Zone2:
         """
         weekly_report = self.strava_analytics.get_weekly_report(week_start_date)
         
-        # Fetch previous week's report for delta comparison
-        from datetime import datetime, timedelta
-        week_start_str = weekly_report.get("week_start", None)
         last_week_report = None
-        if week_start_str:
-            prev_monday = datetime.strptime(week_start_str, '%Y-%m-%d') - timedelta(days=7)
-            last_week_report = self.strava_analytics.get_weekly_report(prev_monday.strftime('%Y-%m-%d'))
+        if weekly_report.get("week_start"):
+            prev_monday, cutoff = previous_week(weekly_report["week_start"])
+            last_week_report = self.strava_analytics.get_weekly_report(prev_monday, cutoff_date=cutoff)
         
         output_folder = self.workdir / "weekly_reports"
         

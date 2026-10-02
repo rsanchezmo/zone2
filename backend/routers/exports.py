@@ -1,5 +1,5 @@
 import asyncio
-from datetime import date, datetime, timedelta
+from datetime import date
 
 import matplotlib.pyplot as plt
 import aiosqlite
@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, Response
 from backend.db import get_db
 from backend.dependencies import get_z2
 from backend.export_cache import ExportCache
-from backend.routers.stats import _get_weekly_report_cached
+from backend.routers.stats import _get_weekly_report_cached, _get_previous_weekly_report_cached
 from backend.services.zones import resolve_hr_zones
 from zone2.core import Zone2
 from zone2.visualizer import StravaVisualizer
@@ -89,11 +89,7 @@ async def export_weekly_report(
         # data, so serving this from the shared cache avoids a duplicate compute
         # whenever the UI has already hit /api/stats/weekly-report.
         report = _get_weekly_report_cached(z2, week_start, hr_zones=hr_zones)
-        week_start_str = report.get("week_start")
-        prev_report = None
-        if week_start_str:
-            prev_monday = datetime.strptime(week_start_str, "%Y-%m-%d") - timedelta(days=7)
-            prev_report = _get_weekly_report_cached(z2, prev_monday.strftime("%Y-%m-%d"), hr_zones=hr_zones)
+        prev_report = _get_previous_weekly_report_cached(z2, report, hr_zones)
 
         return _safe_export(lambda: z2.strava_visualizer.plot_weekly_report(
             weekly_report=report, neon_color=neon_color,

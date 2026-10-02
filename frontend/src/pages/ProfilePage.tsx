@@ -2,6 +2,7 @@ import { Fragment, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAthleteProfile, useAthleteZones, useZonesSettings, useUpdateZonesSettings, useSyncStatus, useSportTypes, useGoals, useGoalProgress, useCreateGoal, useUpdateGoal, useDeleteGoal, useRateLimits, useCacheCompleteness, useBackfillStreams, useCalendarFeedUrl, useRotateCalendarFeedToken, useRecentPhotos, useGearList, type GearSummary, type Goal } from '../api/hooks'
 import PhotoLightbox from '../components/shared/PhotoLightbox'
+import RowActions from '../components/shared/RowActions'
 import { photoThumbUrl } from '../components/shared/photoUrls'
 import { getSportColor } from '../constants/sportColors'
 import { WEAR_SPENT_COLOR, shoeWear } from '../constants/gear'
@@ -140,6 +141,7 @@ export default function ProfilePage() {
     })
   }
   const [editingGoalId, setEditingGoalId] = useState<number | null>(null)
+  const [confirmDeleteGoalId, setConfirmDeleteGoalId] = useState<number | null>(null)
   const currentYear = new Date().getFullYear()
   const [goalForm, setGoalForm] = useState({ year: String(currentYear), sport_type: 'Run', metric: 'distance_km', period: 'weekly', target_value: '' })
 
@@ -539,21 +541,20 @@ export default function ProfilePage() {
                     <span className="text-[11px] text-gray-500 font-mono">{goal.year}</span>
                     {/* Hover-reveal would strand these on touch, where no hover
                         event ever fires — pin them visible there instead. */}
-                    <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
-                      <button
-                        onClick={() => startEdit(goal)}
-                        className={clsx('text-[11px] px-2 py-1 rounded', isLight ? 'text-gray-400 hover:text-gray-600 hover:bg-gray-100' : 'text-gray-500 hover:text-gray-300 hover:bg-surface-700')}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => deleteGoal.mutate(goal.id, {
-                          onSuccess: () => toast('Goal deleted', 'success'),
-                        })}
-                        className="text-[11px] px-2 py-1 rounded text-red-400 hover:text-red-300 hover:bg-red-500/10"
-                      >
-                        Delete
-                      </button>
+                    <div className={clsx(
+                      'ml-auto transition-opacity',
+                      confirmDeleteGoalId !== goal.id && 'opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100',
+                    )}>
+                      <RowActions
+                        isConfirming={confirmDeleteGoalId === goal.id}
+                        onEdit={() => startEdit(goal)}
+                        onConfirmDelete={() => {
+                          deleteGoal.mutate(goal.id, { onSuccess: () => toast('Goal deleted', 'success') })
+                          setConfirmDeleteGoalId(null)
+                        }}
+                        onAskDelete={() => setConfirmDeleteGoalId(goal.id)}
+                        onCancelDelete={() => setConfirmDeleteGoalId(null)}
+                      />
                     </div>
                   </div>
 

@@ -1,3 +1,4 @@
+from datetime import date, datetime, timedelta
 from enum import StrEnum
 import functools
 
@@ -378,6 +379,13 @@ def compute_trimp_banister(duration_min: float, avg_hr: float, hr_rest: float, h
     return duration_min * delta * 0.64 * math.exp(1.92 * delta)
 
 
+def hr_zone_counts(hr_values, zones: list[dict], weights=None) -> np.ndarray:
+    """Samples (or summed weights) per HR zone. Each zone spans [min, max) and the
+    top zone is open-ended, so a bpm on the edge two zones share counts once."""
+    edges = [z['max'] for z in zones[:-1]]
+    return np.bincount(np.digitize(hr_values, edges), weights=weights, minlength=len(zones))
+
+
 def compute_trimp_zone_weighted(time_in_zones_min: list[float], zone_weights: list[float] | None = None) -> float:
     """Compute zone-weighted TRIMP using Lucia's weights.
 
@@ -388,6 +396,19 @@ def compute_trimp_zone_weighted(time_in_zones_min: list[float], zone_weights: li
     if zone_weights is None:
         zone_weights = [1.0, 1.1, 1.5, 2.2, 4.5]
     return sum(t * w for t, w in zip(time_in_zones_min, zone_weights))
+
+
+def previous_week(week_start: str, today: date | None = None) -> tuple[str, str | None]:
+    """Monday of the week before `week_start`, and the cutoff that compares it fairly
+    (None for a full week): while `week_start`'s week is still running, the previous
+    week counts only up to the same weekday."""
+    monday = datetime.strptime(week_start, '%Y-%m-%d').date()
+    prev_monday = monday - timedelta(days=7)
+    today = today or date.today()
+    cutoff = None
+    if today <= monday + timedelta(days=6):
+        cutoff = (prev_monday + timedelta(days=(today - monday).days)).isoformat()
+    return prev_monday.isoformat(), cutoff
 
 
 def get_region_coordinates(region_name: str) -> dict | None:

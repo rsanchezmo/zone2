@@ -1193,15 +1193,16 @@ export function useActivityScore(activityId?: number) {
 
 // Goals
 
+export type GoalMetric = 'distance_km' | 'time_hours' | 'activities' | 'elevation_m'
+export type GoalPeriod = 'weekly' | 'monthly' | 'yearly'
+
 export interface Goal {
   id: number;
   year: number;
   /** Sport type or '__all__'. */
   sport_type: string;
-  /** 'distance_km' | 'time_hours' | 'activities' | 'elevation_m' */
-  metric: string;
-  /** 'weekly' | 'monthly' | 'yearly' */
-  period: string;
+  metric: GoalMetric;
+  period: GoalPeriod;
   target_value: number;
   created_at: string;
 }
