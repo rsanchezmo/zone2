@@ -16,7 +16,7 @@ import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 
-from backend.db import get_db
+from backend.db import get_db, row_dict
 from backend.services.calendar_feed import (
     build_ics,
     get_last_fetched_at,
@@ -32,10 +32,6 @@ router = APIRouter()
 # show recent plan history; 365 days forward covers any race-training block.
 PAST_DAYS = 60
 FUTURE_DAYS = 365
-
-
-def _row_to_dict(row: aiosqlite.Row) -> dict:
-    return {k: row[k] for k in row.keys()}
 
 
 def _feed_url(request: Request, token: str) -> str:
@@ -64,13 +60,13 @@ async def calendar_feed(
         "SELECT * FROM training_sessions WHERE date >= ? AND date <= ? ORDER BY date",
         (date_from, date_to),
     )
-    sessions = [_row_to_dict(r) for r in await cur.fetchall()]
+    sessions = [row_dict(r) for r in await cur.fetchall()]
 
     cur = await db.execute(
         "SELECT * FROM race_events WHERE date >= ? AND date <= ? ORDER BY date",
         (date_from, date_to),
     )
-    races = [_row_to_dict(r) for r in await cur.fetchall()]
+    races = [row_dict(r) for r in await cur.fetchall()]
 
     body = build_ics(sessions, races)
     await record_fetch(db)

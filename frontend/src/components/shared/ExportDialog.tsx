@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback, useEffectEvent } from 'react'
-import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import { useTheme } from '../../hooks/useTheme'
 import { useToast } from '../../hooks/useToast'
 import ColorPicker from './ColorPicker'
 import { downloadWithToast, parseFastApiError } from './download'
+import Modal from './Modal'
 
 export type ExportType =
   | 'weekly-report'
@@ -130,15 +130,6 @@ function ExportDialogContent({
     return () => URL.revokeObjectURL(previewSrc)
   }, [previewSrc])
 
-  // Escape key handler
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [onClose])
-
   async function handleDownload() {
     setDownloading(true)
     const ok = await downloadWithToast(buildUrl(quality), filename, toast)
@@ -146,24 +137,8 @@ function ExportDialogContent({
     if (ok) onClose()
   }
 
-  return createPortal(
-    <div
-      className={clsx(
-        'fixed inset-0 p-4 flex items-center justify-center z-[10001] animate-[fadeIn_150ms_ease-out]',
-        isLight ? 'bg-black/30' : 'bg-black/60'
-      )}
-      onClick={onClose}
-    >
-      <div
-        className={clsx(
-          'border rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto',
-          'animate-[scaleIn_150ms_ease-out]',
-          isLight
-            ? 'bg-white border-gray-200 shadow-xl'
-            : 'bg-surface-800 border-surface-600 shadow-2xl'
-        )}
-        onClick={e => e.stopPropagation()}
-      >
+  return (
+    <Modal onClose={onClose} className="max-w-lg max-h-[90vh]">
         {/* Header */}
         <div className={clsx(
           'flex items-center justify-between px-5 py-4 border-b',
@@ -386,9 +361,7 @@ function ExportDialogContent({
             <span>{downloading ? 'Exporting' : 'Download'}</span>
           </button>
         </div>
-      </div>
-    </div>,
-    document.body
+    </Modal>
   )
 }
 

@@ -1,14 +1,13 @@
 from datetime import datetime, timedelta
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 import aiosqlite
-import json
 import pandas as pd
 
 from backend._serialize import sanitize as _sanitize
-from backend.db import get_db
+from backend.db import delete_row, get_db, insert_row, row_dict, update_row
 from backend.dependencies import get_z2
 from backend.scoring import match_activity, compute_execution_score, has_targets
 from backend.services.zones import resolve_hr_zones
@@ -17,6 +16,8 @@ from zone2.core import Zone2
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_JSON_COLS = ("segments",)
 
 
 class SessionCreate(BaseModel):
@@ -55,32 +56,7 @@ class SessionUpdate(BaseModel):
 
 
 def _row_to_dict(row: aiosqlite.Row) -> dict:
-    segments = None
-    raw_segments = row["segments"]
-    if raw_segments:
-        try:
-            segments = json.loads(raw_segments) if isinstance(raw_segments, str) else raw_segments
-        except (json.JSONDecodeError, TypeError):
-            segments = None
-    return {
-        "id": row["id"],
-        "date": row["date"],
-        "title": row["title"],
-        "sport_type": row["sport_type"],
-        "description": row["description"],
-        "planned_distance_km": row["planned_distance_km"],
-        "planned_duration_mins": row["planned_duration_mins"],
-        "planned_intensity": row["planned_intensity"],
-        "target_avg_pace": row["target_avg_pace"],
-        "target_pace_min": row["target_pace_min"],
-        "target_pace_max": row["target_pace_max"],
-        "target_hr_zone": row["target_hr_zone"],
-        "target_zone_pct": row["target_zone_pct"],
-        "segments": segments,
-        "workout_template_id": row["workout_template_id"],
-        "completed": bool(row["completed"]),
-        "created_at": row["created_at"],
-    }
+    return row_dict(row, json_cols=_JSON_COLS, bool_cols=("completed",))
 
 
 @router.get("/sessions")
@@ -116,18 +92,11 @@ def _activity_row_to_dict(row: pd.Series | dict) -> dict:
 
 def _activities_by_day(z2: Zone2, date_from: str, date_to: str) -> dict[str, list[dict]]:
     """Bucket cached activities within [date_from, date_to] (inclusive) by local day."""
-    activities_df = z2.strava_activities_cache.get_prepared_view()
+    cache = z2.strava_activities_cache
+    activities_df = cache.get_prepared_view()
     if activities_df.empty:
         return {}
-    dt_from = pd.to_datetime(date_from)
-    dt_to = pd.to_datetime(date_to) + pd.Timedelta(days=1)  # inclusive
-    if activities_df["start_date_local"].dt.tz is not None:
-        dt_from = dt_from.tz_localize(activities_df["start_date_local"].dt.tz)
-        dt_to = dt_to.tz_localize(activities_df["start_date_local"].dt.tz)
-    activities_df = activities_df[
-        (activities_df["start_date_local"] >= dt_from)
-        & (activities_df["start_date_local"] < dt_to)
-    ]
+    activities_df = activities_df[cache.days_mask(date_from, date_to)]
 
     activity_map: dict[str, list[dict]] = {}
     records = activities_df[[c for c in _SCORING_COLUMNS if c in activities_df.columns]].to_dict("records")
@@ -302,24 +271,9 @@ async def create_session(
     session: SessionCreate,
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    segments_json = json.dumps(session.segments) if session.segments else None
-    cursor = await db.execute(
-        """INSERT INTO training_sessions (date, title, sport_type, description,
-           planned_distance_km, planned_duration_mins, planned_intensity,
-           target_avg_pace, target_pace_min, target_pace_max, target_hr_zone, target_zone_pct,
-           segments, workout_template_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (session.date, session.title, session.sport_type, session.description,
-         session.planned_distance_km, session.planned_duration_mins, session.planned_intensity,
-         session.target_avg_pace, session.target_pace_min, session.target_pace_max,
-         session.target_hr_zone, session.target_zone_pct,
-         segments_json, session.workout_template_id),
-    )
-    await db.commit()
-    new_id = cursor.lastrowid
-    cursor = await db.execute("SELECT * FROM training_sessions WHERE id = ?", (new_id,))
-    row = await cursor.fetchone()
-    return _row_to_dict(row)
+    values = session.model_dump()
+    values["segments"] = values["segments"] or None
+    return _row_to_dict(await insert_row(db, "training_sessions", values, json_cols=_JSON_COLS))
 
 
 @router.put("/sessions/{session_id}")
@@ -328,31 +282,8 @@ async def update_session(
     update: SessionUpdate,
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    cursor = await db.execute("SELECT * FROM training_sessions WHERE id = ?", (session_id,))
-    existing = await cursor.fetchone()
-    if not existing:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    fields = []
-    values = []
-    for field_name, value in update.model_dump(exclude_unset=True).items():
-        if field_name == "segments":
-            fields.append("segments = ?")
-            values.append(json.dumps(value) if value is not None else None)
-        else:
-            fields.append(f"{field_name} = ?")
-            values.append(value)
-
-    if not fields:
-        raise HTTPException(status_code=400, detail="No fields to update")
-
-    values.append(session_id)
-    await db.execute(f"UPDATE training_sessions SET {', '.join(fields)} WHERE id = ?", values)
-    await db.commit()
-
-    cursor = await db.execute("SELECT * FROM training_sessions WHERE id = ?", (session_id,))
-    row = await cursor.fetchone()
-    return _row_to_dict(row)
+    return _row_to_dict(await update_row(db, "training_sessions", session_id, update.model_dump(exclude_unset=True),
+                                         "Session not found", json_cols=_JSON_COLS))
 
 
 @router.delete("/sessions/{session_id}", status_code=204)
@@ -360,8 +291,4 @@ async def delete_session(
     session_id: int,
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    cursor = await db.execute("SELECT id FROM training_sessions WHERE id = ?", (session_id,))
-    if not await cursor.fetchone():
-        raise HTTPException(status_code=404, detail="Session not found")
-    await db.execute("DELETE FROM training_sessions WHERE id = ?", (session_id,))
-    await db.commit()
+    await delete_row(db, "training_sessions", session_id, "Session not found")
