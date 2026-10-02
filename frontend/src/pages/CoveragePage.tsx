@@ -16,6 +16,7 @@ import { useTheme } from '../hooks/useTheme'
 import { InvalidateSize } from '../components/shared/leafletHelpers'
 import { FullscreenIcon } from '../components/shared/mapChrome'
 import { tileLayerAttribution, tileLayerClass, tileLayerUrl } from '../utils/mapTiles'
+import { geojsonBounds, identityOf } from '../utils/geojson'
 import { useExitFullscreenOnEscape } from '../hooks/useExitFullscreenOnEscape'
 import { MapStyleToggle, SATELLITE_ACCENT, SATELLITE_ATTR, SATELLITE_TILES, type MapStyle } from '../components/shared/MapStyleToggle'
 import NewStreetsPanel from '../components/shared/NewStreetsPanel'
@@ -44,15 +45,14 @@ function heatColor(t: number): string {
   return `rgb(${mix(16)},${mix(8)},${mix(0)})`
 }
 
-function FitToLayer({ data }: { data: unknown }) {
+function FitToLayer({ data }: { data: GeoJSON.GeoJsonObject | undefined }) {
   const map = useMap()
   const fitted = useRef(false)
   useEffect(() => {
     if (!data || fitted.current) return
-    const layer = L.geoJSON(data as GeoJSON.GeoJsonObject)
-    const bounds = layer.getBounds()
-    if (bounds.isValid()) {
-      map.fitBounds(bounds, { padding: [30, 30] })
+    const bounds = geojsonBounds(data)
+    if (bounds) {
+      map.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: [30, 30] })
       fitted.current = true
     }
   }, [map, data])
@@ -303,11 +303,11 @@ export default function CoveragePage() {
   const activeSlug = slug ?? cities?.[0]?.slug
   const city = cities?.find(c => c.slug === activeSlug)
 
-  // Leaflet layers read their GeoJSON once at mount, so every layer below is
-  // keyed by dataUpdatedAt: it moves the moment a fetch resolves, which is what
-  // forces the redraw — a key built from the request inputs alone would change
-  // while the previous payload is still the one being held.
-  const { data: edges, isLoading: edgesLoading, dataUpdatedAt: edgesAt } = useCoverageEdges(activeSlug)
+  // Leaflet layers read their GeoJSON once at mount, so the street layers are
+  // keyed by the identity of their payload: a new one remounts them, a
+  // refetch returning the same data (structurally shared) doesn't. Style
+  // changes are applied in place through their memoized style props.
+  const { data: edges, isLoading: edgesLoading } = useCoverageEdges(activeSlug)
   // 9 = administrative districts, 10 = neighbourhoods (finer). Cities OSM
   // doesn't subdivide at the chosen level collapse to a whole-city district.
   const [adminLevel, setAdminLevel] = useState<9 | 10>(9)
@@ -327,7 +327,7 @@ export default function CoveragePage() {
 
   const [showMissing, setShowMissing] = useState(false)
   const [viewportBbox, setViewportBbox] = useState<string | undefined>(undefined)
-  const { data: uncovered, dataUpdatedAt: uncoveredAt } = useUncoveredEdges(activeSlug, showMissing ? viewportBbox : undefined)
+  const { data: uncovered } = useUncoveredEdges(activeSlug, showMissing ? viewportBbox : undefined)
 
   const deleteMutation = useDeleteCity()
   const [confirmingDelete, setConfirmingDelete] = useState(false)
@@ -467,12 +467,25 @@ export default function CoveragePage() {
     [maxTimes],
   )
 
-  const edgesKey = useMemo(
-    () => `${activeSlug}-${edgesAt}-${heatmapMode ? `heat${maxTimes}` : accent}-${planMode}`,
-    [activeSlug, edgesAt, accent, heatmapMode, maxTimes, planMode],
-  )
+  const edgesKey = edges ? identityOf(edges) : 0
   // Covered streets recede behind a planned loop
   const edgesOpacity = planMode ? 0.4 : 1
+  const glowStyle = useMemo(() => ({ color: accent, weight: 5, opacity: 0.18 * edgesOpacity }), [accent, edgesOpacity])
+  const coreStyle = useMemo(() => ({ color: accent, weight: 1.6, opacity: 0.95 * edgesOpacity }), [accent, edgesOpacity])
+  const heatGlowStyle = useCallback((f?: GeoJSON.Feature) => {
+    const n = heatNorm((f?.properties as { times?: number } | null)?.times ?? 1)
+    return { color: heatColor(n), weight: 3 + 4 * n, opacity: 0.16 * edgesOpacity }
+  }, [heatNorm, edgesOpacity])
+  const heatCoreStyle = useCallback((f?: GeoJSON.Feature) => {
+    const n = heatNorm((f?.properties as { times?: number } | null)?.times ?? 1)
+    return { color: heatColor(n), weight: 1.2 + 2.2 * n, opacity: 0.95 * edgesOpacity }
+  }, [heatNorm, edgesOpacity])
+  const missingStyle = useMemo(() => ({
+    color: mapStyle === 'satellite' ? '#cbd5e1' : isLight ? '#94a3b8' : '#64748b',
+    weight: 1.2,
+    opacity: 0.55,
+    dashArray: '3 4',
+  }), [mapStyle, isLight])
 
   if (!citiesLoading && (cities?.length ?? 0) === 0) {
     return (
@@ -532,50 +545,28 @@ export default function CoveragePage() {
             />
           )}
           {showMissing && uncovered && viewportBbox && (
-            <GeoJSON
-              key={`missing-${activeSlug}-${uncoveredAt}`}
-              data={uncovered}
-              style={{
-                color: mapStyle === 'satellite' ? '#cbd5e1' : isLight ? '#94a3b8' : '#64748b',
-                weight: 1.2,
-                opacity: 0.55,
-                dashArray: '3 4',
-              }}
-            />
+            <GeoJSON key={`missing-${identityOf(uncovered)}`} data={uncovered} style={missingStyle} />
           )}
           {edges && heatmapMode && (
             <>
               {/* Frequency heatmap: colour + weight scale with how often each
                   street was run (log scale, glow underlay + brighter core). */}
-              <GeoJSON
-                key={`${edgesKey}-hglow`}
-                data={edges}
-                style={(f?: GeoJSON.Feature) => {
-                  const n = heatNorm((f?.properties as { times?: number } | null)?.times ?? 1)
-                  return { color: heatColor(n), weight: 3 + 4 * n, opacity: 0.16 * edgesOpacity }
-                }}
-              />
-              <GeoJSON
-                key={`${edgesKey}-hcore`}
-                data={edges}
-                style={(f?: GeoJSON.Feature) => {
-                  const n = heatNorm((f?.properties as { times?: number } | null)?.times ?? 1)
-                  return { color: heatColor(n), weight: 1.2 + 2.2 * n, opacity: 0.95 * edgesOpacity }
-                }}
-              />
+              <GeoJSON key={`${edgesKey}-hglow`} data={edges} style={heatGlowStyle} />
+              <GeoJSON key={`${edgesKey}-hcore`} data={edges} style={heatCoreStyle} />
             </>
           )}
           {edges && !heatmapMode && (
             <>
               {/* Glow underlay + bright core */}
-              <GeoJSON key={`${edgesKey}-glow`} data={edges} style={{ color: accent, weight: 5, opacity: 0.18 * edgesOpacity }} />
-              <GeoJSON key={`${edgesKey}-core`} data={edges} style={{ color: accent, weight: 1.6, opacity: 0.95 * edgesOpacity }} />
+              <GeoJSON key={`${edgesKey}-glow`} data={edges} style={glowStyle} />
+              <GeoJSON key={`${edgesKey}-core`} data={edges} style={coreStyle} />
             </>
           )}
           {/* Outside the style branches so toggling heatmap doesn't re-fit the view */}
           {edges && <FitToLayer data={edges} />}
           {planMode && <LoopPlanLayer planner={planner} />}
-          <ViewportTracker onChange={setViewportBbox} />
+          {/* Pans re-render the page only while the missing layer needs them */}
+          {showMissing && <ViewportTracker onChange={setViewportBbox} />}
           {areaRect && (
             <Rectangle bounds={areaRect} pathOptions={{ color: '#22d3ee', weight: 1.5, fillOpacity: 0.06 }} />
           )}

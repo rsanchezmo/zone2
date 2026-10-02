@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import ChartPanel, { LegendSwatch } from './ChartPanel'
 import { useCoverageTimeline } from '../../api/hooks'
@@ -17,7 +17,7 @@ type Range = '1y' | 'all'
 
 /** A city's coverage growth: km of streets run for the first time each month,
  *  with the running total. */
-export default function NewStreetsPanel({ slug, accent }: { slug?: string; accent: string }) {
+function NewStreetsPanel({ slug, accent }: { slug?: string; accent: string }) {
   const { data } = useCoverageTimeline(slug)
   const { colors } = useTheme()
   const isMobile = useIsMobile()
@@ -81,3 +81,6 @@ export default function NewStreetsPanel({ slug, accent }: { slug?: string; accen
     </ChartPanel>
   )
 }
+
+// Its chart needn't redraw on every pan of the coverage map above it
+export default memo(NewStreetsPanel)

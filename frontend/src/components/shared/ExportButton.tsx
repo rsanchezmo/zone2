@@ -1,8 +1,11 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import clsx from 'clsx'
 import { useToast } from '../../hooks/useToast'
-import ExportDialog, { type ExportType } from './ExportDialog'
+import type { ExportType } from './ExportDialog'
 import { downloadWithToast } from './download'
+
+// Loaded on the first open, then kept mounted so its choices persist between opens
+const ExportDialog = lazy(() => import('./ExportDialog'))
 
 interface ExportButtonProps {
   url: string
@@ -14,6 +17,7 @@ interface ExportButtonProps {
 export default function ExportButton({ url, label = 'PNG', filename = 'export.png', exportType }: ExportButtonProps) {
   const [loading, setLoading] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [dialogMounted, setDialogMounted] = useState(false)
   const { toast } = useToast()
 
   // Parse URL into baseUrl + baseParams for the dialog
@@ -25,6 +29,7 @@ export default function ExportButton({ url, label = 'PNG', filename = 'export.pn
   async function handleExport() {
     if (exportType) {
       setDialogOpen(true)
+      setDialogMounted(true)
       return
     }
 
@@ -59,15 +64,17 @@ export default function ExportButton({ url, label = 'PNG', filename = 'export.pn
           {loading ? 'Exporting' : label}
         </span>
       </button>
-      {exportType && (
-        <ExportDialog
-          open={dialogOpen}
-          onClose={() => setDialogOpen(false)}
-          baseUrl={baseUrl}
-          baseParams={baseParams}
-          defaultFilename={filename}
-          exportType={exportType}
-        />
+      {exportType && dialogMounted && (
+        <Suspense fallback={null}>
+          <ExportDialog
+            open={dialogOpen}
+            onClose={() => setDialogOpen(false)}
+            baseUrl={baseUrl}
+            baseParams={baseParams}
+            defaultFilename={filename}
+            exportType={exportType}
+          />
+        </Suspense>
       )}
     </>
   )
