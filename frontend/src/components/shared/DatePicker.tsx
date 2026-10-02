@@ -5,6 +5,7 @@ import {
 } from 'date-fns'
 import clsx from 'clsx'
 import { useTheme } from '../../hooks/useTheme'
+import { useClickOutside } from '../../hooks/useClickOutside'
 import { WEEKDAYS_MIN } from '../../constants/weekdays'
 
 /** Format a yyyy-MM-dd string to dd/MM/yyyy for display */
@@ -54,14 +55,7 @@ export default function DatePicker({ value, onChange, label, inputClassName }: D
     }
   }, [value])
 
-  useEffect(() => {
-    if (!open) return
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open])
+  useClickOutside(ref, open, () => setOpen(false))
 
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value

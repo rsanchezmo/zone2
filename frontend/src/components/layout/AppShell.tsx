@@ -5,6 +5,7 @@ import { useSyncStatus, useTriggerSync, useBackfillStreams } from '../../api/hoo
 import { useBackdrop } from '../../hooks/useBackdrop'
 import { useTheme } from '../../hooks/useTheme'
 import { useEscapeKey } from '../../hooks/useEscapeKey'
+import { useClickOutside } from '../../hooks/useClickOutside'
 import { useToast } from '../../hooks/useToast'
 import PageErrorBoundary from './PageErrorBoundary'
 import clsx from 'clsx'
@@ -91,13 +92,7 @@ function SyncPopover({ isLight, placement }: { isLight: boolean; placement: Popo
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    if (open) document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [open])
+  useClickOutside(ref, open, () => setOpen(false))
 
   return (
     <div ref={ref} className="relative">
