@@ -22,6 +22,8 @@ import sqlite3
 import threading
 import time
 import zlib
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import date as date_t, timedelta
 from pathlib import Path
 from typing import Any
@@ -59,18 +61,25 @@ def _decode_payload(stored: bytes) -> Any:
     return json.loads(zlib.decompress(stored))
 
 
-def _conn() -> sqlite3.Connection:
+@contextmanager
+def _conn() -> Iterator[sqlite3.Connection]:
+    """One transaction on its own connection, closed on exit: a bare sqlite3
+    connection's `with` only commits, leaving the close to garbage collection."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(DB_PATH)
-    c.row_factory = sqlite3.Row
-    # WAL lets the API keep reading calendar.db while a long backfill writes;
-    # busy_timeout makes any contention wait briefly instead of raising
-    # "database is locked". WAL is a persisted file property (set here too so
-    # CLI/telegram contexts that skip init_db still get it); busy_timeout is
-    # per-connection. Both must run before any transaction opens.
-    c.execute("PRAGMA busy_timeout=5000")
-    c.execute("PRAGMA journal_mode=WAL")
-    return c
+    try:
+        c.row_factory = sqlite3.Row
+        # WAL lets the API keep reading calendar.db while a long backfill writes;
+        # busy_timeout makes any contention wait briefly instead of raising
+        # "database is locked". WAL is a persisted file property (set here too so
+        # CLI/telegram contexts that skip init_db still get it); busy_timeout is
+        # per-connection. Both must run before any transaction opens.
+        c.execute("PRAGMA busy_timeout=5000")
+        c.execute("PRAGMA journal_mode=WAL")
+        with c:
+            yield c
+    finally:
+        c.close()
 
 
 class GarminDailyStatsCache:
