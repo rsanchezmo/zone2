@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from typing import Literal, TypedDict
@@ -88,7 +89,9 @@ async def resolve_hr_zones(z2: Zone2, db: aiosqlite.Connection) -> ResolvedZones
 
     if requested_source == "strava":
         try:
-            strava = z2.strava_user_cache.get_athlete_zones()
+            # Refetches from Strava once the cached zones are a day old; off the
+            # event loop so that request can't stall every other one.
+            strava = await asyncio.to_thread(z2.strava_user_cache.get_athlete_zones)
             hr = strava.get("heart_rate", {}) if isinstance(strava, dict) else {}
             if hr.get("custom_zones") and isinstance(hr.get("zones"), list):
                 # Strava's zone 5 may have max=null; normalise to estimated max_hr.
