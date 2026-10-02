@@ -350,12 +350,7 @@ def delete_city(slug: str):
                 fp.unlink(missing_ok=True)
     # Explicit artifact names — a bare glob on the slug prefix could match
     # another city whose slug extends this one.
-    suffixes = [
-        "edges.parquet", "connectors.parquet", "boundary.parquet", "meta.json", "viewport.parquet",
-        "walked.parquet", "new_streets.parquet", "covered_edges.parquet", "matched_activities.parquet",
-        "routes.parquet", "stats.json",
-    ]
-    paths = [_osm_dir() / f"{slug}_{s}" for s in suffixes]
+    paths = [StravaMapMatcher.artifact_path(_osm_dir(), slug, name) for name in StravaMapMatcher.ARTIFACTS]
     paths += _osm_dir().glob(f"{slug}_districts_*.parquet")
     removed = 0
     for fp in paths:
@@ -556,7 +551,9 @@ def _run_coverage_sync(slug: str, z2: Zone2, sport_types: list[str], keep_loaded
             return
         stats = _get_matcher(slug).match_incremental(gdf)
         logger.info("Coverage sync for %s done: %s%%", slug, stats.get("coverage_pct"))
+        # On the network the matching just built, released only afterwards
         _warm_map_layers(slug, z2)
+        _get_matcher(slug).release_matching()
         if not keep_loaded:
             with _matchers_lock:
                 _matchers.pop(slug, None)
