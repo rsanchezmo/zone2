@@ -1,7 +1,6 @@
 """Run backend + frontend dev servers together."""
 import subprocess
 import sys
-import signal
 import os
 
 def main():
