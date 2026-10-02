@@ -42,10 +42,7 @@ export default function PersonalRecordsPage() {
         {Array.from({ length: 3 }).map((_, i) => (
           <div
             key={i}
-            className={clsx(
-              'panel p-5 animate-pulse',
-              isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
-            )}
+            className="panel p-5 animate-pulse"
           >
             <div className={clsx('h-3 w-24 rounded mb-5', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
             <div className="space-y-3">
@@ -118,10 +115,7 @@ export default function PersonalRecordsPage() {
         })
       ) : (
         <div
-          className={clsx(
-            'panel p-10 flex flex-col items-center justify-center gap-3 text-center',
-            isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
-          )}
+          className="panel p-10 flex flex-col items-center justify-center gap-3 text-center"
         >
           <svg
             className={clsx('w-9 h-9', isLight ? 'text-gray-300' : 'text-gray-600')}

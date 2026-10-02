@@ -17,7 +17,7 @@ export default function SegmentEfforts({ activity }: { activity: ActivityDetail 
   const efforts = activity.segment_efforts ?? []
   return (
     <details
-      className={clsx('panel p-5 group', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}
+      className="panel p-5 group"
       open
     >
       <summary className="eyebrow cursor-pointer select-none list-none flex items-center justify-between">

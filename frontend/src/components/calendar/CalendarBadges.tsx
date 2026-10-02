@@ -1,4 +1,3 @@
-import clsx from 'clsx'
 import type { PlanAccomplishment, Streaks } from '../../api/hooks'
 import { useTheme } from '../../hooks/useTheme'
 import { scoreColor } from '../../utils/scoreColor'
@@ -13,10 +12,7 @@ function StreakBadge({ value, label, kind, title }: { value: number; label: stri
     : (isLight ? '#111827' : '#f3f4f6') // neutral strong
   return (
     <div
-      className={clsx(
-        'panel flex items-center gap-1.5 px-2.5 py-1',
-        isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
-      )}
+      className="panel flex items-center gap-1.5 px-2.5 py-1"
       title={title}
     >
       {kind === 'best' ? (
@@ -37,15 +33,10 @@ function StreakBadge({ value, label, kind, title }: { value: number; label: stri
 
 /* ── Plan accomplishment badge — % of planned sessions executed ── */
 function PlanRateBadge({ rate, label, title }: { rate: number; label: string; title?: string }) {
-  const { theme } = useTheme()
-  const isLight = theme === 'light'
   const accent = scoreColor(rate)
   return (
     <div
-      className={clsx(
-        'panel flex items-center gap-1.5 px-2.5 py-1',
-        isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
-      )}
+      className="panel flex items-center gap-1.5 px-2.5 py-1"
       title={title}
     >
       <span style={{ color: accent }}><CheckIcon size={11} /></span>

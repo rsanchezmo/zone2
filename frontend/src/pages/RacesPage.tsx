@@ -14,6 +14,7 @@ import { FlagIcon, CheckIcon, ExternalLinkIcon } from '../components/icons'
 import clsx from 'clsx'
 import { useTheme } from '../hooks/useTheme'
 import { useToast } from '../hooks/useToast'
+import PageHeader from '../components/shared/PageHeader'
 
 const RACE_ACCENT = '#eab308' // amber — race identity across the page
 
@@ -73,34 +74,30 @@ export default function RacesPage() {
     }
   }
 
-  const panelClass = clsx(
-    'panel',
-    isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
-  )
 
   return (
     <div className="max-w-4xl mx-auto space-y-10 pb-12">
       {/* ── Breadcrumb header ─────────────────────────── */}
-      <header className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-baseline gap-2">
-          <span className="eyebrow">Races</span>
-        </div>
-        <button
-          onClick={() => { setEditing(null); setShowForm(true) }}
-          className="btn"
-          style={{
-            borderColor: `${RACE_ACCENT}40`,
-            color: RACE_ACCENT,
-            backgroundColor: `${RACE_ACCENT}15`,
-          }}
-        >
-          + Add race
-        </button>
-      </header>
+      <PageHeader
+        title="Races"
+        actions={
+          <button
+            onClick={() => { setEditing(null); setShowForm(true) }}
+            className="btn"
+            style={{
+              borderColor: `${RACE_ACCENT}40`,
+              color: RACE_ACCENT,
+              backgroundColor: `${RACE_ACCENT}15`,
+            }}
+          >
+            + Add race
+          </button>
+        }
+      />
 
       {/* ── Create / Edit form ────────────────────────── */}
       {showForm && (
-        <section className={clsx(panelClass, 'hero-brackets p-5 md:p-6 space-y-4')} style={{ ['--card-accent' as string]: RACE_ACCENT }}>
+        <section className="panel hero-brackets p-5 md:p-6 space-y-4" style={{ ['--card-accent' as string]: RACE_ACCENT }}>
           <div className="flex items-center justify-between">
             <div className="eyebrow flex items-center gap-2" style={{ color: RACE_ACCENT }}>
               <FlagIcon size={11} />
@@ -122,7 +119,7 @@ export default function RacesPage() {
       {isLoading ? (
         <div className="space-y-3">
           {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className={clsx(panelClass, 'p-5 h-24 animate-pulse')} />
+            <div key={i} className="panel p-5 h-24 animate-pulse" />
           ))}
         </div>
       ) : (
@@ -139,7 +136,7 @@ export default function RacesPage() {
                   return (
                     <article
                       key={r.id}
-                      className={clsx(panelClass, 'p-4 transition-colors')}
+                      className="panel p-4 transition-colors"
                       style={{ borderLeftWidth: 2, borderLeftColor: RACE_ACCENT }}
                     >
                       <div className="flex items-start gap-4">
@@ -244,7 +241,7 @@ export default function RacesPage() {
                       : (b.distance_km ?? 0) - (a.distance_km ?? 0))[0]
                   const isConfirming = confirmDeleteId === r.id
                   return (
-                    <article key={r.id} className={clsx(panelClass, 'p-4 transition-colors')}>
+                    <article key={r.id} className="panel p-4 transition-colors">
                       <div className="flex items-center gap-4">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap mb-0.5">
@@ -294,7 +291,7 @@ export default function RacesPage() {
           )}
 
           {upcoming.length === 0 && past.length === 0 && !showForm && (
-            <div className={clsx(panelClass, 'p-10 text-center flex flex-col items-center gap-3')}>
+            <div className="panel p-10 text-center flex flex-col items-center gap-3">
               <div style={{ color: RACE_ACCENT }}><FlagIcon size={32} /></div>
               <div className={clsx('text-sm', isLight ? 'text-gray-500' : 'text-gray-500')}>No races yet</div>
               <button

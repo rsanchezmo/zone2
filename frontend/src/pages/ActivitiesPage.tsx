@@ -9,6 +9,7 @@ import { useTheme } from '../hooks/useTheme'
 import clsx from 'clsx'
 import DatePicker from '../components/shared/DatePicker'
 import RouteThumbnail from '../components/shared/RouteThumbnail'
+import PageHeader from '../components/shared/PageHeader'
 
 const SORT_OPTIONS = [
   { value: 'date', label: 'Date' },
@@ -365,20 +366,15 @@ export default function ActivitiesPage() {
   return (
     <div className="max-w-6xl mx-auto space-y-6 pb-12">
       {/* ── Breadcrumb header ─────────────────────────── */}
-      <header className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-baseline gap-2 flex-wrap">
-          <span className="eyebrow">Activities</span>
-          <span className={clsx('text-[11px]', isLight ? 'text-gray-300' : 'text-gray-700')}>·</span>
-          {!isLoading && data ? (
-            <span className={clsx('text-[11px] font-mono tabular-nums', isLight ? 'text-gray-500' : 'text-gray-500')}>
-              {data.total.toLocaleString()} activit{data.total === 1 ? 'y' : 'ies'}
-              {debouncedSearch && <> matching &ldquo;<span className={isLight ? 'text-gray-700' : 'text-gray-300'}>{debouncedSearch}</span>&rdquo;</>}
-            </span>
-          ) : (
-            <span className="text-[11px] text-gray-500 normal-case tracking-normal">every workout you've logged</span>
-          )}
-        </div>
-        {activeFilterCount > 0 && (
+      <PageHeader
+        title="Activities"
+        description={!isLoading && data ? (
+          <span className="tabular-nums">
+            {data.total.toLocaleString()} activit{data.total === 1 ? 'y' : 'ies'}
+            {debouncedSearch && <> matching &ldquo;<span className={isLight ? 'text-gray-700' : 'text-gray-300'}>{debouncedSearch}</span>&rdquo;</>}
+          </span>
+        ) : "every workout you've logged"}
+        actions={activeFilterCount > 0 && (
           <button
             onClick={clearAll}
             className="btn"
@@ -386,7 +382,7 @@ export default function ActivitiesPage() {
             Clear {activeFilterCount} filter{activeFilterCount > 1 ? 's' : ''}
           </button>
         )}
-      </header>
+      />
 
       {/* ── Active gear filter chip ─────────────────── */}
       {gearId && (
@@ -414,10 +410,7 @@ export default function ActivitiesPage() {
       )}
 
       {/* ── Filter toolbar ─────────────────────────── */}
-      <section className={clsx(
-        'panel p-3 space-y-2.5',
-        isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
-      )}>
+      <section className="panel p-3 space-y-2.5">
         {/* Row 1: Search */}
         <div className="relative">
           <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -528,10 +521,7 @@ export default function ActivitiesPage() {
           {[...Array(5)].map((_, i) => (
             <div
               key={i}
-              className={clsx(
-                'panel p-4 animate-pulse',
-                isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
-              )}
+              className="panel p-4 animate-pulse"
             >
               <div className={clsx('h-4 rounded w-1/3 mb-3', isLight ? 'bg-gray-100' : 'bg-surface-700')} />
               <div className={clsx('h-3 rounded w-1/4', isLight ? 'bg-gray-100' : 'bg-surface-700')} />
@@ -539,10 +529,7 @@ export default function ActivitiesPage() {
           ))}
         </div>
       ) : data?.items?.length === 0 ? (
-        <div className={clsx(
-          'panel p-10 flex flex-col items-center justify-center gap-3 text-center',
-          isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
-        )}>
+        <div className="panel p-10 flex flex-col items-center justify-center gap-3 text-center">
           <svg className={clsx('w-9 h-9', isLight ? 'text-gray-300' : 'text-gray-600')} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
           </svg>

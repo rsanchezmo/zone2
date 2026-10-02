@@ -12,8 +12,7 @@ export default function AthleteCard({ profile }: { profile: AthleteProfile }) {
     <section
       className={clsx(
         'panel hero-brackets p-6 md:p-8 flex items-center gap-6',
-        isLight ? 'bg-white' : 'bg-surface-800',
-      )}
+        )}
       style={{ ['--card-accent' as string]: (profile.premium || profile.summit) ? '#eab308' : '#6b7280' }}
     >
       {profile.profile_medium && profile.profile_medium !== 'avatar/athlete/large.png' ? (
