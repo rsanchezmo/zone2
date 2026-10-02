@@ -588,6 +588,10 @@ function SessionModal({
   const [raceUrl, setRaceUrl] = useState('')
   const [confirmDeleteRaceId, setConfirmDeleteRaceId] = useState<number | null>(null)
 
+  const formRef = useRef<HTMLDivElement>(null)
+  const editingSession = sessions.find(s => s.id === editingId) ?? null
+  const editColor = editingSession ? getSportColor(editingSession.sport_type) : null
+
   const { data: templates } = useWorkoutTemplates(sportType)
   const createTemplate = useCreateWorkoutTemplate()
 
@@ -646,6 +650,7 @@ function SessionModal({
     setActiveGoals(goals)
     setShowGoalPicker(false)
     setShowTemplatePicker(false)
+    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
   function cancelEdit() {
@@ -948,14 +953,19 @@ function SessionModal({
             {sessions.map(s => {
               const sColor = getSportColor(s.sport_type as string)
               const isConfirming = confirmDeleteId === (s.id as number)
+              const isEditing = editingId === s.id
               const sessionScore = scores?.[String(s.id as number)]
               return (
                 <div key={s.id as number}>
-                  <div className="rounded p-2 border border-dashed transition-colors"
-                    style={{ borderColor: `${sColor}60`, backgroundColor: `${sColor}10` }}
+                  <div className={clsx('rounded p-2 border transition-colors', isEditing ? 'border-solid' : 'border-dashed')}
+                    style={{
+                      borderColor: isEditing ? sColor : `${sColor}60`,
+                      backgroundColor: isEditing ? `${sColor}25` : `${sColor}10`,
+                      boxShadow: isEditing ? `0 0 0 1px ${sColor}` : undefined,
+                    }}
                   >
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 min-w-0 cursor-pointer" onClick={() => startEdit(s)}>
+                      <div className={clsx('flex items-center gap-2 min-w-0', !isEditing && 'cursor-pointer')} onClick={() => { if (!isEditing) startEdit(s) }}>
                         <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: sColor }} />
                         <span className="text-sm" style={{ color: sColor }}>{String(s.sport_type)}</span>
                         {!!s.description && (
@@ -971,7 +981,9 @@ function SessionModal({
                         )}
                       </div>
                       <div className="flex gap-2 shrink-0 ml-2">
-                        {isConfirming ? (
+                        {isEditing ? (
+                          <span className="eyebrow text-[10px] font-semibold" style={{ color: sColor }}>Editing below</span>
+                        ) : isConfirming ? (
                           <>
                             <span className="text-xs text-red-400">Delete?</span>
                             <button onClick={() => { onDelete(s.id as number); setConfirmDeleteId(null) }} className="text-red-400 hover:text-red-300 text-xs font-bold">Yes</button>
@@ -1041,10 +1053,19 @@ function SessionModal({
           </div>
         )}
 
-        <div className="space-y-3">
-          <div className="eyebrow">
-            {editingId ? 'Edit Session' : 'Add Session'}
-          </div>
+        <div
+          ref={formRef}
+          className={clsx('space-y-3 scroll-mt-2 transition-colors', editColor && 'rounded-lg border p-3 -mx-3')}
+          style={editColor ? { borderColor: `${editColor}80`, backgroundColor: `${editColor}0d` } : undefined}
+        >
+          {editingSession && editColor ? (
+            <div className="eyebrow flex items-center gap-1.5 min-w-0" style={{ color: editColor }}>
+              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: editColor }} />
+              <span className="truncate">Editing {editingSession.sport_type}{editingSession.description ? ` · ${editingSession.description}` : ''}</span>
+            </div>
+          ) : (
+            <div className="eyebrow">Add Session</div>
+          )}
           <div>
             <label className="text-xs text-gray-500 mb-1 block">Session Type</label>
             <SportTypeCombobox
@@ -1386,11 +1407,11 @@ function SessionModal({
               }}
               className={clsx('flex-1 rounded py-2 text-sm font-medium transition-colors', isLight ? 'bg-gray-900 text-white hover:bg-gray-800' : 'bg-white/15 text-gray-100 border border-white/20 hover:bg-white/20')}
             >
-              {editingId ? 'Save' : 'Add'}
+              {editingId ? 'Save Changes' : 'Add'}
             </button>
             {editingId ? (
               <button onClick={cancelEdit} className={clsx('flex-1 rounded py-2 text-sm text-gray-400', isLight ? 'bg-gray-100 hover:text-gray-700' : 'bg-surface-700 hover:text-gray-200')}>
-                Cancel Edit
+                Discard Changes
               </button>
             ) : (
               <button onClick={onClose} className={clsx('flex-1 rounded py-2 text-sm text-gray-400', isLight ? 'bg-gray-100 hover:text-gray-700' : 'bg-surface-700 hover:text-gray-200')}>
