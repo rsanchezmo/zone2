@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 
 import pandas as pd
 
@@ -36,7 +37,7 @@ def refresh_race_activities(z2: Zone2) -> bool:
     """Point the analytics at the activities of the user's race calendar, so a
     race counts as one without being flagged on Strava. Returns whether the
     set changed (race-based stats then need recomputing)."""
-    with sqlite3.connect(DB_PATH) as c:
+    with closing(sqlite3.connect(DB_PATH)) as c:
         events = c.execute("SELECT date, sport_type, distance_km FROM race_events").fetchall()
     ids = race_activity_ids(z2.strava_activities_cache.get_prepared_view(), events)
     return z2.strava_analytics.set_race_activity_ids(ids)
