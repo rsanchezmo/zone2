@@ -480,7 +480,8 @@ class StravaActivitiesCache:
 
         # Check rate limit budget before starting
         try:
-            limits = strava_endpoint.get_rate_limits(refresh=True)
+            # A sync's activity fetch has just updated the usage from its response headers
+            limits = strava_endpoint.get_rate_limits(refresh=not strava_endpoint.usage_is_fresh())
             fifteen = limits['fifteen_min']
             daily = limits['daily']
             remaining = min(fifteen['limit'] - fifteen['usage'], daily['limit'] - daily['usage'])
