@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   AreaChart, Area, BarChart, Bar, ScatterChart, Scatter, ZAxis,
@@ -264,6 +264,7 @@ function RouteMapPanel({ gearId, accent, isLight }: { gearId: string; accent: st
   const routes = useMemo(() => decodeRoutes(data), [data])
   // Open on the home network; trips further out are still there to zoom out to.
   const fitTo = useMemo(() => homeBounds(routes), [routes])
+  const colorFor = useCallback(() => accent, [accent])
 
   if (!isLoading && routes.length === 0) return null
 
@@ -273,7 +274,7 @@ function RouteMapPanel({ gearId, accent, isLight }: { gearId: string; accent: st
         routes={routes}
         fitTo={fitTo}
         loading={isLoading}
-        colorFor={() => accent}
+        colorFor={colorFor}
         className={clsx('h-[420px] rounded-lg overflow-hidden border', isLight ? 'border-gray-200' : 'border-surface-600')}
       />
     </ChartPanel>

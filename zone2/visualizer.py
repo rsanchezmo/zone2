@@ -8,7 +8,9 @@ import matplotlib.pyplot as plt
 import geopandas as gpd
 import pandas as pd
 from pathlib import Path
+import shapely
 from shapely.geometry import Point, LineString
+from matplotlib.collections import LineCollection
 import numpy as np
 from datetime import datetime
 import logging
@@ -62,6 +64,16 @@ class StravaVisualizer:
         finally:
             plt.close(fig)
 
+    @staticmethod
+    def _neon_lines(ax, geoms: gpd.GeoSeries, layers: list[tuple[str, float, float]]) -> None:
+        """Draw lines as stacked (color, linewidth, alpha) layers, bottom first,
+        one LineCollection each. GeoSeries.plot would also render the whole
+        figure at the end of every call."""
+        lines = shapely.get_parts(geoms[~(geoms.isna() | geoms.is_empty)].to_numpy())
+        segments = [shapely.get_coordinates(line) for line in lines]
+        for zorder, (color, linewidth, alpha) in enumerate(layers, start=1):
+            ax.add_collection(LineCollection(segments, color=color, linewidth=linewidth, alpha=alpha, zorder=zorder))
+
     def _filter_and_get_gdf(self, sport_types: list[str] | None = None,
                             radius_km: float | None = None,
                             location: str | None = None,
@@ -113,15 +125,8 @@ class StravaVisualizer:
         fig, ax = plt.subplots(figsize=(15, 15), facecolor='black')
         ax.set_facecolor('black')
 
-        # --- THE NEON EFFECT ---
-        # Layer 1: The "Atmosphere" (Wide, very faint glow)
-        gdf.plot(ax=ax, color=neon_color, linewidth=6, alpha=0.03, zorder=1)
-        
-        # Layer 2: The "Glow" (Medium, soft light)
-        gdf.plot(ax=ax, color=neon_color, linewidth=2, alpha=0.15, zorder=2)
-        
-        # Layer 3: The "Core" (Thin, bright white center)
-        gdf.plot(ax=ax, color='white', linewidth=0.6, alpha=0.9, zorder=3)
+        # Wide faint atmosphere, soft glow, bright white core
+        self._neon_lines(ax, gdf.geometry, [(neon_color, 6, 0.03), (neon_color, 2, 0.15), ('white', 0.6, 0.9)])
 
         ax.set_axis_off()
         
@@ -307,13 +312,7 @@ class StravaVisualizer:
         ax_map = fig.add_subplot(gs[1])
         ax_map.set_facecolor('black')
         
-        # Neon effect for the route
-        # Layer 1: The "Atmosphere" (Wide, very faint glow)
-        gdf.plot(ax=ax_map, color=neon_color, linewidth=14, alpha=0.03, zorder=1)
-        # Layer 2: The "Glow" (Medium, soft light)
-        gdf.plot(ax=ax_map, color=neon_color, linewidth=7, alpha=0.15, zorder=2)
-        # Layer 3: The "Core" (Thin, bright white center)
-        gdf.plot(ax=ax_map, color='white', linewidth=2.5, alpha=0.9, zorder=3)
+        self._neon_lines(ax_map, gdf.geometry, [(neon_color, 14, 0.03), (neon_color, 7, 0.15), ('white', 2.5, 0.9)])
         
         # Add start/end markers
         coords = list(gdf.iloc[0].geometry.coords)

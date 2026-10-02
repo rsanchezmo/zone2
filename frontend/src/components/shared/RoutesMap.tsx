@@ -80,6 +80,26 @@ export default function RoutesMap({
   const tileUrl = isSatellite ? SATELLITE_TILES : tileLayerUrl(isLight, cartoApiKey)
   const allBounds = useMemo(() => routeBounds(routes), [routes])
   const signature = useMemo(() => routesSignature(routes), [routes])
+  // Built once per route set: react-leaflet restyles and rebinds every
+  // polyline whose props change identity, and there can be ~1k of them.
+  const lines = useMemo(() => routes.map(route => (
+    <Polyline
+      key={String(route.id)}
+      positions={route.positions}
+      pathOptions={{ color: colorFor ? colorFor(route) : getSportColor(route.sport_type), weight: 2, opacity: 0.6 }}
+      eventHandlers={{
+        click: () => navigate(`/activities/${route.id}`),
+        mouseover: e => {
+          e.target.setStyle({ weight: 4, opacity: 1 })
+          e.target.bindTooltip(`${route.sport_type}: ${route.name}`, { sticky: true }).openTooltip()
+        },
+        mouseout: e => {
+          e.target.setStyle({ weight: 2, opacity: 0.6 })
+          e.target.closeTooltip()
+        },
+      }}
+    />
+  )), [routes, colorFor, navigate])
 
   const placeholder = clsx(
     'flex flex-col items-center justify-center h-full gap-3',
@@ -114,27 +134,7 @@ export default function RoutesMap({
               className={isSatellite ? 'satellite-tiles' : tileLayerClass(cartoApiKey)}
             />
           )}
-          {routes.map(route => {
-            const color = colorFor ? colorFor(route) : getSportColor(route.sport_type)
-            return (
-              <Polyline
-                key={String(route.id)}
-                positions={route.positions}
-                pathOptions={{ color, weight: 2, opacity: 0.6 }}
-                eventHandlers={{
-                  click: () => navigate(`/activities/${route.id}`),
-                  mouseover: e => {
-                    e.target.setStyle({ weight: 4, opacity: 1 })
-                    e.target.bindTooltip(`${route.sport_type}: ${route.name}`, { sticky: true }).openTooltip()
-                  },
-                  mouseout: e => {
-                    e.target.setStyle({ weight: 2, opacity: 0.6 })
-                    e.target.closeTooltip()
-                  },
-                }}
-              />
-            )
-          })}
+          {lines}
           <FitAll bounds={fitTo ?? allBounds} signature={signature} />
           <InvalidateSize expanded={expanded} />
           {children}
