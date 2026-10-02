@@ -172,4 +172,7 @@ def sync_status(z2: Zone2 = Depends(get_z2)):
         "last_activity_date": str(cache.get_last_activity_date()) if cache.get_last_activity_date() else None,
         "earliest_activity_date": str(cache.get_earliest_activity_date()) if cache.get_earliest_activity_date() else None,
         "athlete_name": athlete_name,
+        # Moves whenever the cached activities change: a sync that leaves it
+        # alone changed nothing the app shows
+        "cache_version": cache.cache_version,
     }

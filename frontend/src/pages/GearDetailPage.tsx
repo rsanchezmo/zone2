@@ -335,9 +335,7 @@ function CumulativePanel({ data, accent, colors, isMobile }: {
             tickFormatter={(v: number) => `${Math.round(v)}`}
           />
           <Tooltip
-            contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
-            labelStyle={{ color: colors.labelColor }}
-            itemStyle={{ color: colors.labelColor }}
+            {...colors.tooltip}
             labelFormatter={(v: unknown) => new Date(Number(v)).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
             formatter={(value: unknown) => [`${Number(value ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} km`, 'Total']}
           />
@@ -397,9 +395,7 @@ function MonthlyPanel({ data, accent, colors, isLight, isMobile }: {
           />
           <Tooltip
             cursor={{ fill: isLight ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.04)' }}
-            contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
-            labelStyle={{ color: colors.labelColor }}
-            itemStyle={{ color: colors.labelColor }}
+            {...colors.tooltip}
             formatter={(value: unknown, _name: unknown, entry: { payload?: GearDetail['monthly'][number] }) => [
               `${Number(value ?? 0).toFixed(1)} km · ${entry.payload?.activities ?? 0} activities`,
               '',

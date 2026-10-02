@@ -301,9 +301,7 @@ function StreamChart({
               width={isMobile ? 32 : 60}
             />
             <Tooltip
-              contentStyle={{ background: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8 }}
-              labelStyle={{ color: colors.labelColor }}
-              itemStyle={{ color: colors.labelColor }}
+              {...colors.tooltip}
               labelFormatter={v => hasDistanceRange ? `${xFormatter(Number(v))} ${xUnit}` : ''}
               formatter={(v, name) => {
                 const label = name === 'secondary' ? (secondaryLabel ?? 'Secondary') : title

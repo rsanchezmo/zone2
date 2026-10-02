@@ -67,9 +67,7 @@ function NewStreetsPanel({ slug, accent }: { slug?: string; accent: string }) {
           <YAxis yAxisId="total" orientation="right" tick={{ fill: colors.tickFillSecondary, fontSize: 10 }}
                  axisLine={false} tickLine={false} width={isMobile ? 32 : 44} tickFormatter={(v: number) => `${v}`} />
           <Tooltip
-            contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
-            labelStyle={{ color: colors.labelColor }}
-            itemStyle={{ color: colors.labelColor }}
+            {...colors.tooltip}
             formatter={(value: unknown, name: unknown) =>
               name === 'new_km' ? [`+${Number(value).toFixed(1)} km`, 'New streets'] : [`${Number(value).toFixed(1)} km`, 'Total covered']}
           />

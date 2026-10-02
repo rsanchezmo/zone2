@@ -438,6 +438,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const qc = useQueryClient()
   const wasSyncing = useRef(false)
+  // The data version before the running sync started
+  const idleCacheVersion = useRef<number | undefined>(undefined)
 
   const [dockPosition, setDockPosition] = useState<DockPosition>(getInitialDockPosition)
   const isBottom = dockPosition === 'bottom'
@@ -493,11 +495,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     triggerSync({ include_streams: true })
   }, [syncStatus?.needs_sync, syncStatus?.syncing, syncTriggerPending, triggerSync])
 
-  // Invalidate only activity-dependent queries on sync completion. Hitting
-  // qc.invalidateQueries() with no filter refetches everything (theme,
-  // static config, etc.) and causes a visible refetch storm.
+  // Invalidate only activity-dependent queries, and only when the sync changed
+  // the data. Hitting qc.invalidateQueries() with no filter refetches
+  // everything (theme, static config, etc.) and causes a visible refetch storm.
   useEffect(() => {
-    if (wasSyncing.current && syncStatus?.syncing === false) {
+    if (wasSyncing.current && syncStatus?.syncing === false && syncStatus.cache_version !== idleCacheVersion.current) {
       const activityDependentKeys = [
         'activities', 'activities-range', 'activities-on-dates', 'activity',
         'similar-activities', 'polylines', 'sport-types', 'years',
@@ -510,10 +512,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       for (const key of activityDependentKeys) {
         qc.invalidateQueries({ queryKey: [key] })
       }
+    }
+    if (wasSyncing.current && syncStatus?.syncing === false) {
       toast(`Synced ${syncStatus.total_activities ?? ''} activities`, 'success')
     }
+    if (syncStatus && !syncStatus.syncing) idleCacheVersion.current = syncStatus.cache_version
     wasSyncing.current = syncStatus?.syncing ?? false
-  }, [qc, syncStatus?.syncing, syncStatus?.total_activities, toast])
+  }, [qc, syncStatus, toast])
 
   // Derive active color for ambient effects
   const activeItem = NAV_ITEMS.find(item => location.pathname.startsWith(item.to))

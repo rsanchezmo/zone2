@@ -84,8 +84,7 @@ function SportPieChart({ title, data, formatValue, colorMap }: {
             ))}
           </Pie>
           <Tooltip
-            contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
-            itemStyle={{ color: colors.labelColor }}
+            {...colors.tooltip}
             formatter={(value, name) => [formatValue(Number(value), String(name)), String(name)]}
           />
         </PieChart>
@@ -255,9 +254,7 @@ function AccumulatedChart({ data, previous, titles, colorMap }: AccumulatedChart
             tickFormatter={axisFmt}
           />
           <Tooltip
-            contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
-            labelStyle={{ color: colors.labelColor }}
-            itemStyle={{ color: colors.labelColor }}
+            {...colors.tooltip}
             formatter={(value, name) => [formatDurationHM(Number(value) * 60), String(name)]}
             itemSorter={item => (item.dataKey === '_total' ? 0 : item.dataKey === '_prevTotal' ? 1 : 2)}
           />

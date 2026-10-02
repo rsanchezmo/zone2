@@ -191,6 +191,7 @@ export interface ActivityListResponse {
 export interface ActivityPolyline {
   id: number;
   sport_type: string;
+  year: number;
   polyline: string;
   name: string;
 }
@@ -360,6 +361,7 @@ export function useWeeklyReport(weekStart?: string) {
     queryKey: ['weekly-report', weekStart],
     queryFn: () =>
       api.get('/stats/weekly-report', { params: { week_start: weekStart } }).then(r => r.data),
+    enabled: !!weekStart,
   });
 }
 
@@ -912,6 +914,7 @@ export interface SyncStatus {
   last_activity_date: string | null;
   earliest_activity_date: string | null;
   athlete_name: string | null;
+  cache_version: number;
 }
 
 export function useSyncStatus() {
@@ -1348,10 +1351,10 @@ export interface WorkoutTemplate {
 
 export function useWorkoutTemplates(sportType?: string) {
   return useQuery<WorkoutTemplate[]>({
-    queryKey: ['workout-templates', sportType],
-    queryFn: () =>
-      api.get('/workouts', { params: sportType ? { sport_type: sportType } : {} }).then(r => r.data),
-    placeholderData: keepPreviousData,
+    // One request for every sport; changing the sport filters what's loaded
+    queryKey: ['workout-templates'],
+    queryFn: () => api.get('/workouts').then(r => r.data),
+    select: sportType ? templates => templates.filter(t => t.sport_type === sportType) : undefined,
   });
 }
 

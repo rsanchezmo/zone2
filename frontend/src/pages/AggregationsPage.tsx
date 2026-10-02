@@ -33,12 +33,13 @@ export default function AggregationsPage() {
   const geocodeMutation = useGeocodeCity()
   const [expanded, setExpanded] = useState(false)
 
-  const { data: rawPolylines, isLoading } = usePolylines(
-    sport || undefined,
-    year ? Number(year) : undefined,
+  // Every route once (shared with the route wallpaper); the filters apply in memory
+  const { data: rawPolylines, isLoading } = usePolylines()
+  const allRoutes = useMemo(() => decodeRoutes(rawPolylines), [rawPolylines])
+  const activities = useMemo(
+    () => allRoutes.filter(r => (!sport || r.sport_type === sport) && (!year || r.year === Number(year))),
+    [allRoutes, sport, year],
   )
-
-  const activities = useMemo(() => decodeRoutes(rawPolylines), [rawPolylines])
 
   const heatmapUrl = useMemo(() => {
     const params = new URLSearchParams()

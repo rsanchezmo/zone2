@@ -28,17 +28,8 @@ def _template(row: aiosqlite.Row) -> dict:
 
 
 @router.get("")
-async def list_templates(
-    sport_type: str | None = None,
-    db: aiosqlite.Connection = Depends(get_db),
-):
-    if sport_type:
-        cursor = await db.execute(
-            "SELECT * FROM workout_templates WHERE sport_type = ? ORDER BY created_at DESC",
-            (sport_type,),
-        )
-    else:
-        cursor = await db.execute("SELECT * FROM workout_templates ORDER BY created_at DESC")
+async def list_templates(db: aiosqlite.Connection = Depends(get_db)):
+    cursor = await db.execute("SELECT * FROM workout_templates ORDER BY created_at DESC")
     rows = await cursor.fetchall()
     return [_template(row) for row in rows]
 

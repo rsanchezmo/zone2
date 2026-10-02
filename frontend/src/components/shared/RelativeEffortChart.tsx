@@ -71,9 +71,7 @@ export default function RelativeEffortChart({ sportType }: { sportType?: string 
             allowDecimals={false}
           />
           <Tooltip
-            contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
-            labelStyle={{ color: colors.labelColor }}
-            itemStyle={{ color: colors.labelColor }}
+            {...colors.tooltip}
             formatter={((v: number | number[] | undefined, name: string): [string, string] | undefined => {
               if (v == null) return undefined
               if (name === 'RE') return [String(Math.round(v as number)), 'Relative effort']

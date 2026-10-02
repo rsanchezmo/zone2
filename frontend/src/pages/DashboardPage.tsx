@@ -368,9 +368,7 @@ export default function DashboardPage() {
                 <XAxis dataKey="label" tick={{ fill: colors.tickFill, fontSize: 10 }} axisLine={false} tickLine={false} interval="equidistantPreserveStart" />
                 <YAxis tick={{ fill: colors.tickFillSecondary, fontSize: 10 }} axisLine={false} tickLine={false} width={isMobile ? 32 : 55} tickFormatter={(v: number) => formatDistAxis(v, mainSport)} />
                 <Tooltip
-                  contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
-                  labelStyle={{ color: colors.labelColor }}
-                  itemStyle={{ color: colors.labelColor }}
+                  {...colors.tooltip}
                   formatter={(value: unknown, name: unknown) => [
                     formatDist(Number(value ?? 0), mainSport),
                     name === 'prev' ? `${year - 1}` : name === 'target' ? 'Target' : `${year}`,
@@ -433,9 +431,7 @@ export default function DashboardPage() {
                 tickFormatter={(v: number) => monthlyMetric === 'distance' ? formatDistAxis(v, mainSport) : `${v}`}
               />
               <Tooltip
-                contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
-                labelStyle={{ color: colors.labelColor }}
-                itemStyle={{ color: colors.labelColor }}
+                {...colors.tooltip}
                 formatter={(value: unknown, name: unknown) => {
                   const v = Number(value ?? 0)
                   const current = monthlyMetric === 'distance' ? 'distance' : 'activities'
@@ -527,9 +523,7 @@ export default function DashboardPage() {
                     tickFormatter={(v: number) => hasDistance ? formatDistAxis(v, mainSport) : `${v}`}
                   />
                   <Tooltip
-                    contentStyle={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8, fontSize: 12 }}
-                    labelStyle={{ color: colors.labelColor }}
-                    itemStyle={{ color: colors.labelColor }}
+                    {...colors.tooltip}
                     formatter={tooltipFmt}
                   />
                   <Line

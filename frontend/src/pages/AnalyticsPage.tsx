@@ -314,14 +314,7 @@ export default function AnalyticsPage() {
                 allowDecimals={false}
               />
               <Tooltip
-                contentStyle={{
-                  background: colors.tooltipBg,
-                  border: `1px solid ${isLight ? '#e5e7eb' : '#334155'}`,
-                  borderRadius: 8,
-                  fontSize: 12,
-                }}
-                labelStyle={{ color: colors.tickFillSecondary }}
-                itemStyle={{ color: colors.tickFillSecondary }}
+                {...colors.tooltip}
                 formatter={((v: number | number[] | undefined, name: string): [string, string] | undefined => {
                   if (v == null) return undefined
                   if (name === 'Central') return [formatClockDuration(v as number), 'Predicted']

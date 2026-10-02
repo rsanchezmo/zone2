@@ -1373,8 +1373,7 @@ function ActivityDetailPageInner() {
                       allowDataOverflow
                     />
                     <Tooltip
-                      contentStyle={{ background: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}`, borderRadius: 8 }}
-                      labelStyle={{ color: colors.labelColor }}
+                      {...colors.tooltip}
                       labelFormatter={v => `Effort #${v}`}
                       formatter={(v: number | undefined) => [fmtPaceValue(v ?? 0) + ` ${paceUnit}`, isPaceSport ? 'Pace' : 'Speed']}
                     />
