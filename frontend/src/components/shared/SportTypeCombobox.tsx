@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { SPORT_COLORS_HEX, getSportColor } from '../../constants/sportColors'
+import { useClickOutside } from '../../hooks/useClickOutside'
 import clsx from 'clsx'
 
 const SORTED_SPORTS = [...Object.keys(SPORT_COLORS_HEX).sort(), 'Other']
@@ -23,17 +24,10 @@ export default function SportTypeCombobox({ value, onChange, className, isLight 
     ? SORTED_SPORTS.filter(s => s.toLowerCase().includes(search.toLowerCase()))
     : SORTED_SPORTS
 
-  // Close on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false)
-        setSearch('')
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
+  useClickOutside(containerRef, true, () => {
+    setOpen(false)
+    setSearch('')
+  })
 
   // Scroll highlighted item into view
   useEffect(() => {
