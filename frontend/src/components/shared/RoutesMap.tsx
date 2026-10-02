@@ -8,7 +8,7 @@ import clsx from 'clsx'
 import { getSportColor } from '../../constants/sportColors'
 import { useAppConfig } from '../../api/hooks'
 import { useTheme } from '../../hooks/useTheme'
-import { useExitFullscreenOnEscape } from '../../hooks/useExitFullscreenOnEscape'
+import { useEscapeKey } from '../../hooks/useEscapeKey'
 import { tileLayerAttribution, tileLayerClass, tileLayerUrl } from '../../utils/mapTiles'
 import { InvalidateSize } from './leafletHelpers'
 import { FullscreenIcon } from './mapChrome'
@@ -73,7 +73,7 @@ export default function RoutesMap({
     onExpandedChange?.(next)
   }
 
-  useExitFullscreenOnEscape(expanded, () => setFullscreen(false))
+  useEscapeKey(expanded, () => setFullscreen(false))
 
   const { cartoApiKey, pending: configPending } = useAppConfig()
   const isSatellite = mapStyle === 'satellite'

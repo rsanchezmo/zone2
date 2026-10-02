@@ -28,7 +28,7 @@ def _f(value) -> float:
 
 def _gear_activities(z2: Zone2) -> pd.DataFrame:
     """Activities carrying a gear_id, dates already parsed."""
-    activities = z2.strava_analytics._get_prepared_activities()
+    activities = z2.strava_activities_cache.get_prepared_view()
     if activities.empty or "gear_id" not in activities.columns:
         return activities.iloc[0:0]
     return activities[activities["gear_id"].notna()]
@@ -82,7 +82,7 @@ def _all_time_bests(z2: Zone2) -> dict[int, int]:
     Strava computes these server-side and ships them on the detailed activity,
     so this needs no streams.
     """
-    activities = z2.strava_analytics._get_prepared_activities()
+    activities = z2.strava_activities_cache.get_prepared_view()
     if activities.empty or "best_efforts" not in activities.columns:
         return {}
 

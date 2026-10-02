@@ -1,11 +1,11 @@
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 import aiosqlite
 
-from backend.db import get_db
+from backend.db import delete_row, get_db, insert_row, row_dict, update_row
 from backend.dependencies import get_z2
 from backend.routers.stats import clear_stats_cache
 from backend.services.races import refresh_race_activities
@@ -42,21 +42,6 @@ async def _races_changed(z2: Zone2) -> None:
         clear_stats_cache()
 
 
-def _row_to_dict(row: aiosqlite.Row) -> dict:
-    return {
-        "id": row["id"],
-        "name": row["name"],
-        "date": row["date"],
-        "sport_type": row["sport_type"],
-        "distance_km": row["distance_km"],
-        "target_pace": row["target_pace"],
-        "description": row["description"],
-        "location": row["location"],
-        "url": row["url"],
-        "created_at": row["created_at"],
-    }
-
-
 @router.get("/")
 async def list_race_events(
     date_from: str | None = None,
@@ -71,7 +56,7 @@ async def list_race_events(
     else:
         cursor = await db.execute("SELECT * FROM race_events ORDER BY date")
     rows = await cursor.fetchall()
-    return [_row_to_dict(row) for row in rows]
+    return [row_dict(row) for row in rows]
 
 
 @router.get("/upcoming")
@@ -82,24 +67,15 @@ async def upcoming_race_events(db: aiosqlite.Connection = Depends(get_db)):
         (today,),
     )
     rows = await cursor.fetchall()
-    return [_row_to_dict(row) for row in rows]
+    return [row_dict(row) for row in rows]
 
 
 @router.post("/", status_code=201)
 async def create_race_event(race: RaceEventCreate, db: aiosqlite.Connection = Depends(get_db),
                             z2: Zone2 = Depends(get_z2)):
-    cursor = await db.execute(
-        "INSERT INTO race_events (name, date, sport_type, distance_km, target_pace, description, location, url) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (race.name, race.date, race.sport_type, race.distance_km, race.target_pace,
-         race.description, race.location, race.url),
-    )
-    await db.commit()
+    row = await insert_row(db, "race_events", race.model_dump())
     await _races_changed(z2)
-    new_id = cursor.lastrowid
-    cursor = await db.execute("SELECT * FROM race_events WHERE id = ?", (new_id,))
-    row = await cursor.fetchone()
-    return _row_to_dict(row)
+    return row_dict(row)
 
 
 @router.put("/{race_id}")
@@ -109,36 +85,13 @@ async def update_race_event(
     db: aiosqlite.Connection = Depends(get_db),
     z2: Zone2 = Depends(get_z2),
 ):
-    cursor = await db.execute("SELECT * FROM race_events WHERE id = ?", (race_id,))
-    existing = await cursor.fetchone()
-    if not existing:
-        raise HTTPException(status_code=404, detail="Race event not found")
-
-    fields = []
-    values = []
-    for field_name, value in update.model_dump(exclude_unset=True).items():
-        fields.append(f"{field_name} = ?")
-        values.append(value)
-
-    if not fields:
-        raise HTTPException(status_code=400, detail="No fields to update")
-
-    values.append(race_id)
-    await db.execute(f"UPDATE race_events SET {', '.join(fields)} WHERE id = ?", values)
-    await db.commit()
+    row = await update_row(db, "race_events", race_id, update.model_dump(exclude_unset=True), "Race event not found")
     await _races_changed(z2)
-
-    cursor = await db.execute("SELECT * FROM race_events WHERE id = ?", (race_id,))
-    row = await cursor.fetchone()
-    return _row_to_dict(row)
+    return row_dict(row)
 
 
 @router.delete("/{race_id}", status_code=204)
 async def delete_race_event(race_id: int, db: aiosqlite.Connection = Depends(get_db),
                             z2: Zone2 = Depends(get_z2)):
-    cursor = await db.execute("SELECT id FROM race_events WHERE id = ?", (race_id,))
-    if not await cursor.fetchone():
-        raise HTTPException(status_code=404, detail="Race event not found")
-    await db.execute("DELETE FROM race_events WHERE id = ?", (race_id,))
-    await db.commit()
+    await delete_row(db, "race_events", race_id, "Race event not found")
     await _races_changed(z2)

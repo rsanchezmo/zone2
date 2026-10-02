@@ -66,21 +66,34 @@ class StravaActivitiesCache:
         return self._cache_version
 
     def get_prepared_view(self) -> pd.DataFrame:
-        """Return a DataFrame with `start_date_local` parsed once. Rebuilt
-        only when the underlying cache changes. Callers MUST NOT mutate it
-        (it's the live cache)."""
+        """The activities with `start_date_local` parsed and the `map` cell's
+        polyline as a `summary_polyline` column, built once per cache version.
+        Callers MUST NOT mutate it (it's the live cache)."""
         if self._prepared_view is not None and self._prepared_view_version == self._cache_version:
             return self._prepared_view
         raw = self._load_to_memory()
         if raw.empty:
             self._prepared_view = raw
         else:
-            # Shallow: only start_date_local is new, the rest shares the raw cache's data.
+            # Shallow: only the added columns are new, the rest shares the raw cache's data.
             view = raw.copy(deep=False)
-            view["start_date_local"] = pd.to_datetime(view["start_date_local"])
+            view["start_date_local"] = pd.to_datetime(view["start_date_local"], utc=True)
+            if "map" in view.columns:
+                view["summary_polyline"] = view["map"].map(_summary_polyline)
             self._prepared_view = view
         self._prepared_view_version = self._cache_version
         return self._prepared_view
+
+    def days_mask(self, date_from: str | None = None, date_to: str | None = None) -> pd.Series:
+        """Mask over the prepared view for activities on local days
+        date_from..date_to (YYYY-MM-DD, both inclusive, either open)."""
+        sdl = self.get_prepared_view()["start_date_local"]
+        mask = pd.Series(True, index=sdl.index)
+        if date_from:
+            mask &= sdl >= pd.Timestamp(date_from, tz=sdl.dt.tz)
+        if date_to:
+            mask &= sdl < pd.Timestamp(date_to, tz=sdl.dt.tz) + pd.Timedelta(days=1)
+        return mask
 
     # ── streams API ──────────────────────────────────────────────────
     def get_streams(self, activity_id: int) -> dict | None:
@@ -609,6 +622,16 @@ class StravaActivitiesCache:
             logger.info("Synced %d activities, skipped %d (already had data)", synced_count, skipped_count)
         else:
             logger.info("All %d activities already have the requested data", skipped_count)
+
+
+def _summary_polyline(map_cell) -> str | None:
+    """The polyline in an activity's `map` cell (JSON text from the parquet)."""
+    if isinstance(map_cell, str):
+        try:
+            map_cell = json.loads(map_cell)
+        except json.JSONDecodeError:
+            return None
+    return (map_cell.get("summary_polyline") or None) if isinstance(map_cell, dict) else None
 
 
 def _normalize_streams(raw: dict | None) -> dict | None:

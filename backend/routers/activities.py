@@ -7,7 +7,7 @@ from backend._ttl_cache import TTLCache
 from backend.dependencies import get_z2
 from zone2.activities_cache import _has_full_photo_list
 from zone2.core import Zone2
-from zone2.utils import format_pace_or_speed
+from zone2.utils import df_rows, format_pace_or_speed
 from zone2.streams_store import columnar_to_points, detect_stops
 
 router = APIRouter()
@@ -127,17 +127,8 @@ def list_activities(
         mask &= activities["gear_id"] == gear_id
     if year:
         mask &= sdl.dt.year == year
-    tz = sdl.dt.tz
-    if date_from:
-        dt_from = pd.to_datetime(date_from)
-        if tz is not None:
-            dt_from = dt_from.tz_localize(tz)
-        mask &= sdl >= dt_from
-    if date_to:
-        dt_to = pd.to_datetime(date_to) + pd.Timedelta(days=1)
-        if tz is not None:
-            dt_to = dt_to.tz_localize(tz)
-        mask &= sdl < dt_to
+    if date_from or date_to:
+        mask &= z2.strava_activities_cache.days_mask(date_from, date_to)
     activities = activities[mask]
 
     # Sort
@@ -203,29 +194,26 @@ def get_polylines(
 
 
 def _polylines(z2: Zone2, sport_type: str | None, year: int | None, gear_id: str | None) -> list[dict]:
-    activities = z2.strava_analytics._get_prepared_activities()
-    if activities.empty:
+    activities = z2.strava_activities_cache.get_prepared_view()
+    if activities.empty or "summary_polyline" not in activities.columns:
         return []
 
+    mask = activities["summary_polyline"].notna()
     if sport_type:
-        activities = activities[activities["sport_type"] == sport_type]
+        mask &= activities["sport_type"] == sport_type
     if year:
-        activities = activities[activities["start_date_local"].dt.year == year]
+        mask &= activities["start_date_local"].dt.year == year
     if gear_id and "gear_id" in activities.columns:
-        activities = activities[activities["gear_id"] == gear_id]
-
-    # Use pre-parsed map dicts — no json.loads needed
-    has_map = activities["map"].apply(lambda m: isinstance(m, dict) and bool(m.get("summary_polyline")))
-    filtered = activities[has_map]
+        mask &= activities["gear_id"] == gear_id
 
     return [
         {
             "id": _sanitize(row["id"]),
             "sport_type": row.get("sport_type", ""),
-            "polyline": row["map"]["summary_polyline"],
+            "polyline": row["summary_polyline"],
             "name": row.get("name", ""),
         }
-        for _, row in filtered.iterrows()
+        for row in df_rows(activities[mask], "id", "sport_type", "summary_polyline", "name")
     ]
 
 

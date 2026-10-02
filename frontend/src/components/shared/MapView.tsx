@@ -4,6 +4,7 @@ import 'leaflet/dist/leaflet.css'
 import type { LatLngBoundsExpression } from 'leaflet'
 import { useAppConfig } from '../../api/hooks'
 import { useTheme } from '../../hooks/useTheme'
+import { useEscapeKey } from '../../hooks/useEscapeKey'
 import clsx from 'clsx'
 import { MapStyleToggle, SATELLITE_ACCENT, SATELLITE_ATTR, SATELLITE_TILES, type MapStyle } from './MapStyleToggle'
 import { InvalidateSize, RouteArrows } from './leafletHelpers'
@@ -90,13 +91,7 @@ function MapView({ positions, color = '#ef4444', showMarkers = true, kmMarkers, 
   const startIcon = useMemo(() => createStartIcon(), [])
   const endIcon = useMemo(() => createEndIcon(), [])
 
-  // Close fullscreen on Escape key
-  useEffect(() => {
-    if (!expanded) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setExpanded(false) }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [expanded])
+  useEscapeKey(expanded, () => setExpanded(false))
 
   // Pre-compute gradient segments with smoothed velocities
   const gradientSegments = useMemo(() => {

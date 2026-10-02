@@ -1,5 +1,9 @@
-import aiosqlite
+import json
 from pathlib import Path
+from typing import Any
+
+import aiosqlite
+from fastapi import HTTPException
 
 DB_PATH = Path(".strava/calendar.db")
 
@@ -153,3 +157,66 @@ async def get_db():
         # locks instead of erroring (WAL is already on from init_db).
         await db.execute("PRAGMA busy_timeout=5000")
         yield db
+
+
+# ── Row helpers shared by the CRUD routers ──────────────────────────────
+# Table and column names come from the routers' own models, never from requests.
+
+def row_dict(row: aiosqlite.Row, json_cols: tuple[str, ...] = (), bool_cols: tuple[str, ...] = ()) -> dict:
+    """A row as a dict, with JSON-text columns decoded (None when empty or
+    unreadable) and SQLite 0/1 columns as booleans."""
+    d = dict(row)
+    for col in json_cols:
+        d[col] = _decode_json(d.get(col))
+    for col in bool_cols:
+        d[col] = bool(d.get(col))
+    return d
+
+
+def _decode_json(raw: Any) -> Any:
+    if not raw or not isinstance(raw, str):
+        return raw or None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
+def _encode(values: dict, json_cols: tuple[str, ...]) -> dict:
+    return {k: json.dumps(v) if k in json_cols and v is not None else v for k, v in values.items()}
+
+
+async def insert_row(db: aiosqlite.Connection, table: str, values: dict,
+                     json_cols: tuple[str, ...] = ()) -> aiosqlite.Row:
+    values = _encode(values, json_cols)
+    cursor = await db.execute(
+        f"INSERT INTO {table} ({', '.join(values)}) VALUES ({', '.join('?' * len(values))}) RETURNING *",
+        tuple(values.values()),
+    )
+    row = await cursor.fetchone()
+    await db.commit()
+    return row
+
+
+async def update_row(db: aiosqlite.Connection, table: str, row_id: int, values: dict, not_found: str,
+                     json_cols: tuple[str, ...] = ()) -> aiosqlite.Row:
+    """Set `values` on row `row_id` and return it updated; 404 when it doesn't exist."""
+    if not values:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    values = _encode(values, json_cols)
+    cursor = await db.execute(
+        f"UPDATE {table} SET {', '.join(f'{k} = ?' for k in values)} WHERE id = ? RETURNING *",
+        (*values.values(), row_id),
+    )
+    row = await cursor.fetchone()
+    await db.commit()
+    if row is None:
+        raise HTTPException(status_code=404, detail=not_found)
+    return row
+
+
+async def delete_row(db: aiosqlite.Connection, table: str, row_id: int, not_found: str) -> None:
+    cursor = await db.execute(f"DELETE FROM {table} WHERE id = ?", (row_id,))
+    await db.commit()
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=404, detail=not_found)

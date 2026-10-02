@@ -1,9 +1,10 @@
-import json
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 import aiosqlite
 
-from backend.db import get_db
+from backend.db import delete_row, get_db, insert_row, row_dict, update_row
+
+_JSON_COLS = ("segments",)
 
 router = APIRouter()
 
@@ -22,19 +23,8 @@ class WorkoutTemplateUpdate(BaseModel):
     segments: list[dict] | None = None
 
 
-def _row_to_dict(row: aiosqlite.Row) -> dict:
-    d = {
-        "id": row["id"],
-        "name": row["name"],
-        "sport_type": row["sport_type"],
-        "description": row["description"],
-        "created_at": row["created_at"],
-    }
-    try:
-        d["segments"] = json.loads(row["segments"])
-    except (json.JSONDecodeError, TypeError):
-        d["segments"] = []
-    return d
+def _template(row: aiosqlite.Row) -> dict:
+    return row_dict(row, json_cols=("segments",))
 
 
 @router.get("")
@@ -50,7 +40,7 @@ async def list_templates(
     else:
         cursor = await db.execute("SELECT * FROM workout_templates ORDER BY created_at DESC")
     rows = await cursor.fetchall()
-    return [_row_to_dict(row) for row in rows]
+    return [_template(row) for row in rows]
 
 
 @router.post("", status_code=201)
@@ -58,16 +48,7 @@ async def create_template(
     template: WorkoutTemplateCreate,
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    segments_json = json.dumps(template.segments)
-    cursor = await db.execute(
-        "INSERT INTO workout_templates (name, sport_type, description, segments) VALUES (?, ?, ?, ?)",
-        (template.name, template.sport_type, template.description, segments_json),
-    )
-    await db.commit()
-    new_id = cursor.lastrowid
-    cursor = await db.execute("SELECT * FROM workout_templates WHERE id = ?", (new_id,))
-    row = await cursor.fetchone()
-    return _row_to_dict(row)
+    return _template(await insert_row(db, "workout_templates", template.model_dump(), json_cols=_JSON_COLS))
 
 
 @router.put("/{template_id}")
@@ -76,30 +57,8 @@ async def update_template(
     update: WorkoutTemplateUpdate,
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    cursor = await db.execute("SELECT * FROM workout_templates WHERE id = ?", (template_id,))
-    if not await cursor.fetchone():
-        raise HTTPException(status_code=404, detail="Template not found")
-
-    fields = []
-    values = []
-    for field_name, value in update.model_dump(exclude_unset=True).items():
-        if field_name == "segments" and value is not None:
-            fields.append("segments = ?")
-            values.append(json.dumps(value))
-        else:
-            fields.append(f"{field_name} = ?")
-            values.append(value)
-
-    if not fields:
-        raise HTTPException(status_code=400, detail="No fields to update")
-
-    values.append(template_id)
-    await db.execute(f"UPDATE workout_templates SET {', '.join(fields)} WHERE id = ?", values)
-    await db.commit()
-
-    cursor = await db.execute("SELECT * FROM workout_templates WHERE id = ?", (template_id,))
-    row = await cursor.fetchone()
-    return _row_to_dict(row)
+    return _template(await update_row(db, "workout_templates", template_id, update.model_dump(exclude_unset=True),
+                                      "Template not found", json_cols=_JSON_COLS))
 
 
 @router.delete("/{template_id}", status_code=204)
@@ -107,8 +66,4 @@ async def delete_template(
     template_id: int,
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    cursor = await db.execute("SELECT id FROM workout_templates WHERE id = ?", (template_id,))
-    if not await cursor.fetchone():
-        raise HTTPException(status_code=404, detail="Template not found")
-    await db.execute("DELETE FROM workout_templates WHERE id = ?", (template_id,))
-    await db.commit()
+    await delete_row(db, "workout_templates", template_id, "Template not found")

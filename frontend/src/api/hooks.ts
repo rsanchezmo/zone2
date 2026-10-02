@@ -1270,6 +1270,8 @@ export interface RaceEvent {
   created_at: string;
 }
 
+export type RaceEventInput = Omit<RaceEvent, 'id' | 'created_at'>;
+
 export function useRaceEvents() {
   return useQuery<RaceEvent[]>({
     queryKey: ['race-events'],
@@ -1297,7 +1299,7 @@ export function useUpcomingRaces() {
 export function useCreateRaceEvent() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: Record<string, unknown>) =>
+    mutationFn: (data: RaceEventInput) =>
       api.post<RaceEvent>('/races/', data).then(r => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['race-events'] });
@@ -1310,7 +1312,7 @@ export function useCreateRaceEvent() {
 export function useUpdateRaceEvent() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...data }: { id: number } & Record<string, unknown>) =>
+    mutationFn: ({ id, ...data }: { id: number } & Partial<RaceEventInput>) =>
       api.put<RaceEvent>(`/races/${id}`, data).then(r => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['race-events'] });

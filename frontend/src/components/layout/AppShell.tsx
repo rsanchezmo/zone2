@@ -4,6 +4,7 @@ import { useQueryClient, useIsFetching } from '@tanstack/react-query'
 import { useSyncStatus, useTriggerSync, useBackfillStreams } from '../../api/hooks'
 import { useBackdrop } from '../../hooks/useBackdrop'
 import { useTheme } from '../../hooks/useTheme'
+import { useEscapeKey } from '../../hooks/useEscapeKey'
 import { useToast } from '../../hooks/useToast'
 import PageErrorBoundary from './PageErrorBoundary'
 import clsx from 'clsx'
@@ -302,13 +303,7 @@ function MobileNav({ isLight, location }: { isLight: boolean; location: { pathna
   const [open, setOpen] = useState(false)
   const { toggleTheme } = useTheme()
 
-  // Escape to close
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [open])
+  useEscapeKey(open, () => setOpen(false))
 
   // Lock body scroll while drawer is open
   useEffect(() => {

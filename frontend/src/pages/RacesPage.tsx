@@ -3,13 +3,12 @@ import { Link } from 'react-router-dom'
 import { format, parseISO, differenceInCalendarDays } from 'date-fns'
 import {
   useRaceEvents, useCreateRaceEvent, useUpdateRaceEvent, useDeleteRaceEvent,
-  useActivitiesOnDates, type Activity, type RaceEvent,
+  useActivitiesOnDates, type Activity, type RaceEvent, type RaceEventInput,
 } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
-import { getPaceUnit, getDistUnit, formatPace, isSpeedSport, parsePaceInput, toInputDist, fromInputDist, formatDistExact } from '../utils/formatSpeed'
+import { getPaceUnit, formatPace, isSpeedSport, formatDistExact } from '../utils/formatSpeed'
 import { localDateStr } from '../utils/dates'
-import SportTypeCombobox from '../components/shared/SportTypeCombobox'
-import DatePicker from '../components/shared/DatePicker'
+import RaceEventForm from '../components/shared/RaceEventForm'
 import RowActions from '../components/shared/RowActions'
 import { FlagIcon, CheckIcon, ExternalLinkIcon } from '../components/icons'
 import clsx from 'clsx'
@@ -29,58 +28,28 @@ export default function RacesPage() {
   const deleteRace = useDeleteRaceEvent()
 
   const [showForm, setShowForm] = useState(false)
-  const [editingId, setEditingId] = useState<number | null>(null)
-  const [name, setName] = useState('')
-  const [date, setDate] = useState('')
-  const [sportType, setSportType] = useState('Run')
-  const [distanceKm, setDistanceKm] = useState('')
-  const [targetPace, setTargetPace] = useState('')
-  const [description, setDescription] = useState('')
-  const [location, setLocation] = useState('')
-  const [url, setUrl] = useState('')
+  // The race being edited; null while adding one
+  const [editing, setEditing] = useState<RaceEvent | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
 
-  function resetForm() {
+  function closeForm() {
     setShowForm(false)
-    setEditingId(null)
-    setName(''); setDate(''); setSportType('Run'); setDistanceKm('')
-    setTargetPace(''); setDescription(''); setLocation(''); setUrl('')
+    setEditing(null)
   }
 
   function startEdit(r: RaceEvent) {
-    setEditingId(r.id)
-    setName(r.name)
-    setDate(r.date)
-    setSportType(r.sport_type)
-    setDistanceKm(r.distance_km != null ? toInputDist(r.distance_km, r.sport_type) : '')
-    setTargetPace(r.target_pace != null
-      ? formatPace(r.target_pace, isSpeedSport(r.sport_type))
-      : '')
-    setDescription(r.description || '')
-    setLocation(r.location || '')
-    setUrl(r.url || '')
+    setEditing(r)
     setShowForm(true)
   }
 
-  function handleSubmit() {
-    if (!name.trim() || !date) return
-    const payload: Record<string, unknown> = {
-      name: name.trim(),
-      date,
-      sport_type: sportType,
-      distance_km: fromInputDist(distanceKm, sportType),
-      target_pace: targetPace ? parsePaceInput(targetPace, isSpeedSport(sportType)) : null,
-      description: description || null,
-      location: location || null,
-      url: url || null,
-    }
-    if (editingId) {
-      updateRace.mutate({ id: editingId, ...payload }, {
-        onSuccess: () => { toast('Race updated', 'success'); resetForm() },
+  function handleSubmit(race: RaceEventInput) {
+    if (editing) {
+      updateRace.mutate({ id: editing.id, ...race }, {
+        onSuccess: () => { toast('Race updated', 'success'); closeForm() },
       })
     } else {
-      createRace.mutate(payload, {
-        onSuccess: () => { toast('Race created', 'success'); resetForm() },
+      createRace.mutate(race, {
+        onSuccess: () => { toast('Race created', 'success'); closeForm() },
       })
     }
   }
@@ -104,8 +73,6 @@ export default function RacesPage() {
     }
   }
 
-  const paceUnit = getPaceUnit(sportType)
-
   const panelClass = clsx(
     'panel',
     isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
@@ -119,7 +86,7 @@ export default function RacesPage() {
           <span className="eyebrow">Races</span>
         </div>
         <button
-          onClick={() => { resetForm(); setShowForm(true); setDate(format(today, 'yyyy-MM-dd')) }}
+          onClick={() => { setEditing(null); setShowForm(true) }}
           className="btn"
           style={{
             borderColor: `${RACE_ACCENT}40`,
@@ -137,95 +104,18 @@ export default function RacesPage() {
           <div className="flex items-center justify-between">
             <div className="eyebrow flex items-center gap-2" style={{ color: RACE_ACCENT }}>
               <FlagIcon size={11} />
-              {editingId ? 'Edit race' : 'New race'}
+              {editing ? 'Edit race' : 'New race'}
             </div>
-            <button onClick={resetForm} className={clsx('text-[11px] uppercase tracking-[0.15em]', isLight ? 'text-gray-400 hover:text-gray-600' : 'text-gray-500 hover:text-gray-200')}>Close</button>
+            <button onClick={closeForm} className={clsx('text-[11px] uppercase tracking-[0.15em]', isLight ? 'text-gray-400 hover:text-gray-600' : 'text-gray-500 hover:text-gray-200')}>Close</button>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="md:col-span-2">
-              <label className="eyebrow mb-1.5 block">Race name *</label>
-              <input
-                type="text" placeholder="e.g. Berlin Marathon"
-                value={name} onChange={e => setName(e.target.value)}
-                className="input w-full"
-                autoFocus
-              />
-            </div>
-            <div>
-              <label className="eyebrow mb-1.5 block">Date *</label>
-              <DatePicker
-                value={date}
-                onChange={setDate}
-                inputClassName="w-full"
-              />
-            </div>
-            <div>
-              <label className="eyebrow mb-1.5 block">Sport</label>
-              <SportTypeCombobox
-                value={sportType}
-                onChange={setSportType}
-                className="input w-full"
-                isLight={isLight}
-              />
-            </div>
-            <div>
-              <label className="eyebrow mb-1.5 block">Distance ({getDistUnit(sportType)})</label>
-              <input
-                type="text" inputMode="decimal"
-                placeholder={getDistUnit(sportType) === 'm' ? '1500' : '42.195'}
-                value={distanceKm} onChange={e => setDistanceKm(e.target.value)}
-                className="input w-full"
-              />
-            </div>
-            <div>
-              <label className="eyebrow mb-1.5 block">Target pace ({paceUnit})</label>
-              <input
-                type="text" inputMode="decimal" placeholder={paceUnit === 'min/km' ? '5:00' : '30'}
-                value={targetPace} onChange={e => setTargetPace(e.target.value)}
-                className="input w-full"
-              />
-            </div>
-            <div>
-              <label className="eyebrow mb-1.5 block">Location</label>
-              <input
-                type="text" placeholder="Berlin, Germany"
-                value={location} onChange={e => setLocation(e.target.value)}
-                className="input w-full"
-              />
-            </div>
-            <div className="md:col-span-2">
-              <label className="eyebrow mb-1.5 block">URL</label>
-              <input
-                type="text" placeholder="https://…"
-                value={url} onChange={e => setUrl(e.target.value)}
-                className="input w-full"
-              />
-            </div>
-            <div className="md:col-span-2">
-              <label className="eyebrow mb-1.5 block">Notes</label>
-              <textarea
-                placeholder="Goals, strategy, notes…"
-                value={description} onChange={e => setDescription(e.target.value)}
-                className="input w-full"
-                rows={3}
-              />
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={handleSubmit}
-              disabled={!name.trim() || !date}
-              className="btn flex-1 !text-sm !py-2"
-              style={{
-                borderColor: `${RACE_ACCENT}50`,
-                color: RACE_ACCENT,
-                backgroundColor: `${RACE_ACCENT}15`,
-              }}
-            >
-              {editingId ? 'Save changes' : 'Create race'}
-            </button>
-            <button onClick={resetForm} className="btn !text-sm !py-2 px-6">Cancel</button>
-          </div>
+          <RaceEventForm
+            key={editing?.id ?? 'new'}
+            initial={editing}
+            date={format(today, 'yyyy-MM-dd')}
+            accent={RACE_ACCENT}
+            onSubmit={handleSubmit}
+            onCancel={closeForm}
+          />
         </section>
       )}
 
@@ -408,7 +298,7 @@ export default function RacesPage() {
               <div style={{ color: RACE_ACCENT }}><FlagIcon size={32} /></div>
               <div className={clsx('text-sm', isLight ? 'text-gray-500' : 'text-gray-500')}>No races yet</div>
               <button
-                onClick={() => { resetForm(); setShowForm(true); setDate(format(today, 'yyyy-MM-dd')) }}
+                onClick={() => { setEditing(null); setShowForm(true) }}
                 className="text-[11px] uppercase tracking-[0.15em] font-semibold"
                 style={{ color: RACE_ACCENT }}
               >

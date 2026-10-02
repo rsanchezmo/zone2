@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom'
 import { useAthleteProfile, useAthleteZones, useZonesSettings, useUpdateZonesSettings, useSyncStatus, useSportTypes, useGoals, useGoalProgress, useCreateGoal, useUpdateGoal, useDeleteGoal, useRateLimits, useCacheCompleteness, useBackfillStreams, useCalendarFeedUrl, useRotateCalendarFeedToken, useRecentPhotos, useGearList, type GearSummary, type Goal } from '../api/hooks'
 import PhotoLightbox from '../components/shared/PhotoLightbox'
 import RowActions from '../components/shared/RowActions'
+import GoalProgressBar from '../components/shared/GoalProgressBar'
+import { goalAmount, GOAL_DONE_COLOR } from '../utils/goals'
 import { photoThumbUrl } from '../components/shared/photoUrls'
 import { getSportColor } from '../constants/sportColors'
 import { WEAR_SPENT_COLOR, shoeWear } from '../constants/gear'
@@ -502,21 +504,14 @@ export default function ProfilePage() {
           <div className="space-y-3">
             {goals.map(goal => {
               const sport = goal.sport_type
-              const color = sport === '__all__' ? '#9ca3af' : getSportColor(sport)
+              const color = getSportColor(sport)
               const metric = goal.metric
-              const isSwimmingDist = metric === 'distance_km' && getSportCategory(sport) === 'swimming'
-              const targetRaw = goal.target_value
-              const targetDisplay = isSwimmingDist ? Math.round(targetRaw * 1000) : targetRaw
-              const targetUnit = isSwimmingDist ? 'm' : metric === 'distance_km' ? 'km' : metric === 'time_hours' ? 'hrs' : metric === 'elevation_m' ? 'm' : ''
+              const { value: targetDisplay, unit: targetUnit } = goalAmount(goal, goal.target_value)
 
-              const progress = progressMap.get(goal.id as number)
-              const currentRaw = progress?.current_value ?? null
-              const currentDisplay = currentRaw !== null ? (isSwimmingDist ? Math.round(currentRaw * 1000) : Math.round(currentRaw * 10) / 10) : null
+              const progress = progressMap.get(goal.id)
+              const currentDisplay = progress ? goalAmount(goal, progress.current_value).value : null
               const pct = progress?.percentage ?? null
-              const clampedPct = pct !== null ? Math.min(pct, 100) : 0
-
-              // Color logic: green if >=100%, sport color otherwise
-              const barColor = pct !== null && pct >= 100 ? '#22c55e' : color
+              const barColor = pct !== null && pct >= 100 ? GOAL_DONE_COLOR : color
 
               return (
                 <div
@@ -560,14 +555,7 @@ export default function ProfilePage() {
 
                   {/* Progress bar */}
                   <div className="flex items-center gap-3">
-                    <div className="flex-1">
-                      <div className={clsx('h-2 rounded-full overflow-hidden', isLight ? 'bg-gray-100' : 'bg-surface-700')}>
-                        <div
-                          className="h-full rounded-full transition-all duration-700 ease-out"
-                          style={{ width: `${clampedPct}%`, backgroundColor: barColor }}
-                        />
-                      </div>
-                    </div>
+                    <GoalProgressBar percentage={pct ?? 0} color={color} className="flex-1 h-2" />
                     <div className="text-right shrink-0 min-w-[100px]">
                       {currentDisplay !== null ? (
                         <span className="text-sm font-mono font-medium" style={{ color: barColor }}>

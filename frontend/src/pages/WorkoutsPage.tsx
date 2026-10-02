@@ -8,6 +8,7 @@ import { getSportColor } from '../constants/sportColors'
 import { getPaceUnit } from '../utils/formatSpeed'
 import SportTypeCombobox from '../components/shared/SportTypeCombobox'
 import SegmentListBuilder, { SegmentSummary, type Segment } from '../components/shared/SegmentListBuilder'
+import RowActions from '../components/shared/RowActions'
 import clsx from 'clsx'
 import { useTheme } from '../hooks/useTheme'
 import { useToast } from '../hooks/useToast'
@@ -236,31 +237,16 @@ export default function WorkoutsPage() {
                         <div className={clsx('text-xs', isLight ? 'text-gray-500' : 'text-gray-500')}>{String(t.description)}</div>
                       )}
                     </div>
-                    <div className="flex gap-2 shrink-0">
-                      {isConfirming ? (
-                        <>
-                          <span className="text-[11px] uppercase tracking-[0.15em] text-red-400">Delete?</span>
-                          <button
-                            onClick={() => {
-                              deleteTemplate.mutate(t.id, {
-                                onSuccess: () => toast('Workout deleted', 'success'),
-                              })
-                              setConfirmDeleteId(null)
-                            }}
-                            className="action-link text-red-400 hover:text-red-300 text-[11px] uppercase tracking-[0.15em] font-bold"
-                          >Yes</button>
-                          <button
-                            onClick={() => setConfirmDeleteId(null)}
-                            className={clsx('action-link text-[11px] uppercase tracking-[0.15em]', isLight ? 'text-gray-400 hover:text-gray-600' : 'text-gray-500 hover:text-gray-200')}
-                          >No</button>
-                        </>
-                      ) : (
-                        <>
-                          <button onClick={() => startEdit(t)} className={clsx('action-link text-[11px] uppercase tracking-[0.15em]', isLight ? 'text-gray-400 hover:text-gray-600' : 'text-gray-500 hover:text-gray-200')}>Edit</button>
-                          <button onClick={() => setConfirmDeleteId(t.id)} className="action-link text-red-400/80 hover:text-red-300 text-[11px] uppercase tracking-[0.15em]">Delete</button>
-                        </>
-                      )}
-                    </div>
+                    <RowActions
+                      isConfirming={isConfirming}
+                      onEdit={() => startEdit(t)}
+                      onConfirmDelete={() => {
+                        deleteTemplate.mutate(t.id, { onSuccess: () => toast('Workout deleted', 'success') })
+                        setConfirmDeleteId(null)
+                      }}
+                      onAskDelete={() => setConfirmDeleteId(t.id)}
+                      onCancelDelete={() => setConfirmDeleteId(null)}
+                    />
                   </div>
                   <SegmentSummary segments={t.segments || []} />
                 </div>

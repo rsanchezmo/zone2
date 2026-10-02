@@ -17,7 +17,7 @@ import { InvalidateSize } from '../components/shared/leafletHelpers'
 import { FullscreenIcon } from '../components/shared/mapChrome'
 import { tileLayerAttribution, tileLayerClass, tileLayerUrl } from '../utils/mapTiles'
 import { geojsonBounds, identityOf } from '../utils/geojson'
-import { useExitFullscreenOnEscape } from '../hooks/useExitFullscreenOnEscape'
+import { useEscapeKey } from '../hooks/useEscapeKey'
 import { MapStyleToggle, SATELLITE_ACCENT, SATELLITE_ATTR, SATELLITE_TILES, type MapStyle } from '../components/shared/MapStyleToggle'
 import NewStreetsPanel from '../components/shared/NewStreetsPanel'
 import { LoopPlanLayer, LoopPlanPanel, RouteViewPanel } from '../components/shared/LoopPlanner'
@@ -350,7 +350,7 @@ export default function CoveragePage() {
     prevRunning.current = syncRunning
   }, [syncRunning, qc, resetSyncMutation])
 
-  useExitFullscreenOnEscape(expanded, () => setExpanded(false))
+  useEscapeKey(expanded, () => setExpanded(false))
 
   const accent = mapStyle === 'satellite' ? SATELLITE_ACCENT : COVERED_ACCENT
   const districtColor = mapStyle === 'satellite' ? '#c4b5fd' : isLight ? '#7c3aed' : '#8b5cf6'

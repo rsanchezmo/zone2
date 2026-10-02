@@ -15,13 +15,16 @@ import {
   type ExecutionScore, type Goal, type GoalMetric, type GoalProgress, type RaceEvent,
   type SessionScoresResponse, type TrainingSession, type WeeklyReport,
 } from '../api/hooks'
-import { getSportColor, DEFAULT_SPORT_COLOR } from '../constants/sportColors'
+import { getSportColor } from '../constants/sportColors'
 import { getPaceUnit, formatDist, formatPace, isSpeedSport, formatDurationHM, formatDistExact } from '../utils/formatSpeed'
 import { localDateStr, parseLocalDate } from '../utils/dates'
 import { scoreColor } from '../utils/scoreColor'
 import { WEEKDAYS_SHORT, WEEKDAYS_MIN, WEEKDAY_LETTERS } from '../constants/weekdays'
 import ExportButton from '../components/shared/ExportButton'
-import { FlagIcon, CheckIcon, DistanceIcon, TimerIcon, BoltIcon, RangeIcon, HeartIcon } from '../components/icons'
+import { FlagIcon, CheckIcon } from '../components/icons'
+import { SESSION_GOALS, type SessionGoalKey } from '../constants/sessionGoals'
+import GoalProgressBar from '../components/shared/GoalProgressBar'
+import { formatGoalProgress, GOAL_DONE_COLOR } from '../utils/goals'
 import clsx from 'clsx'
 import { useTheme } from '../hooks/useTheme'
 import { useToast } from '../hooks/useToast'
@@ -107,24 +110,20 @@ interface WeekSummary {
 /** Week totals and weekly-goal progress, shared by the month grid's per-week
  *  divider and the week view's panel header. */
 function WeekTotals({ summary, className }: { summary: WeekSummary; className?: string }) {
-  const { theme } = useTheme()
-  const isLight = theme === 'light'
   return (
     <div className={clsx('flex items-center flex-wrap gap-x-3 gap-y-1', className)}>
       {summary.goals.map(g => {
-        const color = g.sport_type === '__all__' ? DEFAULT_SPORT_COLOR : getSportColor(g.sport_type)
+        const color = getSportColor(g.sport_type)
         const complete = g.percentage >= 100
         return (
           <div
             key={g.id}
             className="flex items-center gap-1"
-            title={`${g.sport_type === '__all__' ? 'All' : g.sport_type}: ${g.current_value.toFixed(1)} / ${g.target_value} ${g.metric.replace('_', ' ')} (${g.percentage.toFixed(0)}%)`}
+            title={`${g.sport_type === '__all__' ? 'All' : g.sport_type} ${g.metric.replace('_', ' ')}: ${formatGoalProgress(g, g.current_value)} (${g.percentage.toFixed(0)}%)`}
           >
             <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
-            <div className={clsx('w-16 h-1.5 rounded-full overflow-hidden', isLight ? 'bg-gray-200' : 'bg-surface-700')}>
-              <div className="h-full rounded-full" style={{ width: `${Math.min(g.percentage, 100)}%`, backgroundColor: complete ? '#22c55e' : color }} />
-            </div>
-            <span className="text-[9px] font-mono" style={{ color: complete ? '#22c55e' : '#6b7280' }}>
+            <GoalProgressBar percentage={g.percentage} color={color} className="w-16 h-1.5" />
+            <span className="text-[9px] font-mono" style={{ color: complete ? GOAL_DONE_COLOR : '#6b7280' }}>
               {g.percentage.toFixed(0)}%
             </span>
           </div>
@@ -147,27 +146,23 @@ function sessionGoalChips(s: TrainingSession): GoalChip[] {
   const chips: GoalChip[] = []
   const hasSegments = Array.isArray(s.segments) && s.segments.length > 0
   // Distance auto-derived from segments would just restate the workout below it.
-  if (s.planned_distance_km != null && !hasSegments) {
-    chips.push({ icon: <DistanceIcon size={10} />, color: '#3b82f6', label: formatDist(s.planned_distance_km, s.sport_type) })
+  const add = (goal: SessionGoalKey, label: string) => {
+    const { color, Icon } = SESSION_GOALS[goal]
+    chips.push({ icon: Icon && <Icon size={10} />, color, label })
   }
-  if (s.planned_duration_mins != null) {
-    chips.push({ icon: <TimerIcon size={10} />, color: '#22c55e', label: `${s.planned_duration_mins} min` })
-  }
+  if (s.planned_distance_km != null && !hasSegments) add('distance', formatDist(s.planned_distance_km, s.sport_type))
+  if (s.planned_duration_mins != null) add('duration', `${s.planned_duration_mins} min`)
   const useSpeed = isSpeedSport(s.sport_type)
   const paceUnit = getPaceUnit(s.sport_type)
-  if (s.target_avg_pace != null) {
-    chips.push({ icon: <BoltIcon size={10} />, color: '#f97316', label: `${formatPace(s.target_avg_pace, useSpeed)} ${paceUnit}` })
-  }
+  if (s.target_avg_pace != null) add('avg_pace', `${formatPace(s.target_avg_pace, useSpeed)} ${paceUnit}`)
   if (s.target_pace_min != null || s.target_pace_max != null) {
     const isPace = paceUnit === 'min/km'
     const parts: string[] = []
     if (s.target_pace_min != null) parts.push(`${isPace ? 'fastest' : 'min'} ${formatPace(s.target_pace_min, useSpeed)}`)
     if (s.target_pace_max != null) parts.push(`${isPace ? 'slowest' : 'max'} ${formatPace(s.target_pace_max, useSpeed)}`)
-    chips.push({ icon: <RangeIcon size={10} />, color: '#a855f7', label: `${parts.join(' – ')} ${paceUnit}` })
+    add('pace_range', `${parts.join(' – ')} ${paceUnit}`)
   }
-  if (s.target_hr_zone != null) {
-    chips.push({ icon: <HeartIcon size={10} />, color: '#ef4444', label: `Zone ${s.target_hr_zone} @ ${s.target_zone_pct ?? 80}%` })
-  }
+  if (s.target_hr_zone != null) add('hr_zone', `Zone ${s.target_hr_zone} @ ${s.target_zone_pct ?? 80}%`)
   return chips
 }
 
@@ -443,7 +438,7 @@ function WeekInspector(props: WeekInspectorProps) {
           <div className="eyebrow !text-[9px] mb-2">Weekly goals</div>
           <div className="space-y-2.5">
             {weeklyGoals.map(g => {
-              const color = g.sport_type === '__all__' ? DEFAULT_SPORT_COLOR : getSportColor(g.sport_type)
+              const color = getSportColor(g.sport_type)
               const complete = g.percentage >= 100
               return (
                 <div key={g.id}>
@@ -454,16 +449,11 @@ function WeekInspector(props: WeekInspectorProps) {
                         {g.sport_type === '__all__' ? 'All sports' : g.sport_type}
                       </span>
                     </span>
-                    <span className="text-[11px] font-mono tabular-nums shrink-0" style={{ color: complete ? '#22c55e' : color }}>
-                      {g.current_value.toFixed(1)} / {g.target_value}
+                    <span className="text-[11px] font-mono tabular-nums shrink-0" style={{ color: complete ? GOAL_DONE_COLOR : color }}>
+                      {formatGoalProgress(g, g.current_value)}
                     </span>
                   </div>
-                  <div className={clsx('h-1.5 rounded-full overflow-hidden', isLight ? 'bg-gray-200' : 'bg-surface-700')}>
-                    <div
-                      className="h-full rounded-full transition-all duration-500"
-                      style={{ width: `${Math.min(g.percentage, 100)}%`, backgroundColor: complete ? '#22c55e' : color }}
-                    />
-                  </div>
+                  <GoalProgressBar percentage={g.percentage} color={color} className="h-1.5" />
                 </div>
               )
             })}
@@ -1768,11 +1758,6 @@ export default function CalendarPage() {
         />
       </div>
 
-      {/* Weekly Report — fade in */}
-      <style>{`
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-        @keyframes scaleIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
-      `}</style>
       <section>
         <div className="flex items-baseline gap-2.5 mb-4 flex-wrap">
           <span className="eyebrow shrink-0">Week detail</span>
@@ -1801,8 +1786,8 @@ export default function CalendarPage() {
           onCopy={handleCopySession}
           onUpdate={handleUpdateSession}
           onDelete={(id: number) => deleteSession.mutate(id)}
-          onAddRace={(data) => createRace.mutate({ date: selectedDate, ...data })}
-          onUpdateRace={(id, data) => updateRace.mutate({ id, ...data })}
+          onAddRace={race => createRace.mutate(race)}
+          onUpdateRace={(id, race) => updateRace.mutate({ id, ...race })}
           onDeleteRace={(id) => deleteRace.mutate(id)}
           onClose={() => setShowModal(false)}
         />

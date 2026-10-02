@@ -16,10 +16,8 @@ import ResyncActivityButton from '../components/shared/ResyncActivityButton'
 import ChartPanel from '../components/shared/ChartPanel'
 import HrZoneDistributionChart from '../components/shared/HrZoneDistributionChart'
 import { buildHrHistogram } from '../components/shared/hrHistogram'
-import {
-  DeviceIcon, ShoeIcon, ThermometerIcon, ClockIcon, DumbbellIcon, MedalIcon, TrophyIcon,
-  DistanceIcon, TimerIcon, BoltIcon, RangeIcon, HeartIcon,
-} from '../components/icons'
+import { DeviceIcon, ShoeIcon, ThermometerIcon, ClockIcon, DumbbellIcon, MedalIcon, TrophyIcon } from '../components/icons'
+import { SESSION_GOALS, type SessionGoalKey } from '../constants/sessionGoals'
 import { getSportColor } from '../constants/sportColors'
 import { getSportCategory, convertSpeed, formatPace, formatClockDuration, formatDist, distValue, getDistUnit, isSpeedSport } from '../utils/formatSpeed'
 import { parseLocalDate } from '../utils/dates'
@@ -922,13 +920,16 @@ function ActivityDetailPageInner() {
         const session = activityScore.session
         const sessionSegments = session?.segments ?? undefined
 
-        const metricConfig: Record<string, { label: string; icon: ReactNode; color: string }> = {
-          distance: { label: 'Distance', icon: <DistanceIcon size={11} />, color: '#3b82f6' },
-          duration: { label: 'Duration', icon: <TimerIcon size={11} />, color: '#22c55e' },
-          avg_pace: { label: 'Avg Pace', icon: <BoltIcon size={11} />, color: '#f97316' },
-          pace: { label: 'Pace Range', icon: <RangeIcon size={11} />, color: '#a855f7' },
-          hr_zone: { label: 'HR Zone', icon: <HeartIcon size={11} />, color: '#ef4444' },
+        // Score metric keys, as the backend names them, to the session goal they measure
+        const metricGoals: Record<string, SessionGoalKey> = {
+          distance: 'distance', duration: 'duration', avg_pace: 'avg_pace', pace: 'pace_range', hr_zone: 'hr_zone',
         }
+        const metricConfig: Record<string, { label: string; icon: ReactNode; color: string }> = Object.fromEntries(
+          Object.entries(metricGoals).map(([metric, goal]) => {
+            const { label, color, Icon } = SESSION_GOALS[goal]
+            return [metric, { label, color, icon: Icon && <Icon size={11} /> }]
+          }),
+        )
 
         const formatPaceVal = (pace: number, unit: string) => {
           const isPaceUnit = unit === 'min/km' || unit === 'min/100m'

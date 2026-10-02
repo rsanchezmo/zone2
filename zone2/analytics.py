@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
-import json
 import logging
 import math
 from threading import RLock
@@ -50,8 +49,6 @@ class StravaAnalytics:
         self.strava_activities_cache = strava_activities_cache # inmutable data (historical activities)
         self.strava_user_cache = strava_user_cache # mutable data (user profile, stats, zones)
         self.garmin_cache = garmin_cache # optional GarminDailyStatsCache for measured RHR/VO2max
-        self._prepared_activities = None
-        self._prepared_activities_version = -1
         self._hr_zones_cache = None
         self._race_predictions_cache: dict = {}
         self._race_residuals_cache: dict[str, list] = {}
@@ -66,43 +63,8 @@ class StravaAnalytics:
         # Request threads share these caches: one build at a time, the rest reuse it.
         self._lock = RLock()
 
-    def _get_prepared_activities(self) -> pd.DataFrame:
-        """Return activities DF with parsed dates and parsed map JSON, cached
-        to avoid repeated copy+parse.
-
-        Streams are NOT attached to this DataFrame — they live in the cache's
-        StreamsStore. Call `strava_activities_cache.get_streams(activity_id)`
-        when stream data is needed.
-        """
-        with self._lock:
-            raw = self.strava_activities_cache._load_to_memory()
-            current_version = self.strava_activities_cache.cache_version
-            if self._prepared_activities is None or current_version != self._prepared_activities_version:
-                # Shallow: only the replaced columns are new, the rest share the raw cache's data.
-                df = raw.copy(deep=False)
-                df['start_date_local'] = pd.to_datetime(df['start_date_local'], utc=True)
-                if 'map' in df.columns:
-                    df['map'] = df['map'].apply(self._parse_json_cell)
-                self._prepared_activities = df
-                self._prepared_activities_version = current_version
-            return self._prepared_activities
-
-    @staticmethod
-    def _parse_json_cell(val):
-        """Parse a JSON cell from string to Python object, once."""
-        if val is None or (isinstance(val, float) and np.isnan(val)):
-            return None
-        if isinstance(val, str):
-            try:
-                return json.loads(val)
-            except (json.JSONDecodeError, TypeError):
-                return None
-        return val
-
     def invalidate_caches(self):
         """Clear all analytics-level caches. Call after sync."""
-        self._prepared_activities = None
-        self._prepared_activities_version = -1
         self._hr_zones_cache = None
         self._race_predictions_cache = {}
         self._race_residuals_cache = {}
@@ -135,7 +97,7 @@ class StravaAnalytics:
     def warm_caches(self) -> None:
         """Build the history-wide caches, and any missing per-activity stream
         summaries, ahead of the first request that needs them."""
-        activities = self._get_prepared_activities()
+        activities = self.strava_activities_cache.get_prepared_view()
         for category in ("running", "cycling", "swimming"):
             self._ranked_bests(category)
         if not activities.empty:
@@ -270,7 +232,7 @@ class StravaAnalytics:
                               Used for fair year-over-year comparison (e.g. only up to Feb 20).
         """
 
-        activities = self._get_prepared_activities()
+        activities = self.strava_activities_cache.get_prepared_view()
 
         # get activities for the specified year
         mask = (activities['start_date_local'].dt.year == year) & (activities['sport_type'] == main_sport)
@@ -397,7 +359,7 @@ class StravaAnalytics:
             cutoff_month_day: Optional (month, day) tuple to filter activities up to that date.
         """
 
-        activities = self._get_prepared_activities()
+        activities = self.strava_activities_cache.get_prepared_view()
 
         # get activities for the specified year (all sports)
         mask = activities['start_date_local'].dt.year == year
@@ -477,7 +439,7 @@ class StravaAnalytics:
         """
         from datetime import datetime, timedelta, timezone
 
-        activities = self._get_prepared_activities()
+        activities = self.strava_activities_cache.get_prepared_view()
 
         # Determine the week to report on
         if week_start_date is None:
@@ -811,7 +773,7 @@ class StravaAnalytics:
 
             bests_columns = ["activity_id", "activity_name", "date", "distance_m", "time_s",
                              "is_race", "avg_hr"]
-            activities = self._get_prepared_activities()
+            activities = self.strava_activities_cache.get_prepared_view()
             if not self._sport_distances(sport_category) or activities.empty:
                 empty = pd.DataFrame(columns=bests_columns)
                 self._per_activity_bests_cache[sport_category] = empty
@@ -1255,7 +1217,7 @@ class StravaAnalytics:
         }
         targets = sorted((d for d, _ in sport_configs.get(sport_category, [])), reverse=True)
         residuals: list[tuple[pd.Timestamp, float]] = []
-        activities = self._get_prepared_activities()
+        activities = self.strava_activities_cache.get_prepared_view()
         if not targets or activities.empty:
             self._race_residuals_cache[sport_category] = residuals
             return residuals
@@ -1406,7 +1368,7 @@ class StravaAnalytics:
         n_recent = len({b["distance_m"] for b in recent if b.get("is_top1")})
         confidence = "high" if n_recent >= 5 else "medium" if n_recent >= 3 else "low"
 
-        activities = self._get_prepared_activities()
+        activities = self.strava_activities_cache.get_prepared_view()
         cat_activities = activities[
             activities["sport_type"].apply(lambda st: get_sport_category(st) == sport_category)
         ]
@@ -1604,7 +1566,7 @@ class StravaAnalytics:
         if cached is not None:
             return cached
 
-        activities = self._get_prepared_activities()
+        activities = self.strava_activities_cache.get_prepared_view()
         if activities.empty:
             self._training_load_cache[cache_key] = []
             return []
