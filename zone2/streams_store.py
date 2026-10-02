@@ -13,7 +13,7 @@ Shape of a single activity's streams:
         "velocity_smooth":  [float | None, ...],
         "heartrate":        [int | None, ...],
         "cadence":          [int | None, ...],
-        "power":            [int | None, ...],
+        "watts":            [int | None, ...],
         "latlng":           [[float, float], ...],
     }
 
