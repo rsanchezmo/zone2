@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useCallback, type ReactNode } from 'react'
 import {
   startOfMonth, endOfMonth, eachDayOfInterval, format, addMonths, subMonths, isSameMonth,
   startOfWeek, endOfWeek, isSameWeek, parseISO,
@@ -7,22 +7,54 @@ import clsx from 'clsx'
 import { WEEKDAYS_MIN } from '../../constants/weekdays'
 import { useTheme } from '../../hooks/useTheme'
 import { useClickOutside } from '../../hooks/useClickOutside'
+import { formatWeekRange } from './calendar'
+
+/** The nav label that opens a picker. One outside-click boundary covers the label
+ *  and the popover, so pressing the label while open closes it instead of reopening it.
+ *  `contents` keeps the popover anchored to the whole nav group. */
+function PickerButton({ label, children }: { label: string; children: (close: () => void) => ReactNode }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const close = useCallback(() => setOpen(false), [])
+  useClickOutside(ref, open, close)
+  return (
+    <div ref={ref} className="contents">
+      <button onClick={() => setOpen(v => !v)} className="btn min-w-[150px] text-center !text-sm tabular-nums">
+        {label}
+      </button>
+      {open && children(close)}
+    </div>
+  )
+}
+
+export function WeekPicker({ currentWeekStart, onSelect }: { currentWeekStart: string; onSelect: (weekStart: string) => void }) {
+  return (
+    <PickerButton label={formatWeekRange(currentWeekStart)}>
+      {close => <WeekPopover currentWeekStart={currentWeekStart} onSelect={onSelect} onClose={close} />}
+    </PickerButton>
+  )
+}
+
+export function MonthPicker({ current, onSelect }: { current: Date; onSelect: (d: Date) => void }) {
+  return (
+    <PickerButton label={format(current, 'MMMM yyyy')}>
+      {close => <MonthPopover current={current} onSelect={onSelect} onClose={close} />}
+    </PickerButton>
+  )
+}
 
 /* ── Week Picker ──────────────────────────────────── */
-export function WeekPicker({ currentWeekStart, onSelect, onClose }: {
+function WeekPopover({ currentWeekStart, onSelect, onClose }: {
   currentWeekStart: string
   onSelect: (weekStart: string) => void
   onClose: () => void
 }) {
   const { theme } = useTheme()
   const isLight = theme === 'light'
-  const ref = useRef<HTMLDivElement>(null)
   const [viewMonth, setViewMonth] = useState(() => {
     try { return startOfMonth(parseISO(currentWeekStart)) }
     catch { return startOfMonth(new Date()) }
   })
-
-  useClickOutside(ref, true, onClose)
 
   const mStart = startOfMonth(viewMonth)
   const mEnd = endOfMonth(viewMonth)
@@ -36,7 +68,7 @@ export function WeekPicker({ currentWeekStart, onSelect, onClose }: {
   })()
 
   return (
-    <div ref={ref} className={clsx(
+    <div className={clsx(
       'absolute top-full mt-1 z-50 rounded-xl p-3 shadow-xl w-[260px] border',
       isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
     )}>
@@ -96,22 +128,19 @@ export function WeekPicker({ currentWeekStart, onSelect, onClose }: {
 /* ── Month Picker ─────────────────────────────────── */
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-export function MonthPicker({ current, onSelect, onClose }: {
+function MonthPopover({ current, onSelect, onClose }: {
   current: Date
   onSelect: (d: Date) => void
   onClose: () => void
 }) {
   const { theme } = useTheme()
   const isLight = theme === 'light'
-  const ref = useRef<HTMLDivElement>(null)
   const [viewYear, setViewYear] = useState(current.getFullYear())
   const nowMonth = new Date().getMonth()
   const nowYear = new Date().getFullYear()
 
-  useClickOutside(ref, true, onClose)
-
   return (
-    <div ref={ref} className={clsx(
+    <div className={clsx(
       'absolute top-full mt-1 z-50 rounded-xl p-3 shadow-xl w-[220px] border',
       isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
     )}>

@@ -71,8 +71,6 @@ export default function CalendarPage() {
   const [sportFilter, setSportFilter] = useState<Set<string>>(new Set())
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [showModal, setShowModal] = useState(false)
-  const [showMonthPicker, setShowMonthPicker] = useState(false)
-  const [showWeekPicker, setShowWeekPicker] = useState(false)
   const [draggingSessionId, setDraggingSessionId] = useState<number | null>(null)
   const [draggingSession, setDraggingSession] = useState<TrainingSession | null>(null)
   const [dragOverDate, setDragOverDate] = useState<string | null>(null)
@@ -132,8 +130,6 @@ export default function CalendarPage() {
       }
       return next
     })
-    setShowMonthPicker(false)
-    setShowWeekPicker(false)
   }, [currentMonth, weekStart])
 
   // The week view's grid is the inspected week, so it waits for it too
@@ -409,20 +405,8 @@ export default function CalendarPage() {
               {view === 'month' ? (
                 <>
                   <button onClick={() => setCurrentMonth(m => subMonths(m, 1))} className="btn !px-3" aria-label="Previous month">&larr;</button>
-                  <button
-                    onClick={() => setShowMonthPicker(v => !v)}
-                    className="btn min-w-[150px] text-center !text-sm tabular-nums"
-                  >
-                    {format(currentMonth, 'MMMM yyyy')}
-                  </button>
+                  <MonthPicker current={currentMonth} onSelect={setCurrentMonth} />
                   <button onClick={() => setCurrentMonth(m => addMonths(m, 1))} className="btn !px-3" aria-label="Next month">&rarr;</button>
-                  {showMonthPicker && (
-                    <MonthPicker
-                      current={currentMonth}
-                      onSelect={setCurrentMonth}
-                      onClose={() => setShowMonthPicker(false)}
-                    />
-                  )}
                 </>
               ) : (
                 <>
@@ -431,12 +415,7 @@ export default function CalendarPage() {
                     className="btn !px-3"
                     aria-label="Previous week"
                   >&larr;</button>
-                  <button
-                    onClick={() => setShowWeekPicker(v => !v)}
-                    className="btn min-w-[150px] text-center !text-sm tabular-nums"
-                  >
-                    {formatWeekRange(weekStart)}
-                  </button>
+                  <WeekPicker currentWeekStart={weekStart} onSelect={setPickedWeek} />
                   {/* Unclamped, unlike the report's own picker in month view — the
                       point of week view is reading a plan that lives in the future. */}
                   <button
@@ -444,13 +423,6 @@ export default function CalendarPage() {
                     className="btn !px-3"
                     aria-label="Next week"
                   >&rarr;</button>
-                  {showWeekPicker && (
-                    <WeekPicker
-                      currentWeekStart={weekStart}
-                      onSelect={setPickedWeek}
-                      onClose={() => setShowWeekPicker(false)}
-                    />
-                  )}
                 </>
               )}
             </div>
