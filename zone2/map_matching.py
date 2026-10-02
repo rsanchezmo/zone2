@@ -953,7 +953,9 @@ class StravaMapMatcher:
         return highway.map({h: self._is_street(h) for h in highway.unique()}).to_numpy(dtype=bool)
 
     def _undirected_gdf(self) -> gpd.GeoDataFrame:
-        """Unique undirected edges with geometry — the serving/aggregation view."""
+        """Street segments with geometry — the serving/aggregation view. One row
+        per segment already (see _one_row_per_segment): distinct ways between
+        the same two nodes are separate streets, so (u, v) is not unique."""
         if self._und_gdf is None:
             idx = self._edges_gdf.index
             u = idx.get_level_values(0).to_numpy()
@@ -973,7 +975,7 @@ class StravaMapMatcher:
                 geometry=self._edges_gdf.geometry.values,
                 crs=self._edges_gdf.crs,
             )
-            self._und_gdf = gdf.drop_duplicates(['u', 'v']).reset_index(drop=True)
+            self._und_gdf = gdf
         return self._und_gdf
 
     def undirected_with_covered(self, streets_only: bool = False) -> gpd.GeoDataFrame:
@@ -1181,7 +1183,7 @@ class StravaMapMatcher:
     # ones are cut from their projected geometry, stored alongside.
     VIEWPORT_CELL_DEG = 0.002
     VIEWPORT_ROW_GROUP = 1024
-    VIEWPORT_INDEX_VERSION = b'4'   # bump when the index layout or rendering changes
+    VIEWPORT_INDEX_VERSION = b'5'   # bump when the index layout or rendering changes
 
     @classmethod
     def _viewport_index_path(cls, osm_dir: Path, slug: str) -> Path:
