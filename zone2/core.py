@@ -5,7 +5,7 @@ from zone2.analytics import StravaAnalytics, YearInSportFeatures
 from zone2.user_cache import StravaUserCache
 from zone2.activities_cache import StravaActivitiesCache
 from zone2.endpoint import StravaEndpoint
-from zone2.utils import *
+from zone2.utils import get_activities_as_gdf, previous_week
 from zone2.visualizer import StravaVisualizer
 from zone2.garmin_client import GarminClient
 from zone2.garmin_cache import GarminDailyStatsCache

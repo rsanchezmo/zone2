@@ -9,7 +9,7 @@ import numpy as np
 from zone2.activities_cache import StravaActivitiesCache
 from zone2.user_cache import StravaUserCache
 from zone2.utils import (
-    vo2_max, get_sport_category, vdot_from_time_distance,
+    get_sport_category, vdot_from_time_distance,
     predicted_time_from_vdot, riegel_predict, fit_riegel_exponent,
     compute_trimp_banister, compute_trimp_zone_weighted, hr_zone_counts, df_rows,
     training_paces_from_vdot,
@@ -56,8 +56,6 @@ class StravaAnalytics:
         self._race_predictions_cache: dict = {}
         self._race_residuals_cache: dict[str, list] = {}
         self._training_load_cache: dict = {}
-        self._pmc_cache: dict = {}
-        self._fitness_trend_cache: dict = {}
         # Per-activity best efforts table per sport category — computed once
         # from the sliding-window scan, reused across windowed queries to
         # avoid re-scanning streams on every history step.
@@ -109,8 +107,6 @@ class StravaAnalytics:
         self._race_predictions_cache = {}
         self._race_residuals_cache = {}
         self._training_load_cache = {}
-        self._pmc_cache = {}
-        self._fitness_trend_cache = {}
         self._per_activity_bests_cache = {}
         self._ranked_bests_cache = {}
 
@@ -127,7 +123,6 @@ class StravaAnalytics:
             self._ranked_bests_cache = {}
             self._race_predictions_cache = {}
             self._race_residuals_cache = {}
-            self._fitness_trend_cache = {}
             return True
 
     def _race_mask(self, activities: pd.DataFrame) -> pd.Series:
@@ -158,25 +153,6 @@ class StravaAnalytics:
     USER ANALYTICS
     ===============
     """
-
-    def get_rest_heart_rate(self):
-        """Get the athlete's resting heart rate.
-
-        Prefers the measured Garmin value (7-day average when present, else the
-        latest nightly reading). Falls back to the Z2_min / 2 proxy from Strava
-        zones when no Garmin data is cached.
-        """
-        garmin_rhr = self._garmin_resting_hr()
-        if garmin_rhr is not None:
-            return garmin_rhr
-
-        zones = self.strava_user_cache.get_athlete_zones()
-        hr_rest = zones['heart_rate']['zones'][1]['min'] / 2
-
-        if hr_rest == 0:
-            hr_rest = 60  # Default fallback value
-
-        return hr_rest
 
     def _garmin_resting_hr(self) -> float | None:
         """Most recent Garmin resting HR, or None when unavailable.
@@ -256,41 +232,6 @@ class StravaAnalytics:
             return zones['heart_rate']['zones']
         hr_max = zones.get('heart_rate', {}).get('zones', [{}] * 5)[4].get('min', 190)
         return self._build_default_zones(hr_max)
-
-    def get_current_vo2_max(self):
-        """Get the athlete's VO2 Max.
-
-        Prefers Garmin's measured value (from the cached `training_status`
-        daily payload). Falls back to the Uth-Sørensen-Overgaard-Pedersen
-        estimation:
-            VO2 Max = 15.3 x (HR_max / HR_rest)
-        """
-        garmin_vo2 = self._garmin_vo2max()
-        if garmin_vo2 is not None:
-            return round(garmin_vo2, 2)
-
-        hr_max = self.get_max_heart_rate()
-        hr_rest = self.get_rest_heart_rate()
-
-        vo2_max_value = vo2_max(hr_max, hr_rest)
-        return round(vo2_max_value, 2)
-
-    def _garmin_vo2max(self) -> float | None:
-        """Most recent Garmin-measured VO2max, or None when unavailable."""
-        if self.garmin_cache is None:
-            return None
-        try:
-            latest = self.garmin_cache.get_latest("training_status")
-        except Exception:
-            logger.warning("Garmin VO2max lookup failed", exc_info=True)
-            return None
-        if not latest:
-            return None
-        vo2 = ((latest.get("payload") or {}).get("mostRecentVO2Max") or {}).get("generic") or {}
-        value = vo2.get("vo2MaxPreciseValue") or vo2.get("vo2MaxValue")
-        if value is None or not (20 <= value <= 90):
-            return None
-        return float(value)
 
     def _garmin_race_predictions(self) -> dict | None:
         """Latest cached Garmin race-predictor times (running only), or None.
@@ -1637,22 +1578,20 @@ class StravaAnalytics:
             )
         return history
 
-    # ── Training Load & PMC ───────────────────────────────────────────
+    # ── Training Load ───────────────────────────────────────────
 
-    def get_daily_training_load(self, hr_zones: list | None = None, hr_rest: float | None = None) -> list[dict]:
+    def get_daily_training_load(self, hr_rest: float, hr_zones: list | None = None) -> list[dict]:
         """Compute daily TRIMP values from all activities.
 
+        hr_rest: resting HR (resolved from user settings).
         hr_zones: optional zones override (e.g. resolved from user settings).
-        hr_rest:  optional resting-HR override (e.g. resolved from user settings).
 
         Results are memoized per distinct (resting HR, max HR, zones) key, so
-        every caller — PMC, /training-load, weekly Relative Effort, any sport —
-        reuses one full-cache scan instead of recomputing the stream-heavy TRIMP.
-        Cleared by invalidate_caches() after a sync.
+        weekly Relative Effort for every sport reuses one full-cache scan
+        instead of recomputing the stream-heavy TRIMP. Cleared by
+        invalidate_caches() after a sync.
         """
         hr_max = self.get_max_heart_rate()
-        if hr_rest is None:
-            hr_rest = self.get_rest_heart_rate()
         if hr_zones is None:
             hr_zones = self._get_hr_zones_cached()
 
@@ -1680,17 +1619,9 @@ class StravaAnalytics:
             self._training_load_cache[cache_key] = []
             return []
 
-        # Vectorized Banister TRIMP across all valid rows — replaces the
-        # scalar compute_trimp_banister call that ran inside the old iterrows
-        # loop. Matches the male default in the scalar helper.
         duration_min_arr = valid['moving_time'].to_numpy(dtype=np.float64) / 60.0
-        avg_hr_arr = valid['average_heartrate'].to_numpy(dtype=np.float64)
-        hr_range = hr_max - hr_rest
-        if hr_range > 0:
-            delta = np.clip((avg_hr_arr - hr_rest) / hr_range, 0.0, 1.0)
-            banister = duration_min_arr * delta * 0.64 * np.exp(1.92 * delta)
-        else:
-            banister = np.zeros(len(valid), dtype=np.float64)
+        banister = compute_trimp_banister(duration_min_arr, valid['average_heartrate'].to_numpy(dtype=np.float64),
+                                          hr_rest, hr_max)
 
         trimps = banister.copy()
         methods = np.full(len(valid), 'banister', dtype=object)
@@ -1748,8 +1679,8 @@ class StravaAnalytics:
 
     def get_weekly_relative_effort(
         self,
+        hr_rest: float,
         hr_zones: list | None = None,
-        hr_rest: float | None = None,
         sports: tuple[str, ...] | None = None,
         band_span: int = 6,
         band_k: float = 0.6,
@@ -1800,208 +1731,7 @@ class StravaAnalytics:
         ]
         return {"weeks": weeks, "scale": self.RE_DISPLAY_SCALE, "sports": list(sports)}
 
-    def get_pmc_chart(self, start_date: str | None = None, end_date: str | None = None) -> dict:
-        """Compute Performance Management Chart (CTL/ATL/TSB) from daily TRIMP."""
-        # The series runs up to today
-        cache_key = f"{start_date}|{end_date}|{_utc_now_naive().date()}"
-        if cache_key in self._pmc_cache:
-            return self._pmc_cache[cache_key]
-
-        from datetime import datetime, timedelta
-
-        daily_load = self.get_daily_training_load()
-        if not daily_load:
-            empty = {"data": [], "current": {"ctl": 0, "atl": 0, "tsb": 0}, "peak_fitness": {"ctl": 0, "date": None}}
-            self._pmc_cache[cache_key] = empty
-            return empty
-
-        # Build date-indexed series from first activity to today
-        first_date = pd.to_datetime(daily_load[0]["date"])
-        today = pd.Timestamp(_utc_now_naive().strftime('%Y-%m-%d'))
-        date_range = pd.date_range(first_date, today, freq='D')
-
-        trimp_map = {d["date"]: d["trimp"] for d in daily_load}
-        trimp_series = pd.Series(
-            [trimp_map.get(ds, 0.0) for ds in date_range.strftime('%Y-%m-%d')],
-            index=date_range,
-        )
-
-        # Coggan-standard impulse/response: CTL_t = CTL_{t-1} + (load_t − CTL_{t-1})/42,
-        # i.e. alpha = 1/42. (span=42 would set alpha = 2/43 ≈ 1/21.5 — a chart
-        # roughly twice as reactive as the standard 42-day CTL definition.)
-        # A zero-load seed day is prepended so the EWM starts at 0 instead of
-        # the first day's raw TRIMP (ewm(adjust=False) seeds at the first
-        # observation, which would report "peak fitness" on day one of history).
-        seed_day = date_range[0] - pd.Timedelta(days=1)
-        seeded = pd.concat([pd.Series([0.0], index=[seed_day]), trimp_series])
-        ctl = seeded.ewm(alpha=1 / 42, adjust=False).mean().iloc[1:]
-        atl = seeded.ewm(alpha=1 / 7, adjust=False).mean().iloc[1:]
-        tsb = ctl - atl
-
-        # Filter to requested range for output
-        mask = pd.Series(True, index=date_range)
-        if start_date:
-            mask = mask & (date_range >= pd.to_datetime(start_date))
-        if end_date:
-            mask = mask & (date_range <= pd.to_datetime(end_date))
-
-        shown = np.flatnonzero(mask.to_numpy())
-        data = [
-            {"date": ds, "trimp": round(tr, 1), "ctl": round(c, 1), "atl": round(a, 1), "tsb": round(b, 1)}
-            for ds, tr, c, a, b in zip(
-                date_range[shown].strftime('%Y-%m-%d'),
-                *(series.to_numpy()[shown].tolist() for series in (trimp_series, ctl, atl, tsb)),
-            )
-        ]
-
-        # Peak fitness
-        peak_idx = ctl.idxmax()
-        peak_ctl = round(float(ctl[peak_idx]), 1)
-
-        # HR data quality
-        activities = self._get_prepared_activities()
-        total = len(activities)
-        with_hr = int(activities['average_heartrate'].dropna().count()) if 'average_heartrate' in activities.columns else 0
-        with_streams = len(self.strava_activities_cache.streams.all_activity_ids())
-
-        result = {
-            "data": data,
-            "current": {
-                "ctl": round(float(ctl.iloc[-1]), 1) if len(ctl) else 0,
-                "atl": round(float(atl.iloc[-1]), 1) if len(atl) else 0,
-                "tsb": round(float(tsb.iloc[-1]), 1) if len(tsb) else 0,
-            },
-            "peak_fitness": {
-                "ctl": peak_ctl,
-                "date": peak_idx.strftime('%Y-%m-%d'),
-            },
-            "data_quality": {
-                "total_activities": total,
-                "activities_with_hr": with_hr,
-                "activities_with_streams": with_streams,
-                "sufficient": with_hr >= 1,
-                "warnings": (
-                    ["No activities with heart rate data found"]
-                    if with_hr == 0 else []
-                ),
-            },
-        }
-        self._pmc_cache[cache_key] = result
-        return result
-
     # ── Fitness Trend (VDOT over time) ────────────────────────────────
-
-    def get_fitness_trend(self, sport_type: str = "Run", start_date: str | None = None, end_date: str | None = None) -> dict:
-        """Compute a best-effort VDOT fitness trend for running.
-
-        Each activity is represented by the highest VDOT among its
-        sliding-window best efforts at standard distances (from
-        `_get_per_activity_bests_df`) — the strongest sustained segment the
-        athlete actually produced that day. The previous implementation fed
-        whole-activity distance/moving_time into the Daniels formula, which
-        treats every easy run as a race effort, so the line tracked recent
-        effort rather than fitness.
-
-        The trend line (`rolling_avg` key, kept for API compatibility) is the
-        28-day rolling *maximum*: the best fitness demonstrated in the last
-        four weeks. Easy weeks hold the line flat instead of dragging it down.
-        """
-        cache_key = f"{sport_type}|{start_date}|{end_date}"
-        if cache_key in self._fitness_trend_cache:
-            return self._fitness_trend_cache[cache_key]
-
-        category = get_sport_category(sport_type)
-        bests = self._get_per_activity_bests_df(category)
-        filtered = bests.dropna(subset=["date"]) if not bests.empty else bests
-
-        if not filtered.empty and start_date:
-            filtered = filtered[filtered['date'] >= pd.to_datetime(start_date, utc=True)]
-        if not filtered.empty and end_date:
-            filtered = filtered[filtered['date'] <= pd.to_datetime(end_date, utc=True)]
-
-        # Vectorized VDOT over every (activity, distance) best effort: inline
-        # the closed-form Daniels approximation in one pass. Same math as
-        # vdot_from_time_distance, just numpy. Efforts under 3 minutes are
-        # outside the formula's validity range and dropped.
-        times_s = filtered['time_s'].to_numpy(dtype=np.float64) if not filtered.empty else np.array([])
-        dists_m = filtered['distance_m'].to_numpy(dtype=np.float64) if not filtered.empty else np.array([])
-        t_min = times_s / 60.0
-        with np.errstate(divide='ignore', invalid='ignore'):
-            v_mpm = np.where(t_min > 0, dists_m / t_min, 0.0)
-            vo2 = -4.60 + 0.182258 * v_mpm + 0.000104 * v_mpm * v_mpm
-            pct = 0.8 + 0.1894393 * np.exp(-0.012778 * t_min) + 0.2989558 * np.exp(-0.1932605 * t_min)
-            vdot = np.where(pct > 0, vo2 / pct, np.nan)
-        vdot = np.round(vdot, 2)
-        keep = np.isfinite(vdot) & (vdot > 15) & (vdot < 85) & (times_s >= 180)
-
-        points = []
-        if keep.any():
-            kept = filtered.loc[keep].copy()
-            kept["vdot"] = vdot[keep]
-            # One point per activity: the best effort that demonstrates the
-            # most fitness (max VDOT across that activity's distances).
-            top_idx = kept.groupby("activity_id")["vdot"].idxmax()
-            per_act = kept.loc[top_idx].sort_values("date")
-            points = [
-                {
-                    "date": r["date"].strftime('%Y-%m-%d'),
-                    "vdot": float(r["vdot"]),
-                    "activity_name": str(r.get("activity_name", "") or ""),
-                    "distance_km": round(float(r["distance_m"]) / 1000, 2),
-                }
-                for r in df_rows(per_act, "date", "vdot", "activity_name", "distance_m")
-            ]
-
-        # Demonstrated-fitness envelope: 28-day rolling max of best-effort
-        # VDOT. Key name kept as `rolling_avg` for API compatibility.
-        rolling_avg = []
-        if len(points) >= 3:
-            vdot_series = pd.Series(
-                [p["vdot"] for p in points],
-                index=pd.to_datetime([p["date"] for p in points]),
-            )
-            rolled = vdot_series.rolling(window='28D', min_periods=1).max()
-            for d, v in rolled.items():
-                rolling_avg.append({"date": d.strftime('%Y-%m-%d'), "vdot": round(float(v), 2)})
-
-        # Current and peak
-        current_vdot = rolling_avg[-1]["vdot"] if rolling_avg else (points[-1]["vdot"] if points else None)
-        peak_entry = max(rolling_avg, key=lambda x: x["vdot"]) if rolling_avg else None
-
-        # Trend: compare current 28-day envelope vs 8 weeks ago
-        trend = "stable"
-        if len(rolling_avg) >= 2:
-            recent = rolling_avg[-1]["vdot"]
-            # Find entry ~56 days ago
-            target_date = (pd.to_datetime(rolling_avg[-1]["date"]) - pd.Timedelta(days=56)).strftime('%Y-%m-%d')
-            older = [r for r in rolling_avg if r["date"] <= target_date]
-            if older:
-                diff = recent - older[-1]["vdot"]
-                if diff > 0.5:
-                    trend = "improving"
-                elif diff < -0.5:
-                    trend = "declining"
-
-        result = {
-            "activities": points,
-            "rolling_avg": rolling_avg,
-            "current_vdot": current_vdot,
-            "peak_vdot": {"vdot": peak_entry["vdot"], "date": peak_entry["date"]} if peak_entry else None,
-            "trend": trend,
-            "sport_type": sport_type,
-            "data_quality": {
-                "total_activities": int(filtered["activity_id"].nunique()) if not filtered.empty else 0,
-                "activities_with_vdot": len(points),
-                "sufficient": len(points) >= 5,
-                "warnings": (
-                    ["Only {} activities with valid VDOT — need at least 5 for reliable trend".format(len(points))]
-                    if len(points) < 5 else []
-                ),
-            },
-        }
-        self._fitness_trend_cache[cache_key] = result
-        return result
-
 
 class YearInSportFeatures(StrEnum):
     TOTAL_ACTIVITIES = "total_activities"

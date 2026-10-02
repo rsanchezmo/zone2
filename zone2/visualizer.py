@@ -1,24 +1,21 @@
 from zone2.analytics import StravaAnalytics
-from zone2.utils import get_activities_as_gdf, get_region_coordinates, format_pace_or_speed, convert_speed, get_sport_category
+from zone2.utils import get_activities_as_gdf, get_region_coordinates, format_pace_or_speed, is_speed_sport
 from zone2.constants import WEB_MERCATOR_CRS, BASE_CRS
 from zone2.analytics import WeeklyReportFeatures
 
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 
 import geopandas as gpd
 import pandas as pd
 from pathlib import Path
 from shapely.geometry import Point, LineString
 import numpy as np
-import matplotlib.ticker as ticker
 from datetime import datetime
 import logging
 import threading
 from io import BytesIO
 
 logger = logging.getLogger(__name__)
-
 
 
 class StravaVisualizer:
@@ -65,27 +62,12 @@ class StravaVisualizer:
         finally:
             plt.close(fig)
 
-    def _get_centroid_of_map(self, gdf: gpd.GeoDataFrame, center_latlon: tuple[float, float] | None) -> Point:
-        """
-        Determines the map center.
-        """
-        if center_latlon is not None:
-            return gpd.GeoDataFrame(geometry=[Point(center_latlon[1], center_latlon[0])], 
-                                    crs=BASE_CRS).to_crs(WEB_MERCATOR_CRS).iloc[0].geometry
-
-        # Fallback: Calculate median centroid of all activities
-        centroids = gdf.geometry.centroid
-        return Point(
-            np.median(centroids.x),
-            np.median(centroids.y)
-        )
-
     def _filter_and_get_gdf(self, sport_types: list[str] | None = None,
                             radius_km: float | None = None,
                             location: str | None = None,
-                            filter_by_boundary: bool = False,
-                            year: int | None = None) -> tuple[gpd.GeoDataFrame | None, dict | None]:
-        """Filters by sport/year, projects to WebMercator, and spatially filters by radius or boundary."""
+                            year: int | None = None) -> gpd.GeoDataFrame | None:
+        """Filters by sport/year, projects to WebMercator and keeps the routes
+        within radius_km of the geocoded location."""
         gdf = self._activities_with_routes()
 
         if sport_types:
@@ -93,53 +75,26 @@ class StravaVisualizer:
 
         if year and 'start_date_local' in gdf.columns:
             gdf = gdf[gdf['start_date_local'].dt.year == year]
-            
+
         if gdf.empty:
             logger.info("No activities found for %s", sport_types)
-            return None, None
-        
-        # get region_coordinates if location is provided
+            return None
+
+        gdf = gdf.to_crs(WEB_MERCATOR_CRS)
         region_coords = get_region_coordinates(location) if location else None
-        if region_coords is None:
-            return gdf.to_crs(WEB_MERCATOR_CRS), None
-        
-        if radius_km is not None:
-            # Project to WebMercator for distance calculations
-            gdf = gdf.to_crs(WEB_MERCATOR_CRS)
+        if region_coords is None or radius_km is None:
+            return gdf
 
-            # Determine centroid of the map in WebMercator
-            centroid = self._get_centroid_of_map(gdf, (region_coords['lat'], region_coords['lon']))       
-
-            # Filter data on a ~ radius_km as we use WebMercator 
-            gdf['dist_to_centroid'] = gdf.geometry.distance(centroid)
-            gdf = gdf[gdf['dist_to_centroid'] < radius_km * 1e3]
-
-        elif filter_by_boundary:
-            # Use bounding box from OSM to filter activities
-            bbox_polygon = region_coords['boundingbox']
-            # Ensure we are comparing in Lat/Lon (BASE_CRS) because bbox is Lat/Lon
-            gdf_latlon = gdf.to_crs(BASE_CRS)
-            
-            # Use INTERSECTS instead of WITHIN to keep runs that cross the border
-            mask = gdf_latlon.geometry.intersects(bbox_polygon)
-            gdf = gdf_latlon[mask]
-            
-            # Convert result to WebMercator for final plotting
-            gdf = gdf.to_crs(WEB_MERCATOR_CRS)
-        
-        # Fallback: Location provided but no filter method (radius/boundary) selected
-        # Usually we just return the full dataset projected
-        else:
-             gdf = gdf.to_crs(WEB_MERCATOR_CRS)
-
-        return gdf, region_coords
+        centroid = gpd.GeoSeries([Point(region_coords['lon'], region_coords['lat'])],
+                                 crs=BASE_CRS).to_crs(WEB_MERCATOR_CRS).iloc[0]
+        # WebMercator distances: ~radius_km at these latitudes
+        return gdf[gdf.geometry.distance(centroid) < radius_km * 1e3]
 
     def thunderstorm_heatmap(
             self,
             location: str | None = None,
             sport_types: list[str] | None = None,
             radius_km: float = 20.0,
-            add_basemap: bool = False,
             neon_color: str = "#fc0101", # Cyan default, try '#FF00FF' for Magenta
             show_title: bool = True,
             return_buffer: bool = False,
@@ -149,7 +104,7 @@ class StravaVisualizer:
         """
         Generates a high-contrast 'Neon' visualization of activities.
         """
-        gdf, _ = self._filter_and_get_gdf(sport_types, radius_km, location, year=year)
+        gdf = self._filter_and_get_gdf(sport_types, radius_km, location, year=year)
         if gdf is None or gdf.empty:
             logger.info("No data found for the specified parameters.")
             return
@@ -167,22 +122,6 @@ class StravaVisualizer:
         
         # Layer 3: The "Core" (Thin, bright white center)
         gdf.plot(ax=ax, color='white', linewidth=0.6, alpha=0.9, zorder=3)
-
-        # Optional Basemap
-        if add_basemap:
-            try:
-                # Imported here: contextily (and rasterio under it) is heavy and only maps need it.
-                import contextily as ctx
-                # DarkMatterOnlyLabels places street names *on top* of the glow, which looks cool
-                # DarkMatterNoLabels places just the map background
-                ctx.add_basemap(
-                    ax, 
-                    source=ctx.providers.CartoDB.DarkMatterOnlyLabels, 
-                    alpha=0.4,
-                    zoom_adjust=1 # Higher res tiles
-                )
-            except Exception as e:
-                logger.warning("Basemap warning: %s", e)
 
         ax.set_axis_off()
         
@@ -219,262 +158,6 @@ class StravaVisualizer:
         result = self._finalize_figure(fig, save_path, dpi=dpi or 600, return_buffer=return_buffer, pad_inches=0.2)
         if not return_buffer:
             logger.info("Thunderstorm map saved to: %s", save_path)
-        return result
-
-    def activity_bubble_map(
-            self,
-            region: str,  # 'Europe', 'Spain', or None for World
-            sport_types: list[str] | None = None,
-            min_radius_scale: float = 100.0,
-            grid_density: int = 100,  # if too low, bubbles may lose position accuracy
-            neon_color: str = "#fc0101",
-            show_title: bool = False,
-            return_buffer: bool = False,
-            dpi: int | None = None,
-    ) -> BytesIO | None:
-        """
-        Generates a 'Bubble Map' where the size of the circle represents 
-        the number of activities in that cluster.
-        """
-        # 1. Get Base Data (Filter by boundary logic is handled inside _filter_and_get_gdf)
-        gdf, region_info = self._filter_and_get_gdf(
-            sport_types=sport_types, 
-            radius_km=None, 
-            location=region, 
-            filter_by_boundary=True
-        )
-        
-        if gdf is None or gdf.empty:
-            logger.info("No activities found.")
-            return
-
-        if region_info is None:
-            logger.info("Region information not found.")
-            return
-
-        # 2. Setup Bounding Box (in Web Mercator)
-        # We do this FIRST to determine the grid size
-        bbox_latlon = region_info['boundingbox']
-        
-        # Create a GeoDataFrame just to project the box accurately
-        bbox_gdf = gpd.GeoDataFrame(geometry=[bbox_latlon], crs=BASE_CRS).to_crs(WEB_MERCATOR_CRS)
-        minx, miny, maxx, maxy = bbox_gdf.total_bounds
-        
-        box_width = maxx - minx
-        box_height = maxy - miny
-
-        # 3. Dynamic Grid Grouping (in Meters)
-        # Divide the map width by 'grid_density' to find the cell size
-        # e.g. If map is 1000km wide and density is 50, grid cells are 20km wide.
-        grid_size = box_width / grid_density
-        
-        # Convert activities to Web Mercator if they aren't already
-        gdf_proj = gdf.to_crs(WEB_MERCATOR_CRS)
-        
-        # Snap centroids to this dynamic grid
-        # Formula: round(coord / size) * size
-        gdf_proj['x_group'] = (gdf_proj.geometry.centroid.x // grid_size) * grid_size
-        gdf_proj['y_group'] = (gdf_proj.geometry.centroid.y // grid_size) * grid_size
-        
-        # Group and count
-        grouped = gdf_proj.groupby(['x_group', 'y_group']).size().reset_index(name='count')
-        
-        # Create Bubbles (shift to center of grid cell)
-        bubbles_gdf = gpd.GeoDataFrame(
-            grouped,
-            geometry=gpd.points_from_xy(grouped.x_group + grid_size/2, grouped.y_group + grid_size/2),
-            crs=WEB_MERCATOR_CRS
-        )
-
-        # 4. Setup Canvas
-        fig, ax = plt.subplots(figsize=(20, 12), facecolor='black')
-        ax.set_facecolor('black')
-        
-        # Set Limits explicitly to the Bounding Box
-        # Add small padding (1%)
-        pad_x = box_width * 0.01
-        pad_y = box_height * 0.01
-        ax.set_xlim(minx - pad_x, maxx + pad_x)
-        ax.set_ylim(miny - pad_y, maxy + pad_y)
-
-        # 5. Calculate Marker Sizes
-        # Normalize by max count so the busiest spot is always "1.0" scale
-        max_val = bubbles_gdf['count'].max()
-        
-        # Size formula needs to be responsive to the figure size and grid density
-        # If we have many grid cells (high density), bubbles should be smaller to avoid overlap
-        # We use a heuristic: base_size relative to grid_density
-        relative_scale = (np.sqrt(bubbles_gdf['count']) / np.sqrt(max_val))
-        
-        # Tuning factor: The visual size of the bubble
-        # min_radius_scale passed by user acts as a global multiplier
-        sizes = relative_scale * min_radius_scale 
-
-        # 6. Plotting The Neon Bubbles
-        
-        # Layer 1: Atmosphere
-        ax.scatter(
-            bubbles_gdf.geometry.x,
-            bubbles_gdf.geometry.y,
-            s=sizes * 8,
-            c=neon_color,
-            alpha=0.05,
-            linewidth=0,
-            zorder=2
-        )
-
-        # Layer 2: The Halo
-        ax.scatter(
-            bubbles_gdf.geometry.x,
-            bubbles_gdf.geometry.y,
-            s=sizes * 4,
-            c=neon_color,
-            alpha=0.2,
-            linewidth=0,
-            zorder=3
-        )
-
-        # Layer 3: The Core
-        ax.scatter(
-            bubbles_gdf.geometry.x,
-            bubbles_gdf.geometry.y,
-            s=sizes,
-            c='white',
-            alpha=0.9,
-            edgecolors=neon_color,
-            linewidth=1,
-            zorder=4
-        )
-
-        # 7. Basemap
-        try:
-            import contextily as ctx
-            ctx.add_basemap(
-                ax,
-                source=ctx.providers.CartoDB.DarkMatter,
-                alpha=0.6,
-                zoom_adjust=0, # Auto-zoom usually works well with set_xlim
-                zorder=1
-            )
-        except Exception as e:
-            logger.debug("Basemap tile fetch failed: %s", e)
-
-        ax.set_axis_off()
-        ax.axis('equal')
-
-        # 8. Title & Save
-        if show_title:
-            sport_str = " / ".join(sport_types).upper() if sport_types else "ALL ACTIVITIES"
-            
-            plt.title(
-                f"{region.upper()} | {sport_str} | DENSITY",
-                color=neon_color,
-                fontsize=24,
-                fontfamily='monospace',
-                fontweight='bold',
-                pad=20
-            )
-
-        filename = f"bubble_map_{region.replace(' ', '_')}.png"
-        save_path = self.output_dir / filename.lower()
-
-        result = self._finalize_figure(fig, save_path, dpi=dpi or 600, return_buffer=return_buffer)
-        if not return_buffer:
-            logger.info("Bubble map saved to: %s", save_path)
-        return result
-
-
-    def activity_clock(
-        self,
-        sport_types: list[str] | None = None,
-        neon_color: str = "#fa2100",
-        max_dist_km: float | None = None,
-        show_title: bool = True,
-        return_buffer: bool = False,
-        dpi: int | None = None,
-    ) -> BytesIO | None:
-        """
-        Generates a polar scatter plot of activities (Time vs Distance) 
-        """
-        # 1. Get Data
-        activities = self.strava_analytics.strava_activities_cache.activities
-        gdf = get_activities_as_gdf(activities)
-
-        # Filter Sports
-        if sport_types:
-            gdf = gdf[gdf['sport_type'].isin(sport_types)]
-
-        if gdf.empty:
-            logger.info("No activities found.")
-            return
-
-        # 2. Prepare Coordinates
-        # Convert start time to hours (0-24)
-        # Ensure it's datetime format just in case
-        gdf['start_date_local'] = gpd.pd.to_datetime(gdf['start_date_local'])
-        
-        hours = gdf['start_date_local'].dt.hour + gdf['start_date_local'].dt.minute / 60.0
-        
-        # Convert hours to Radians (0 to 2pi)
-        theta = (hours / 24.0) * 2 * np.pi
-        
-        # Radius = Distance in KM
-        r = gdf['distance'] / 1e3 
-
-        # 3. Setup Neon Canvas
-        fig = plt.figure(figsize=(15, 15), facecolor='black')
-        ax = fig.add_subplot(111, projection='polar')
-        ax.set_facecolor('black')
-        
-        # Layer 1: Atmosphere (Large, very faint)
-        ax.scatter(theta, r, c=neon_color, s=250, alpha=0.1, edgecolors='none', zorder=1)
-        
-        # Layer 2: Glow (Medium, soft)
-        ax.scatter(theta, r, c=neon_color, s=100, alpha=0.25, edgecolors='none', zorder=2)
-        
-        # Layer 3: Core (Sharp, white dot)
-        ax.scatter(theta, r, c='white', s=15, alpha=0.9, edgecolors='none', zorder=3)
-
-        # 5. Customizing the Polar Grid (make it look "Tech")
-        ax.set_theta_zero_location("N")  # Midnight at top
-        ax.set_theta_direction(-1)       # Clockwise
-        
-        # Grid lines styling
-        ax.grid(color=neon_color, alpha=0.1, linestyle=':', linewidth=1)
-        ax.spines['polar'].set_visible(False) # Hide the outer circle line
-
-        # Custom Hour Labels
-        # We only label standard watch positions: 12, 3, 6, 9 (0, 6, 12, 18 in 24h format)
-        ax.set_xticks(np.linspace(0, 2*np.pi, 4, endpoint=False))
-        ax.set_xticklabels(['12am', '6am', '12pm', '6pm'], 
-                           fontfamily='monospace', fontsize=14, color=neon_color, weight='bold')
-
-        # Distance rings (Y-axis) styling
-        ax.tick_params(axis='y', colors=neon_color, labelsize=8)
-        
-        # Optional: Cap the radius view if there are outliers
-        if max_dist_km:
-             ax.set_ylim(0, max_dist_km)
-        
-        # Title
-        sport_str = ", ".join(sport_types).upper() if sport_types else "ALL ACTIVITIES"
-        if show_title:
-            plt.title(
-                f"{sport_str}", 
-                color=neon_color,
-                fontsize=20, 
-                fontfamily='monospace', 
-                fontweight='bold', 
-                pad=30
-            )
-
-        # 6. Save
-        filename = f"activity_clock_{sport_str.replace(' ', '_')}.png"
-        save_path = self.output_dir / filename.lower()
-
-        result = self._finalize_figure(fig, save_path, dpi=dpi or 600, return_buffer=return_buffer)
-        if not return_buffer:
-            logger.info("Activity clock saved to: %s", save_path)
         return result
 
     def plot_activity(
@@ -924,14 +607,7 @@ class StravaVisualizer:
         avg_speed_str = format_pace_or_speed(average_speed, main_sport)
         comp_avg_speed_str = format_pace_or_speed(comp_average_speed, main_sport) if comp_average_speed else None
         
-        # Determine label based on sport type
-        sport_lower = main_sport.lower()
-        cycling_sports = {'ride', 'virtualride', 'ebikeride', 'handcycle', 'velomobile', 
-                          'gravel ride', 'gravelride', 'mountain bike ride', 'mountainbikeride'}
-        if any(cycle in sport_lower for cycle in cycling_sports):
-            avg_speed_label = "avg speed"
-        else:
-            avg_speed_label = "avg pace"
+        avg_speed_label = "avg speed" if is_speed_sport(main_sport) else "avg pace"
         
         # Stats with comparison values for all features
         # Box-based layout for additional stats: 3 columns x 2 rows
@@ -1029,14 +705,7 @@ class StravaVisualizer:
             alpha=0.7
         )
         
-        # Determine label based on sport type (pace vs speed)
-        sport_lower = main_sport.lower()
-        cycling_sports = {'ride', 'virtualride', 'ebikeride', 'handcycle', 'velomobile', 
-                          'gravel ride', 'gravelride', 'mountain bike ride', 'mountainbikeride'}
-        if any(cycle in sport_lower for cycle in cycling_sports):
-            speed_label = "▸ Top Speed"
-        else:
-            speed_label = "▸ Fastest Pace"
+        speed_label = "▸ Top Speed" if is_speed_sport(main_sport) else "▸ Fastest Pace"
         
         highlights = [
             ("▸ Longest Distance", f"{longest_km:.1f} km", f"{comp_longest_km:.1f} km" if comp_longest_km else None),
@@ -1371,11 +1040,9 @@ class StravaVisualizer:
         sport_most_done = all_sports_data.get(AllYearInSportFeatures.SPORT_MOST_DONE, "N/A")
         num_sports = len(activities_per_sport) if activities_per_sport else 0
         active_days = all_sports_data.get(AllYearInSportFeatures.ACTIVE_DAYS, 0)
-        activities_per_week = all_sports_data.get(AllYearInSportFeatures.ACTIVITIES_PER_WEEK, 0)
         
         # Get comparison values if available
         comp_active_days = comparison_all_data.get(AllYearInSportFeatures.ACTIVE_DAYS, 0) if comparison_all_data else None
-        comp_activities_per_week = comparison_all_data.get(AllYearInSportFeatures.ACTIVITIES_PER_WEEK, 0) if comparison_all_data else None
         comp_activities_per_sport_hl = comparison_all_data.get(AllYearInSportFeatures.ACTIVITIES_PER_SPORT, {}) if comparison_all_data else {}
         comp_num_sports = len(comp_activities_per_sport_hl) if comp_activities_per_sport_hl else None
         comp_most_active_weekday = comparison_all_data.get(AllYearInSportFeatures.MOST_ACTIVE_WEEKDAY) if comparison_all_data else None
@@ -1457,353 +1124,6 @@ class StravaVisualizer:
             logger.info("Year in sport (totals) saved to: %s", save_path)
         return result
 
-    def hud_dashboard(
-        self,
-        sport_type: str,
-        bins: int = 40,
-        return_buffer: bool = False,
-        dpi: int | None = None,
-    ) -> BytesIO | None:
-        """
-        Generates a 3-row 'Cyberpunk HUD' dashboard showing distributions of
-        Distance, Heart Rate, and Speed/Pace.
-        Speed/Pace format adapts based on sport type.
-        """
-        # 1. Get & Filter Data
-        activities = self.strava_analytics.strava_activities_cache.activities
-        gdf = get_activities_as_gdf(activities)
-        
-        gdf = gdf[gdf['sport_type'] == sport_type]
-        
-        if gdf.empty:
-            logger.info("No data found.")
-            return
-
-        # 2. Determine sport category for speed/pace formatting
-        primary_sport = sport_type if sport_type else ""
-        category = get_sport_category(primary_sport)
-
-        # 3. Prepare Metrics (Drop NaNs for cleaner plots)
-        # Distance: Convert to KM
-        dist_data = gdf['distance'].dropna() / 1000.0
-        
-        # Heart Rate: Use raw BPM
-        hr_data = gdf['average_heartrate'].dropna() if 'average_heartrate' in gdf.columns else []
-        
-        # Speed: Convert based on sport type using utility
-        if 'average_speed' in gdf.columns:
-            speed_raw = gdf['average_speed'].dropna()
-            # Convert each speed value and get the unit label
-            speed_data = speed_raw.apply(lambda s: convert_speed(s, primary_sport)[0])
-            _, unit_label = convert_speed(1.0, primary_sport)  # Get unit label
-            
-            if category == 'cycling':
-                speed_title = f"SPEED [{unit_label}]"
-            else:
-                speed_title = f"PACE ['{unit_label.replace('min/', '/')}]"
-        else:
-            speed_data = []
-            speed_title = "SPEED"
-
-        # 4. Setup Canvas (3 Rows, 1 Col)
-        fig, axes = plt.subplots(3, 1, figsize=(10, 12), facecolor='black')
-        plt.subplots_adjust(hspace=0.4) # Space between panels
-
-        # Helper to draw "Digital Equalizer" style histogram
-        def plot_digital_hist(ax, data, color, title):
-            if len(data) == 0:
-                ax.text(0.5, 0.5, "NO DATA", color='gray', ha='center')
-                ax.set_axis_off()
-                return
-
-            ax.set_facecolor('black')
-            
-            # Calculate histogram
-            counts, bin_edges = np.histogram(data, bins=bins, density=True)
-            centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-            
-            # --- GLOW EFFECTS ---
-            # 1. The "Atmosphere" (Fill)
-            ax.fill_between(centers, counts, color=color, alpha=0.1, step='mid', zorder=1)
-            
-            # 2. The "Glow" (Blurry Line)
-            ax.step(centers, counts, color=color, linewidth=6, alpha=0.2, where='mid', zorder=2)
-            
-            # 3. The "Core" (Sharp Line)
-            ax.step(centers, counts, color='white', linewidth=1.0, alpha=0.9, where='mid', zorder=3)
-
-            median_val = np.median(data)
-            
-            # Median Glow (Wide)
-            ax.axvline(median_val, color=color, linewidth=6, alpha=0.2, zorder=4)
-            
-            # Median Core (Sharp, Dashed)
-            ax.axvline(median_val, color='white', linewidth=1.5, linestyle='--', alpha=1.0, zorder=5)
-
-            ax.text(0.8, 0.9, title, transform=ax.transAxes, 
-                    color=color, ha='center', fontfamily='monospace', fontsize=14, fontweight='bold', alpha=0.8)
-
-            # # Styling
-            ax.tick_params(axis='x', colors='white', labelsize=9)
-
-        # 5. Plot Each Metric
-        # Panel 1: Distance (Yellow Neon)
-        plot_digital_hist(axes[0], dist_data, color='#faff00', title="DISTANCE [km]")
-        
-        # Panel 2: Heart Rate (Magenta Neon)
-        plot_digital_hist(axes[1], hr_data, color='#ff00ff', title="HR [bpm]")
-        
-        # Panel 3: Speed/Pace (Cyan Neon) - sport-specific
-        plot_digital_hist(axes[2], speed_data, color='#00faed', title=speed_title)
-
-        # 6. Save
-        sport_str = sport_type.upper()
-        filename = f"hud_{sport_str.replace(' ', '_')}.png"
-        save_path = self.output_dir / filename.lower()
-
-        result = self._finalize_figure(fig, save_path, dpi=dpi or 600, return_buffer=return_buffer)
-        if not return_buffer:
-            logger.info("HUD dashboard saved to: %s", save_path)
-        return result
-
-    def plot_efficiency_factor(self, sport_type: str, window=14, return_buffer: bool = False, dpi: int | None = None) -> BytesIO | None:
-        """
-        Plots Aerobic Efficiency (Speed / HR) with publication-quality styling.
-        Includes rolling average, standard deviation bands, and peak annotations.
-        """
-        # 1. Data Prep
-        gdf, _ = self._filter_and_get_gdf([sport_type])
-        if gdf is None or gdf.empty:
-            logger.info("No data found for the specified parameters.")
-            return
-
-        df = gdf.copy()
-        
-        # Filter invalid HR or very short runs
-        df = df[(df['average_heartrate'] > 50) & (df['distance'] > 3_000)]
-        
-        # Calculate EF: Speed (m/min) / HR (bpm)
-        # Speed is in m/s, so * 60 to get m/min
-        df['ef_score'] = (df['average_speed'] * 60) / df['average_heartrate']
-
-        # Parse dates
-        df['start_date_local'] = pd.to_datetime(df['start_date_local'])
-        df = df.sort_values('start_date_local')
-
-        # 2. Statistical Calculations
-        # Rolling Mean (Trend)
-        df['ef_rolling'] = df['ef_score'].rolling(window=window, center=True).mean()
-        # Rolling Std Dev (Consistency) - Valuable for scientific context
-        df['ef_std'] = df['ef_score'].rolling(window=window, center=True).std()
-        
-        # Identify global peak for annotation
-        peak_idx = df['ef_rolling'].idxmax()
-        if pd.isna(peak_idx): return # Handle edge case of no data
-        peak_date = df.loc[peak_idx, 'start_date_local']
-        peak_val = df.loc[peak_idx, 'ef_rolling']
-
-        # 3. Professional Plotting Setup
-        # Use a white background style typical for journals
-        with plt.style.context('seaborn-v0_8-whitegrid'):
-            fig, ax = plt.subplots(figsize=(12, 7))
-
-            # A. Raw Data (Background Context)
-            # distinct but subtle color
-            ax.scatter(df['start_date_local'], df['ef_score'], 
-                    alpha=0.15, color='#2c3e50', s=15, 
-                    edgecolors='none', label='Daily Session')
-
-            # B. Variance Band (Consistency)
-            # Shading +/- 1 Standard Deviation represents stability of the metric
-            ax.fill_between(df['start_date_local'], 
-                            df['ef_rolling'] - df['ef_std'], 
-                            df['ef_rolling'] + df['ef_std'], 
-                            color='#3498db', alpha=0.15, 
-                            label=fr'{window}-Day Variability (±1$\sigma$)')
-
-            # C. Rolling Trend (Main Focus)
-            # Strong, professional line color (e.g., Navy Blue or deep Teal)
-            ax.plot(df['start_date_local'], df['ef_rolling'], 
-                    color="#005b96", linewidth=2.5, 
-                    label=f'{window}-Day Moving Avg')
-
-            # D. Key Event Annotation (Peak)
-            ax.plot(peak_date, peak_val, marker='o', color="#d35400", 
-                    markersize=4, zorder=5, label='Peak Efficiency')
-            
-            # Add text annotation with arrow pointing to the peak
-            ax.annotate(f'Peak EF: {peak_val:.2f}\n({peak_date.strftime("%b %Y")})',
-                        xy=(peak_date, peak_val), 
-                        xytext=(15, 15), textcoords='offset points',
-                        fontsize=9, color='#d35400', fontweight='bold',
-                        arrowprops=dict(arrowstyle='->', color='#d35400', connectionstyle="arc3,rad=.2"))
-
-            # 4. Academic Formatting
-            
-            # Title and Labels
-            # Using TeX notation for units makes it look very scientific
-            ax.set_ylabel(r'Efficiency Factor ($\frac{m/min}{bpm}$)', fontsize=11, fontweight='bold')
-            ax.set_title('Longitudinal Aerobic Efficiency Trend', fontsize=14, pad=15, fontweight='bold')
-            
-            # Remove top and right spines (Tufte style minimalism)
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
-            ax.spines['left'].set_linewidth(0.5)
-            ax.spines['bottom'].set_linewidth(0.5)
-
-            # X-Axis Date Formatting
-            locator = mdates.AutoDateLocator(minticks=5, maxticks=12)
-            formatter = mdates.ConciseDateFormatter(locator)
-            ax.xaxis.set_major_locator(locator)
-            ax.xaxis.set_major_formatter(formatter)
-            plt.setp(ax.get_xticklabels(), fontsize=9)
-
-            # Grid and Legend
-            ax.grid(True, which='major', axis='y', linestyle='--', alpha=0.4)
-            ax.grid(False, axis='x') # Vertical grids often clutter time series
-            
-            # Legend placed cleanly
-            ax.legend(frameon=True, fancybox=False, edgecolor='black', fontsize=9, loc='upper left')
-
-            # Final layout adjustment
-            plt.tight_layout()
-            
-            # Save
-            output_path = self.output_dir / "efficiency_factor.png"
-
-            result = self._finalize_figure(fig, output_path, dpi=dpi or 600, facecolor='white', return_buffer=return_buffer)
-            if not return_buffer:
-                logger.info("Professional efficiency plot saved to %s", output_path)
-            return result
-
-    def plot_performance_frontier(self, sport_types=['Run'], return_buffer: bool = False, dpi: int | None = None) -> BytesIO | None:
-        """
-        Plots the Distance-Pace Frontier with Riegel's Fatigue Model fitting.
-        
-        Insights:
-        - Empirical Frontier: Actual best performances.
-        - Theoretical Frontier: Power-law fit (Riegel's formula).
-        - Fatigue Factor: Slope of decay (lower is better endurance).
-        """
-        
-        # --- 1. Data Prep ---
-        gdf, _ = self._filter_and_get_gdf(sport_types)
-        if gdf is None or gdf.empty:
-            logger.info("No data found.")
-            return
-        
-        df = gdf[['distance', 'average_speed', 'start_date_local']].dropna()
-        
-        # Conversions
-        df['dist_km'] = df['distance'] / 1000.0
-        df['speed_m_s'] = df['average_speed']
-        df['pace_dec'] = 16.66667 / df['average_speed'] # Decimal min/km
-        
-        # Cleaning: Remove obvious GPS errors or trivial runs
-        df = df[(df['pace_dec'] > 2.5) & (df['pace_dec'] < 10.0)] 
-        df = df[df['dist_km'] > 1.0]
-
-        # --- 2. Calculate Pareto Frontier (Empirical Boundary) ---
-        # Sort by distance to make the loop efficient
-        df_sorted = df.sort_values('dist_km', ascending=False)
-        
-        # A point is on the frontier if it has the highest speed for any distance >= itself.
-        # (Simple sweep algorithm)
-        frontier_indices = []
-        max_speed_so_far = -1
-        
-        for idx, row in df_sorted.iterrows():
-            if row['speed_m_s'] > max_speed_so_far:
-                frontier_indices.append(idx)
-                max_speed_so_far = row['speed_m_s']
-                
-        frontier = df.loc[frontier_indices].sort_values('dist_km')
-
-        # --- 3. Scientific Insight: Riegel's Power Law Fit ---
-        # Model: Speed = C * Distance^b (where b is fatigue factor, typically negative)
-        # We fit this log-log to the frontier points only.
-        
-        def power_law(x, c, b):
-            return c * np.power(x, b)
-
-        # Fit curve to the frontier data (scipy imported here: heavy, and only this plot needs it)
-        from scipy.optimize import curve_fit
-        popt, _ = curve_fit(power_law, frontier['dist_km'], frontier['speed_m_s'], 
-                            p0=[6.0, -0.07], maxfev=5000)
-        c_fit, b_fit = popt
-        
-        # Generate smooth curve for plotting
-        x_model = np.linspace(frontier['dist_km'].min(), frontier['dist_km'].max() * 1.1, 100)
-        y_model_speed = power_law(x_model, c_fit, b_fit)
-        y_model_pace = 16.66667 / y_model_speed
-
-        # --- 4. Professional Plotting ---
-        with plt.style.context('seaborn-v0_8-whitegrid'):
-            fig, ax = plt.subplots(figsize=(12, 8))
-
-            # A. The "Cloud" (Training Volume)
-            ax.scatter(df['dist_km'], df['pace_dec'], 
-                    c='#bdc3c7', alpha=0.3, s=10, 
-                    label='Training Activities', edgecolors='none')
-
-            # B. The Theoretical Limit (Model)
-            # This line represents "Physiological Potential" based on best efforts
-            ax.plot(x_model, y_model_pace, 
-                    color='#2c3e50', linestyle='--', linewidth=1.5, alpha=0.8,
-                    label=f'Riegel Fit (Fatigue Factor: {b_fit:.3f})')
-
-            # C. The Empirical Frontier (Actual Records)
-            ax.plot(frontier['dist_km'], frontier['pace_dec'], 
-                    color='#e74c3c', linewidth=2.5, marker='o', markersize=6,
-                    label='Pareto Frontier (Actual Bests)')
-
-            # D. Smart Annotations for Standard Distances
-            # We find the frontier point closest to standard distances to label them
-            standard_dists = [5, 10, 21.1, 42.2]
-            for d_target in standard_dists:
-                # Find nearest point in frontier
-                closest_idx = (frontier['dist_km'] - d_target).abs().idxmin()
-                row = frontier.loc[closest_idx]
-                
-                # Only annotate if it's actually close to the standard distance (e.g., within 10%)
-                if abs(row['dist_km'] - d_target) / d_target < 0.15:
-                    mins = int(row['pace_dec'])
-                    secs = int((row['pace_dec'] % 1) * 60)
-                    
-                    ax.annotate(f"{d_target}k\n{mins}:{secs:02d}", 
-                                xy=(row['dist_km'], row['pace_dec']),
-                                xytext=(0, 25), textcoords='offset points',
-                                ha='center', va='bottom',
-                                bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="#e74c3c", alpha=0.8),
-                                fontsize=9, fontweight='bold', color='#c0392b',
-                                arrowprops=dict(arrowstyle='->', color='#e74c3c'))
-
-            # --- 5. Formatting ---
-
-            def pace_fmt(x, pos):
-                m = int(x)
-                s = int((x % 1) * 60)
-                return f"{m}:{s:02d}"
-
-            ax.yaxis.set_major_formatter(ticker.FuncFormatter(pace_fmt))
-            ax.invert_yaxis() # Traditional running plots have faster (lower) pace at top
-            
-            ax.set_xlabel('Distance (km)', fontsize=11, fontweight='bold')
-            ax.set_ylabel('Pace (min/km)', fontsize=11, fontweight='bold')
-            ax.set_title('Performance Frontier & Fatigue Decay', fontsize=14, pad=15, fontweight='bold')
-            
-            # Legend with insight
-            ax.legend(frameon=True, fancybox=False, edgecolor='black', loc='upper right')
-
-            plt.tight_layout()
-            out_path = self.output_dir / "performance_frontier.png"
-
-            result = self._finalize_figure(fig, out_path, dpi=dpi or 600, facecolor='white', return_buffer=return_buffer)
-            if not return_buffer:
-                logger.info("Frontier plot saved to %s", out_path)
-            return result
-
-
     def plot_weekly_report(
         self,
         weekly_report: dict,
@@ -1846,8 +1166,6 @@ class StravaVisualizer:
         total_elevation = weekly_report.get(WeeklyReportFeatures.TOTAL_ELEVATION_M, 0)
         total_hours = weekly_report.get(WeeklyReportFeatures.TOTAL_TIME_HOURS, 0)
         active_days = weekly_report.get(WeeklyReportFeatures.ACTIVE_DAYS, 0)
-        activities_per_day = weekly_report.get(WeeklyReportFeatures.ACTIVITIES_PER_DAY, {})
-        distance_per_day_km = weekly_report.get(WeeklyReportFeatures.DISTANCE_PER_DAY_KM, {})
         distance_per_sport = weekly_report.get(WeeklyReportFeatures.DISTANCE_PER_SPORT_KM, {})
         activities_per_sport = weekly_report.get(WeeklyReportFeatures.ACTIVITIES_PER_SPORT, {})
         num_sports = len(activities_per_sport)
@@ -1999,9 +1317,6 @@ class StravaVisualizer:
         ax_chart = fig.add_subplot(gs[2])
         ax_chart.set_facecolor('black')
         
-        # Get sports per day data (still needed for sport colors later)
-        sports_per_day = weekly_report.get(WeeklyReportFeatures.SPORTS_PER_DAY, {})
-        
         # Define sport colors - distinct neon colors for each sport
         sport_color_palette = [
             '#fc0101',  # Red
@@ -2028,9 +1343,6 @@ class StravaVisualizer:
         
         # HR Zone distribution
         hr_zone_distribution = weekly_report.get(WeeklyReportFeatures.HR_ZONE_DISTRIBUTION, {})
-        
-        # Get max HR to calculate zone ranges
-        hr_max = self.strava_analytics.get_max_heart_rate()
         
         # Zone colors (green to red gradient)
         zone_colors = {
@@ -2098,17 +1410,7 @@ class StravaVisualizer:
             # Use sport_colors from earlier
             colors = [sport_colors.get(s, neon_color) for s in sports]
             
-            # --- Add legend row between title and pie charts ---
-            ax_legend = fig.add_subplot(gs_pies[0, :])
-            ax_legend.set_facecolor('black')
-            ax_legend.set_axis_off()
-            
-            # Create custom legend patches
-            from matplotlib.patches import Patch
-            legend_patches = [Patch(facecolor=sport_colors.get(s, neon_color), edgecolor='white', label=s.upper()) 
-                            for s in sports]
-        
-            
+
             # --- Left Pie: Distance per Sport ---
             ax_dist_pie = fig.add_subplot(gs_pies[1, 0])
             ax_dist_pie.set_facecolor('black')

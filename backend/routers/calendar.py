@@ -85,8 +85,6 @@ def _row_to_dict(row: aiosqlite.Row) -> dict:
 
 @router.get("/sessions")
 async def list_sessions(
-    month: int | None = None,
-    year: int | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
     db: aiosqlite.Connection = Depends(get_db),
@@ -94,9 +92,6 @@ async def list_sessions(
     if date_from and date_to:
         query = "SELECT * FROM training_sessions WHERE date >= ? AND date <= ? ORDER BY date"
         cursor = await db.execute(query, (date_from, date_to))
-    elif month and year:
-        query = "SELECT * FROM training_sessions WHERE strftime('%Y', date) = ? AND strftime('%m', date) = ? ORDER BY date"
-        cursor = await db.execute(query, (str(year), f"{month:02d}"))
     else:
         cursor = await db.execute("SELECT * FROM training_sessions ORDER BY date")
     rows = await cursor.fetchall()

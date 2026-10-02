@@ -14,7 +14,7 @@ Design notes
   class (see backend/app.py lifespan).
 - MFA: handled interactively on first login only. From a web server context
   there is no stdin, so the prompt_mfa callback raises a clean error
-  pointing the user at `scripts/garmin_login.py`.
+  pointing the user at `scripts/garmin_poc.py`.
 - All garminconnect methods are synchronous; callers running on the event
   loop must wrap calls in `asyncio.to_thread(...)`.
 """
@@ -22,7 +22,6 @@ Design notes
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 from datetime import date as date_t
@@ -58,7 +57,7 @@ class GarminMFARequired(RuntimeError):
 def _mfa_not_interactive() -> str:
     raise GarminMFARequired(
         "Garmin Connect requires MFA but the web server has no stdin. "
-        "Run `poetry run python scripts/garmin_login.py` once from a "
+        "Run `poetry run python scripts/garmin_poc.py` once from a "
         "terminal to refresh the cached token, then restart the backend."
     )
 

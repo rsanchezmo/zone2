@@ -165,15 +165,6 @@ class StreamsStore:
             self._ensure_index()
             return set(self._index.keys())
 
-    def clear(self):
-        with self._lock:
-            for f in self.store_dir.glob("*.pkl"):
-                f.unlink()
-            self._loaded.clear()
-            self._index = None
-            self._index_years = {}
-            self._summaries = None
-
     # ── internals ─────────────────────────────────────────────────────
 
     def _year_file(self, year: int) -> Path:
@@ -266,34 +257,6 @@ class StreamsStore:
 
 
 # ── columnar/list-of-dicts conversion helpers ─────────────────────────
-
-# Strava native stream keys (from /streams endpoint). 'latlng' is paired.
-STREAM_KEYS = ("time", "distance", "altitude", "velocity_smooth",
-               "heartrate", "cadence", "watts", "moving", "temp", "latlng")
-
-
-def points_to_columnar(points: list[dict]) -> dict:
-    """Convert a list-of-dicts (legacy in-memory shape, or API input) to
-    columnar. Used during migration and at API ingestion boundaries."""
-    if not points:
-        return {}
-    # Collect keys across all points to be tolerant of missing fields
-    keys: set[str] = set()
-    for p in points:
-        keys.update(p.keys())
-    # Special-case lat/lng → latlng
-    has_lat_lng = "lat" in keys and "lng" in keys
-    keys.discard("lat")
-    keys.discard("lng")
-
-    cols: dict[str, list] = {k: [p.get(k) for p in points] for k in keys}
-    if has_lat_lng:
-        cols["latlng"] = [
-            [p.get("lat"), p.get("lng")] if p.get("lat") is not None or p.get("lng") is not None else None
-            for p in points
-        ]
-    return cols
-
 
 def columnar_to_points(streams: dict) -> list[dict]:
     """Convert columnar dict-of-lists to list-of-dicts. Used at the API edge

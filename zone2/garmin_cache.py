@@ -22,7 +22,7 @@ import sqlite3
 import threading
 import time
 import zlib
-from datetime import date as date_t, datetime, timedelta
+from datetime import date as date_t, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -55,9 +55,8 @@ def _encode_payload(payload: Any) -> bytes:
     return zlib.compress(json.dumps(payload, default=str).encode(), 6)
 
 
-def _decode_payload(stored: bytes | str) -> Any:
-    # Rows not yet migrated by compress_stored_payloads hold plain JSON text
-    return json.loads(zlib.decompress(stored) if isinstance(stored, bytes) else stored)
+def _decode_payload(stored: bytes) -> Any:
+    return json.loads(zlib.decompress(stored))
 
 
 def _conn() -> sqlite3.Connection:
@@ -222,29 +221,6 @@ class GarminDailyStatsCache:
         if written:
             logger.info("Garmin: backfilled %d derived daily summaries", written)
         return written
-
-    def compress_stored_payloads(self) -> int:
-        """One-time migration: zlib-compress payloads still stored as JSON
-        text, then VACUUM so the file actually shrinks. Idempotent — a no-op
-        once every payload is compressed. Returns rows converted."""
-        converted = 0
-        with _conn() as c:
-            while rows := c.execute(
-                "SELECT rowid, payload FROM garmin_daily_stats WHERE typeof(payload) = 'text' LIMIT 2000"
-            ).fetchall():
-                c.executemany("UPDATE garmin_daily_stats SET payload = ? WHERE rowid = ?",
-                              [(zlib.compress(r["payload"].encode(), 6), r["rowid"]) for r in rows])
-                c.commit()
-                converted += len(rows)
-        if converted:
-            c = _conn()
-            try:
-                c.execute("VACUUM")
-                c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            finally:
-                c.close()
-            logger.info("Garmin: compressed %d stored payloads", converted)
-        return converted
 
     def get_latest(self, metric: str) -> dict | None:
         with _conn() as c:

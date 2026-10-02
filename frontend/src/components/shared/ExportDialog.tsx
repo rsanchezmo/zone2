@@ -11,9 +11,6 @@ export type ExportType =
   | 'year-in-sport'
   | 'activity'
   | 'thunderstorm-heatmap'
-  | 'efficiency-factor'
-  | 'performance-frontier'
-  | 'activity-clock'
 
 const QUALITY_OPTIONS = [
   { label: 'Standard', dpi: 150 },
@@ -26,9 +23,6 @@ const DEFAULT_DPIS: Record<ExportType, number> = {
   'year-in-sport': 300,
   'activity': 300,
   'thunderstorm-heatmap': 600,
-  'efficiency-factor': 600,
-  'performance-frontier': 600,
-  'activity-clock': 600,
 }
 
 const EXPORT_LABELS: Record<ExportType, string> = {
@@ -36,9 +30,6 @@ const EXPORT_LABELS: Record<ExportType, string> = {
   'year-in-sport': 'Year in Sport',
   'activity': 'Activity',
   'thunderstorm-heatmap': 'Heatmap',
-  'efficiency-factor': 'Efficiency Factor',
-  'performance-frontier': 'Performance Frontier',
-  'activity-clock': 'Activity Clock',
 }
 
 interface ExportDialogProps {
@@ -84,9 +75,7 @@ function ExportDialogContent({
   // Build URL with given DPI
   const buildUrl = useCallback((dpi: number) => {
     const params = new URLSearchParams(baseParams)
-    if (hasColorOption(exportType)) {
-      params.set('neon_color', neonColor)
-    }
+    params.set('neon_color', neonColor)
     params.set('dpi', String(dpi))
     if (exportType === 'activity' && title) {
       params.set('title', title)
@@ -156,8 +145,6 @@ function ExportDialogContent({
     setDownloading(false)
     if (ok) onClose()
   }
-
-  const colorOption = hasColorOption(exportType)
 
   return createPortal(
     <div
@@ -285,11 +272,9 @@ function ExportDialogContent({
           </div>
 
           {/* Color picker */}
-          {colorOption && (
-            <Section label="Color">
-              <ColorPicker value={neonColor} onChange={setNeonColor} />
-            </Section>
-          )}
+          <Section label="Color">
+            <ColorPicker value={neonColor} onChange={setNeonColor} />
+          </Section>
 
           {/* Quality */}
           <Section label="Quality">
@@ -383,9 +368,9 @@ function ExportDialogContent({
             )}
             style={{
               letterSpacing: '0.15em',
-              borderColor: colorOption ? neonColor : undefined,
-              color: colorOption ? neonColor : undefined,
-              boxShadow: colorOption ? `0 0 12px ${neonColor}20` : undefined,
+              borderColor: neonColor,
+              color: neonColor,
+              boxShadow: `0 0 12px ${neonColor}20`,
             }}
           >
             {downloading ? (
@@ -405,10 +390,6 @@ function ExportDialogContent({
     </div>,
     document.body
   )
-}
-
-function hasColorOption(exportType: ExportType) {
-  return !['efficiency-factor', 'performance-frontier'].includes(exportType)
 }
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {

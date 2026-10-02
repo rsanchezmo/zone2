@@ -21,8 +21,7 @@ class ResolvedRestingHr(TypedDict):
 
 
 def _estimated_resting_hr(z2: Zone2) -> float:
-    """Zone-proxy resting HR (half of the Z2 lower bound), no API call. Mirrors
-    the non-Garmin fallback in StravaAnalytics.get_rest_heart_rate."""
+    """Zone-proxy resting HR (half of the Z2 lower bound), no API call."""
     try:
         zones = z2.strava_analytics.get_hr_zones()
         val = zones[1]["min"] / 2 if zones and len(zones) > 1 else 0

@@ -59,7 +59,6 @@ def _row_to_dict(row: aiosqlite.Row) -> dict:
 
 @router.get("/")
 async def list_race_events(
-    year: int | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
     db: aiosqlite.Connection = Depends(get_db),
@@ -68,11 +67,6 @@ async def list_race_events(
         cursor = await db.execute(
             "SELECT * FROM race_events WHERE date >= ? AND date <= ? ORDER BY date",
             (date_from, date_to),
-        )
-    elif year is not None:
-        cursor = await db.execute(
-            "SELECT * FROM race_events WHERE date LIKE ? ORDER BY date",
-            (f"{year}-%",),
         )
     else:
         cursor = await db.execute("SELECT * FROM race_events ORDER BY date")

@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, date
 import calendar
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 import aiosqlite
 

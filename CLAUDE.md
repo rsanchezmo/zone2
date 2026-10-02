@@ -51,7 +51,7 @@ Zone2
 ├── StravaEndpoint          — Strava API client (OAuth, activity/stream fetching)
 ├── StravaActivitiesCache   — Local Parquet-based activity storage with lazy in-memory loading
 ├── StravaUserCache          — Cached user profile/zones data
-├── StravaAnalytics          — Computes stats (year-in-sport, weekly reports, HR zones, VO2max)
+├── StravaAnalytics          — Computes stats (year-in-sport, weekly reports, HR zones, race predictions)
 └── StravaVisualizer         — All matplotlib visualizations (heatmaps, dashboards, reports)
 ```
 
@@ -67,7 +67,7 @@ Zone2
 
 **Backend** (`backend/`): FastAPI app with 8 API routers at `/api/*`:
 - `activities.py` — List, filter, sort activities; polylines for maps; similar activities
-- `stats.py` — Weekly reports, year-in-sport, efficiency factor, performance frontier, personal records, streaks
+- `stats.py` — Weekly reports, year-in-sport, personal records, race predictions, relative effort, streaks
 - `calendar.py` — Training session CRUD, scoring
 - `exports.py` — PNG image generation (weekly reports, heatmaps, activity plots)
 - `sync.py` — Background sync tasks, stream backfill, cache status
