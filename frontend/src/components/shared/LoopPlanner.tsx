@@ -156,12 +156,12 @@ function GarminSend({ onSend, busy, done, label = 'Send to Garmin' }: {
   const device = devices?.find(d => String(d.device_id) === selected) ?? null
   return (
     <div className="flex items-center gap-1.5 flex-wrap">
-      <select value={selected} onChange={e => setChoice(e.target.value)} className="select !text-[11px] !py-1 !px-1.5"
+      <select value={selected} onChange={e => setChoice(e.target.value)} className="select text-[11px] py-1 px-1.5"
               aria-label="Watch to send the course to" disabled={!devices}>
         {devices?.map(d => <option key={d.device_id} value={d.device_id}>{d.name}</option>)}
         <option value="none">Garmin Connect only</option>
       </select>
-      <button className="btn !text-[11px] !py-1 !px-2.5 inline-flex items-center gap-1" disabled={busy || !devices}
+      <button className="btn text-[11px] py-1 px-2.5 inline-flex items-center gap-1" disabled={busy || !devices}
               onClick={() => onSend(device?.device_id ?? null, device?.name ?? null)}
               title={device ? `Create the course in Garmin Connect and send it to ${device.name}` : 'Create the course in Garmin Connect'}>
         <GarminIcon /> {busy ? 'Sending…' : label}
@@ -249,12 +249,12 @@ export function LoopPlanPanel({ planner, slug, className, isLight, onClose }: {
       </div>
       {error && <span className="text-[11px] text-red-400 max-w-80">{error}</span>}
       <div className="flex items-center gap-1.5 flex-wrap">
-        <button className="btn !text-[11px] !py-1 !px-2.5" onClick={planner.another} disabled={planning || !start}
+        <button className="btn text-[11px] py-1 px-2.5" onClick={planner.another} disabled={planning || !start}
                 title="Same distance and points, different streets">
           ↻ Suggest another
         </button>
         {request.via.length > 0 && (
-          <button className="btn !text-[11px] !py-1 !px-2.5" onClick={planner.clearVia}>
+          <button className="btn text-[11px] py-1 px-2.5" onClick={planner.clearVia}>
             Remove {request.via.length === 1 ? 'the point' : 'the points'}
           </button>
         )}
@@ -265,16 +265,16 @@ export function LoopPlanPanel({ planner, slug, className, isLight, onClose }: {
             <input
               value={name ?? defaultName}
               onChange={e => setName(e.target.value)}
-              className="input !text-xs !py-1 !px-2 w-52"
+              className="input text-xs py-1 px-2 w-52"
               aria-label="Route name"
               maxLength={80}
               disabled={!!saved}
             />
-            <button className="btn !text-[11px] !py-1 !px-2.5" onClick={() => { save().catch(() => {}) }}
+            <button className="btn text-[11px] py-1 px-2.5" onClick={() => { save().catch(() => {}) }}
                     disabled={!!saved || saveMutation.isPending} title="Keep it in the routes list below the map">
               {saved ? 'Saved ✓' : saveMutation.isPending ? 'Saving…' : 'Save'}
             </button>
-            <button className="btn !text-[11px] !py-1 !px-2.5" onClick={() => downloadGpx(routeName, loop.geometry.coordinates)}
+            <button className="btn text-[11px] py-1 px-2.5" onClick={() => downloadGpx(routeName, loop.geometry.coordinates)}
                     title="Save the loop as a GPX file">
               ⤓ GPX
             </button>
@@ -351,23 +351,23 @@ export function RouteViewPanel({ planner, slug, className, isLight }: {
       )}
       {planner.error && <span className="text-[11px] text-red-400 max-w-80">{planner.error}</span>}
       <div className="flex items-center gap-1.5 flex-wrap">
-        <button className="btn !text-[11px] !py-1 !px-2.5" disabled={!view.coordinates.length}
+        <button className="btn text-[11px] py-1 px-2.5" disabled={!view.coordinates.length}
                 onClick={() => downloadGpx(view.name, view.coordinates)}>
           ⤓ GPX
         </button>
         {route && !confirmingDelete && (
-          <button className="btn !text-[11px] !py-1 !px-2.5" onClick={() => setConfirmingDelete(true)}
+          <button className="btn text-[11px] py-1 px-2.5" onClick={() => setConfirmingDelete(true)}
                   title="Remove it from the routes list (its Garmin course stays)">
             Delete
           </button>
         )}
         {route && confirmingDelete && (
           <>
-            <button className="btn !text-[11px] !py-1 !px-2.5 !text-red-400 !border-red-500/50" disabled={deleteMutation.isPending}
+            <button className="btn text-[11px] py-1 px-2.5 text-red-400 border-red-500/50" disabled={deleteMutation.isPending}
                     onClick={() => deleteMutation.mutate(route.id, { onSuccess: () => planner.show(null) })}>
               {deleteMutation.isPending ? 'Deleting…' : 'Delete it'}
             </button>
-            <button className="btn !text-[11px] !py-1 !px-2.5" onClick={() => setConfirmingDelete(false)}>Cancel</button>
+            <button className="btn text-[11px] py-1 px-2.5" onClick={() => setConfirmingDelete(false)}>Cancel</button>
           </>
         )}
       </div>

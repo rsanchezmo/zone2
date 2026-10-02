@@ -57,7 +57,7 @@ export default function AggregationsPage() {
     })
   }
 
-  const selectClass = 'select !text-xs !py-1 !px-1.5'
+  const selectClass = 'select text-xs py-1 px-1.5'
 
   // Compute sport breakdown for the overlay badge (top N)
   const sportBreakdown = useMemo(() => {
@@ -151,12 +151,12 @@ export default function AggregationsPage() {
                 value={heatmapCity}
                 onChange={e => setHeatmapCity(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') handleGoToCity() }}
-                className="input !py-1 !px-2 !text-xs w-40"
+                className="input py-1 px-2 text-xs w-40"
               />
               <button
                 onClick={handleGoToCity}
                 disabled={!heatmapCity.trim() || geocodeMutation.isPending}
-                className="btn !text-[11px] !py-1 !px-2.5"
+                className="btn text-[11px] py-1 px-2.5"
                 title="Zoom map to this city"
               >
                 {geocodeMutation.isPending ? '…' : 'Go'}

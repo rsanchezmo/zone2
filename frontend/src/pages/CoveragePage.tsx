@@ -226,7 +226,7 @@ function AddCityForm({ onAdded }: { onAdded: (slug: string) => void }) {
   }
   if (!open) {
     return (
-      <button onClick={() => setOpen(true)} className="btn !text-[11px] !py-1 !px-2.5" title="Download a new city's street network">
+      <button onClick={() => setOpen(true)} className="btn text-[11px] py-1 px-2.5" title="Download a new city's street network">
         + City
       </button>
     )
@@ -254,13 +254,13 @@ function AddCityForm({ onAdded }: { onAdded: (slug: string) => void }) {
         onChange={e => { setValue(e.target.value); setResolved(null); setSuggestion(null); setNoArea(false) }}
         onKeyDown={e => { if (e.key === 'Escape') setOpen(false) }}
         placeholder="Amsterdam, Netherlands"
-        className="input !text-xs !py-1 !px-2 w-44"
+        className="input text-xs py-1 px-2 w-44"
         aria-label="City name"
       />
       <button
         type="submit"
         disabled={!value.trim() || geocodeMutation.isPending}
-        className={clsx('btn !text-[11px] !py-1 !px-2', resolved && '!text-emerald-400 !border-emerald-500/50')}
+        className={clsx('btn text-[11px] py-1 px-2', resolved && '!text-emerald-400 !border-emerald-500/50')}
       >
         {geocodeMutation.isPending ? 'Resolving…' : resolved ? 'Confirm' : 'Add'}
       </button>
@@ -274,7 +274,7 @@ function AddCityForm({ onAdded }: { onAdded: (slug: string) => void }) {
           </span>
           <button
             type="button"
-            className="btn !text-[10px] !py-0.5 !px-1.5"
+            className="btn text-[10px] py-0.5 px-1.5"
             onClick={() => { setValue(suggestion.query); setResolved(suggestion.display_name); setSuggestion(null) }}
           >
             Use it
@@ -577,7 +577,7 @@ export default function CoveragePage() {
             <select
               value={activeSlug}
               onChange={e => switchCity(e.target.value)}
-              className="select !text-xs !py-1 !px-1.5"
+              className="select text-xs py-1 px-1.5"
               aria-label="City"
             >
               {cities?.map(c => <option key={c.slug} value={c.slug}>{c.city_name}</option>)}
@@ -606,11 +606,11 @@ export default function CoveragePage() {
                   onSuccess: () => switchCity(undefined),
                 })}
                 disabled={deleteMutation.isPending}
-                className="btn !text-[10px] !py-0.5 !px-2 !text-red-400 !border-red-500/50"
+                className="btn text-[10px] py-0.5 px-2 text-red-400 border-red-500/50"
               >
                 {deleteMutation.isPending ? 'Deleting…' : 'Delete'}
               </button>
-              <button onClick={() => setConfirmingDelete(false)} className="btn !text-[10px] !py-0.5 !px-2">
+              <button onClick={() => setConfirmingDelete(false)} className="btn text-[10px] py-0.5 px-2">
                 Cancel
               </button>
             </span>
@@ -637,7 +637,7 @@ export default function CoveragePage() {
           <button
             onClick={() => syncMutation.mutate()}
             disabled={syncRunning}
-            className="btn !text-[11px] !py-1 !px-2.5"
+            className="btn text-[11px] py-1 px-2.5"
             title="Match new activities against this city"
           >
             {syncRunning ? 'Matching…' : 'Sync'}

@@ -338,7 +338,7 @@ function ExportDialogContent({
             onClick={handleDownload}
             disabled={downloading}
             className={clsx(
-              'btn inline-flex items-center gap-1.5 !text-[10px] uppercase font-semibold',
+              'btn inline-flex items-center gap-1.5 text-[10px] uppercase font-semibold',
               downloading && 'opacity-50',
             )}
             style={{

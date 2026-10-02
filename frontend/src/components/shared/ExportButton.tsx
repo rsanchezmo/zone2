@@ -44,7 +44,7 @@ export default function ExportButton({ url, label = 'PNG', filename = 'export.pn
         onClick={handleExport}
         disabled={loading}
         className={clsx(
-          'btn inline-flex items-center gap-1.5 !text-[10px] uppercase',
+          'btn inline-flex items-center gap-1.5 text-[10px] uppercase',
           loading && 'opacity-50',
         )}
         style={{ letterSpacing: '0.15em' }}

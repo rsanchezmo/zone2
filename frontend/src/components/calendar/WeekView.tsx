@@ -70,7 +70,7 @@ export default function WeekView({
               )}
               aria-label={`Open ${format(day, 'EEEE, MMMM d')}`}
             >
-              <div className="eyebrow !text-[9px]">{format(day, 'EEE')}</div>
+              <div className="eyebrow text-[9px]">{format(day, 'EEE')}</div>
               <div
                 className={clsx(
                   'font-mono tabular-nums text-lg leading-none mt-0.5',
@@ -80,7 +80,7 @@ export default function WeekView({
               >
                 {format(day, 'd')}
               </div>
-              {today && <div className="eyebrow !text-[8px] mt-1">today</div>}
+              {today && <div className="eyebrow text-[8px] mt-1">today</div>}
             </button>
 
             <div className="flex-1 min-w-0 space-y-1">

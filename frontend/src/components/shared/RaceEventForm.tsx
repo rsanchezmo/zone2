@@ -120,12 +120,12 @@ export default function RaceEventForm({ initial, date: newDate, dateField = true
         <button
           onClick={submit}
           disabled={!canSubmit}
-          className="btn flex-1 !text-sm !py-2"
+          className="btn flex-1 text-sm py-2"
           style={{ borderColor: `${accent}50`, color: accent, backgroundColor: `${accent}15` }}
         >
           {initial ? 'Save changes' : 'Add race'}
         </button>
-        <button onClick={onCancel} className="btn !text-sm !py-2 px-6">Cancel</button>
+        <button onClick={onCancel} className="btn text-sm py-2 px-6">Cancel</button>
       </div>
     </div>
   )

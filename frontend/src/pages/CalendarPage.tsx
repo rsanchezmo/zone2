@@ -403,15 +403,15 @@ export default function CalendarPage() {
               <div className="flex items-center gap-1.5 relative">
                 {view === 'month' ? (
                   <>
-                    <button onClick={() => setCurrentMonth(m => subMonths(m, 1))} className="btn !px-3" aria-label="Previous month">&larr;</button>
+                    <button onClick={() => setCurrentMonth(m => subMonths(m, 1))} className="btn px-3" aria-label="Previous month">&larr;</button>
                     <MonthPicker current={currentMonth} onSelect={setCurrentMonth} />
-                    <button onClick={() => setCurrentMonth(m => addMonths(m, 1))} className="btn !px-3" aria-label="Next month">&rarr;</button>
+                    <button onClick={() => setCurrentMonth(m => addMonths(m, 1))} className="btn px-3" aria-label="Next month">&rarr;</button>
                   </>
                 ) : (
                   <>
                     <button
                       onClick={() => setPickedWeek(format(subDays(parseISO(weekStart), 7), 'yyyy-MM-dd'))}
-                      className="btn !px-3"
+                      className="btn px-3"
                       aria-label="Previous week"
                     >&larr;</button>
                     <WeekPicker currentWeekStart={weekStart} onSelect={setPickedWeek} />
@@ -419,7 +419,7 @@ export default function CalendarPage() {
                         point of week view is reading a plan that lives in the future. */}
                     <button
                       onClick={() => setPickedWeek(format(addDays(parseISO(weekStart), 7), 'yyyy-MM-dd'))}
-                      className="btn !px-3"
+                      className="btn px-3"
                       aria-label="Next week"
                     >&rarr;</button>
                   </>
