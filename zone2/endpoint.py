@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import Enum, auto
 import logging
 import os
 import threading
@@ -26,6 +27,13 @@ class StravaStreamFetchError(Exception):
     """Raised when a stream fetch fails for a non-rate-limit reason (5xx, 404,
     network). Distinct from a 200 OK with empty body, which is a valid 'no
     streams' result and is cached as such."""
+
+
+class RateGuard(Enum):
+    """How a request treats Strava's rate limits."""
+    RECORD = auto()    # only record usage: profile reads must not fail a sync
+    ON_429 = auto()    # pre-flight budget check, raise only when Strava refuses
+    AT_LIMIT = auto()  # pre-flight budget check, raise on 429 or once a window is used up
 
 
 class StravaTokenData(BaseModel):
@@ -62,10 +70,9 @@ class StravaTokenData(BaseModel):
 
 class StravaEndpoint:
 
-    __ACTIVITIES_URL = 'https://www.strava.com/api/v3/athlete/activities'
-    __ACTIVITY_URL = 'https://www.strava.com/api/v3/activities'
-    __ATHLETE_URL = 'https://www.strava.com/api/v3/athlete'
-    __GEAR_URL = 'https://www.strava.com/api/v3/gear'
+    # Strava moves the API to a new host on 2027-06-01; confirm it in the official
+    # docs before changing this, since every request sends the Bearer token here.
+    __API_BASE = 'https://www.strava.com/api/v3'
     __OAUTH_TOKEN_URL = 'https://www.strava.com/oauth/token'
     __OAUTH_AUTHORIZE_URL = 'https://www.strava.com/oauth/authorize'
     __TOKEN_FILENAME = 'token.json'
@@ -237,6 +244,24 @@ class StravaEndpoint:
                     logger.debug("Unparseable X-RateLimit-Usage header: %s", usage_header)
         return None
 
+    def __get(self, path: str, params: dict | None = None, guard: RateGuard = RateGuard.AT_LIMIT) -> requests.Response:
+        """GET an API path with a valid token, recording the usage headers."""
+        if guard is not RateGuard.RECORD:
+            self._ensure_rate_limit_budget()
+        response = self.__session.get(
+            f"{StravaEndpoint.__API_BASE}{path}",
+            headers=self.__get_headers(),
+            params=params,
+            timeout=self.__REQUEST_TIMEOUT,
+        )
+        if guard is RateGuard.AT_LIMIT:
+            self._check_rate_limit(response)
+            return response
+        self._update_rate_limit_cache(response)
+        if guard is RateGuard.ON_429 and response.status_code == 429:
+            raise StravaRateLimitError("Strava API returned 429 Too Many Requests")
+        return response
+
     def _check_rate_limit(self, response: requests.Response):
         """Update cached usage from the response headers, then raise if the
         response indicates the limit was reached."""
@@ -253,12 +278,8 @@ class StravaEndpoint:
     
 
     def __fetch_activities(self, page: int, per_page: int, from_date: datetime | None = None, to_date: datetime | None = None) -> list[dict]:
-        headers = self.__get_headers()
-
         activities = []
         while True:
-            self._ensure_rate_limit_budget()
-
             params = {
                 "page": page,
                 'per_page': per_page
@@ -271,16 +292,7 @@ class StravaEndpoint:
             if to_date:
                 params['before'] = int(to_date.timestamp())
 
-            response = self.__session.get(
-                StravaEndpoint.__ACTIVITIES_URL,
-                headers=headers,
-                params=params,
-                timeout=self.__REQUEST_TIMEOUT,
-            )
-            self._update_rate_limit_cache(response)
-            if response.status_code == 429:
-                raise StravaRateLimitError("Strava API returned 429 Too Many Requests")
-            
+            response = self.__get('/athlete/activities', params, RateGuard.ON_429)
             if response.status_code != 200:
                 logger.error("Failed to fetch activities: %s", response.text)
                 return activities
@@ -305,15 +317,7 @@ class StravaEndpoint:
     
     def get_athlete(self) -> dict:
         """Fetch athlete information from Strava API."""
-        headers = self.__get_headers()
-        
-        response = self.__session.get(
-            StravaEndpoint.__ATHLETE_URL,
-            headers=headers,
-            timeout=self.__REQUEST_TIMEOUT,
-        )
-        self._update_rate_limit_cache(response)
-        
+        response = self.__get('/athlete', guard=RateGuard.RECORD)
         if response.status_code != 200:
             logger.error("Failed to fetch athlete info: %s", response.text)
             return {}
@@ -332,13 +336,7 @@ class StravaEndpoint:
         not spend Strava quota.
         """
         if refresh:
-            headers = self.__get_headers()
-            response = self.__session.get(
-                StravaEndpoint.__ATHLETE_URL,
-                headers=headers,
-                timeout=self.__REQUEST_TIMEOUT,
-            )
-            self._update_rate_limit_cache(response)
+            response = self.__get('/athlete', guard=RateGuard.RECORD)
             if response.status_code != 200:
                 logger.error("Failed to refresh rate limits: %s", response.text)
         known = self._last_usage_at != 0.0
@@ -355,14 +353,7 @@ class StravaEndpoint:
         
         Endpoint: GET /athlete/zones
         """
-        headers = self.__get_headers()
-        response = self.__session.get(
-            f"{StravaEndpoint.__ATHLETE_URL}/zones",
-            headers=headers,
-            timeout=self.__REQUEST_TIMEOUT,
-        )
-        self._update_rate_limit_cache(response)
-        
+        response = self.__get('/athlete/zones', guard=RateGuard.RECORD)
         if response.status_code != 200:
             logger.error("Failed to fetch athlete zones: %s", response.text)
             return {}
@@ -373,14 +364,7 @@ class StravaEndpoint:
         """
         Fetch detailed info for a single activity (includes description, gear, etc.).
         """
-        self._ensure_rate_limit_budget()
-        headers = self.__get_headers()
-        response = self.__session.get(
-            f"{StravaEndpoint.__ACTIVITY_URL}/{activity_id}",
-            headers=headers,
-            timeout=self.__REQUEST_TIMEOUT,
-        )
-        self._check_rate_limit(response)
+        response = self.__get(f'/activities/{activity_id}')
         if response.status_code != 200:
             logger.error("Failed to fetch detail for activity %s: %s", activity_id, response.text)
             return None
@@ -391,14 +375,7 @@ class StravaEndpoint:
         Fetch detailed info for a single gear item. Unlike /athlete, this also
         works for retired gear, which Strava omits from the profile response.
         """
-        self._ensure_rate_limit_budget()
-        headers = self.__get_headers()
-        response = self.__session.get(
-            f"{StravaEndpoint.__GEAR_URL}/{gear_id}",
-            headers=headers,
-            timeout=self.__REQUEST_TIMEOUT,
-        )
-        self._check_rate_limit(response)
+        response = self.__get(f'/gear/{gear_id}')
         if response.status_code != 200:
             logger.error("Failed to fetch gear %s: %s", gear_id, response.text)
             return None
@@ -409,15 +386,7 @@ class StravaEndpoint:
         Fetch photos for a single activity.
         Returns a list of photo objects with URLs.
         """
-        self._ensure_rate_limit_budget()
-        headers = self.__get_headers()
-        response = self.__session.get(
-            f"{StravaEndpoint.__ACTIVITY_URL}/{activity_id}/photos",
-            headers=headers,
-            params={'photo_sources': 'true', 'size': size},
-            timeout=self.__REQUEST_TIMEOUT,
-        )
-        self._check_rate_limit(response)
+        response = self.__get(f'/activities/{activity_id}/photos', {'photo_sources': 'true', 'size': size})
         if response.status_code != 200:
             logger.error("Failed to fetch photos for activity %s: %s", activity_id, response.text)
             return []
@@ -433,21 +402,11 @@ class StravaEndpoint:
         """
         from zone2.streams_store import from_strava_api
 
-        self._ensure_rate_limit_budget()
-        headers = self.__get_headers()
-
-        response = self.__session.get(
-            f"{StravaEndpoint.__ACTIVITY_URL}/{activity_id}/streams",
-            headers=headers,
-            params={
-                'keys': 'time,latlng,altitude,velocity_smooth,heartrate,cadence,watts,distance',
-                'key_by_type': 'true',
-                'resolution': 'medium'
-            },
-            timeout=self.__REQUEST_TIMEOUT,
-        )
-
-        self._check_rate_limit(response)
+        response = self.__get(f'/activities/{activity_id}/streams', {
+            'keys': 'time,latlng,altitude,velocity_smooth,heartrate,cadence,watts,distance',
+            'key_by_type': 'true',
+            'resolution': 'medium',
+        })
         if response.status_code != 200:
             logger.error("Failed to fetch streams for activity %s: %s", activity_id, response.text)
             raise StravaStreamFetchError(
