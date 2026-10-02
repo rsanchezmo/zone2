@@ -218,11 +218,17 @@ def city_garmin_courses(slug: str, z2: Zone2):
                if c["start"][0] is not None and south <= c["start"][0] <= north and west <= c["start"][1] <= east]
 
     def build():
-        matcher = _get_matcher(slug)
+        # A course's id and distance identify its line; a changed course is matched again
+        keys = {f"{c['course_id']}:{c['distance_km']}": c for c in courses}
+        streets = StravaMapMatcher.course_streets_of(_osm_dir(), slug)
+        if any(key not in streets for key in keys):
+            streets = _get_matcher(slug).match_courses({
+                key: (lambda c=c: [(lat, lon) for lon, lat in course_line(z2, c["course_id"])["coordinates"]])
+                for key, c in keys.items()
+            })
         out = []
-        for c in courses:
-            line = course_line(z2, c["course_id"])["coordinates"]
-            new_km, city_km = matcher.new_km_along([(lat, lon) for lon, lat in line]) or (None, None)
+        for key, c in keys.items():
+            new_km, city_km = StravaMapMatcher.street_km_of(_osm_dir(), slug, streets.get(key)) or (None, None)
             out.append({**c, "new_km": new_km, "city_km": city_km})
         return out
     version = _state_version(slug) + (_LAYERS_FORMAT, _COURSES_FORMAT,
