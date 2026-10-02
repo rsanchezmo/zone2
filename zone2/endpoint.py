@@ -519,7 +519,7 @@ class StravaEndpoint:
             f"{StravaEndpoint.__ACTIVITY_URL}/{activity_id}/streams",
             headers=headers,
             params={
-                'keys': 'time,latlng,altitude,velocity_smooth,heartrate,cadence,power,distance',
+                'keys': 'time,latlng,altitude,velocity_smooth,heartrate,cadence,watts,distance',
                 'key_by_type': 'true',
                 'resolution': 'medium'
             },
