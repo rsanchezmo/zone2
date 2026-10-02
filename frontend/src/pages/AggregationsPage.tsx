@@ -7,6 +7,7 @@ import { useTheme } from '../hooks/useTheme'
 import clsx from 'clsx'
 import RoutesMap from '../components/shared/RoutesMap'
 import { decodeRoutes } from '../components/shared/routes'
+import PageHeader from '../components/shared/PageHeader'
 
 function FlyToCity({ target }: { target: GeocodeResult['bbox'] | null }) {
   const map = useMap()
@@ -71,11 +72,7 @@ export default function AggregationsPage() {
     <div className={expanded ? '' : 'max-w-6xl mx-auto space-y-6 pb-6'}>
       {/* ── Breadcrumb header (hidden in fullscreen) ──── */}
       {!expanded && (
-        <header className="flex items-baseline gap-2 flex-wrap">
-          <span className="eyebrow">Aggregations</span>
-          <span className={clsx('text-[11px]', isLight ? 'text-gray-300' : 'text-gray-700')}>·</span>
-          <span className="text-[11px] text-gray-500 normal-case tracking-normal">every route you've recorded, on one map</span>
-        </header>
+        <PageHeader title="Aggregations" description="every route you've recorded, on one map" />
       )}
 
       <RoutesMap

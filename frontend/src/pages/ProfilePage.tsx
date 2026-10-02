@@ -16,6 +16,7 @@ import GoalsSection from '../components/profile/GoalsSection'
 import CacheCompleteness from '../components/profile/CacheCompleteness'
 import RateLimits from '../components/profile/RateLimits'
 import CalendarSubscription from '../components/profile/CalendarSubscription'
+import PageHeader from '../components/shared/PageHeader'
 
 export default function ProfilePage() {
   const { theme } = useTheme()
@@ -33,15 +34,11 @@ export default function ProfilePage() {
   const { data: cacheCompleteness } = useCacheCompleteness(syncStatus?.syncing)
   const { data: feedUrl } = useCalendarFeedUrl()
 
-  const cardClass = clsx(
-    'rounded-xl border p-4',
-    isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
-  )
 
   if (profileLoading) {
     return (
       <div className="max-w-4xl mx-auto space-y-10 pb-12">
-        <div className={clsx('panel p-6 flex items-center gap-6 animate-pulse', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
+        <div className="panel p-6 flex items-center gap-6 animate-pulse">
           <div className={clsx('w-20 h-20 rounded-full', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
           <div className="flex-1 space-y-3">
             <div className={clsx('h-6 w-40 rounded', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
@@ -50,7 +47,7 @@ export default function ProfilePage() {
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className={clsx('panel p-4 animate-pulse', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
+            <div key={i} className="panel p-4 animate-pulse">
               <div className={clsx('h-3 w-16 rounded mb-3', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
               <div className={clsx('h-6 w-20 rounded', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
             </div>
@@ -63,7 +60,7 @@ export default function ProfilePage() {
   if (!profile) {
     return (
       <div className="max-w-4xl mx-auto">
-        <div className={clsx(cardClass, 'p-8 text-center')}>
+        <div className="panel p-8 text-center">
           <p className="text-sm text-gray-500">Unable to load profile</p>
         </div>
       </div>
@@ -72,11 +69,7 @@ export default function ProfilePage() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-10 pb-12">
-      <header className="flex items-baseline gap-2">
-        <span className="eyebrow">Profile</span>
-        <span className={clsx('text-[11px]', isLight ? 'text-gray-300' : 'text-gray-700')}>·</span>
-        <span className="text-[11px] text-gray-500 normal-case tracking-normal">athlete · goals · cache</span>
-      </header>
+      <PageHeader title="Profile" description="athlete · goals · cache" />
       <AthleteCard profile={profile} />
       <PhotoCollage />
       <AthleteDetails profile={profile} totalActivities={syncStatus?.total_activities} />

@@ -26,6 +26,7 @@ import RaceCountdown from '../components/calendar/RaceCountdown'
 import MonthGrid from '../components/calendar/MonthGrid'
 import WeekView from '../components/calendar/WeekView'
 import WeekInspector from '../components/calendar/WeekInspector'
+import PageHeader from '../components/shared/PageHeader'
 
 // Recharts and the day editor load on demand: the calendar paints without them
 const WeekDetailCharts = lazy(() => import('../components/calendar/WeekDetailCharts'))
@@ -375,62 +376,61 @@ export default function CalendarPage() {
   return (
     <div className="max-w-6xl mx-auto space-y-6 pb-12">
       {/* ── Breadcrumb header ─────────────────────────── */}
-      <header className="space-y-3">
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-baseline gap-2">
-            <span className="eyebrow">Calendar</span>
-            <span className={clsx('text-[11px]', isLight ? 'text-gray-300' : 'text-gray-700')}>·</span>
-            <span className="text-[11px] text-gray-500 normal-case tracking-normal">sessions, activities, and plans</span>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-0.5" role="group" aria-label="Calendar view">
-              <button
-                className="chip"
-                data-active={view === 'month'}
-                aria-pressed={view === 'month'}
-                onClick={() => switchView('month')}
-              >
-                Month
-              </button>
-              <button
-                className="chip"
-                data-active={view === 'week'}
-                aria-pressed={view === 'week'}
-                onClick={() => switchView('week')}
-              >
-                Week
-              </button>
-            </div>
-            <div className="flex items-center gap-1.5 relative">
-              {view === 'month' ? (
-                <>
-                  <button onClick={() => setCurrentMonth(m => subMonths(m, 1))} className="btn !px-3" aria-label="Previous month">&larr;</button>
-                  <MonthPicker current={currentMonth} onSelect={setCurrentMonth} />
-                  <button onClick={() => setCurrentMonth(m => addMonths(m, 1))} className="btn !px-3" aria-label="Next month">&rarr;</button>
-                </>
-              ) : (
-                <>
-                  <button
-                    onClick={() => setPickedWeek(format(subDays(parseISO(weekStart), 7), 'yyyy-MM-dd'))}
-                    className="btn !px-3"
-                    aria-label="Previous week"
-                  >&larr;</button>
-                  <WeekPicker currentWeekStart={weekStart} onSelect={setPickedWeek} />
-                  {/* Unclamped, unlike the report's own picker in month view — the
-                      point of week view is reading a plan that lives in the future. */}
-                  <button
-                    onClick={() => setPickedWeek(format(addDays(parseISO(weekStart), 7), 'yyyy-MM-dd'))}
-                    className="btn !px-3"
-                    aria-label="Next week"
-                  >&rarr;</button>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
+      <div className="space-y-3">
+        <PageHeader
+          title="Calendar"
+          description="sessions, activities, and plans"
+          controls={
+            <>
+              <div className="flex items-center gap-0.5" role="group" aria-label="Calendar view">
+                <button
+                  className="chip"
+                  data-active={view === 'month'}
+                  aria-pressed={view === 'month'}
+                  onClick={() => switchView('month')}
+                >
+                  Month
+                </button>
+                <button
+                  className="chip"
+                  data-active={view === 'week'}
+                  aria-pressed={view === 'week'}
+                  onClick={() => switchView('week')}
+                >
+                  Week
+                </button>
+              </div>
+              <div className="flex items-center gap-1.5 relative">
+                {view === 'month' ? (
+                  <>
+                    <button onClick={() => setCurrentMonth(m => subMonths(m, 1))} className="btn !px-3" aria-label="Previous month">&larr;</button>
+                    <MonthPicker current={currentMonth} onSelect={setCurrentMonth} />
+                    <button onClick={() => setCurrentMonth(m => addMonths(m, 1))} className="btn !px-3" aria-label="Next month">&rarr;</button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => setPickedWeek(format(subDays(parseISO(weekStart), 7), 'yyyy-MM-dd'))}
+                      className="btn !px-3"
+                      aria-label="Previous week"
+                    >&larr;</button>
+                    <WeekPicker currentWeekStart={weekStart} onSelect={setPickedWeek} />
+                    {/* Unclamped, unlike the report's own picker in month view — the
+                        point of week view is reading a plan that lives in the future. */}
+                    <button
+                      onClick={() => setPickedWeek(format(addDays(parseISO(weekStart), 7), 'yyyy-MM-dd'))}
+                      className="btn !px-3"
+                      aria-label="Next week"
+                    >&rarr;</button>
+                  </>
+                )}
+              </div>
+            </>
+          }
+        />
         <CalendarBadges streaks={streakData} planRate={planRate} />
         <RaceCountdown races={upcomingRaces} />
-      </header>
+      </div>
 
       {/* Sport filter — scopes what the grid shows and what its week totals count.
           The weekly report below is computed server-side and stays all-sport. */}

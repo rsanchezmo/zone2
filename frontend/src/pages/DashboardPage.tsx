@@ -648,8 +648,7 @@ function HeroBlock(props: HeroBlockProps) {
       className={clsx(
         'panel hero-brackets relative p-6 md:p-8 grid gap-8 md:gap-10',
         'md:grid-cols-[minmax(0,auto)_1fr]',
-        isLight ? 'bg-white' : 'bg-surface-800',
-      )}
+        )}
       style={{ ['--card-accent' as string]: sportColor }}
     >
       {/* Ring — left */}

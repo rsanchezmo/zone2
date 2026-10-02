@@ -11,6 +11,7 @@ import { parseLocalDate } from '../utils/dates'
 import { useTheme } from '../hooks/useTheme'
 import { useIsMobile } from '../hooks/useIsMobile'
 import clsx from 'clsx'
+import PageHeader from '../components/shared/PageHeader'
 
 const SPORTS: { key: string; label: string; sportType: string }[] = [
   { key: 'running', label: 'Running', sportType: 'Run' },
@@ -92,32 +93,31 @@ export default function AnalyticsPage() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-8 pb-12">
-      {/* Header */}
-      <header className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-baseline gap-2">
-          <span className="eyebrow">Analytics</span>
-        </div>
-        <div className="flex gap-1.5 flex-wrap">
-          {SPORTS.map(s => {
-            const c = getSportColor(s.sportType)
-            const active = s.key === sport
-            return (
-              <button
-                key={s.key}
-                onClick={() => { setSport(s.key); setFocusDistance(null) }}
-                className="text-[11px] uppercase tracking-[0.15em] px-3 py-1.5 rounded-full border font-semibold transition-colors"
-                style={{
-                  color: active ? c : undefined,
-                  borderColor: active ? `${c}50` : undefined,
-                  backgroundColor: active ? `${c}15` : 'transparent',
-                }}
-              >
-                {s.label}
-              </button>
-            )
-          })}
-        </div>
-      </header>
+      <PageHeader
+        title="Analytics"
+        controls={
+          <div className="flex gap-1.5 flex-wrap">
+            {SPORTS.map(s => {
+              const c = getSportColor(s.sportType)
+              const active = s.key === sport
+              return (
+                <button
+                  key={s.key}
+                  onClick={() => { setSport(s.key); setFocusDistance(null) }}
+                  className="text-[11px] uppercase tracking-[0.15em] px-3 py-1.5 rounded-full border font-semibold transition-colors"
+                  style={{
+                    color: active ? c : undefined,
+                    borderColor: active ? `${c}50` : undefined,
+                    backgroundColor: active ? `${c}15` : 'transparent',
+                  }}
+                >
+                  {s.label}
+                </button>
+              )
+            })}
+          </div>
+        }
+      />
 
       {/* Race predictions block */}
       <section className="space-y-4">

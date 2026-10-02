@@ -171,7 +171,7 @@ export default function WeekInspector(props: WeekInspectorProps) {
   const hidden = sorted.length - shown.length
 
   return (
-    <aside className={clsx('panel p-4 flex flex-col gap-3.5 lg:sticky lg:top-4', isLight ? 'bg-white' : 'bg-surface-800')}>
+    <aside className="panel p-4 flex flex-col gap-3.5 lg:sticky lg:top-4">
       <header className="flex items-start justify-between gap-2">
         <div>
           <div className="eyebrow !text-blue-400">Week {format(parseISO(weekStart), 'w')}</div>

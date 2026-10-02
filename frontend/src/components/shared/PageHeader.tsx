@@ -3,7 +3,7 @@ import clsx from 'clsx'
 
 interface PageHeaderProps {
   title: string
-  description?: string
+  description?: ReactNode
   lastSyncedAt?: string | null
   controls?: ReactNode
   actions?: ReactNode

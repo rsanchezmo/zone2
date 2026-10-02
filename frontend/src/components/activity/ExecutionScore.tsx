@@ -123,10 +123,9 @@ function ExecutionScoreCollapsible({
   const [expanded, setExpanded] = useState(!isSegmented)
   const { theme } = useTheme()
   const isLight = theme === 'light'
-  const cardClass = clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')
 
   return (
-    <div className={cardClass}>
+    <div className="panel p-4">
       {/* Header — always visible */}
       <div
         className="flex items-center justify-between cursor-pointer select-none"

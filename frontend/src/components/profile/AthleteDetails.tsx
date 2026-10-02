@@ -33,8 +33,7 @@ function InfoTile({ label, value, unit, compact }: { label: string; value: strin
   return (
     <div className={clsx(
       'panel p-4',
-      isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
-    )}>
+      )}>
       <div className="eyebrow mb-1.5">{label}</div>
       <div className={clsx(
         'font-mono tabular-nums font-semibold tracking-tight',

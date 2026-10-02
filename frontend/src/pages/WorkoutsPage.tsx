@@ -12,6 +12,7 @@ import RowActions from '../components/shared/RowActions'
 import clsx from 'clsx'
 import { useTheme } from '../hooks/useTheme'
 import { useToast } from '../hooks/useToast'
+import PageHeader from '../components/shared/PageHeader'
 
 const SPORT_FILTERS = ['All', 'Run', 'Ride', 'Swim', 'Walk', 'Hike'] as const
 
@@ -36,10 +37,6 @@ export default function WorkoutsPage() {
   const updateTemplate = useUpdateWorkoutTemplate()
   const deleteTemplate = useDeleteWorkoutTemplate()
 
-  const panelClass = clsx(
-    'panel',
-    isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
-  )
   const inputClass = 'input w-full'
 
   function resetForm() {
@@ -82,13 +79,10 @@ export default function WorkoutsPage() {
   return (
     <div className="max-w-4xl mx-auto space-y-10 pb-12">
       {/* ── Breadcrumb header ─────────────────────────── */}
-      <header className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-baseline gap-2">
-          <span className="eyebrow">Workouts</span>
-          <span className={clsx('text-[11px]', isLight ? 'text-gray-300' : 'text-gray-700')}>·</span>
-          <span className="text-[11px] text-gray-500 normal-case tracking-normal">templates for structured sessions</span>
-        </div>
-        {!showBuilder && (
+      <PageHeader
+        title="Workouts"
+        description="templates for structured sessions"
+        actions={!showBuilder && (
           <button
             onClick={() => { resetForm(); setShowBuilder(true) }}
             className="btn"
@@ -96,7 +90,7 @@ export default function WorkoutsPage() {
             + New workout
           </button>
         )}
-      </header>
+      />
 
       {/* ── Sport filter ───────────────────────────── */}
       <section>
@@ -125,7 +119,7 @@ export default function WorkoutsPage() {
 
       {/* ── Builder form ───────────────────────────── */}
       {showBuilder && (
-        <section className={clsx(panelClass, 'p-5 md:p-6 space-y-4 hero-brackets')} style={{ ['--card-accent' as string]: getSportColor(sportType) }}>
+        <section className="panel p-5 md:p-6 space-y-4 hero-brackets" style={{ ['--card-accent' as string]: getSportColor(sportType) }}>
           <div className="eyebrow">{editingTemplate ? 'Edit workout' : 'New workout'}</div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -194,7 +188,7 @@ export default function WorkoutsPage() {
         {isLoading ? (
           <div className="grid gap-3">
             {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className={clsx(panelClass, 'p-4 animate-pulse')}>
+              <div key={i} className="panel p-4 animate-pulse">
                 <div className="flex items-center gap-2 mb-3">
                   <div className={clsx('h-4 w-32 rounded', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
                   <div className={clsx('h-4 w-12 rounded-full', isLight ? 'bg-gray-100' : 'bg-surface-700')} />
@@ -204,7 +198,7 @@ export default function WorkoutsPage() {
             ))}
           </div>
         ) : !templates || templates.length === 0 ? (
-          <div className={clsx(panelClass, 'p-10 text-center flex flex-col items-center gap-3')}>
+          <div className="panel p-10 text-center flex flex-col items-center gap-3">
             <svg className={clsx('w-9 h-9', isLight ? 'text-gray-300' : 'text-gray-600')} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
             </svg>
@@ -219,7 +213,7 @@ export default function WorkoutsPage() {
               return (
                 <div
                   key={t.id}
-                  className={clsx(panelClass, 'p-4 transition-colors')}
+                  className="panel p-4 transition-colors"
                   style={{ borderLeftWidth: 2, borderLeftColor: sColor }}
                 >
                   <div className="flex items-start justify-between mb-3 gap-3">

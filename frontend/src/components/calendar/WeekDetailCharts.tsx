@@ -18,8 +18,7 @@ function SportPieChart({ title, data, formatValue, colorMap }: {
   formatValue: (v: number, sport?: string) => string
   colorMap: Record<string, string>
 }) {
-  const { theme, colors } = useTheme()
-  const isLight = theme === 'light'
+  const { colors } = useTheme()
   const pieData = useMemo(() => {
     return Object.entries(data)
       .filter(([, v]) => v > 0)
@@ -55,7 +54,7 @@ function SportPieChart({ title, data, formatValue, colorMap }: {
   }
 
   return (
-    <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
+    <div className="panel p-4">
       <div className="eyebrow mb-2">{title}</div>
       <div className="flex gap-3 mb-2 flex-wrap">
         {pieData.map(d => (
@@ -213,7 +212,7 @@ function AccumulatedChart({ data, previous, titles, colorMap }: AccumulatedChart
   }
 
   return (
-    <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
+    <div className="panel p-4">
       <div className="eyebrow mb-1">Accumulated Training Time</div>
       <div className="flex gap-3 mb-3 flex-wrap items-center">
         <div className="flex items-center gap-1.5">
@@ -307,8 +306,6 @@ export default function WeekDetailCharts({ current, previous, colorMap, hrZoneBo
   colorMap: Record<string, string>
   hrZoneBounds: HrZoneBound[] | undefined
 }) {
-  const { theme } = useTheme()
-  const isLight = theme === 'light'
   return (
     <div className="space-y-4" style={{ animation: 'fadeIn 300ms ease-out' }}>
       {/* Accumulated Training Time */}
@@ -323,7 +320,7 @@ export default function WeekDetailCharts({ current, previous, colorMap, hrZoneBo
 
       {/* HR Zone Distribution */}
       {current.hr_histogram && hrZoneBounds && hrZoneBounds.length >= 5 && (
-        <div className={clsx('rounded-xl p-4 border', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
+        <div className="panel p-4">
           <div className="eyebrow mb-3">HR Zone Distribution</div>
           <HrZoneDistributionChart
             histogram={{ minBpm: current.hr_histogram.min_bpm, counts: current.hr_histogram.counts }}

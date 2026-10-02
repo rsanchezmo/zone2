@@ -80,7 +80,7 @@ export default function GearDetailPage() {
     return (
       <div className="max-w-5xl mx-auto space-y-6 pb-12">
         <PageHeader title="Gear" />
-        <div className={clsx('panel p-6 animate-pulse h-32', isLight ? 'bg-white' : 'bg-surface-800')} />
+        <div className="panel p-6 animate-pulse h-32" />
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {Array.from({ length: 8 }).map((_, i) => <StatCard key={i} label="" value="" loading />)}
         </div>
@@ -178,7 +178,7 @@ function GearHero({ data, accent, isLight }: { data: GearDetail; accent: string;
 
   return (
     <section
-      className={clsx('panel chart-card p-5 md:p-6', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}
+      className="panel chart-card p-5 md:p-6"
       style={{ ['--card-accent' as string]: accent }}
     >
       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -590,10 +590,7 @@ function ExtremesRow({ data, accent, isLight, dominantSport }: {
         <Link
           key={label}
           to={`/activities/${extreme!.id}`}
-          className={clsx(
-            'panel p-4 group transition-colors',
-            isLight ? 'bg-white border-gray-200 hover:border-gray-300' : 'bg-surface-800 border-surface-600 hover:border-surface-500',
-          )}
+          className="panel p-4 group transition-colors"
         >
           <div className="eyebrow mb-1.5">{label}</div>
           <div className="text-xl font-bold tabular-nums tracking-tight" style={{ color: accent }}>

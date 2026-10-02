@@ -23,6 +23,7 @@ import NewStreetsPanel from '../components/shared/NewStreetsPanel'
 import { LoopPlanLayer, LoopPlanPanel, RouteViewPanel } from '../components/shared/LoopPlanner'
 import RoutesPanel from '../components/shared/RoutesPanel'
 import { selectionKey, useLoopPlanner, type RouteSelection } from '../hooks/useLoopPlanner'
+import PageHeader from '../components/shared/PageHeader'
 
 const COVERED_ACCENT = '#fb2c36'
 
@@ -490,9 +491,7 @@ export default function CoveragePage() {
   if (!citiesLoading && (cities?.length ?? 0) === 0) {
     return (
       <div className="max-w-6xl mx-auto pb-6 space-y-4">
-        <header className="flex items-baseline gap-2">
-          <span className="eyebrow">Coverage</span>
-        </header>
+        <PageHeader title="Coverage" />
         <div className={clsx('panel p-10 text-center text-sm space-y-4', isLight ? 'text-gray-500' : 'text-gray-400')}>
           <p>No coverage maps yet. Add a city to download its runnable street network, then sync your activities against it.</p>
           <div className="flex justify-center">
@@ -506,11 +505,7 @@ export default function CoveragePage() {
   return (
     <div className={expanded ? '' : 'max-w-6xl mx-auto space-y-6 pb-6'}>
       {!expanded && (
-        <header className="flex items-baseline gap-2 flex-wrap">
-          <span className="eyebrow">Coverage</span>
-          <span className={clsx('text-[11px]', isLight ? 'text-gray-300' : 'text-gray-700')}>·</span>
-          <span className="text-[11px] text-gray-500 normal-case tracking-normal">every street you've conquered — and the ones you haven't</span>
-        </header>
+        <PageHeader title="Coverage" description="every street you've conquered — and the ones you haven't" />
       )}
 
       <div
