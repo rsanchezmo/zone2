@@ -1457,14 +1457,15 @@ export function useWorkoutTemplates(sportType?: string) {
   });
 }
 
-/** A workout made in Garmin Connect (z2 leaves these alone). */
+/** A workout made in Garmin Connect (z2 leaves these alone), its steps read as segments. */
 export interface GarminLibraryWorkout {
   workout_id: number;
   name: string;
-  sport: string | null;
+  sport_type: string;
   created_at: string | null;
   distance_km: number | null;
   duration_s: number | null;
+  segments: Segment[];
 }
 
 export function useGarminLibrary(enabled: boolean) {

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   useWorkoutTemplates, useCreateWorkoutTemplate,
   useUpdateWorkoutTemplate, useDeleteWorkoutTemplate, useWatchWorkouts, useGarminLibrary,
@@ -20,8 +20,38 @@ const SPORT_FILTERS = ['All', 'Run', 'Ride', 'Swim', 'Walk', 'Hike'] as const
 
 const garminWorkoutUrl = (id: number) => `https://connect.garmin.com/modern/workout/${id}`
 
-// Garmin's sport keys as z2's sport types, for colours and units
-const GARMIN_SPORTS: Record<string, string> = { running: 'Run', cycling: 'Ride', swimming: 'Swim', walking: 'Walk', hiking: 'Hike' }
+/** A workout as a card: name, sport, a meta line, actions and its segments. */
+function WorkoutCard({ name, sportType, description, meta, actions, segments }: {
+  name: string
+  sportType: string
+  description?: string | null
+  meta?: ReactNode
+  actions?: ReactNode
+  segments: Segment[]
+}) {
+  const color = getSportColor(sportType)
+  return (
+    <div className="panel p-4 transition-colors" style={{ borderLeftWidth: 2, borderLeftColor: color }}>
+      <div className="flex items-start justify-between mb-3 gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap mb-1">
+            <span className="font-semibold text-sm tracking-tight text-gray-100">{name}</span>
+            <span
+              className="text-[10px] uppercase tracking-[0.15em] rounded-full px-2 py-0.5 border font-semibold"
+              style={{ color, borderColor: `${color}40`, backgroundColor: `${color}15` }}
+            >
+              {sportType}
+            </span>
+          </div>
+          {!!description && <div className="text-xs text-gray-500">{description}</div>}
+          {meta && <div className="flex items-center gap-3 flex-wrap mt-1">{meta}</div>}
+        </div>
+        {actions}
+      </div>
+      <SegmentSummary segments={segments} />
+    </div>
+  )
+}
 
 /** Whether a saved run workout's copy is in the Garmin library. */
 function GarminCopyStatus({ template }: { template: WorkoutTemplate }) {
@@ -45,23 +75,25 @@ function GarminCopyStatus({ template }: { template: WorkoutTemplate }) {
   )
 }
 
-function GarminLibraryRow({ workout }: { workout: GarminLibraryWorkout }) {
-  const sport = GARMIN_SPORTS[workout.sport ?? ''] ?? workout.sport ?? ''
-  const color = getSportColor(sport)
+function GarminLibraryCard({ workout }: { workout: GarminLibraryWorkout }) {
+  const estimate = [
+    workout.distance_km ? formatDist(workout.distance_km, workout.sport_type) : '',
+    workout.duration_s ? formatDurationHM(workout.duration_s) : '',
+  ].filter(Boolean).join(' · ')
   return (
-    <a href={garminWorkoutUrl(workout.workout_id)} target="_blank" rel="noreferrer"
-      className="flex items-center gap-3 px-4 py-2.5 group">
-      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
-      <span className="text-sm truncate group-hover:underline">{workout.name}</span>
-      <span className="text-[11px] font-mono tabular-nums text-gray-500 shrink-0">
-        {[workout.distance_km ? formatDist(workout.distance_km, sport) : '', workout.duration_s ? formatDurationHM(workout.duration_s) : '']
-          .filter(Boolean).join(' · ')}
-      </span>
-      <span className="ml-auto flex items-center gap-3 shrink-0 text-[11px] text-gray-500">
-        <span className="hidden sm:inline">{workout.created_at}</span>
-        <ExternalLinkIcon size={11} />
-      </span>
-    </a>
+    <WorkoutCard
+      name={workout.name}
+      sportType={workout.sport_type}
+      segments={workout.segments}
+      meta={<>
+        <a href={garminWorkoutUrl(workout.workout_id)} target="_blank" rel="noreferrer"
+          className="inline-flex items-center gap-1 text-[11px] text-gray-500 hover:text-gray-300 hover:underline">
+          Garmin Connect <ExternalLinkIcon size={10} />
+        </a>
+        {estimate && <span className="text-[11px] font-mono tabular-nums text-gray-500">{estimate}</span>}
+        {workout.created_at && <span className="text-[11px] text-gray-500 tabular-nums">{workout.created_at}</span>}
+      </>}
+    />
   )
 }
 
@@ -87,6 +119,7 @@ export default function WorkoutsPage() {
   const deleteTemplate = useDeleteWorkoutTemplate()
   const { data: watch } = useWatchWorkouts()
   const { data: garminLibrary } = useGarminLibrary(!!watch?.available)
+  const garminWorkouts = (garminLibrary ?? []).filter(w => !queryFilter || w.sport_type === queryFilter)
 
   const inputClass = 'input w-full'
 
@@ -261,65 +294,45 @@ export default function WorkoutsPage() {
           </div>
         ) : (
           <div className="grid gap-3 stagger-children">
-            {templates.map(t => {
-              const sColor = getSportColor(t.sport_type)
-              const isConfirming = confirmDeleteId === t.id
-              return (
-                <div
-                  key={t.id}
-                  className="panel p-4 transition-colors"
-                  style={{ borderLeftWidth: 2, borderLeftColor: sColor }}
-                >
-                  <div className="flex items-start justify-between mb-3 gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap mb-1">
-                        <span className={clsx('font-semibold text-sm tracking-tight', isLight ? 'text-gray-900' : 'text-gray-100')}>{t.name}</span>
-                        <span
-                          className="text-[10px] uppercase tracking-[0.15em] rounded-full px-2 py-0.5 border font-semibold"
-                          style={{ color: sColor, borderColor: `${sColor}40`, backgroundColor: `${sColor}15` }}
-                        >
-                          {t.sport_type}
-                        </span>
-                      </div>
-                      {!!t.description && (
-                        <div className={clsx('text-xs', isLight ? 'text-gray-500' : 'text-gray-500')}>{String(t.description)}</div>
-                      )}
-                      <div className="flex items-center gap-3 flex-wrap mt-1">
-                        <GarminCopyStatus template={t} />
-                        {t.uses > 0 && (
-                          <span className="text-[11px] text-gray-500 tabular-nums">planned {t.uses}×</span>
-                        )}
-                      </div>
-                    </div>
-                    <RowActions
-                      isConfirming={isConfirming}
-                      onEdit={() => startEdit(t)}
-                      onConfirmDelete={() => {
-                        const onGarmin = t.garmin_workout_id != null
-                        deleteTemplate.mutate(t.id, {
-                          onSuccess: () => toast(onGarmin ? 'Workout deleted, here and on Garmin' : 'Workout deleted', 'success'),
-                        })
-                        setConfirmDeleteId(null)
-                      }}
-                      onAskDelete={() => setConfirmDeleteId(t.id)}
-                      onCancelDelete={() => setConfirmDeleteId(null)}
-                    />
-                  </div>
-                  <SegmentSummary segments={t.segments || []} />
-                </div>
-              )
-            })}
+            {templates.map(t => (
+              <WorkoutCard
+                key={t.id}
+                name={t.name}
+                sportType={t.sport_type}
+                description={t.description}
+                segments={t.segments || []}
+                meta={<>
+                  <GarminCopyStatus template={t} />
+                  {t.uses > 0 && <span className="text-[11px] text-gray-500 tabular-nums">planned {t.uses}×</span>}
+                </>}
+                actions={
+                  <RowActions
+                    isConfirming={confirmDeleteId === t.id}
+                    onEdit={() => startEdit(t)}
+                    onConfirmDelete={() => {
+                      const onGarmin = t.garmin_workout_id != null
+                      deleteTemplate.mutate(t.id, {
+                        onSuccess: () => toast(onGarmin ? 'Workout deleted, here and on Garmin' : 'Workout deleted', 'success'),
+                      })
+                      setConfirmDeleteId(null)
+                    }}
+                    onAskDelete={() => setConfirmDeleteId(t.id)}
+                    onCancelDelete={() => setConfirmDeleteId(null)}
+                  />
+                }
+              />
+            ))}
           </div>
         )}
       </section>
 
       {/* ── Garmin Connect's own workouts ───────────── */}
-      {!!garminLibrary?.length && (
+      {garminWorkouts.length > 0 && (
         <section>
           <div className="section-head mb-1"><span className="eyebrow">In Garmin Connect</span></div>
           <p className="text-[11px] text-gray-500 mb-3">Made in Garmin Connect. z2 leaves these as they are.</p>
-          <div className={clsx('panel divide-y', isLight ? 'divide-[#ececec]' : 'divide-surface-600')}>
-            {garminLibrary.map(w => <GarminLibraryRow key={w.workout_id} workout={w} />)}
+          <div className="grid gap-3">
+            {garminWorkouts.map(w => <GarminLibraryCard key={w.workout_id} workout={w} />)}
           </div>
         </section>
       )}

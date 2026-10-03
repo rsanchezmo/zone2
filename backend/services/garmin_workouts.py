@@ -29,6 +29,7 @@ from backend.services.calendar_feed import format_distance_km, format_target_pac
 from backend.services.zones import get_setting
 from zone2.core import Zone2
 from zone2.garmin_client import GarminClient, GarminNotFound
+from zone2.utils import convert_speed
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,72 @@ def segment_steps(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def steps_hash(steps: list[dict[str, Any]]) -> str:
     return hashlib.sha1(json.dumps(steps, sort_keys=True).encode()).hexdigest()
+
+
+# ── Reading Garmin's workouts back ───────────────────────────────────────
+
+# Garmin's sports and step types as z2's ("main" is a swim's main set)
+GARMIN_SPORTS = {"running": "Run", "cycling": "Ride", "swimming": "Swim", "walking": "Walk", "hiking": "Hike",
+                 "strength_training": "WeightTraining"}
+_SEGMENT_TYPES = {"warmup": "warmup", "cooldown": "cooldown", "interval": "work", "main": "work",
+                  "recovery": "recovery", "rest": "rest"}
+
+
+def _amount(step: dict[str, Any]) -> dict[str, float]:
+    """A step's end as a distance or a duration; an open (lap button) end has neither."""
+    key = (step.get("endCondition") or {}).get("conditionTypeKey")
+    value = step.get("endConditionValue") or 0
+    if not value:
+        return {}
+    if key in ("time", "fixed.rest"):
+        return {"duration_mins": round(value / 60, 2)}
+    # Swim steps keep their distance on a lap-button end
+    if key in ("distance", "lap.button"):
+        return {"distance_km": round(value / 1000, 3)}
+    return {}
+
+
+def _targets(step: dict[str, Any], sport_type: str) -> dict[str, float]:
+    """Pace or speed targets in the unit z2 stores for the sport, or the HR zone."""
+    key = (step.get("targetType") or {}).get("workoutTargetTypeKey")
+    if key in ("pace.zone", "speed.zone"):
+        values = sorted(round(convert_speed(v, sport_type)[0], 3) for v in (step.get("targetValueOne"), step.get("targetValueTwo")) if v)
+        return {"target_pace_min": values[0], "target_pace_max": values[-1]} if values else {}
+    if key == "heart.rate.zone" and step.get("zoneNumber"):
+        return {"target_hr_zone": int(step["zoneNumber"])}
+    return {}
+
+
+def _step_segments(steps: list[dict[str, Any]], sport_type: str) -> list[dict[str, Any]]:
+    segments = []
+    for step in steps:
+        if step.get("type") != "RepeatGroupDTO":
+            kind = _SEGMENT_TYPES.get(step["stepType"]["stepTypeKey"], "work")
+            segments.append({"type": kind, **_amount(step), **_targets(step, sport_type), "repetitions": 1})
+            continue
+        reps = int(step.get("numberOfIterations") or 1)
+        inner = step.get("workoutSteps") or []
+        kinds = [_SEGMENT_TYPES.get(s["stepType"]["stepTypeKey"]) if s.get("type") != "RepeatGroupDTO" else None
+                 for s in inner]
+        if kinds in (["work"], ["work", "recovery"], ["work", "rest"]):
+            work = {**_step_segments(inner[:1], sport_type)[0], "repetitions": reps}
+            if len(inner) == 2:
+                recovery = _amount(inner[1])
+                work.update(recovery_duration_mins=recovery.get("duration_mins"),
+                            recovery_distance_km=recovery.get("distance_km"))
+            segments.append(work)
+        else:
+            # Richer sets (several work steps, nested repeats) unrolled, so the summary stays true
+            segments.extend(_step_segments(inner, sport_type) * reps)
+    return segments
+
+
+def garmin_segments(workout: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+    """A Garmin workout's sport and steps as z2's sport type and segments."""
+    sport_key = (workout.get("sportType") or {}).get("sportTypeKey") or ""
+    sport_type = GARMIN_SPORTS.get(sport_key, sport_key.replace("_", " ").title())
+    steps = [s for seg in workout.get("workoutSegments") or [] for s in seg.get("workoutSteps") or []]
+    return sport_type, _step_segments(steps, sport_type)
 
 
 def _error(e: Exception) -> str:

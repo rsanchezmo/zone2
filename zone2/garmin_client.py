@@ -367,15 +367,19 @@ class GarminClient:
             if not _is_missing(e):
                 raise
 
-    def update_workout(self, workout_id: int, workout: dict) -> None:
-        """Replace a library workout's name, notes and steps in place; its
-        calendar entries stay and show the new version."""
+    def get_workout(self, workout_id: int) -> dict:
+        """A library workout with its steps."""
         try:
-            current = self._logged_in().get_workout_by_id(workout_id)
+            return self._logged_in().get_workout_by_id(workout_id)
         except Exception as e:
             if _is_missing(e):
                 raise GarminNotFound(f"Garmin workout {workout_id} no longer exists") from e
             raise
+
+    def update_workout(self, workout_id: int, workout: dict) -> None:
+        """Replace a library workout's name, notes and steps in place; its
+        calendar entries stay and show the new version."""
+        current = self.get_workout(workout_id)
         self._request("PUT", f"/workout-service/workout/{workout_id}", json={**current, **workout})
 
     def list_workouts(self) -> list[dict]:

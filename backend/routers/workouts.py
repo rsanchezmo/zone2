@@ -13,7 +13,7 @@ from backend.dependencies import get_z2
 from backend.services import garmin_workouts
 from backend.services.workout_library import find_same
 from zone2.core import Zone2
-from zone2.garmin_client import GarminUnavailable
+from zone2.garmin_client import GarminClient, GarminUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,8 @@ _JSON_COLS = ("segments",)
 router = APIRouter()
 
 _garmin_library_cache = TTLCache(maxsize=1, ttl_seconds=600)
+# Parsed steps per (workout, Garmin version): they only change when the workout is edited
+_garmin_steps_cache = TTLCache(maxsize=512, ttl_seconds=7 * 86400)
 
 
 class WorkoutTemplateCreate(BaseModel):
@@ -66,32 +68,49 @@ async def list_templates(db: aiosqlite.Connection = Depends(get_db), z2: Zone2 =
     return templates
 
 
+def _garmin_workouts(client: GarminClient, ours: set[int]) -> list[dict]:
+    """The library's workouts other than z2's copies, newest first, with their
+    steps as z2 segments (each fetched once per Garmin version)."""
+    listed = _garmin_library_cache.get("library")
+    if listed is None:
+        listed = sorted(client.list_workouts(), key=lambda w: w.get("createdDate") or "", reverse=True)
+        _garmin_library_cache.set("library", listed)
+    workouts = []
+    for w in listed:
+        if w["workoutId"] in ours:
+            continue
+        key = (w["workoutId"], w.get("updateDate"))
+        parsed = _garmin_steps_cache.get(key)
+        if parsed is None:
+            parsed = garmin_workouts.garmin_segments(client.get_workout(w["workoutId"]))
+            _garmin_steps_cache.set(key, parsed)
+        sport_type, segments = parsed
+        workouts.append({
+            "workout_id": w["workoutId"],
+            "name": w.get("workoutName"),
+            "sport_type": sport_type,
+            "created_at": (w.get("createdDate") or "")[:10] or None,
+            "distance_km": round(w["estimatedDistanceInMeters"] / 1000, 2) if w.get("estimatedDistanceInMeters") else None,
+            "duration_s": w.get("estimatedDurationInSecs"),
+            "segments": segments,
+        })
+    return workouts
+
+
 @router.get("/garmin")
 async def garmin_library(db: aiosqlite.Connection = Depends(get_db), z2: Zone2 = Depends(get_z2)):
     """The Garmin library's other workouts (made in Garmin Connect), newest first."""
     if not z2.garmin_client.email:
         return []
-    workouts = _garmin_library_cache.get("library")
-    if workouts is None:
-        try:
-            raw = await run_in_threadpool(z2.garmin_client.list_workouts)
-        except GarminUnavailable as e:
-            raise HTTPException(status_code=503, detail=str(e))
-        except Exception as e:
-            logger.warning("Garmin workout list failed: %s: %s", type(e).__name__, e)
-            raise HTTPException(status_code=502, detail=f"Garmin Connect failed: {e}")
-        workouts = [{
-            "workout_id": w["workoutId"],
-            "name": w.get("workoutName"),
-            "sport": (w.get("sportType") or {}).get("sportTypeKey"),
-            "created_at": (w.get("createdDate") or "")[:10] or None,
-            "distance_km": round(w["estimatedDistanceInMeters"] / 1000, 2) if w.get("estimatedDistanceInMeters") else None,
-            "duration_s": w.get("estimatedDurationInSecs"),
-        } for w in sorted(raw, key=lambda w: w.get("createdDate") or "", reverse=True)]
-        _garmin_library_cache.set("library", workouts)
     ours = {r[0] for r in await (await db.execute(
         "SELECT garmin_workout_id FROM workout_templates WHERE garmin_workout_id IS NOT NULL")).fetchall()}
-    return [w for w in workouts if w["workout_id"] not in ours]
+    try:
+        return await run_in_threadpool(_garmin_workouts, z2.garmin_client, ours)
+    except GarminUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        logger.warning("Garmin workout list failed: %s: %s", type(e).__name__, e)
+        raise HTTPException(status_code=502, detail=f"Garmin Connect failed: {e}")
 
 
 @router.post("", status_code=201)
