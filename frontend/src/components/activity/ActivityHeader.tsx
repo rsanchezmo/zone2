@@ -41,12 +41,15 @@ function PhotoGallery({ photos }: { photos: StravaPhoto[] }) {
   )
 }
 
+const WORKOUT_TYPE_LABELS: Partial<Record<number, string>> = { 1: 'Race', 2: 'Long run', 3: 'Workout', 11: 'Race', 12: 'Workout' }
+
 /** Back link, sport, name and actions, then the description, photos and metadata pills. */
 export default function ActivityHeader({ activity, id }: { activity: ActivityDetail; id: string | undefined }) {
   const navigate = useNavigate()
   const { theme } = useTheme()
   const isLight = theme === 'light'
   const sportAccent = getSportColor(activity.sport_type)
+  const workoutType = activity.workout_type != null ? WORKOUT_TYPE_LABELS[activity.workout_type] : undefined
 
   return (
     <header>
@@ -117,7 +120,7 @@ export default function ActivityHeader({ activity, id }: { activity: ActivityDet
       )}
 
       {/* Metadata pills — hairline-bordered, sport-agnostic */}
-      {(activity.device_name || activity.gear || activity.average_temp != null || activity.timezone || activity.workout_type != null || (activity.pr_count ?? 0) > 0 || (activity.achievement_count ?? 0) > 0) && (
+      {(activity.device_name || activity.gear || activity.average_temp != null || activity.timezone || workoutType || (activity.pr_count ?? 0) > 0 || (activity.achievement_count ?? 0) > 0) && (
         <div className="flex flex-wrap gap-1.5 mt-5">
           {activity.device_name && <MetaPill icon={<DeviceIcon size={11} />} text={activity.device_name} />}
           {activity.gear && (
@@ -129,7 +132,7 @@ export default function ActivityHeader({ activity, id }: { activity: ActivityDet
           )}
           {activity.average_temp != null && <MetaPill icon={<ThermometerIcon size={11} />} text={`${Math.round(activity.average_temp)}°C`} />}
           {activity.timezone && <MetaPill icon={<ClockIcon size={11} />} text={activity.timezone.replace(/^\(.*?\)\s*/, '')} />}
-          {activity.workout_type != null && <MetaPill icon={<DumbbellIcon size={11} />} text={String(activity.workout_type)} />}
+          {workoutType && <MetaPill icon={<DumbbellIcon size={11} />} text={workoutType} />}
           {(activity.pr_count ?? 0) > 0 && (
             <MetaPill icon={<MedalIcon size={11} />} text={`${activity.pr_count} PR${(activity.pr_count ?? 0) > 1 ? 's' : ''}`} tone="amber" />
           )}

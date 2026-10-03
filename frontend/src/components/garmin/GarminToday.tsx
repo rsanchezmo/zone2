@@ -81,7 +81,7 @@ export function VitalsSection({ card }: { card: GarminCard }) {
           accent={toneColor(restingHrTone(card.restingHR, card.hr7dAvg))} />
         <StatCard label="VO2 max"
           value={card.vo2max != null ? card.vo2max.toFixed(1) : '–'}
-          sublabel={card.vo2maxDate ? `updated ${card.vo2maxDate}` : undefined}
+          sublabel={[card.statusPhrase, card.vo2maxDate && `updated ${card.vo2maxDate}`].filter(Boolean).join(' · ') || undefined}
           accent={ACCENT} />
         <StatCard label="Stress avg" value={card.stressAvg ?? '–'}
           sublabel={card.stressMax != null ? `peak ${card.stressMax}` : undefined}

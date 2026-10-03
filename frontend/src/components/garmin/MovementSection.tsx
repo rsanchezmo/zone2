@@ -7,6 +7,8 @@ import {
 import { useTheme } from '../../hooks/useTheme'
 import type { GarminTrends } from '../../api/hooks'
 import ChartPanel, { LegendSwatch } from '../shared/ChartPanel'
+import { todayLocalStr } from '../../utils/dates'
+import { StatusPill } from './GarminTiles'
 import {
   ACCENT, ACCENT_LIGHT, MUTED, POS, VO2, displayNum, dotProps, num, useGarminChartProps,
   vo2ZoneColor,
@@ -44,6 +46,19 @@ export default function MovementSection({ trends: t, days }: { trends: GarminTre
     moderate: num(r.moderate) ?? 0,
     vigorous: num(r.vigorous) ?? 0,
   })), [t])
+
+  // Garmin repeats the week's running total on each day, so the latest row
+  // carries it; shown only while that row is in the current Monday week.
+  const imWeek = useMemo(() => {
+    const last = (t?.metrics.intensity_minutes ?? []).at(-1)
+    const total = num(last?.weekly_total)
+    const goal = num(last?.weekly_goal)
+    if (!last || total == null || goal == null) return null
+    const today = new Date(`${todayLocalStr()}T00:00:00`)
+    const monday = new Date(today)
+    monday.setDate(today.getDate() - ((today.getDay() + 6) % 7))
+    return new Date(`${last.date}T00:00:00`) >= monday ? { total, goal } : null
+  }, [t])
 
   const distanceData = useMemo(() => (t?.metrics.daily_steps ?? []).map(r => {
     const m = num(r.total_distance_m)
@@ -158,6 +173,9 @@ export default function MovementSection({ trends: t, days }: { trends: GarminTre
       {/* ── Intensity minutes ────────────────────────────────── */}
       <ChartPanel
         title="Intensity minutes" sublabel={`last ${days}d`} accent={ACCENT}
+        status={imWeek
+          ? <StatusPill color={imWeek.total >= imWeek.goal ? POS : MUTED}>{imWeek.total} / {imWeek.goal} min this week</StatusPill>
+          : undefined}
         legend={<>
           <LegendSwatch color={ACCENT} label="Vigorous" />
           <LegendSwatch color={ACCENT_LIGHT} label="Moderate" />

@@ -198,6 +198,11 @@ export default function AnalyticsPage() {
                       recent best {formatClockDuration(p.pr_time_s)}
                     </div>
                   )}
+                  {p.garmin_time_s != null && (
+                    <div className="text-[10px] text-gray-500 font-mono tabular-nums mt-0.5">
+                      Garmin {formatClockDuration(p.garmin_time_s)}
+                    </div>
+                  )}
                 </button>
               )
             })}

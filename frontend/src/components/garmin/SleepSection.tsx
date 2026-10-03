@@ -6,6 +6,7 @@ import {
 import { useTheme } from '../../hooks/useTheme'
 import type { GarminTrends } from '../../api/hooks'
 import ChartPanel, { LegendSwatch } from '../shared/ChartPanel'
+import { StatusPill } from './GarminTiles'
 import {
   ACCENT, ACCENT_LIGHT, displayNum, hrvTone, num, secondsToMinutes, toneColor,
   useGarminChartProps, type GarminCard,
@@ -171,16 +172,9 @@ export default function SleepSection({ trends: t, days, card }: { trends: Garmin
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <ChartPanel
           title="HRV overnight" sublabel={`last ${days}d`} accent={ACCENT}
-          status={card.hrvStatus ? (() => {
-            const c = toneColor(hrvTone(card.hrvStatus))
-            return (
-              <span className="inline-flex items-center gap-1.5 text-[10px] uppercase font-semibold tracking-[0.15em] px-2 py-0.5 rounded-full border"
-                style={{ background: `${c}1a`, color: c, borderColor: `${c}55` }}>
-                <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: c }} />
-                {card.hrvStatus.toLowerCase()}
-              </span>
-            )
-          })() : undefined}
+          status={card.hrvStatus
+            ? <StatusPill color={toneColor(hrvTone(card.hrvStatus))}>{card.hrvStatus.toLowerCase()}</StatusPill>
+            : undefined}
           legend={<>
             <LegendSwatch color={ACCENT} label="Last night" />
             <LegendSwatch color={ACCENT_LIGHT} label="7-day avg" variant="dashed" />
