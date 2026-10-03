@@ -12,6 +12,7 @@ import { useTheme } from '../hooks/useTheme'
 import { useIsMobile } from '../hooks/useIsMobile'
 import clsx from 'clsx'
 import PageHeader from '../components/shared/PageHeader'
+import FitnessForm from '../components/analytics/FitnessForm'
 
 const SPORTS: { key: string; label: string; sportType: string }[] = [
   { key: 'running', label: 'Running', sportType: 'Run' },
@@ -358,6 +359,8 @@ export default function AnalyticsPage() {
           </ResponsiveContainer>
         )}
       </section>
+
+      <FitnessForm />
     </div>
   )
 }

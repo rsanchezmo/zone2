@@ -1,7 +1,8 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from enum import StrEnum
 import logging
 import math
+from statistics import median
 from threading import RLock
 import pandas as pd
 import numpy as np
@@ -437,8 +438,6 @@ class StravaAnalytics:
         Returns:
             Dictionary with weekly statistics.
         """
-        from datetime import datetime, timedelta, timezone
-
         activities = self.strava_activities_cache.get_prepared_view()
 
         # Determine the week to report on
@@ -1616,9 +1615,11 @@ class StravaAnalytics:
         date_strs = valid['start_date_local'].dt.strftime('%Y-%m-%d').to_numpy()
         names = valid.get('name', pd.Series([''] * len(valid), index=valid.index)).fillna('').to_numpy()
         sports = valid.get('sport_type', pd.Series([''] * len(valid), index=valid.index)).fillna('').to_numpy()
+        km_arr = valid.get('distance', pd.Series(0.0, index=valid.index)).fillna(0.0).to_numpy(dtype=np.float64) / 1000.0
 
         daily: dict[str, dict] = {}
-        for date_str, trimp, method, name, sport in zip(date_strs, trimps_rounded, methods, names, sports):
+        for date_str, trimp, method, name, sport, minutes, km in zip(
+                date_strs, trimps_rounded, methods, names, sports, duration_min_arr, km_arr):
             entry = daily.get(date_str)
             if entry is None:
                 entry = {"date": date_str, "trimp": 0.0, "activities": [], "trimp_method": str(method)}
@@ -1629,6 +1630,8 @@ class StravaAnalytics:
                 "sport_type": str(sport),
                 "trimp": float(trimp),
                 "trimp_method": str(method),
+                "minutes": float(minutes),
+                "km": float(km),
             })
 
         result = sorted(daily.values(), key=lambda d: d["date"])
@@ -1695,7 +1698,90 @@ class StravaAnalytics:
         ]
         return {"weeks": weeks, "scale": self.RE_DISPLAY_SCALE, "sports": list(sports)}
 
-    # ── Fitness Trend (VDOT over time) ────────────────────────────────
+    # ── Fitness and form ──────────────────────────────────────────────
+
+    # Exponentially weighted daily load over the Banister model's classic spans
+    FITNESS_DAYS = 42
+    FATIGUE_DAYS = 7
+    # Planned sessions are costed from this much of your own recent training
+    PLAN_HISTORY_DAYS = 180
+
+    def get_fitness_form(self, hr_rest: float, hr_zones: list | None, planned: list[dict], days: int) -> dict:
+        """Fitness (42-day load average), fatigue (7-day) and form (their
+        difference) per day over the last `days`, from the daily TRIMP, then
+        continued over `planned` sessions (date, sport_type, planned_duration_mins,
+        planned_distance_km) as a projection. TRIMP isn't on the TSS scale the
+        usual absolute form zones assume, so form is also given as a share of
+        fitness, which doesn't depend on the scale."""
+        daily = self.get_daily_training_load(hr_rest=hr_rest, hr_zones=hr_zones)
+        if not daily:
+            return {"series": []}
+        loads = {d["date"]: d["trimp"] for d in daily}
+        today = date.today()
+        cost = self._planned_load_estimator(daily, today)
+        planned_load: dict[str, float] = {}
+        for session in planned:
+            if session["date"] >= today.isoformat():
+                planned_load[session["date"]] = planned_load.get(session["date"], 0.0) + cost(session)
+
+        end = max([today, *(date.fromisoformat(d) for d in planned_load)])
+        window_start = today - timedelta(days=days)
+        fitness = fatigue = 0.0
+        series = []
+        for day in pd.date_range(daily[0]["date"], end, freq="D").date:
+            key = day.isoformat()
+            # Today stays actual once an activity is logged; until then the plan stands in
+            projected = day > today or (day == today and key not in loads)
+            load = planned_load.get(key, 0.0) if projected else loads.get(key, 0.0)
+            fitness += (load - fitness) / self.FITNESS_DAYS
+            fatigue += (load - fatigue) / self.FATIGUE_DAYS
+            if day >= window_start:
+                form = fitness - fatigue
+                series.append({
+                    "date": key,
+                    "load": round(load, 1),
+                    "fitness": round(fitness, 1),
+                    "fatigue": round(fatigue, 1),
+                    "form": round(form, 1),
+                    "form_pct": round(100 * form / fitness, 1) if fitness > 0 else None,
+                    "projected": projected,
+                })
+        return {"series": series, "fitness_days": self.FITNESS_DAYS, "fatigue_days": self.FATIGUE_DAYS}
+
+    def _planned_load_estimator(self, daily: list[dict], today: date):
+        """Load of a planned session, from your own sessions of the last
+        PLAN_HISTORY_DAYS: its minutes (planned, or planned km at your usual
+        pace) times your load per minute for that sport, or your typical
+        session of that sport when the plan gives neither. Sports with too
+        little history fall back to all sports."""
+        since = (today - timedelta(days=self.PLAN_HISTORY_DAYS)).isoformat()
+        samples: dict[str, list[dict]] = {}
+        everything: list[dict] = []
+        for d in daily:
+            if d["date"] >= since:
+                for a in d["activities"]:
+                    samples.setdefault(a["sport_type"], []).append(a)
+                    everything.append(a)
+
+        def rates(acts: list[dict]) -> tuple[float | None, float | None, float]:
+            per_min = [a["trimp"] / a["minutes"] for a in acts if a["minutes"] > 0]
+            min_per_km = [a["minutes"] / a["km"] for a in acts if a["km"] > 0.5]
+            return (median(per_min) if per_min else None, median(min_per_km) if min_per_km else None,
+                    median([a["trimp"] for a in acts]) if acts else 0.0)
+
+        overall = rates(everything)
+        by_sport = {sport: rates(acts) for sport, acts in samples.items() if len(acts) >= 3}
+
+        def cost(session: dict) -> float:
+            sport = session.get("sport_type") or ""
+            if sport.lower() == "rest":
+                return 0.0
+            per_min, min_per_km, typical = by_sport.get(sport, overall)
+            minutes = session.get("planned_duration_mins")
+            if not minutes and session.get("planned_distance_km") and min_per_km:
+                minutes = session["planned_distance_km"] * min_per_km
+            return float(minutes * per_min) if minutes and per_min else float(typical)
+        return cost
 
 class YearInSportFeatures(StrEnum):
     TOTAL_ACTIVITIES = "total_activities"
