@@ -21,6 +21,7 @@ from backend.services.zones import get_setting, set_setting
 
 FEED_TOKEN_KEY = "calendar_feed_token"
 LAST_FETCH_KEY = "calendar_feed_last_fetched_at"
+LAST_FETCHER_KEY = "calendar_feed_last_fetched_by"
 PRODID = "-//z2//Calendar Feed//EN"
 
 
@@ -51,14 +52,37 @@ async def rotate_token(db: aiosqlite.Connection) -> str:
     return token
 
 
-async def record_fetch(db: aiosqlite.Connection) -> None:
-    """Stamp the last successful feed fetch so the UI can show whether a
-    subscriber (usually Google) is actively polling."""
+# User-Agent marker -> the subscriber it identifies, checked in order
+_SUBSCRIBERS = (
+    ("Google-Calendar-Importer", "Google Calendar"),
+    ("Google", "Google"),
+    ("dataaccessd", "Apple Calendar"),
+    ("CalendarAgent", "Apple Calendar"),
+    ("Microsoft", "Outlook"),
+)
+
+
+def subscriber_name(user_agent: str | None) -> str:
+    """Who fetched the feed: a calendar app by name, anything else by its User-Agent."""
+    ua = user_agent or ""
+    return next((name for marker, name in _SUBSCRIBERS if marker in ua), ua[:60] or "unknown client")
+
+
+async def record_fetch(db: aiosqlite.Connection, user_agent: str | None) -> None:
+    """Stamp the last successful feed fetch and who made it, so the UI can
+    show whether the subscriber (usually Google) is actively polling. Every
+    request reaches the app through the tunnel, so the User-Agent is the only
+    way to tell Google's poll from a browser or curl."""
     await set_setting(db, LAST_FETCH_KEY, datetime.now(timezone.utc).isoformat())
+    await set_setting(db, LAST_FETCHER_KEY, subscriber_name(user_agent))
 
 
 async def get_last_fetched_at(db: aiosqlite.Connection) -> str | None:
     return await get_setting(db, LAST_FETCH_KEY)
+
+
+async def get_last_fetched_by(db: aiosqlite.Connection) -> str | None:
+    return await get_setting(db, LAST_FETCHER_KEY)
 
 
 def _escape_text(value: str) -> str:

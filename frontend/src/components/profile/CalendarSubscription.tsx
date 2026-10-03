@@ -38,7 +38,7 @@ export default function CalendarSubscription({ feedUrl }: { feedUrl: CalendarFee
         >
           <span className="flex items-center gap-2">
             <span className="text-sm">Subscribe in Google Calendar</span>
-            <FeedStatusPill lastFetchedAt={feedUrl?.last_fetched_at ?? null} />
+            <FeedStatusPill lastFetchedAt={feedUrl?.last_fetched_at ?? null} fetchedBy={feedUrl?.last_fetched_by ?? null} />
           </span>
           <span className="text-xs text-gray-500 tabular-nums">{showSubscribe ? '−' : '+'}</span>
         </button>
@@ -79,7 +79,7 @@ export default function CalendarSubscription({ feedUrl }: { feedUrl: CalendarFee
 // ────────────────────────────────────────────────────────
 // FeedStatusPill — shows whether the ICS feed has been polled recently
 // ────────────────────────────────────────────────────────
-function FeedStatusPill({ lastFetchedAt }: { lastFetchedAt: string | null }) {
+function FeedStatusPill({ lastFetchedAt, fetchedBy }: { lastFetchedAt: string | null; fetchedBy: string | null }) {
   const now = useNow(60_000)
   if (!lastFetchedAt) {
     return (
@@ -101,10 +101,11 @@ function FeedStatusPill({ lastFetchedAt }: { lastFetchedAt: string | null }) {
     ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600'
     : 'bg-amber-500/10 border-amber-500/30 text-amber-600'
   const dotTone = isActive ? 'bg-emerald-500' : 'bg-amber-500'
-  const label = isActive ? `Active · polled ${relative}` : `Stale · ${relative}`
+  const by = fetchedBy ? `${fetchedBy} ` : ''
+  const label = isActive ? `Active · ${by}polled ${relative}` : `Stale · ${by}${relative}`
 
   return (
-    <span className={clsx('inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded border', tone)} title={`Last fetch: ${last.toLocaleString()}`}>
+    <span className={clsx('inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded border', tone)} title={`Last fetch: ${last.toLocaleString()}${fetchedBy ? ` by ${fetchedBy}` : ''}`}>
       <span className={clsx('w-1.5 h-1.5 rounded-full', dotTone)} /> {label}
     </span>
   )
