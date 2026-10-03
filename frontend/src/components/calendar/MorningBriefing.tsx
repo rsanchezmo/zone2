@@ -12,11 +12,11 @@ import { formZone, formatFormPct } from '../analytics/form'
 import { sessionGoalChips } from './calendar'
 import GoalChips from './GoalChips'
 
-const SUGGESTION_COLOR: Record<NonNullable<Briefing['suggestion']>['tone'], string> = {
-  caution: '#f59e0b',
-  go: '#22c55e',
-  rest: '#38bdf8',
-  info: '#9ca3af',
+const SUGGESTION: Record<NonNullable<Briefing['suggestion']>['tone'], { color: string; label: string }> = {
+  caution: { color: '#f59e0b', label: 'Heads-up' },
+  go: { color: '#22c55e', label: 'Green light' },
+  rest: { color: '#38bdf8', label: 'Recovery' },
+  info: { color: '#9ca3af', label: 'Note' },
 }
 
 // Shoes this close to their expected life, and still in use, get a heads-up
@@ -117,9 +117,12 @@ export default function MorningBriefing() {
             <div className="text-sm text-gray-500">Nothing planned.</div>
           )}
           {suggestion && (
-            <p className="text-sm border-l-2 pl-3 py-0.5" style={{ borderColor: SUGGESTION_COLOR[suggestion.tone] }}>
-              {suggestion.text}
-            </p>
+            <div className="border-l-2 pl-3 space-y-0.5" style={{ borderColor: SUGGESTION[suggestion.tone].color }}>
+              <div className="eyebrow !text-[9px]" style={{ color: SUGGESTION[suggestion.tone].color }}>
+                {SUGGESTION[suggestion.tone].label}
+              </div>
+              <p className="text-[13px] leading-relaxed text-gray-300">{suggestion.text}</p>
+            </div>
           )}
         </div>
 
