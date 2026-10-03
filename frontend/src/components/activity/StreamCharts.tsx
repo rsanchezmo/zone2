@@ -66,6 +66,7 @@ export default function StreamCharts({ activity, activityScore, streamSeries }: 
   const hasHR = streamSeries.heartrate.length > 0
   const hasElevation = streamSeries.elevation.length > 0
   const hasCadence = streamSeries.cadence.length > 0
+  const hasPower = streamSeries.power.length > 0
   const isRunning = sportCategory === 'running'
   const hasGap = isRunning && streamSeries.gap.length > 0
   const isSwimStream = sportCategory === 'swimming'
@@ -131,6 +132,21 @@ export default function StreamCharts({ activity, activityScore, streamSeries }: 
           color="#34d399"
           gradientId="cadGrad"
           unit="spm"
+          zones={segmentZones.length > 0 ? segmentZones : undefined}
+          markers={stopMarkers}
+          markersLegend={stopsLegend}
+          xUnit={streamXUnit}
+          xFormatter={streamXFormatter}
+        />
+      )}
+
+      {hasPower && (
+        <StreamChart
+          title="Power"
+          data={streamSeries.power}
+          color="#a855f7"
+          gradientId="powerGrad"
+          unit="W"
           zones={segmentZones.length > 0 ? segmentZones : undefined}
           markers={stopMarkers}
           markersLegend={stopsLegend}
