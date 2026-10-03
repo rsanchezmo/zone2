@@ -24,6 +24,7 @@ import { SESSION_GOALS, SESSION_GOAL_KEYS, type SessionGoalKey } from '../../con
 import RowActions from '../shared/RowActions'
 import { rowActionClass } from '../shared/rowActionClass'
 import Modal from '../shared/Modal'
+import WatchStatus from './WatchStatus'
 
 const RACE_ACCENT = '#f59e0b'
 
@@ -365,6 +366,7 @@ export default function SessionModal({
                         <SegmentSummary segments={s.segments as Segment[]} />
                       </div>
                     )}
+                    <WatchStatus session={s} label className="mt-1.5 flex max-w-full" />
                   </div>
                   {copyingSessionId === (s.id as number) && (() => {
                     const mStart = startOfWeek(startOfMonth(copyMonth), { weekStartsOn: 1 })

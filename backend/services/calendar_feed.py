@@ -18,6 +18,7 @@ import aiosqlite
 
 from backend.config import settings
 from backend.services.zones import get_setting, set_setting
+from zone2.utils import get_sport_category, is_speed_sport
 
 FEED_TOKEN_KEY = "calendar_feed_token"
 LAST_FETCH_KEY = "calendar_feed_last_fetched_at"
@@ -153,8 +154,18 @@ _SEGMENT_TYPE_LABELS = {
 }
 
 
-def _format_distance_km(km: float) -> str:
+def format_distance_km(km: float) -> str:
     return f"{km:g} km" if km >= 1 else f"{int(round(km * 1000))} m"
+
+
+def format_target_pace(sport_type: str | None, lo: float | None, hi: float | None = None) -> str:
+    """A session's target pace or range as stored: km/h for speed sports,
+    else minutes per km (per 100 m swimming), shown as m:ss."""
+    values = sorted({v for v in (lo, hi) if v})
+    if is_speed_sport(sport_type):
+        return "–".join(f"{v:g}" for v in values) + " km/h"
+    per = "/100m" if get_sport_category(sport_type) == "swimming" else "/km"
+    return "–".join(f"{m}:{sec:02d}" for m, sec in (divmod(round(v * 60), 60) for v in values)) + f" {per}"
 
 
 def _parse_segments(raw) -> list[dict] | None:
@@ -171,7 +182,7 @@ def _parse_segments(raw) -> list[dict] | None:
     return None
 
 
-def _format_segment(seg: dict) -> str:
+def _format_segment(seg: dict, sport_type: str | None) -> str:
     type_key = seg.get("type") or ""
     label = _SEGMENT_TYPE_LABELS.get(type_key, type_key.capitalize() or "Segment")
 
@@ -179,17 +190,13 @@ def _format_segment(seg: dict) -> str:
     dist = seg.get("distance_km")
     dur = seg.get("duration_mins")
     if dist:
-        qty = _format_distance_km(float(dist))
+        qty = format_distance_km(float(dist))
     elif dur:
         qty = f"{float(dur):g} min"
 
     targets: list[str] = []
-    pmin = seg.get("target_pace_min")
-    pmax = seg.get("target_pace_max")
-    if pmin and pmax:
-        targets.append(f"pace {pmin:.2f}–{pmax:.2f}")
-    elif pmin:
-        targets.append(f"pace {pmin:.2f}")
+    if seg.get("target_pace_min") or seg.get("target_pace_max"):
+        targets.append(format_target_pace(sport_type, seg.get("target_pace_min"), seg.get("target_pace_max")))
     if seg.get("target_hr_zone"):
         targets.append(f"Z{seg['target_hr_zone']}")
 
@@ -205,7 +212,7 @@ def _format_segment(seg: dict) -> str:
     if rec_dur:
         line += f" (recovery {float(rec_dur):g} min)"
     elif rec_dist:
-        line += f" (recovery {_format_distance_km(float(rec_dist))})"
+        line += f" (recovery {format_distance_km(float(rec_dist))})"
 
     if seg.get("label"):
         line += f" — {seg['label']}"
@@ -213,7 +220,7 @@ def _format_segment(seg: dict) -> str:
     return line
 
 
-def _session_description(session: dict) -> str:
+def session_description(session: dict) -> str:
     lines: list[str] = []
 
     title = session.get("title")
@@ -229,7 +236,7 @@ def _session_description(session: dict) -> str:
             lines.append("")
         lines.append("Plan:")
         for seg in segments:
-            lines.append(f"• {_format_segment(seg)}")
+            lines.append(f"• {_format_segment(seg, session.get('sport_type'))}")
 
     # Skip the top-level "Planned:" line when segments are present — the
     # planned distance is auto-derived from segments and would just repeat.
@@ -243,12 +250,11 @@ def _session_description(session: dict) -> str:
             lines.append("Planned: " + " · ".join(plan_bits))
 
     tgt: list[str] = []
+    sport = session.get("sport_type")
     if session.get("target_avg_pace"):
-        tgt.append(f"pace {session['target_avg_pace']:.2f}")
-    pmin = session.get("target_pace_min")
-    pmax = session.get("target_pace_max")
-    if pmin and pmax:
-        tgt.append(f"pace {pmin:.2f}–{pmax:.2f}")
+        tgt.append(f"avg {format_target_pace(sport, session['target_avg_pace'])}")
+    if session.get("target_pace_min") or session.get("target_pace_max"):
+        tgt.append(format_target_pace(sport, session.get("target_pace_min"), session.get("target_pace_max")))
     if session.get("target_hr_zone"):
         tgt.append(f"Z{session['target_hr_zone']}")
     if tgt:
@@ -320,7 +326,7 @@ def build_ics(sessions: Iterable[dict], races: Iterable[dict]) -> str:
             dtstamp=dtstamp,
             date_str=s["date"],
             summary=_session_summary(s),
-            description=_session_description(s) or None,
+            description=session_description(s) or None,
         ))
     for r in races:
         if not r.get("date"):

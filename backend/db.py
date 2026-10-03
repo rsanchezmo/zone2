@@ -1,4 +1,6 @@
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -126,6 +128,11 @@ async def init_db():
             ("target_zone_pct", "REAL"),
             ("segments", "TEXT"),
             ("workout_template_id", "INTEGER"),
+            # The session's workout on Garmin Connect (backend/services/garmin_workouts.py)
+            ("garmin_workout_id", "INTEGER"),
+            ("garmin_sync_hash", "TEXT"),
+            ("garmin_sync_state", "TEXT"),
+            ("garmin_sync_error", "TEXT"),
         ]:
             if col not in ts_columns:
                 await db.execute(f"ALTER TABLE training_sessions ADD COLUMN {col} {col_type}")
@@ -150,12 +157,19 @@ async def init_db():
             await db.commit()
 
 
-async def get_db():
+@asynccontextmanager
+async def connect_db() -> AsyncIterator[aiosqlite.Connection]:
+    """A connection of its own, for work that outlives a request (background tasks)."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         # busy_timeout is per-connection — wait out a backfill's brief write
         # locks instead of erroring (WAL is already on from init_db).
         await db.execute("PRAGMA busy_timeout=5000")
+        yield db
+
+
+async def get_db():
+    async with connect_db() as db:
         yield db
 
 

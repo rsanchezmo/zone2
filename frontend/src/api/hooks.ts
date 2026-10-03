@@ -1045,6 +1045,10 @@ export interface TrainingSession {
   workout_template_id: number | null;
   completed: boolean;
   created_at: string;
+  /** The run's workout on the Garmin watch; null state when it has none. */
+  garmin_workout_id: number | null;
+  garmin_sync_state: 'pending' | 'synced' | 'failed' | null;
+  garmin_sync_error: string | null;
 }
 
 export function useCalendarSessionsByRange(dateFrom?: string, dateTo?: string) {
@@ -1053,6 +1057,8 @@ export function useCalendarSessionsByRange(dateFrom?: string, dateTo?: string) {
     queryFn: () =>
       api.get('/calendar/sessions', { params: { date_from: dateFrom, date_to: dateTo } }).then(r => r.data),
     enabled: !!dateFrom && !!dateTo,
+    // Watch workouts are sent in the background after an edit: poll until they land
+    refetchInterval: q => (q.state.data?.some(s => s.garmin_sync_state === 'pending') ? 2000 : false),
   });
 }
 
@@ -1163,6 +1169,32 @@ export function useRotateCalendarFeedToken() {
       api.post('/calendar/feed-url/rotate').then(r => r.data as CalendarFeedUrl),
     onSuccess: (data) => {
       qc.setQueryData(['calendar-feed-url'], data);
+    },
+  });
+}
+
+export interface WatchWorkoutsSetting {
+  /** Garmin Connect is configured. */
+  available: boolean;
+  enabled: boolean;
+}
+
+export function useWatchWorkouts() {
+  return useQuery<WatchWorkoutsSetting>({
+    queryKey: ['watch-workouts'],
+    queryFn: () => api.get('/calendar/watch-workouts').then(r => r.data),
+    staleTime: 1000 * 60 * 60,
+  });
+}
+
+export function useSetWatchWorkouts() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (enabled: boolean) =>
+      api.put<WatchWorkoutsSetting>('/calendar/watch-workouts', { enabled }).then(r => r.data),
+    onSuccess: data => {
+      qc.setQueryData(['watch-workouts'], data);
+      qc.invalidateQueries({ queryKey: ['calendar-sessions-range'] });
     },
   });
 }

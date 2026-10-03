@@ -12,6 +12,7 @@ import {
 } from './calendar'
 import GoalChips from './GoalChips'
 import WeekTotals from './WeekTotals'
+import WatchStatus from './WatchStatus'
 
 interface WeekViewProps extends CalendarGridProps {
   days: Date[]
@@ -159,6 +160,7 @@ export default function WeekView({
                       {!!s.description && (
                         <span className="text-xs text-gray-400 truncate">{s.description}</span>
                       )}
+                      <WatchStatus session={s} />
                       {score?.overall_score != null && (
                         <span
                           className="ml-auto shrink-0 text-[11px] font-mono tabular-nums font-bold px-1.5 rounded"
