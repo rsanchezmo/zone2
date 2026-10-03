@@ -11,7 +11,7 @@ from backend.db import delete_row, get_db, insert_row, row_dict, update_row
 from backend.dependencies import get_z2
 from backend.scoring import match_activity, compute_execution_score, has_targets
 from backend.routers.activities import activities_on_dates
-from backend.services.briefing import recovery_today, suggest
+from backend.services.briefing import RACE_SOON_DAYS, recovery_today, suggest
 from backend.services.resting_hr import resolve_resting_hr
 from backend.services.zones import resolve_hr_zones
 from zone2.core import Zone2
@@ -78,13 +78,18 @@ async def briefing(z2: Zone2 = Depends(get_z2), db: aiosqlite.Connection = Depen
     # Today's row stands in for the plan until something is logged; form is yesterday's until then
     now = next((d for d in reversed(fitness["series"]) if not d["projected"]), None)
     form = {k: now[k] for k in ("date", "fitness", "fatigue", "form_pct")} if now else None
+    cur = await db.execute(
+        "SELECT date, name FROM race_events WHERE date BETWEEN ? AND ? ORDER BY date",
+        (today.isoformat(), (today + timedelta(days=RACE_SOON_DAYS)).isoformat()),
+    )
+    races = [{"date": r["date"], "name": r["name"]} for r in await cur.fetchall()]
     return {
         "date": today.isoformat(),
         "sessions": sessions,
         "done": done,
         "recovery": recovery,
         "form": form,
-        "suggestion": suggest(sessions, bool(done), recovery, form["form_pct"] if form else None),
+        "suggestion": suggest(sessions, bool(done), recovery, form["form_pct"] if form else None, races, today),
     }
 
 
