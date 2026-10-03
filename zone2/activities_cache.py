@@ -14,6 +14,13 @@ from zone2.streams_store import (
 
 logger = logging.getLogger(__name__)
 
+# Stream summary: whether an activity's stored streams include its power
+_HAS_POWER = "has_watts:v1"
+
+
+def _has_power_stream(streams: dict) -> bool:
+    return "watts" in streams
+
 
 def _has_full_photo_list(raw) -> bool:
     """True when the cached photos column holds a real photo list.
@@ -429,6 +436,16 @@ class StravaActivitiesCache:
         self.save_activities([activity])
         return True
 
+    def _streams_lacking_power(self, df: pd.DataFrame) -> set[int]:
+        """Activities with device-recorded power whose stored streams lack it:
+        fetched before the watts stream was requested, so a re-fetch adds it.
+        Strava's estimated power (device_watts false) has no stream."""
+        if 'device_watts' not in df.columns:
+            return set()
+        ids = df.loc[df['device_watts'].eq(1), 'id'].astype('int64').tolist()
+        has_power = self.streams.summaries(_HAS_POWER, ids, _has_power_stream)
+        return {aid for aid, has in has_power.items() if not has}
+
     def get_cache_completeness(self) -> dict:
         """Return completeness stats for streams and photos across all cached activities."""
         df = self._load_to_memory()
@@ -448,7 +465,8 @@ class StravaActivitiesCache:
         # Streams: only device-recorded activities (upload_id present) can have streams.
         # Manual entries have no upload_id and will never return stream data.
         streams_ids = self.streams.all_activity_ids()
-        has_streams = df['id'].astype('int64').isin(streams_ids)
+        has_streams = (df['id'].astype('int64').isin(streams_ids)
+                       & ~df['id'].astype('int64').isin(self._streams_lacking_power(df)))
         expects_streams = df['upload_id'].notna() if 'upload_id' in df.columns else pd.Series([True] * total, index=df.index)
         streams_expected = int(expects_streams.sum())
         streams_complete = int((expects_streams & has_streams).sum())
@@ -526,6 +544,7 @@ class StravaActivitiesCache:
         # Pre-filter: only iterate activities that actually need work (recent first)
         # Skip manual activities (no upload_id) — they have no device data and will never have streams.
         cached_stream_ids = self.streams.all_activity_ids()
+        lacking_power = self._streams_lacking_power(df)
         needs_work = []
         for idx, activity in df.sort_values('start_date', ascending=False).iterrows():
             is_manual = pd.isna(activity.get('upload_id'))
@@ -534,7 +553,7 @@ class StravaActivitiesCache:
             has_detail = activity.get('detail_fetched') == True
             photo_count = int(activity.get('total_photo_count', 0) or 0)
             needs_photos = not has_photos and photo_count > 0
-            needs_streams = not has_streams and not is_manual
+            needs_streams = (not has_streams and not is_manual) or int(activity['id']) in lacking_power
             needs_detail = not has_detail
 
             if needs_streams or needs_photos or needs_detail:
@@ -558,6 +577,10 @@ class StravaActivitiesCache:
                     logger.info("[%d/%d] Fetching streams for activity %s...", i + 1, len(needs_work), activity_id)
                     try:
                         streams = strava_endpoint.get_activity_streams(activity_id)
+                        # Device power that comes back without a stream keeps an
+                        # empty one, so the activity isn't re-fetched for it again
+                        if streams and activity.get('device_watts') == 1 and 'watts' not in streams:
+                            streams['watts'] = []
                         # 200 OK with empty body = legitimately no streams (manual /
                         # indoor activity). Cache as empty dict to skip future retries.
                         activity['streams'] = streams or {}

@@ -182,6 +182,7 @@ export interface StreamSeries {
   gap: SeriesPoint[]
   heartrate: SeriesPoint[]
   cadence: SeriesPoint[]
+  power: SeriesPoint[]
 }
 
 export interface StreamData {
@@ -197,7 +198,7 @@ export interface StreamData {
 export function buildStreamData(activity: ActivityDetail | undefined): StreamData {
   const pos: [number, number][] = []
   const vels: number[] = []
-  const series: StreamSeries = { elevation: [], pace: [], gap: [], heartrate: [], cadence: [] }
+  const series: StreamSeries = { elevation: [], pace: [], gap: [], heartrate: [], cadence: [], power: [] }
   let gSpeeds: number[] = []
   let avgGap: number | null = null
 
@@ -257,6 +258,10 @@ export function buildStreamData(activity: ActivityDetail | undefined): StreamDat
       }
 
       // Cadence
+      if (pt.watts != null && pt.watts > 0) {
+        series.power.push({ distance: dist, value: pt.watts })
+      }
+
       if (pt.cadence != null && pt.cadence > 0) {
         series.cadence.push({ distance: dist, value: pt.cadence })
       }
