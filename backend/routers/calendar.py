@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import logging
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -10,6 +10,9 @@ from backend._serialize import sanitize as _sanitize
 from backend.db import delete_row, get_db, insert_row, row_dict, update_row
 from backend.dependencies import get_z2
 from backend.scoring import match_activity, compute_execution_score, has_targets
+from backend.routers.activities import activities_on_dates
+from backend.services.briefing import recovery_today, suggest
+from backend.services.resting_hr import resolve_resting_hr
 from backend.services.zones import resolve_hr_zones
 from zone2.core import Zone2
 
@@ -57,6 +60,32 @@ class SessionUpdate(BaseModel):
 
 def _row_to_dict(row: aiosqlite.Row) -> dict:
     return row_dict(row, json_cols=_JSON_COLS, bool_cols=("completed",))
+
+
+@router.get("/briefing")
+async def briefing(z2: Zone2 = Depends(get_z2), db: aiosqlite.Connection = Depends(get_db)):
+    """Today at a glance for the top of the calendar: the planned sessions,
+    what's already done, last night's recovery (Garmin), current form and a
+    suggestion weighing them."""
+    today = date.today()
+    cur = await db.execute("SELECT * FROM training_sessions WHERE date = ? ORDER BY id", (today.isoformat(),))
+    sessions = [_row_to_dict(r) for r in await cur.fetchall()]
+    done = (await run_in_threadpool(activities_on_dates, today.isoformat(), z2))["items"]
+    recovery = await run_in_threadpool(recovery_today, z2.garmin_cache, today)
+    zones = await resolve_hr_zones(z2, db)
+    rhr = await resolve_resting_hr(z2, db)
+    fitness = await run_in_threadpool(z2.strava_analytics.get_fitness_form, rhr["value"], zones["zones"], [], 1)
+    # Today's row stands in for the plan until something is logged; form is yesterday's until then
+    now = next((d for d in reversed(fitness["series"]) if not d["projected"]), None)
+    form = {k: now[k] for k in ("date", "fitness", "fatigue", "form_pct")} if now else None
+    return {
+        "date": today.isoformat(),
+        "sessions": sessions,
+        "done": done,
+        "recovery": recovery,
+        "form": form,
+        "suggestion": suggest(sessions, bool(done), recovery, form["form_pct"] if form else None),
+    }
 
 
 @router.get("/sessions")

@@ -10,6 +10,7 @@ import { useIsMobile } from '../../hooks/useIsMobile'
 import { parseLocalDate, todayLocalStr } from '../../utils/dates'
 import StatCard from '../shared/StatCard'
 import ChartPanel, { LegendSwatch } from '../shared/ChartPanel'
+import { FORM_ZONES, formZone, formatFormPct } from './form'
 
 const RANGES = [
   { label: '3M', days: 90 },
@@ -22,20 +23,7 @@ const FATIGUE = '#f472b6'
 const LOAD = '#9ca3af'
 const RACE = '#eab308'
 
-// Form as a share of fitness. The usual form zones apply to it whatever the
-// load scale, which matters because z2's load is TRIMP, not TSS.
-const FORM_ZONES = [
-  { from: 20, to: 60, label: 'Transition', hint: 'fitness is fading', color: '#f59e0b' },
-  { from: 5, to: 20, label: 'Fresh', hint: 'ready to race', color: '#38bdf8' },
-  { from: -10, to: 5, label: 'Neutral', hint: 'holding steady', color: '#9ca3af' },
-  { from: -30, to: -10, label: 'Optimal', hint: 'building fitness', color: '#22c55e' },
-  { from: -80, to: -30, label: 'Overreaching', hint: 'time to back off', color: '#ef4444' },
-] as const
 const FORM_DOMAIN: [number, number] = [-80, 60]
-
-function formZone(pct: number) {
-  return FORM_ZONES.find(z => pct >= z.from) ?? FORM_ZONES[FORM_ZONES.length - 1]
-}
 
 function shortDate(iso: string): string {
   return parseLocalDate(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
@@ -145,13 +133,13 @@ export default function FitnessForm() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard label="Fitness" value={Math.round(now.fitness)} sublabel={`${data.fitness_days ?? 42}-day load`} accent={FITNESS} />
         <StatCard label="Fatigue" value={Math.round(now.fatigue)} sublabel={`${data.fatigue_days ?? 7}-day load`} accent={FATIGUE} />
-        <StatCard label="Form" value={`${nowPct > 0 ? '+' : ''}${Math.round(nowPct)}%`}
+        <StatCard label="Form" value={formatFormPct(nowPct)}
           sublabel={`${nowZone.label} · ${nowZone.hint}`} accent={nowZone.color} />
         {raceAhead && raceDay?.form_pct != null && raceZone ? (
-          <StatCard label={`Race day · ${shortDate(raceAhead.date)}`} value={`${raceDay.form_pct > 0 ? '+' : ''}${Math.round(raceDay.form_pct)}%`}
+          <StatCard label={`Race day · ${shortDate(raceAhead.date)}`} value={formatFormPct(raceDay.form_pct)}
             sublabel={`${raceAhead.name} · ${raceZone.label}`} accent={raceZone.color} />
         ) : planEnd?.form_pct != null && endZone ? (
-          <StatCard label={`End of plan · ${shortDate(planEnd.date)}`} value={`${planEnd.form_pct > 0 ? '+' : ''}${Math.round(planEnd.form_pct)}%`}
+          <StatCard label={`End of plan · ${shortDate(planEnd.date)}`} value={formatFormPct(planEnd.form_pct)}
             sublabel={`${endZone.label} if you train as planned`} accent={endZone.color} />
         ) : (
           <StatCard label="Ahead" value="–" sublabel="Plan sessions to see where form is heading" />
@@ -216,7 +204,7 @@ export default function FitnessForm() {
               formatter={(v: unknown, name) => {
                 if (v == null) return ['–', name]
                 const pct = Number(v)
-                return [`${pct > 0 ? '+' : ''}${Math.round(pct)}% · ${formZone(pct).label}`, name]
+                return [`${formatFormPct(pct)} · ${formZone(pct).label}`, name]
               }} />
             <ReferenceLine y={0} stroke={colors.gridStroke} />
             {/* Neutral line: the zone bands behind it carry the meaning */}

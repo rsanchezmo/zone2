@@ -216,16 +216,18 @@ class GarminClient:
 
     def fetch_training_readiness(self, d):
         """Garmin returns a list of intraday snapshots; we keep the latest by
-        timestamp (which represents the most up-to-date assessment for the day).
-        Stored as a single dict in the cache for simplicity."""
+        timestamp (the most up-to-date assessment), as a single dict, with the
+        wake-up snapshot under `wakeup`: the one to plan the day's training on,
+        before the day's activity drains the later ones."""
         raw = self._call("get_training_readiness", self._iso(d))
         if not raw:
             return None
         if isinstance(raw, list):
-            if not raw:
-                return None
-            # latest snapshot wins — sort by timestamp string (ISO-ordered)
-            raw = sorted(raw, key=lambda x: x.get("timestamp", ""))[-1]
+            snapshots = sorted(raw, key=lambda x: x.get("timestamp", ""))
+            raw = dict(snapshots[-1])
+            wakeup = next((s for s in snapshots if s.get("inputContext") == "AFTER_WAKEUP_RESET"), None)
+            if wakeup is not None:
+                raw["wakeup"] = wakeup
         return raw
 
     # ------------------------------------------------------------------ range fetches

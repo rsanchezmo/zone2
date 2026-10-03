@@ -1056,10 +1056,38 @@ export function useCalendarSessionsByRange(dateFrom?: string, dateTo?: string) {
   });
 }
 
+export interface BriefingRecovery {
+  /** Garmin's wake-up readiness, or its latest snapshot until that exists. */
+  readiness: { score: number; level: string | null; feedback: string | null; at_wakeup: boolean; time: string | null } | null;
+  recovery_hours: number | null;
+  sleep: { score: number; qualifier: string | null; seconds: number | null } | null;
+  hrv: { last_night: number; weekly: number | null; status: string | null } | null;
+  body_battery: { at_wake: number; now: number | null } | null;
+  resting_hr: { today: number; avg_7d: number | null } | null;
+}
+
+export interface Briefing {
+  date: string;
+  sessions: TrainingSession[];
+  done: Activity[];
+  /** Null without Garmin, or before today's Garmin data has synced. */
+  recovery: BriefingRecovery | null;
+  form: { date: string; fitness: number; fatigue: number; form_pct: number | null } | null;
+  suggestion: { tone: 'caution' | 'go' | 'rest' | 'info'; text: string } | null;
+}
+
+export function useBriefing() {
+  return useQuery<Briefing>({
+    queryKey: ['briefing'],
+    queryFn: () => api.get('/calendar/briefing').then(r => r.data),
+    staleTime: 1000 * 60 * 5,
+  });
+}
+
 /** Everything a planned session feeds: the calendar, scores, plan completion
  *  and the fitness projection. */
 function invalidateSessionQueries(qc: QueryClient) {
-  for (const key of ['calendar-sessions-range', 'session-scores', 'activity-score', 'plan-accomplishment', 'fitness-form']) {
+  for (const key of ['calendar-sessions-range', 'session-scores', 'activity-score', 'plan-accomplishment', 'fitness-form', 'briefing']) {
     qc.invalidateQueries({ queryKey: [key] });
   }
 }
