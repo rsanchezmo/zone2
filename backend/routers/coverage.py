@@ -534,9 +534,12 @@ def coverage_area(slug: str, payload: AreaRequest):
 
 
 def _run_coverage_sync(slug: str, z2: Zone2, sport_types: list[str], keep_loaded: bool = True):
-    """Match the city's new activities. Without keep_loaded (background syncs)
-    the city is released afterwards: the page's layers are cached by then."""
+    """Match the city's new activities and bring the page's layers up to date.
+    Without keep_loaded (background syncs) a city this loaded is released
+    afterwards: the page's layers are cached by then."""
     err = None
+    with _matchers_lock:
+        was_loaded = slug in _matchers
     try:
         cache = z2.strava_activities_cache
         activities = cache.activities_raw[cache.activities_raw["sport_type"].isin(sport_types)]
@@ -548,15 +551,22 @@ def _run_coverage_sync(slug: str, z2: Zone2, sport_types: list[str], keep_loaded
         gdf = get_activities_as_gdf_from_streams(todo, cache.streams, polyline_fallback=False)
         if gdf.empty:
             logger.info("Coverage sync for %s: nothing new to match", slug)
-            return
-        stats = _get_matcher(slug).match_incremental(gdf)
-        logger.info("Coverage sync for %s done: %s%%", slug, stats.get("coverage_pct"))
-        # On the network the matching just built, released only afterwards
+        else:
+            stats = _get_matcher(slug).match_incremental(gdf)
+            logger.info("Coverage sync for %s done: %s%%", slug, stats.get("coverage_pct"))
+        # Also with nothing new: after a deploy that changed a layer's format,
+        # this rebuilds it before anyone opens the city. On the network the
+        # matching just built, released only afterwards.
         _warm_map_layers(slug, z2)
-        _get_matcher(slug).release_matching()
-        if not keep_loaded:
+        # A city someone is viewing keeps its network unless this sync matched in it
+        if not gdf.empty or not was_loaded:
             with _matchers_lock:
-                _matchers.pop(slug, None)
+                matcher = _matchers.get(slug)
+            if matcher is not None:
+                matcher.release_matching()
+                if not keep_loaded:
+                    with _matchers_lock:
+                        _matchers.pop(slug, None)
     except Exception as e:
         logger.exception("Coverage sync for %s failed", slug)
         err = f"{type(e).__name__}: {e}"
@@ -567,9 +577,11 @@ def _run_coverage_sync(slug: str, z2: Zone2, sport_types: list[str], keep_loaded
 
 def _warm_map_layers(slug: str, z2: Zone2) -> None:
     """Build the layers the coverage page opens with, so the first visit after
-    new runs doesn't wait for them."""
+    new runs doesn't wait for them. A current layer is only a cache read; the
+    city is loaded just to rebuild a stale one."""
     coverage_edges(slug, covered=True, bbox=None, streets_only=False, counts=True)
-    _get_matcher(slug).write_new_streets(_start_times(z2))
+    if StravaMapMatcher.new_streets_of(_osm_dir(), slug) is None:
+        _get_matcher(slug).write_new_streets(_start_times(z2))
     if not StravaMapMatcher.has_viewport_index(_osm_dir(), slug):
         _get_matcher(slug).write_viewport_index()
     # Districts only when already downloaded: fetching them is the page's call.
