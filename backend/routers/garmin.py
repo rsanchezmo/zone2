@@ -184,8 +184,6 @@ def events(
                 "start_local": e.get("startTimestampLocal"),
                 "end_local": e.get("endTimestampLocal"),
                 "duration_mins": e.get("duration"),
-                "moderate_mins": e.get("moderateIntensityMinutes"),
-                "vigorous_mins": e.get("vigorousIntensityMinutes"),
             })
     out.sort(key=lambda e: e["start_local"] or "", reverse=True)
     return {

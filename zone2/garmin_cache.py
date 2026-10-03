@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from zone2.garmin_client import GarminClient
-from zone2.garmin_extractors import SUMMARY_METRICS, extract, is_finalized
+from zone2.garmin_extractors import SUMMARY_METRICS, extract, is_finalized, summary_version
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +110,12 @@ class GarminDailyStatsCache:
             c.execute(
                 "CREATE INDEX IF NOT EXISTS idx_garmin_summary_metric_date "
                 "ON garmin_daily_summary(metric, date)"
+            )
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS garmin_summary_versions (
+                       metric TEXT PRIMARY KEY,
+                       version INTEGER NOT NULL
+                   )"""
             )
 
     def request_cancel(self) -> None:
@@ -198,20 +204,25 @@ class GarminDailyStatsCache:
             ).fetchall()
             return [{"date": r["date"], "summary": json.loads(r["summary"])} for r in rows]
 
-    def backfill_missing_summaries(self) -> int:
-        """One-time migration: derive slim summaries for cached payloads that
-        don't have one yet. Idempotent — a no-op once every payload has a
-        summary, so it's safe to call on every startup. Returns rows written."""
+    def refresh_summaries(self) -> int:
+        """Derive slim summaries for cached payloads that have none, and
+        re-derive all of a metric's summaries when its projection version
+        changed (see SUMMARY_VERSIONS). A no-op once everything is current, so
+        it runs on every startup. Returns rows written."""
         written = 0
         with _conn() as c:
+            stored = {r["metric"]: r["version"] for r in c.execute(
+                "SELECT metric, version FROM garmin_summary_versions")}
             for metric in SUMMARY_METRICS:
+                version = summary_version(metric)
+                stale = stored.get(metric, 1) != version
                 rows = c.execute(
                     """SELECT s.date AS date, s.payload AS payload
                        FROM garmin_daily_stats s
                        LEFT JOIN garmin_daily_summary m
                          ON m.date = s.date AND m.metric = s.metric
-                       WHERE s.metric = ? AND m.date IS NULL""",
-                    (metric,),
+                       WHERE s.metric = ? AND (? OR m.date IS NULL)""",
+                    (metric, stale),
                 ).fetchall()
                 slim = []
                 for r in rows:
@@ -227,8 +238,14 @@ class GarminDailyStatsCache:
                         slim,
                     )
                     written += len(slim)
+                if stale:
+                    c.execute(
+                        """INSERT INTO garmin_summary_versions (metric, version) VALUES (?, ?)
+                           ON CONFLICT(metric) DO UPDATE SET version = excluded.version""",
+                        (metric, version),
+                    )
         if written:
-            logger.info("Garmin: backfilled %d derived daily summaries", written)
+            logger.info("Garmin: derived %d daily summaries", written)
         return written
 
     def get_latest(self, metric: str) -> dict | None:

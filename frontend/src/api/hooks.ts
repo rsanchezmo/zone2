@@ -1615,8 +1615,6 @@ export interface GarminAutoEvent {
   start_local: string | null;
   end_local: string | null;
   duration_mins: number | null;
-  moderate_mins: number | null;
-  vigorous_mins: number | null;
 }
 
 export interface GarminEventsResponse {

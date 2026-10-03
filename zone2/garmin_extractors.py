@@ -7,9 +7,8 @@ of deserializing the full payloads (a year of `sleep` alone is ~95MB of JSON).
 Keeping them here, not in the router, lets the cache writer and the API share
 one definition.
 
-When a projection changes, bump nothing — just rebuild the summary table
-(GarminDailyStatsCache.backfill_missing_summaries re-derives missing rows; a
-full rebuild means clearing the table first).
+When a projection changes, bump its SUMMARY_VERSIONS entry: the next startup
+re-derives that metric's stored summaries (GarminDailyStatsCache.refresh_summaries).
 """
 
 from __future__ import annotations
@@ -105,11 +104,13 @@ def _extract_stress(p: dict) -> dict[str, Any]:
 
 
 def _extract_body_battery(p: dict) -> dict[str, Any]:
+    # Garmin reports no end-of-day level; the day's last reading is it
+    levels = [v[1] for v in p.get("bodyBatteryValuesArray") or []
+              if isinstance(v, list) and len(v) > 1 and v[1] is not None]
     return {
         "charged": p.get("charged"),
         "drained": p.get("drained"),
-        # endOfDay value lives in feedback event if present
-        "end_of_day": _safe_get(p, "endOfDayBodyBatteryDynamicFeedbackEvent", "endOfDayBodyBattery"),
+        "end_of_day": levels[-1] if levels else None,
     }
 
 
@@ -125,7 +126,8 @@ def _extract_intensity_minutes(p: dict) -> dict[str, Any]:
     return {
         "moderate": p.get("moderateMinutes"),
         "vigorous": p.get("vigorousMinutes"),
-        "weekly_goal": p.get("weeklyGoal"),
+        "weekly_total": p.get("weeklyTotal"),
+        "weekly_goal": p.get("weekGoal"),
     }
 
 
@@ -243,6 +245,17 @@ EXTRACTORS: dict[str, Any] = {
 
 # Iteration order used by the trends endpoint and the summary writer.
 SUMMARY_METRICS: tuple[str, ...] = tuple(EXTRACTORS)
+
+# A metric's projection version, 1 unless listed. Stored summaries of an older
+# version are re-derived from the raw payloads at the next startup.
+SUMMARY_VERSIONS: dict[str, int] = {
+    "body_battery": 2,        # end_of_day from the last reading
+    "intensity_minutes": 2,   # weekly goal read from weekGoal, weekly total added
+}
+
+
+def summary_version(metric: str) -> int:
+    return SUMMARY_VERSIONS.get(metric, 1)
 
 
 def extract(metric: str, payload: Any) -> dict[str, Any] | None:
