@@ -1087,7 +1087,14 @@ export function usePlanAccomplishment() {
   });
 }
 
-export type CalendarFeedUrl = { token: string; url: string; env_managed: boolean; last_fetched_at: string | null };
+export type CalendarFeedUrl = {
+  token: string;
+  url: string;
+  env_managed: boolean;
+  last_fetched_at: string | null;
+  /** Who last fetched it: "Google Calendar", "Apple Calendar", or the client's User-Agent. */
+  last_fetched_by: string | null;
+};
 
 export function useCalendarFeedUrl() {
   return useQuery({
