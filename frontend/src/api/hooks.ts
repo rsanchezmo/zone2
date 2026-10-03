@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData, type QueryClient } from '@tanstack/react-query';
 import api from './client';
 import type { Segment } from '../components/shared/segmentUtils';
 
@@ -617,6 +617,36 @@ export interface RacePredictionsHistoryResponse {
   points: RacePredictionHistoryPoint[];
 }
 
+export interface FitnessDay {
+  date: string;
+  load: number;
+  fitness: number;
+  fatigue: number;
+  form: number;
+  /** Form as a share of fitness: comparable across load scales. */
+  form_pct: number | null;
+  /** From planned sessions rather than logged activities. */
+  projected: boolean;
+}
+
+export interface FitnessFormResponse {
+  series: FitnessDay[];
+  fitness_days?: number;
+  fatigue_days?: number;
+  races: { date: string; name: string }[];
+  /** Garmin's own acute and chronic training load, on its own scale. */
+  garmin: { date: string; acute: number | null; chronic: number | null }[];
+}
+
+export function useFitnessForm(days: number) {
+  return useQuery<FitnessFormResponse>({
+    queryKey: ['fitness-form', days],
+    queryFn: () => api.get('/stats/fitness', { params: { days } }).then(r => r.data),
+    staleTime: 1000 * 60 * 5,
+    placeholderData: keepPreviousData,
+  });
+}
+
 export function useRacePredictionsHistory(sportCategory: string, weeks = 52) {
   return useQuery<RacePredictionsHistoryResponse>({
     queryKey: ['race-predictions-history', sportCategory, weeks],
@@ -1026,17 +1056,20 @@ export function useCalendarSessionsByRange(dateFrom?: string, dateTo?: string) {
   });
 }
 
+/** Everything a planned session feeds: the calendar, scores, plan completion
+ *  and the fitness projection. */
+function invalidateSessionQueries(qc: QueryClient) {
+  for (const key of ['calendar-sessions-range', 'session-scores', 'activity-score', 'plan-accomplishment', 'fitness-form']) {
+    qc.invalidateQueries({ queryKey: [key] });
+  }
+}
+
 export function useCreateSession() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: Record<string, unknown>) =>
       api.post<TrainingSession>('/calendar/sessions', data).then(r => r.data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['calendar-sessions-range'] });
-      qc.invalidateQueries({ queryKey: ['session-scores'] });
-      qc.invalidateQueries({ queryKey: ['activity-score'] });
-      qc.invalidateQueries({ queryKey: ['plan-accomplishment'] });
-    },
+    onSuccess: () => invalidateSessionQueries(qc),
   });
 }
 
@@ -1045,12 +1078,7 @@ export function useUpdateSession() {
   return useMutation({
     mutationFn: ({ id, ...data }: { id: number } & Record<string, unknown>) =>
       api.put<TrainingSession>(`/calendar/sessions/${id}`, data).then(r => r.data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['calendar-sessions-range'] });
-      qc.invalidateQueries({ queryKey: ['session-scores'] });
-      qc.invalidateQueries({ queryKey: ['activity-score'] });
-      qc.invalidateQueries({ queryKey: ['plan-accomplishment'] });
-    },
+    onSuccess: () => invalidateSessionQueries(qc),
   });
 }
 
@@ -1059,12 +1087,7 @@ export function useDeleteSession() {
   return useMutation({
     // 204 No Content
     mutationFn: (id: number) => api.delete<void>(`/calendar/sessions/${id}`).then(r => r.data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['calendar-sessions-range'] });
-      qc.invalidateQueries({ queryKey: ['session-scores'] });
-      qc.invalidateQueries({ queryKey: ['activity-score'] });
-      qc.invalidateQueries({ queryKey: ['plan-accomplishment'] });
-    },
+    onSuccess: () => invalidateSessionQueries(qc),
   });
 }
 

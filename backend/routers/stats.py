@@ -469,3 +469,41 @@ async def relative_effort_weekly(
         sports=sports,
     ))
 
+
+
+@router.get("/fitness")
+async def fitness_form(
+    days: int = Query(default=180, ge=30, le=1095),
+    z2: Zone2 = Depends(get_z2),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Fitness, fatigue and form over the last `days`, projected over the planned
+    sessions ahead, with the races in that span and Garmin's own acute and
+    chronic load alongside."""
+    resolved_zones = await resolve_hr_zones(z2, db)
+    resolved_rhr = await resolve_resting_hr(z2, db)
+    today = date.today().isoformat()
+    cur = await db.execute(
+        "SELECT date, sport_type, planned_distance_km, planned_duration_mins FROM training_sessions WHERE date >= ?",
+        (today,),
+    )
+    planned = [dict(r) for r in await cur.fetchall()]
+    result = await run_in_threadpool(
+        z2.strava_analytics.get_fitness_form,
+        resolved_rhr["value"], resolved_zones["zones"], planned, days,
+    )
+    series = result["series"]
+    if not series:
+        return {**result, "races": [], "garmin": []}
+    start, end = series[0]["date"], series[-1]["date"]
+    cur = await db.execute(
+        "SELECT date, name FROM race_events WHERE date BETWEEN ? AND ? ORDER BY date", (start, end),
+    )
+    races = [{"date": r["date"], "name": r["name"]} for r in await cur.fetchall()]
+    garmin_rows = await run_in_threadpool(z2.garmin_cache.get_summary_range, "training_status", start, today)
+    garmin = [
+        {"date": r["date"], "acute": r["summary"].get("daily_load_acute"), "chronic": r["summary"].get("daily_load_chronic")}
+        for r in garmin_rows
+        if r["summary"].get("daily_load_chronic") is not None
+    ]
+    return {**result, "races": races, "garmin": garmin}
