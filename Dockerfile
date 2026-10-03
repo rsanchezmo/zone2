@@ -42,4 +42,8 @@ COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 
 EXPOSE 8000
 
-CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8000"]
+# cloudflared reaches the app through Docker's gateway, so its X-Forwarded-*
+# headers are trusted from Docker's private range: URLs the app builds (the
+# calendar feed's) then carry the public https scheme. LAN clients on the
+# published port aren't trusted.
+CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "127.0.0.0/8,172.16.0.0/12"]
