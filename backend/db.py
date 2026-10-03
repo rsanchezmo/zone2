@@ -77,6 +77,18 @@ CREATE TABLE IF NOT EXISTS planned_routes (
 );
 CREATE INDEX IF NOT EXISTS idx_planned_routes_slug ON planned_routes(slug);
 
+-- The Garmin calendar entries z2 added for planned sessions (see
+-- backend/services/garmin_workouts.py). session_id is NULL once the past
+-- session an entry was for is deleted: Garmin keeps the entry as history.
+CREATE TABLE IF NOT EXISTS garmin_workout_schedules (
+    schedule_id INTEGER PRIMARY KEY,  -- Garmin's id
+    workout_id INTEGER NOT NULL,      -- Garmin's id of the saved workout's copy
+    date TEXT NOT NULL,
+    session_id INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_garmin_schedules_session ON garmin_workout_schedules(session_id);
+CREATE INDEX IF NOT EXISTS idx_garmin_schedules_workout ON garmin_workout_schedules(workout_id);
+
 CREATE TABLE IF NOT EXISTS user_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -108,6 +120,14 @@ CREATE INDEX IF NOT EXISTS idx_garmin_summary_metric_date ON garmin_daily_summar
 """
 
 
+async def _add_missing_columns(db: aiosqlite.Connection, table: str, columns: list[tuple[str, str]]) -> None:
+    existing = {row[1] for row in await (await db.execute(f"PRAGMA table_info({table})")).fetchall()}
+    for col, col_type in columns:
+        if col not in existing:
+            await db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+    await db.commit()
+
+
 async def init_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
@@ -117,10 +137,7 @@ async def init_db():
         await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("PRAGMA busy_timeout=5000")
         await db.executescript(_SCHEMA)
-        # Migration: add scoring target columns to training_sessions
-        cursor = await db.execute("PRAGMA table_info(training_sessions)")
-        ts_columns = {row[1] for row in await cursor.fetchall()}
-        for col, col_type in [
+        await _add_missing_columns(db, "training_sessions", [
             ("target_pace_min", "REAL"),
             ("target_pace_max", "REAL"),
             ("target_avg_pace", "REAL"),
@@ -128,15 +145,16 @@ async def init_db():
             ("target_zone_pct", "REAL"),
             ("segments", "TEXT"),
             ("workout_template_id", "INTEGER"),
-            # The session's workout on Garmin Connect (backend/services/garmin_workouts.py)
-            ("garmin_workout_id", "INTEGER"),
-            ("garmin_sync_hash", "TEXT"),
+            # Its entry on the Garmin calendar (backend/services/garmin_workouts.py)
             ("garmin_sync_state", "TEXT"),
             ("garmin_sync_error", "TEXT"),
-        ]:
-            if col not in ts_columns:
-                await db.execute(f"ALTER TABLE training_sessions ADD COLUMN {col} {col_type}")
-        await db.commit()
+        ])
+        await _add_missing_columns(db, "workout_templates", [
+            # Its copy in the Garmin library, and a fingerprint of the version there
+            ("garmin_workout_id", "INTEGER"),
+            ("garmin_sync_hash", "TEXT"),
+            ("garmin_sync_error", "TEXT"),
+        ])
 
         # Migration: add year column if goals table existed without it
         cursor = await db.execute("PRAGMA table_info(goals)")

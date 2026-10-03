@@ -1,7 +1,17 @@
-"""Planned runs on the watch: each running session from today on with segments
-or a pace or HR target becomes a Garmin Connect workout scheduled on its day,
-which the watch offers that morning. An edit replaces the workout and a delete
-removes it; sessions in the past are left as they are."""
+"""Structured runs on the watch.
+
+Library: every saved run workout (the Workouts page) has a copy in the Garmin
+Connect library under its name, so the watch can start it any day. Editing it
+updates the copy in place; deleting it deletes the copy, and with it every
+Garmin calendar entry of it (Garmin's rule).
+
+Calendar: a running session planned from a saved workout, from today on, gets
+an entry on the Garmin calendar on its day, which the watch offers that
+morning. Moving the session moves the entry and deleting it removes the entry,
+keeping the workout. Past entries stay as history.
+
+z2 only touches what it created: the copies of its saved workouts and the
+entries it added. Workouts and entries made in Garmin Connect are left alone."""
 from __future__ import annotations
 
 import asyncio
@@ -18,7 +28,7 @@ from backend.db import connect_db, row_dict
 from backend.services.calendar_feed import format_distance_km, format_target_pace, session_description
 from backend.services.zones import get_setting
 from zone2.core import Zone2
-from zone2.garmin_client import GarminClient
+from zone2.garmin_client import GarminClient, GarminNotFound
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +36,6 @@ SETTING_KEY = "garmin_send_workouts"
 RUNNING_SPORTS = frozenset({"Run", "TrailRun", "VirtualRun"})
 # Garmin's pace targets are ranges, so a single pace gets this much either side
 PACE_BAND_S = 5
-NAME_MAX = 60
 ERROR_MAX = 200
 
 # Garmin's step type ids for z2's segment types
@@ -36,12 +45,12 @@ _RUNNING = {"sportTypeId": 1, "sportTypeKey": "running"}
 
 
 class SyncState(StrEnum):
-    PENDING = "pending"  # a change for Garmin is queued (send, replace or remove)
-    SYNCED = "synced"    # on the Garmin calendar as planned
+    PENDING = "pending"  # a change for Garmin is queued
+    SYNCED = "synced"    # on Garmin as planned
     FAILED = "failed"    # the last change failed; retried after each Garmin sync
 
 
-# One Garmin change at a time, so a quick second edit can't send a session twice
+# One Garmin change at a time, so a quick second edit can't add a session twice
 _lock = asyncio.Lock()
 
 
@@ -103,9 +112,7 @@ def _number(steps: list[dict[str, Any]], order: int = 0) -> int:
 
 
 def workout_name(session: dict[str, Any]) -> str:
-    """The session's own description, else its main set: '5×1 km @ 4:00 /km', '10 km Z2'."""
-    if session.get("description"):
-        return session["description"][:NAME_MAX]
+    """Its main set: '5×1 km @ 4:00 /km', '10 km Z2'."""
     main = next((s for s in session.get("segments") or [] if s.get("type") == "work"), None)
     if main:
         reps = int(main.get("repetitions") or 1)
@@ -121,166 +128,294 @@ def workout_name(session: dict[str, Any]) -> str:
         name += f" @ {format_target_pace(session.get('sport_type'), pace)}"
     elif zone:
         name += f" Z{zone}"
-    return name.strip() or session.get("title") or "Run"
+    return name.strip() or session.get("sport_type") or "Run"
 
 
-def build_workout(session: dict[str, Any]) -> dict[str, Any] | None:
-    """The session as a Garmin running workout, or None when it isn't one to
-    send. Segments carry their own targets; the session's targets apply when
-    it has no segments, and without segments it needs a pace or HR target."""
-    if session.get("sport_type") not in RUNNING_SPORTS:
-        return None
-    segments = [s for s in session.get("segments") or [] if isinstance(s, dict)]
-    if segments:
-        steps = [_segment_step(s) for s in segments]
-    else:
-        pace_min, pace_max = session.get("target_pace_min"), session.get("target_pace_max")
-        if not (pace_min or pace_max):
-            pace_min = pace_max = session.get("target_avg_pace")
-        if not (pace_min or pace_max or session.get("target_hr_zone")):
-            return None
-        steps = [_step("work", session.get("planned_distance_km"), session.get("planned_duration_mins"),
-                       _target(pace_min, pace_max, session.get("target_hr_zone")))]
+def segment_steps(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Segments as Garmin workout steps, which is also what makes two workouts
+    the same (whatever the sport)."""
+    steps = [_segment_step(s) for s in segments if isinstance(s, dict)]
     _number(steps)
-    return {"workoutName": workout_name(session), "description": session_description(session) or None,
-            "sportType": _RUNNING,
-            "workoutSegments": [{"segmentOrder": 1, "sportType": _RUNNING, "workoutSteps": steps}]}
+    return steps
 
 
-# ── Keeping Garmin in step ───────────────────────────────────────────────
+def steps_hash(steps: list[dict[str, Any]]) -> str:
+    return hashlib.sha1(json.dumps(steps, sort_keys=True).encode()).hexdigest()
+
+
+def _error(e: Exception) -> str:
+    return str(e)[:ERROR_MAX]
+
+
+# ── Library: saved run workouts ──────────────────────────────────────────
 
 async def is_enabled(z2: Zone2, db: aiosqlite.Connection) -> bool:
     """Garmin is configured and the Profile switch is on (it is by default)."""
     return bool(z2.garmin_client.email) and (await get_setting(db, SETTING_KEY)) != "0"
 
 
-def _wanted(session: dict[str, Any], enabled: bool, today: str) -> tuple[dict[str, Any], str] | None:
-    """The workout the session should have on Garmin and its fingerprint, or None for none."""
-    if not enabled or session["date"] < today:
+def is_run_workout(template: dict[str, Any]) -> bool:
+    return template["sport_type"] in RUNNING_SPORTS and bool(template.get("segments"))
+
+
+def library_workout(template: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """The saved workout as Garmin workout JSON, and a fingerprint of it."""
+    workout = {
+        "workoutName": template["name"],
+        "description": session_description({"sport_type": template["sport_type"], "segments": template["segments"],
+                                            "description": template.get("description")}) or None,
+        "sportType": _RUNNING,
+        "workoutSegments": [{"segmentOrder": 1, "sportType": _RUNNING,
+                             "workoutSteps": segment_steps(template["segments"])}],
+    }
+    return workout, hashlib.sha1(json.dumps(workout, sort_keys=True).encode()).hexdigest()
+
+
+def library_state(template: dict[str, Any], enabled: bool) -> SyncState | None:
+    """Whether the saved workout's Garmin copy is up to date (None: not one to copy)."""
+    if not enabled or not is_run_workout(template):
         return None
-    workout = build_workout(session)
-    if workout is None:
-        return None
-    return workout, hashlib.sha1(json.dumps([workout, session["date"]], sort_keys=True).encode()).hexdigest()
+    if template.get("garmin_workout_id") and template.get("garmin_sync_hash") == library_workout(template)[1]:
+        return SyncState.SYNCED
+    return SyncState.FAILED if template.get("garmin_sync_error") else SyncState.PENDING
 
 
-def needs_sync(session: dict[str, Any], enabled: bool, today: str) -> bool:
-    wanted = _wanted(session, enabled, today)
-    if wanted is None:
-        return session.get("garmin_workout_id") is not None
-    return session.get("garmin_sync_state") != SyncState.SYNCED or session.get("garmin_sync_hash") != wanted[1]
+async def _templates(db: aiosqlite.Connection, where: str = "1", params: tuple = ()) -> list[dict[str, Any]]:
+    rows = await (await db.execute(f"SELECT * FROM workout_templates WHERE {where}", params)).fetchall()
+    return [row_dict(r, json_cols=("segments",)) for r in rows]
 
 
-async def _save(db: aiosqlite.Connection, session_id: int, workout_id: int | None, fingerprint: str | None,
-                state: SyncState | None, error: str | None) -> bool:
-    """Store the outcome; False when the session was deleted meanwhile."""
-    cur = await db.execute(
-        "UPDATE training_sessions SET garmin_workout_id = ?, garmin_sync_hash = ?, garmin_sync_state = ?, "
-        "garmin_sync_error = ? WHERE id = ?",
-        (workout_id, fingerprint, state, error, session_id),
-    )
+async def _forget_copy(db: aiosqlite.Connection, workout_id: int) -> None:
+    """A copy deleted in Garmin Connect, and its calendar entries with it."""
+    await db.execute("DELETE FROM garmin_workout_schedules WHERE workout_id = ?", (workout_id,))
+    await db.execute("UPDATE workout_templates SET garmin_workout_id = NULL, garmin_sync_hash = NULL "
+                     "WHERE garmin_workout_id = ?", (workout_id,))
     await db.commit()
-    return cur.rowcount > 0
 
 
-async def _delete(client: GarminClient, workout_id: int) -> None:
+async def _push_template(db: aiosqlite.Connection, client: GarminClient, template: dict[str, Any]) -> int:
+    """Upload the saved workout's copy, or update it in place; returns its Garmin id."""
+    workout, fingerprint = library_workout(template)
+    workout_id = template.get("garmin_workout_id")
+    if workout_id is not None and template.get("garmin_sync_hash") != fingerprint:
+        try:
+            await asyncio.to_thread(client.update_workout, workout_id, workout)
+        except GarminNotFound:
+            await _forget_copy(db, workout_id)
+            workout_id = None
+    if workout_id is None:
+        workout_id = await asyncio.to_thread(client.upload_workout, workout)
+    await db.execute("UPDATE workout_templates SET garmin_workout_id = ?, garmin_sync_hash = ?, garmin_sync_error = NULL "
+                     "WHERE id = ?", (workout_id, fingerprint, template["id"]))
+    await db.commit()
+    return workout_id
+
+
+async def _sync_library(db: aiosqlite.Connection, client: GarminClient, enabled: bool) -> None:
+    """Upload or update every saved run workout whose copy isn't current."""
+    for t in await _templates(db):
+        if library_state(t, enabled) in (None, SyncState.SYNCED):
+            continue
+        try:
+            await _push_template(db, client, t)
+        except Exception as e:
+            logger.warning("Garmin copy of workout %r failed: %s: %s", t["name"], type(e).__name__, e)
+            await db.execute("UPDATE workout_templates SET garmin_sync_error = ? WHERE id = ?", (_error(e), t["id"]))
+            await db.commit()
+
+
+async def sync_library(z2: Zone2) -> None:
+    """Bring the Garmin copies in line with the saved workouts (after one changes)."""
+    if not z2.garmin_client.email:
+        return
+    async with _lock, connect_db() as db:
+        await _sync_library(db, z2.garmin_client, await is_enabled(z2, db))
+
+
+async def delete_copy(z2: Zone2, workout_id: int) -> None:
+    """Delete a deleted saved workout's Garmin copy, which takes its calendar entries with it."""
+    async with _lock, connect_db() as db:
+        try:
+            await asyncio.to_thread(z2.garmin_client.delete_workout, workout_id)
+        except Exception as e:
+            logger.warning("Deleting Garmin workout %s failed: %s: %s", workout_id, type(e).__name__, e)
+            return
+        await db.execute("DELETE FROM garmin_workout_schedules WHERE workout_id = ?", (workout_id,))
+        await db.commit()
+
+
+# ── Calendar: planned sessions ───────────────────────────────────────────
+
+async def _entries(db: aiosqlite.Connection, session_ids: list[int]) -> dict[int, dict[str, Any]]:
+    """Each session's Garmin calendar entry."""
+    if not session_ids:
+        return {}
+    rows = await (await db.execute(
+        "SELECT * FROM garmin_workout_schedules "
+        f"WHERE session_id IN ({', '.join('?' * len(session_ids))})", session_ids,
+    )).fetchall()
+    return {r["session_id"]: dict(r) for r in rows}
+
+
+def _wanted(session: dict[str, Any], template: dict[str, Any] | None, enabled: bool) -> dict[str, Any] | None:
+    """The saved workout the session's entry should be of, or None for no entry."""
+    if not enabled or template is None or session.get("sport_type") not in RUNNING_SPORTS or not is_run_workout(template):
+        return None
+    return template
+
+
+def needs_sync(session: dict[str, Any], entry: dict[str, Any] | None, template: dict[str, Any] | None,
+               enabled: bool) -> bool:
+    wanted = _wanted(session, template, enabled)
+    if wanted is None:
+        return entry is not None
+    return (session.get("garmin_sync_state") != SyncState.SYNCED or entry is None
+            or entry["date"] != session["date"] or entry["workout_id"] != wanted.get("garmin_workout_id"))
+
+
+async def _set_state(db: aiosqlite.Connection, session_id: int, state: SyncState | None, error: str | None) -> None:
+    await db.execute("UPDATE training_sessions SET garmin_sync_state = ?, garmin_sync_error = ? WHERE id = ?",
+                     (state, error, session_id))
+    await db.commit()
+
+
+async def _unschedule(db: aiosqlite.Connection, client: GarminClient, schedule_id: int) -> None:
+    await asyncio.to_thread(client.unschedule_workout, schedule_id)
+    await db.execute("DELETE FROM garmin_workout_schedules WHERE schedule_id = ?", (schedule_id,))
+    await db.commit()
+
+
+async def _schedule(db: aiosqlite.Connection, client: GarminClient, session: dict[str, Any],
+                    template: dict[str, Any]) -> None:
+    """Add the session's entry, on its saved workout's copy (uploaded first when missing or stale)."""
+    if library_state(template, True) is not SyncState.SYNCED:
+        template = {**template, "garmin_workout_id": await _push_template(db, client, template)}
     try:
-        await asyncio.to_thread(client.delete_workout, workout_id)
-    except Exception as e:
-        logger.warning("Deleting Garmin workout %s failed: %s: %s", workout_id, type(e).__name__, e)
+        schedule_id = await asyncio.to_thread(client.schedule_workout, template["garmin_workout_id"], session["date"])
+    except GarminNotFound:
+        await _forget_copy(db, template["garmin_workout_id"])
+        workout_id = await _push_template(db, client, {**template, "garmin_workout_id": None})
+        template = {**template, "garmin_workout_id": workout_id}
+        schedule_id = await asyncio.to_thread(client.schedule_workout, workout_id, session["date"])
+    await db.execute("INSERT INTO garmin_workout_schedules (schedule_id, workout_id, date, session_id) VALUES (?, ?, ?, ?)",
+                     (schedule_id, template["garmin_workout_id"], session["date"], session["id"]))
+    await db.commit()
 
 
 async def _apply(db: aiosqlite.Connection, client: GarminClient, session: dict[str, Any],
-                 enabled: bool, today: str) -> None:
-    """Replace the session's Garmin workout with the one it should have (or none)."""
-    wanted = _wanted(session, enabled, today)
-    workout_id = session.get("garmin_workout_id")
+                 entry: dict[str, Any] | None, template: dict[str, Any] | None, enabled: bool) -> None:
+    """Replace the session's entry with the one it should have (or none)."""
+    wanted = _wanted(session, template, enabled)
     try:
-        if workout_id is not None:
-            await asyncio.to_thread(client.delete_workout, workout_id)
-            workout_id = None
+        if entry is not None:
+            await _unschedule(db, client, entry["schedule_id"])
         if wanted is not None:
-            workout_id = await asyncio.to_thread(client.upload_workout, wanted[0])
-            await asyncio.to_thread(client.schedule_workout, workout_id, session["date"])
+            await _schedule(db, client, session, wanted)
     except Exception as e:
-        logger.warning("Garmin workout for session %s failed: %s: %s", session["id"], type(e).__name__, e)
-        if not await _save(db, session["id"], workout_id, None, SyncState.FAILED, str(e)[:ERROR_MAX]) \
-                and workout_id is not None:
-            await _delete(client, workout_id)
+        logger.warning("Garmin entry for session %s failed: %s: %s", session["id"], type(e).__name__, e)
+        await _set_state(db, session["id"], SyncState.FAILED, _error(e))
         return
-    if wanted is None:
-        await _save(db, session["id"], None, None, None, None)
-    elif not await _save(db, session["id"], workout_id, wanted[1], SyncState.SYNCED, None):
-        await _delete(client, workout_id)
+    await _set_state(db, session["id"], SyncState.SYNCED if wanted else None, None)
+
+
+async def _session_context(db: aiosqlite.Connection, session: dict[str, Any]) -> tuple[dict | None, dict | None]:
+    """The session's current entry and its saved workout."""
+    entry = (await _entries(db, [session["id"]])).get(session["id"])
+    template = None
+    if session.get("workout_template_id"):
+        template = next(iter(await _templates(db, "id = ?", (session["workout_template_id"],))), None)
+    return entry, template
 
 
 async def mark_pending(z2: Zone2, db: aiosqlite.Connection, session: dict[str, Any],
                        previous_date: str | None = None) -> bool:
-    """Mark the session pending when its Garmin workout needs a change, and
-    say whether it does. A session that was and stays in the past is left alone."""
-    today = date.today().isoformat()
-    if max(session["date"], previous_date or session["date"]) < today:
+    """Mark the session pending when its entry needs a change, and say whether
+    it does. A session that was and stays in the past is left alone."""
+    if max(session["date"], previous_date or session["date"]) < date.today().isoformat():
         return False
-    if not needs_sync(session, await is_enabled(z2, db), today):
+    entry, template = await _session_context(db, session)
+    if not needs_sync(session, entry, template, await is_enabled(z2, db)):
         return False
-    await db.execute("UPDATE training_sessions SET garmin_sync_state = ? WHERE id = ?",
-                     (SyncState.PENDING, session["id"]))
-    await db.commit()
+    await _set_state(db, session["id"], SyncState.PENDING, None)
     return True
 
 
 async def sync_session(z2: Zone2, session_id: int) -> None:
-    """Bring one session's Garmin workout in line with it, after `mark_pending`
-    said it needs it. It re-reads the session, so the latest edit wins."""
+    """Bring one session's entry in line with it, after `mark_pending` said it
+    needs it. It re-reads the session, so the latest edit wins."""
     async with _lock, connect_db() as db:
         row = await (await db.execute("SELECT * FROM training_sessions WHERE id = ?", (session_id,))).fetchone()
         if row is None:
             return
         session = row_dict(row, json_cols=("segments",))
-        today = date.today().isoformat()
+        entry, template = await _session_context(db, session)
         enabled = await is_enabled(z2, db)
-        if needs_sync(session, enabled, today):
-            await _apply(db, z2.garmin_client, session, enabled, today)
+        if needs_sync(session, entry, template, enabled):
+            await _apply(db, z2.garmin_client, session, entry, template, enabled)
 
 
-async def remove_workout(z2: Zone2, workout_id: int) -> None:
-    """Delete the workout of a session deleted from the calendar."""
-    async with _lock:
-        await _delete(z2.garmin_client, workout_id)
+async def forget_session(z2: Zone2, session_id: int) -> None:
+    """After a session is deleted: its past entry stays on Garmin as history and
+    an upcoming one is removed; the workout stays. Runs after any change still
+    in flight for it, so nothing it adds is left behind."""
+    async with _lock, connect_db() as db:
+        await db.execute("UPDATE garmin_workout_schedules SET session_id = NULL WHERE session_id = ? AND date < ?",
+                         (session_id, date.today().isoformat()))
+        await db.commit()
+        rows = await (await db.execute("SELECT schedule_id FROM garmin_workout_schedules WHERE session_id = ?",
+                                       (session_id,))).fetchall()
+        for r in rows:
+            try:
+                await _unschedule(db, z2.garmin_client, r["schedule_id"])
+            except Exception as e:
+                logger.warning("Removing Garmin entry %s failed: %s: %s", r["schedule_id"], type(e).__name__, e)
 
 
-async def mark_pending_upcoming(z2: Zone2, db: aiosqlite.Connection) -> None:
-    """Mark every session from today on whose workout needs a change, before a `reconcile`."""
-    today = date.today().isoformat()
-    enabled = await is_enabled(z2, db)
-    rows = await (await db.execute("SELECT * FROM training_sessions WHERE date >= ?", (today,))).fetchall()
-    ids = [r["id"] for r in rows if needs_sync(row_dict(r, json_cols=("segments",)), enabled, today)]
-    await db.executemany("UPDATE training_sessions SET garmin_sync_state = ? WHERE id = ?",
-                         [(SyncState.PENDING, i) for i in ids])
+async def _due(db: aiosqlite.Connection, enabled: bool) -> list[tuple[dict, dict | None, dict | None]]:
+    """Sessions from today on whose entry needs a change, with their entry and saved workout."""
+    rows = await (await db.execute("SELECT * FROM training_sessions WHERE date >= ? ORDER BY date",
+                                   (date.today().isoformat(),))).fetchall()
+    sessions = [row_dict(r, json_cols=("segments",)) for r in rows]
+    entries = await _entries(db, [s["id"] for s in sessions])
+    templates = {t["id"]: t for t in await _templates(db)}
+    due = []
+    for s in sessions:
+        entry, template = entries.get(s["id"]), templates.get(s.get("workout_template_id"))
+        if needs_sync(s, entry, template, enabled):
+            due.append((s, entry, template))
+    return due
+
+
+async def mark_due_pending(z2: Zone2, db: aiosqlite.Connection) -> None:
+    """Mark every upcoming session whose entry needs a change, before a `reconcile`."""
+    due = await _due(db, await is_enabled(z2, db))
+    await db.executemany("UPDATE training_sessions SET garmin_sync_state = ?, garmin_sync_error = NULL WHERE id = ?",
+                         [(SyncState.PENDING, s["id"]) for s, _, _ in due])
     await db.commit()
 
 
 async def reconcile(z2: Zone2) -> None:
-    """Send what's missing, replace what changed, retry what failed and remove
-    what's no longer wanted, for every session from today on. Runs after each
-    Garmin sync and when the Profile switch flips."""
+    """Copy what the library is missing, then add what's missing on the
+    calendar, move what changed, retry what failed and remove what's no longer
+    wanted, from today on. Runs after each Garmin sync and when the Profile
+    switch flips; with it off, upcoming entries are removed and the copies kept."""
     client = z2.garmin_client
     if not client.email:
         return
     async with _lock, connect_db() as db:
-        today = date.today().isoformat()
         enabled = await is_enabled(z2, db)
-        rows = await (await db.execute("SELECT * FROM training_sessions WHERE date >= ? ORDER BY date",
-                                       (today,))).fetchall()
-        due = [s for s in (row_dict(r, json_cols=("segments",)) for r in rows) if needs_sync(s, enabled, today)]
-        if not due:
+        stale = [t for t in await _templates(db) if library_state(t, enabled) not in (None, SyncState.SYNCED)]
+        due = await _due(db, enabled)
+        if not stale and not due:
             return
-        # One login attempt for the lot, rather than one per session
+        # One login attempt for the lot, rather than one per change
         if not await asyncio.to_thread(client.ensure_logged_in):
             error = (client.last_error or "Garmin Connect is not connected")[:ERROR_MAX]
-            for s in due:
-                await _save(db, s["id"], s.get("garmin_workout_id"), None, SyncState.FAILED, error)
+            for s, _, _ in due:
+                await _set_state(db, s["id"], SyncState.FAILED, error)
             return
-        for s in due:
-            await _apply(db, client, s, enabled, today)
-        logger.info("Garmin workouts reconciled: %d session(s) updated", len(due))
+        await _sync_library(db, client, enabled)
+        due = await _due(db, enabled)  # copies may have changed ids
+        for s, entry, template in due:
+            await _apply(db, client, s, entry, template, enabled)
+        logger.info("Garmin workouts reconciled: %d copies, %d entries", len(stale), len(due))

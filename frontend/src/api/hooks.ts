@@ -1045,11 +1045,12 @@ export interface TrainingSession {
   workout_template_id: number | null;
   completed: boolean;
   created_at: string;
-  /** The run's workout on the Garmin watch; null state when it has none. */
-  garmin_workout_id: number | null;
-  garmin_sync_state: 'pending' | 'synced' | 'failed' | null;
+  /** Its entry on the Garmin calendar; null when it has none. */
+  garmin_sync_state: GarminSyncState | null;
   garmin_sync_error: string | null;
 }
+
+export type GarminSyncState = 'pending' | 'synced' | 'failed';
 
 export function useCalendarSessionsByRange(dateFrom?: string, dateTo?: string) {
   return useQuery<TrainingSession[]>({
@@ -1090,10 +1091,10 @@ export function useBriefing() {
   });
 }
 
-/** Everything a planned session feeds: the calendar, scores, plan completion
- *  and the fitness projection. */
+/** Everything a planned session feeds: the calendar, scores, plan completion,
+ *  the fitness projection and the saved workouts (a new one is saved with it). */
 function invalidateSessionQueries(qc: QueryClient) {
-  for (const key of ['calendar-sessions-range', 'session-scores', 'activity-score', 'plan-accomplishment', 'fitness-form', 'briefing']) {
+  for (const key of ['calendar-sessions-range', 'session-scores', 'activity-score', 'plan-accomplishment', 'fitness-form', 'briefing', 'workout-templates']) {
     qc.invalidateQueries({ queryKey: [key] });
   }
 }
@@ -1437,6 +1438,12 @@ export interface WorkoutTemplate {
   description: string | null;
   created_at: string;
   segments: Segment[];
+  /** Its copy in the Garmin library (runs, while sending is on). */
+  garmin_workout_id: number | null;
+  garmin_sync_state: GarminSyncState | null;
+  garmin_sync_error: string | null;
+  /** Planned sessions that use it. */
+  uses: number;
 }
 
 export function useWorkoutTemplates(sportType?: string) {
@@ -1445,6 +1452,28 @@ export function useWorkoutTemplates(sportType?: string) {
     queryKey: ['workout-templates'],
     queryFn: () => api.get('/workouts').then(r => r.data),
     select: sportType ? templates => templates.filter(t => t.sport_type === sportType) : undefined,
+    // Garmin copies are made in the background: poll until they land
+    refetchInterval: q => (q.state.data?.some(t => t.garmin_sync_state === 'pending') ? 2000 : false),
+  });
+}
+
+/** A workout made in Garmin Connect (z2 leaves these alone). */
+export interface GarminLibraryWorkout {
+  workout_id: number;
+  name: string;
+  sport: string | null;
+  created_at: string | null;
+  distance_km: number | null;
+  duration_s: number | null;
+}
+
+export function useGarminLibrary(enabled: boolean) {
+  return useQuery<GarminLibraryWorkout[]>({
+    queryKey: ['garmin-library'],
+    queryFn: () => api.get('/workouts/garmin').then(r => r.data),
+    enabled,
+    staleTime: 1000 * 60 * 10,
+    retry: false,
   });
 }
 

@@ -66,6 +66,15 @@ class GarminUnavailable(RuntimeError):
     """Garmin Connect isn't logged in (the reason is GarminClient.last_error)."""
 
 
+class GarminNotFound(RuntimeError):
+    """What a user action points at no longer exists in Garmin Connect."""
+
+
+def _is_missing(e: Exception) -> bool:
+    # The lib reports every HTTP error as GarminConnectConnectionError("API Error <status> - ...")
+    return "API Error 404" in str(e)
+
+
 class GarminClient:
     """Lazy, optional Garmin Connect client.
 
@@ -323,25 +332,54 @@ class GarminClient:
         }])
 
     # ------------------------------------------------------------------ workouts
-    # Planned sessions on the Garmin calendar, which the watch offers on the day
-    # (see backend/services/garmin_workouts.py). Raw workout JSON, since the
-    # lib's typed models drop step targets.
+    # Saved workouts in the Garmin library and planned sessions on its calendar,
+    # which the watch offers on the day (see backend/services/garmin_workouts.py).
+    # Raw workout JSON, since the lib's typed models drop step targets.
 
     def upload_workout(self, workout: dict) -> int:
-        """Save a workout and return its id."""
+        """Save a workout to the library and return its id."""
         return int(self._logged_in().upload_workout(workout)["workoutId"])
 
-    def schedule_workout(self, workout_id: int, day: str) -> None:
-        self._logged_in().schedule_workout(workout_id, day)
+    def schedule_workout(self, workout_id: int, day: str) -> int:
+        """Put a workout on the calendar and return the entry's id. A workout
+        can be on many days; GarminNotFound when it was deleted."""
+        try:
+            return int(self._logged_in().schedule_workout(workout_id, day)["workoutScheduleId"])
+        except Exception as e:
+            if _is_missing(e):
+                raise GarminNotFound(f"Garmin workout {workout_id} no longer exists") from e
+            raise
+
+    def unschedule_workout(self, schedule_id: int) -> None:
+        """Take one entry off the calendar; one already gone counts as done."""
+        try:
+            self._logged_in().unschedule_workout(schedule_id)
+        except Exception as e:
+            if not _is_missing(e):
+                raise
 
     def delete_workout(self, workout_id: int) -> None:
-        """Delete a workout, which also takes it off the calendar. One already
-        deleted (in Garmin Connect, say) counts as done."""
+        """Delete a workout from the library, which also removes every calendar
+        entry of it. One already deleted counts as done."""
         try:
             self._logged_in().delete_workout(workout_id)
         except Exception as e:
-            if "API Error 404" not in str(e):
+            if not _is_missing(e):
                 raise
+
+    def update_workout(self, workout_id: int, workout: dict) -> None:
+        """Replace a library workout's name, notes and steps in place; its
+        calendar entries stay and show the new version."""
+        try:
+            current = self._logged_in().get_workout_by_id(workout_id)
+        except Exception as e:
+            if _is_missing(e):
+                raise GarminNotFound(f"Garmin workout {workout_id} no longer exists") from e
+            raise
+        self._request("PUT", f"/workout-service/workout/{workout_id}", json={**current, **workout})
+
+    def list_workouts(self) -> list[dict]:
+        return self._logged_in().get_workouts(0, 500)
 
     # ------------------------------------------------------------------ orchestration
 

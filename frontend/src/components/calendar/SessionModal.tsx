@@ -24,6 +24,8 @@ import { SESSION_GOALS, SESSION_GOAL_KEYS, type SessionGoalKey } from '../../con
 import RowActions from '../shared/RowActions'
 import { rowActionClass } from '../shared/rowActionClass'
 import Modal from '../shared/Modal'
+import { errorDetail } from '../../api/client'
+import { useToast } from '../../hooks/useToast'
 import WatchStatus from './WatchStatus'
 
 const RACE_ACCENT = '#f59e0b'
@@ -79,6 +81,7 @@ export default function SessionModal({
 
   const { data: templates } = useWorkoutTemplates(sportType)
   const createTemplate = useCreateWorkoutTemplate()
+  const { toast } = useToast()
 
   function startEditRace(r: RaceEvent) {
     setEditingRace(r)
@@ -141,6 +144,18 @@ export default function SessionModal({
     setSegments([])
     setWorkoutTemplateId(null)
     setShowTemplatePicker(false)
+  }
+
+  /** Saving the session saves its workout anyway; this names it first. */
+  function saveAsWorkout() {
+    const name = saveTemplateName.trim()
+    if (!name) return
+    createTemplate.mutate({ name, sport_type: sportType, segments }, {
+      onSuccess: t => { setWorkoutTemplateId(t.id); toast(`Saved as “${t.name}”`, 'success') },
+      onError: e => toast(errorDetail(e, 'Could not save the workout'), 'error'),
+    })
+    setShowSaveTemplate(false)
+    setSaveTemplateName('')
   }
 
   function buildPayload() {
@@ -594,33 +609,24 @@ export default function SessionModal({
                           className="text-[11px] rounded px-2 py-1 border transition-all"
                           style={{ borderColor: '#a855f740', color: '#a855f7', backgroundColor: '#a855f710' }}
                         >
-                          Save as template
+                          Save as workout
                         </button>
                       ) : (
                         <div className="flex items-center gap-1.5">
                           <input
                             type="text"
-                            placeholder="Template name"
+                            placeholder="Workout name"
                             value={saveTemplateName}
                             onChange={e => setSaveTemplateName(e.target.value)}
                             className="input flex-1 text-xs py-1"
                             autoFocus
                             onKeyDown={e => {
-                              if (e.key === 'Enter' && saveTemplateName.trim()) {
-                                createTemplate.mutate({ name: saveTemplateName.trim(), sport_type: sportType, segments })
-                                setShowSaveTemplate(false)
-                                setSaveTemplateName('')
-                              }
+                              if (e.key === 'Enter') saveAsWorkout()
                               if (e.key === 'Escape') { setShowSaveTemplate(false) }
                             }}
                           />
                           <button
-                            onClick={() => {
-                              if (!saveTemplateName.trim()) return
-                              createTemplate.mutate({ name: saveTemplateName.trim(), sport_type: sportType, segments })
-                              setShowSaveTemplate(false)
-                              setSaveTemplateName('')
-                            }}
+                            onClick={saveAsWorkout}
                             className="text-[11px] rounded px-2 py-1 border transition-all"
                             style={{ borderColor: '#22c55e40', color: '#22c55e', backgroundColor: '#22c55e10' }}
                           >

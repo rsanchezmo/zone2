@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import {
   useWorkoutTemplates, useCreateWorkoutTemplate,
-  useUpdateWorkoutTemplate, useDeleteWorkoutTemplate,
-  type WorkoutTemplate,
+  useUpdateWorkoutTemplate, useDeleteWorkoutTemplate, useWatchWorkouts, useGarminLibrary,
+  type WorkoutTemplate, type GarminLibraryWorkout,
 } from '../api/hooks'
+import { errorDetail } from '../api/client'
 import { getSportColor } from '../constants/sportColors'
-import { getPaceUnit } from '../utils/formatSpeed'
+import { formatDist, formatDurationHM, getPaceUnit } from '../utils/formatSpeed'
+import { DeviceIcon, ExternalLinkIcon } from '../components/icons'
 import SportTypeCombobox from '../components/shared/SportTypeCombobox'
 import SegmentListBuilder, { SegmentSummary, type Segment } from '../components/shared/SegmentListBuilder'
 import RowActions from '../components/shared/RowActions'
@@ -15,6 +17,53 @@ import { useToast } from '../hooks/useToast'
 import PageHeader from '../components/shared/PageHeader'
 
 const SPORT_FILTERS = ['All', 'Run', 'Ride', 'Swim', 'Walk', 'Hike'] as const
+
+const garminWorkoutUrl = (id: number) => `https://connect.garmin.com/modern/workout/${id}`
+
+// Garmin's sport keys as z2's sport types, for colours and units
+const GARMIN_SPORTS: Record<string, string> = { running: 'Run', cycling: 'Ride', swimming: 'Swim', walking: 'Walk', hiking: 'Hike' }
+
+/** Whether a saved run workout's copy is in the Garmin library. */
+function GarminCopyStatus({ template }: { template: WorkoutTemplate }) {
+  const state = template.garmin_sync_state
+  if (!state) return null
+  if (state === 'synced' && template.garmin_workout_id != null) {
+    return (
+      <a href={garminWorkoutUrl(template.garmin_workout_id)} target="_blank" rel="noreferrer"
+        className="inline-flex items-center gap-1 text-[11px] text-emerald-500 hover:underline">
+        <DeviceIcon size={11} /> On Garmin <ExternalLinkIcon size={10} />
+      </a>
+    )
+  }
+  if (state === 'pending') {
+    return <span className="inline-flex items-center gap-1 text-[11px] text-gray-500 animate-pulse"><DeviceIcon size={11} /> Sending to Garmin…</span>
+  }
+  return (
+    <span className="inline-flex items-start gap-1 text-[11px] text-amber-500" title={template.garmin_sync_error ?? undefined}>
+      <DeviceIcon size={11} className="shrink-0 mt-px" /> Not on Garmin{template.garmin_sync_error ? `: ${template.garmin_sync_error}` : ''}. Retried after the next Garmin sync.
+    </span>
+  )
+}
+
+function GarminLibraryRow({ workout }: { workout: GarminLibraryWorkout }) {
+  const sport = GARMIN_SPORTS[workout.sport ?? ''] ?? workout.sport ?? ''
+  const color = getSportColor(sport)
+  return (
+    <a href={garminWorkoutUrl(workout.workout_id)} target="_blank" rel="noreferrer"
+      className="flex items-center gap-3 px-4 py-2.5 group">
+      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+      <span className="text-sm truncate group-hover:underline">{workout.name}</span>
+      <span className="text-[11px] font-mono tabular-nums text-gray-500 shrink-0">
+        {[workout.distance_km ? formatDist(workout.distance_km, sport) : '', workout.duration_s ? formatDurationHM(workout.duration_s) : '']
+          .filter(Boolean).join(' · ')}
+      </span>
+      <span className="ml-auto flex items-center gap-3 shrink-0 text-[11px] text-gray-500">
+        <span className="hidden sm:inline">{workout.created_at}</span>
+        <ExternalLinkIcon size={11} />
+      </span>
+    </a>
+  )
+}
 
 export default function WorkoutsPage() {
   const { theme } = useTheme()
@@ -36,6 +85,8 @@ export default function WorkoutsPage() {
   const createTemplate = useCreateWorkoutTemplate()
   const updateTemplate = useUpdateWorkoutTemplate()
   const deleteTemplate = useDeleteWorkoutTemplate()
+  const { data: watch } = useWatchWorkouts()
+  const { data: garminLibrary } = useGarminLibrary(!!watch?.available)
 
   const inputClass = 'input w-full'
 
@@ -65,13 +116,16 @@ export default function WorkoutsPage() {
       description: description.trim() || undefined,
       segments,
     }
+    const onError = (e: unknown) => toast(errorDetail(e, 'Could not save the workout'), 'error')
     if (editingTemplate) {
       updateTemplate.mutate({ id: editingTemplate.id, ...payload }, {
         onSuccess: () => { resetForm(); toast('Workout updated', 'success') },
+        onError,
       })
     } else {
       createTemplate.mutate(payload, {
-        onSuccess: () => { resetForm(); toast('Workout created', 'success') },
+        onSuccess: () => { resetForm(); toast('Workout saved', 'success') },
+        onError,
       })
     }
   }
@@ -81,7 +135,7 @@ export default function WorkoutsPage() {
       {/* ── Breadcrumb header ─────────────────────────── */}
       <PageHeader
         title="Workouts"
-        description="templates for structured sessions"
+        description={watch?.enabled ? 'structured sessions · runs synced to Garmin' : 'structured sessions'}
         actions={!showBuilder && (
           <button
             onClick={() => { resetForm(); setShowBuilder(true) }}
@@ -173,7 +227,7 @@ export default function WorkoutsPage() {
                   : '!bg-white/10 !text-gray-200 !border-white/20 hover:!bg-white/15',
               )}
             >
-              {editingTemplate ? 'Save changes' : 'Create template'}
+              {editingTemplate ? 'Save changes' : 'Save workout'}
             </button>
             <button onClick={resetForm} className="btn flex-1 text-sm py-2">
               Cancel
@@ -184,7 +238,7 @@ export default function WorkoutsPage() {
 
       {/* ── Template list ──────────────────────────── */}
       <section>
-        <div className="section-head mb-4"><span className="eyebrow">Templates</span></div>
+        <div className="section-head mb-4"><span className="eyebrow">Saved workouts</span></div>
         {isLoading ? (
           <div className="grid gap-3">
             {Array.from({ length: 3 }).map((_, i) => (
@@ -202,8 +256,8 @@ export default function WorkoutsPage() {
             <svg className={clsx('w-9 h-9', isLight ? 'text-gray-300' : 'text-gray-600')} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
             </svg>
-            <div className={clsx('text-sm', isLight ? 'text-gray-500' : 'text-gray-500')}>No workout templates yet</div>
-            <div className={clsx('text-[11px]', isLight ? 'text-gray-400' : 'text-gray-600')}>Create your first structured workout from the button above</div>
+            <div className={clsx('text-sm', isLight ? 'text-gray-500' : 'text-gray-500')}>No saved workouts yet</div>
+            <div className={clsx('text-[11px]', isLight ? 'text-gray-400' : 'text-gray-600')}>Create one from the button above, or plan a structured session in the calendar</div>
           </div>
         ) : (
           <div className="grid gap-3 stagger-children">
@@ -230,12 +284,21 @@ export default function WorkoutsPage() {
                       {!!t.description && (
                         <div className={clsx('text-xs', isLight ? 'text-gray-500' : 'text-gray-500')}>{String(t.description)}</div>
                       )}
+                      <div className="flex items-center gap-3 flex-wrap mt-1">
+                        <GarminCopyStatus template={t} />
+                        {t.uses > 0 && (
+                          <span className="text-[11px] text-gray-500 tabular-nums">planned {t.uses}×</span>
+                        )}
+                      </div>
                     </div>
                     <RowActions
                       isConfirming={isConfirming}
                       onEdit={() => startEdit(t)}
                       onConfirmDelete={() => {
-                        deleteTemplate.mutate(t.id, { onSuccess: () => toast('Workout deleted', 'success') })
+                        const onGarmin = t.garmin_workout_id != null
+                        deleteTemplate.mutate(t.id, {
+                          onSuccess: () => toast(onGarmin ? 'Workout deleted, here and on Garmin' : 'Workout deleted', 'success'),
+                        })
                         setConfirmDeleteId(null)
                       }}
                       onAskDelete={() => setConfirmDeleteId(t.id)}
@@ -249,6 +312,17 @@ export default function WorkoutsPage() {
           </div>
         )}
       </section>
+
+      {/* ── Garmin Connect's own workouts ───────────── */}
+      {!!garminLibrary?.length && (
+        <section>
+          <div className="section-head mb-1"><span className="eyebrow">In Garmin Connect</span></div>
+          <p className="text-[11px] text-gray-500 mb-3">Made in Garmin Connect. z2 leaves these as they are.</p>
+          <div className={clsx('panel divide-y', isLight ? 'divide-[#ececec]' : 'divide-surface-600')}>
+            {garminLibrary.map(w => <GarminLibraryRow key={w.workout_id} workout={w} />)}
+          </div>
+        </section>
+      )}
     </div>
   )
 }
