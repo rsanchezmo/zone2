@@ -1,8 +1,20 @@
+import type { ReactNode } from 'react'
 import clsx from 'clsx'
 import { WEEKDAYS_FULL, WEEKDAY_LETTERS } from '../../constants/weekdays'
 import {
   ACCENT, NEG, POS, readinessZoneColor, toneColor, type Tone, type WeekdayPattern,
 } from './garmin'
+
+/** Coloured pill for a chart panel's status slot. */
+export function StatusPill({ color, children }: { color: string; children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[10px] uppercase font-semibold tracking-[0.15em] px-2 py-0.5 rounded-full border"
+      style={{ background: `${color}1a`, color, borderColor: `${color}55` }}>
+      <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: color }} />
+      {children}
+    </span>
+  )
+}
 
 export function GarminSkeleton({ isLight }: { isLight: boolean }) {
   const bar = isLight ? 'bg-gray-100' : 'bg-surface-700'
