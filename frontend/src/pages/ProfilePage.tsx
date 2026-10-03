@@ -16,6 +16,7 @@ import GoalsSection from '../components/profile/GoalsSection'
 import CacheCompleteness from '../components/profile/CacheCompleteness'
 import RateLimits from '../components/profile/RateLimits'
 import CalendarSubscription from '../components/profile/CalendarSubscription'
+import WatchWorkouts from '../components/profile/WatchWorkouts'
 import PageHeader from '../components/shared/PageHeader'
 
 export default function ProfilePage() {
@@ -79,6 +80,7 @@ export default function ProfilePage() {
       <CacheCompleteness completeness={cacheCompleteness} syncing={syncStatus?.syncing} />
       <RateLimits limits={rateLimits} />
       <BackdropSettingsPanel />
+      <WatchWorkouts />
       <CalendarSubscription feedUrl={feedUrl} />
     </div>
   )

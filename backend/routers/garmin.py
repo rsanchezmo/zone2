@@ -29,6 +29,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from backend._ttl_cache import TTLCache
 from backend.dependencies import get_z2
+from backend.services.garmin_workouts import reconcile as reconcile_workouts
 from zone2.garmin_client import GarminUnavailable
 from zone2.garmin_extractors import SUMMARY_METRICS
 from zone2.core import Zone2
@@ -111,6 +112,7 @@ def trigger_sync(
     if not _try_claim():
         return {"status": "already_running"}
     background_tasks.add_task(_run_garmin_sync, z2, full)
+    background_tasks.add_task(reconcile_workouts, z2)
     return {"status": "started", "full": full}
 
 

@@ -9,6 +9,7 @@ import { scoreColor } from '../../utils/scoreColor'
 import { FlagIcon, CheckIcon } from '../icons'
 import { dayAvgScore, dayPlanStatus, type CalendarGridProps, type WeekRow } from './calendar'
 import WeekTotals from './WeekTotals'
+import WatchStatus from './WatchStatus'
 
 /** Dots that fit across a day cell on the compact mobile grid before overflowing to a "+n". */
 const MOBILE_DOT_LIMIT = 4
@@ -174,7 +175,7 @@ export default function MonthGrid({
                                 onDragStart={(e) => onSessionDragStart(e, s)}
                                 onDragEnd={onSessionDragEnd}
                                 className={clsx(
-                                  'mt-0.5 text-[10px] px-1.5 py-0.5 rounded border border-dashed truncate cursor-grab active:cursor-grabbing',
+                                  'mt-0.5 text-[10px] px-1.5 py-0.5 rounded border border-dashed flex items-center gap-1 cursor-grab active:cursor-grabbing',
                                   'transition-all duration-150 hover:scale-[1.02]',
                                   draggingSessionId === (s.id as number) && 'opacity-40 scale-95 rotate-1',
                                 )}
@@ -186,7 +187,8 @@ export default function MonthGrid({
                                 onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = 'none' }}
                                 title={s.description as string || s.sport_type as string}
                               >
-                                {s.description ? `${s.sport_type}: ${s.description}` : s.sport_type as string}
+                                <span className="truncate">{s.description ? `${s.sport_type}: ${s.description}` : s.sport_type}</span>
+                                <WatchStatus session={s} size={9} />
                               </div>
                             )
                           })}

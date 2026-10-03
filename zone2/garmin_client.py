@@ -252,10 +252,14 @@ class GarminClient:
     # The Connect web app's course endpoints (the lib has none). User actions,
     # so unlike the fetches above they raise instead of returning None.
 
-    def _request(self, method: str, path: str, **kwargs) -> Any:
+    def _logged_in(self) -> Any:
+        """The lib's client, logged in, for user actions (which raise rather than return None)."""
         if not self.ensure_logged_in():
             raise GarminUnavailable(self.last_error or "Garmin Connect is not connected")
-        return self._client.client.request(method, "connect", path, **kwargs)
+        return self._client
+
+    def _request(self, method: str, path: str, **kwargs) -> Any:
+        return self._logged_in().client.request(method, "connect", path, **kwargs)
 
     def list_courses(self) -> list[dict]:
         return self._request("GET", "/course-service/course").json()
@@ -298,9 +302,7 @@ class GarminClient:
     def course_devices(self) -> list[dict]:
         """Watches that take courses, as {device_id, name, primary}; primary
         is the primary training device."""
-        if not self.ensure_logged_in():
-            raise GarminUnavailable(self.last_error or "Garmin Connect is not connected")
-        devices = self._client.get_primary_training_device()
+        devices = self._logged_in().get_primary_training_device()
         primary = (devices.get("PrimaryTrainingDevice") or {}).get("deviceId")
         return [{"device_id": d["deviceId"], "name": d.get("productDisplayName") or d.get("displayName"),
                  "primary": d["deviceId"] == primary}
@@ -319,6 +321,27 @@ class GarminClient:
             "fileType": "FIT",
             "metaDataId": course_id,
         }])
+
+    # ------------------------------------------------------------------ workouts
+    # Planned sessions on the Garmin calendar, which the watch offers on the day
+    # (see backend/services/garmin_workouts.py). Raw workout JSON, since the
+    # lib's typed models drop step targets.
+
+    def upload_workout(self, workout: dict) -> int:
+        """Save a workout and return its id."""
+        return int(self._logged_in().upload_workout(workout)["workoutId"])
+
+    def schedule_workout(self, workout_id: int, day: str) -> None:
+        self._logged_in().schedule_workout(workout_id, day)
+
+    def delete_workout(self, workout_id: int) -> None:
+        """Delete a workout, which also takes it off the calendar. One already
+        deleted (in Garmin Connect, say) counts as done."""
+        try:
+            self._logged_in().delete_workout(workout_id)
+        except Exception as e:
+            if "API Error 404" not in str(e):
+                raise
 
     # ------------------------------------------------------------------ orchestration
 

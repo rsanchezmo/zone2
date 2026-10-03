@@ -116,14 +116,15 @@ async def _periodic_sync_loop(
 async def _periodic_garmin_sync_loop(
     z2: Zone2, interval_hours: int, initial_delay_s: int = 30
 ) -> None:
-    """Refresh Garmin wellness data every interval_hours via sync_recent(days=14).
-    Runs an initial catch-up shortly after startup (initial_delay_s) so a
+    """Refresh Garmin wellness data every interval_hours via sync_recent(days=14),
+    then bring the watch's planned workouts in line with the calendar. Runs an initial catch-up shortly after startup (initial_delay_s) so a
     restart doesn't leave a full interval-long blind window. Independent of the
     Strava lock — both can run concurrently — but shares the Garmin
     /api/garmin/sync claim so a manual sync isn't trampled."""
     # Inline import keeps `routers.garmin` off the module-import path during
     # cold start until it's actually needed.
     from backend.routers.garmin import _try_claim as _try_claim_garmin, _run_garmin_sync
+    from backend.services.garmin_workouts import reconcile as reconcile_workouts
     log = logging.getLogger("backend.garmin_autosync")
     log.info("Garmin auto-sync scheduler enabled (every %dh, first run in %ds)",
              interval_hours, initial_delay_s)
@@ -135,6 +136,7 @@ async def _periodic_garmin_sync_loop(
             if _try_claim_garmin():
                 log.info("Garmin auto-sync starting")
                 await asyncio.to_thread(_run_garmin_sync, z2, False)
+                await reconcile_workouts(z2)
                 log.info("Garmin auto-sync finished")
             else:
                 log.info("Garmin auto-sync skipped: another Garmin sync running")
