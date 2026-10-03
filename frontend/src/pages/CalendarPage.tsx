@@ -26,6 +26,7 @@ import RaceCountdown from '../components/calendar/RaceCountdown'
 import MonthGrid from '../components/calendar/MonthGrid'
 import WeekView from '../components/calendar/WeekView'
 import WeekInspector from '../components/calendar/WeekInspector'
+import MorningBriefing from '../components/calendar/MorningBriefing'
 import PageHeader from '../components/shared/PageHeader'
 
 // Recharts and the day editor load on demand: the calendar paints without them
@@ -431,6 +432,8 @@ export default function CalendarPage() {
         <CalendarBadges streaks={streakData} planRate={planRate} />
         <RaceCountdown races={upcomingRaces} />
       </div>
+
+      <MorningBriefing />
 
       {/* Sport filter — scopes what the grid shows and what its week totals count.
           The weekly report below is computed server-side and stays all-sport. */}

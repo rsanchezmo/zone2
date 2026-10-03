@@ -502,7 +502,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         'streaks', 'personal-records', 'sport-totals', 'weekly-totals',
         'race-predictions', 'race-predictions-history', 'relative-effort-weekly',
         'session-scores', 'activity-score', 'goal-progress',
-        'cache-completeness',
+        'cache-completeness', 'fitness-form', 'briefing', 'gear',
       ]
       for (const key of activityDependentKeys) {
         qc.invalidateQueries({ queryKey: [key] })
