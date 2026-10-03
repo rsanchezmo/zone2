@@ -272,7 +272,6 @@ export default function MoveIqPanel() {
                     if (startMin == null) return null
                     const color = moveIqColor(e.activity_type)
                     const durMin = Math.min(e.duration_mins ?? 0, 1440 - startMin)
-                    const intensity = (e.moderate_mins ?? 0) + (e.vigorous_mins ?? 0)
                     return (
                       <span
                         key={i}
@@ -283,7 +282,7 @@ export default function MoveIqPanel() {
                           minWidth: 4,
                           backgroundColor: color,
                         }}
-                        title={`Detected ${moveIqLabel(e)} ${eventClock(e.start_local)}–${eventClock(e.end_local)} · ${e.duration_mins ?? 0} min${intensity > 0 ? ` · ${intensity} intensity min` : ''}`}
+                        title={`Detected ${moveIqLabel(e)} ${eventClock(e.start_local)}–${eventClock(e.end_local)} · ${e.duration_mins ?? 0} min`}
                       />
                     )
                   })}

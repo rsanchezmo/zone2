@@ -183,11 +183,11 @@ async def lifespan(app: FastAPI):
     set_zone2(z2)
     await init_db()
 
-    # One-time: derive slim per-day chart summaries for any cached Garmin
-    # payloads that predate the summary table. Idempotent (no-op once filled),
-    # threaded since the first pass parses every stored payload.
+    # Derive the slim per-day chart summaries that are missing or were built by
+    # an older projection. A no-op once current; threaded since a rebuild
+    # parses every stored payload of the metric.
     try:
-        await asyncio.to_thread(z2.garmin_cache.backfill_missing_summaries)
+        await asyncio.to_thread(z2.garmin_cache.refresh_summaries)
     except Exception:
         logging.getLogger("backend.startup").exception("Garmin summary backfill failed")
 
