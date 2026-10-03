@@ -26,8 +26,8 @@ export default function WatchWorkouts() {
         <div className="min-w-0 space-y-0.5">
           <div className="text-sm">Send planned workouts to my watch</div>
           <p className="text-[11px] text-gray-500 leading-relaxed">
-            Runs from today on with intervals, pace or heart-rate targets go to Garmin Connect as workouts on their day,
-            and the watch offers them that morning. Editing or deleting a session updates the watch too.
+            Your saved run workouts go to your Garmin library, so the watch can start them any day, and runs you plan
+            from them go on Garmin's calendar on their day. Turning this off removes upcoming entries and keeps the workouts.
           </p>
         </div>
         <button

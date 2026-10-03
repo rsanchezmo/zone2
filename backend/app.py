@@ -40,7 +40,8 @@ from backend.routers import activities, stats, exports, calendar, calendar_feed,
 from backend.routers.coverage import unload_idle_cities
 from backend.routers.sync import _try_claim_sync, _run_sync
 from backend.services.races import refresh_race_activities
-from backend.db import init_db
+from backend.db import connect_db, init_db
+from backend.services.workout_library import link_upcoming_once
 from zone2.core import Zone2
 
 
@@ -184,6 +185,8 @@ async def lifespan(app: FastAPI):
         await asyncio.to_thread(z2.garmin_client.ensure_logged_in)
     set_zone2(z2)
     await init_db()
+    async with connect_db() as db:
+        await link_upcoming_once(db)
 
     # Derive the slim per-day chart summaries that are missing or were built by
     # an older projection. A no-op once current; threaded since a rebuild

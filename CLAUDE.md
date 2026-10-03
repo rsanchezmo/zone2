@@ -73,7 +73,7 @@ Zone2
 - `sync.py` — Background sync tasks, stream backfill, cache status
 - `athlete.py` — Profile, rate limits, HR zones
 - `goals.py` — Yearly goal CRUD with progress tracking
-- `workouts.py` — Workout template management with segments
+- `workouts.py` — Saved workouts (templates with segments). Saved run workouts are mirrored to the Garmin Connect library and sessions planned from them get Garmin calendar entries (`services/garmin_workouts.py`, reconciled after each Garmin sync); a structured session saved in the calendar links to the saved workout with the same steps or saves a new one (`services/workout_library.py`)
 - `dependencies.py` — DI providing `Zone2` singleton
 - `config.py` — Pydantic settings (`workdir`, `cors_origins`, `sync_max_age_hours`)
 - `db.py` — SQLite via aiosqlite at `.strava/calendar.db` (tables: `training_sessions`, `goals`, `workout_templates`)

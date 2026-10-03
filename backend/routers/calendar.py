@@ -11,7 +11,7 @@ from backend.db import delete_row, get_db, insert_row, row_dict, update_row
 from backend.dependencies import get_z2
 from backend.scoring import match_activity, compute_execution_score, has_targets
 from backend.routers.activities import activities_on_dates
-from backend.services import garmin_workouts
+from backend.services import garmin_workouts, workout_library
 from backend.services.briefing import RACE_SOON_DAYS, recovery_today, suggest
 from backend.services.resting_hr import resolve_resting_hr
 from backend.services.zones import resolve_hr_zones, set_setting
@@ -301,9 +301,17 @@ async def get_score_by_activity(
     return await run_in_threadpool(_score_activity, z2, activity_id, date_str, sessions_with_targets, hr_zones)
 
 
+async def _link_saved_workout(tasks: BackgroundTasks, z2: Zone2, db: aiosqlite.Connection, session: dict) -> dict:
+    """Link the session to its saved workout, saving a new one to the library (and Garmin) when needed."""
+    session, created = await workout_library.link_session(db, session)
+    if created:
+        tasks.add_task(garmin_workouts.sync_library, z2)
+    return session
+
+
 async def _queue_watch_sync(tasks: BackgroundTasks, z2: Zone2, db: aiosqlite.Connection, session: dict,
                             previous_date: str | None = None) -> dict:
-    """Queue the change the session's Garmin workout needs, if any, and return the session as it now stands."""
+    """Queue the change the session's Garmin calendar entry needs, if any, and return the session as it now stands."""
     if await garmin_workouts.mark_pending(z2, db, session, previous_date):
         tasks.add_task(garmin_workouts.sync_session, z2, session["id"])
         return {**session, "garmin_sync_state": garmin_workouts.SyncState.PENDING}
@@ -320,6 +328,7 @@ async def create_session(
     values = session.model_dump()
     values["segments"] = values["segments"] or None
     row = _row_to_dict(await insert_row(db, "training_sessions", values, json_cols=_JSON_COLS))
+    row = await _link_saved_workout(tasks, z2, db, row)
     return await _queue_watch_sync(tasks, z2, db, row)
 
 
@@ -332,8 +341,12 @@ async def update_session(
     z2: Zone2 = Depends(get_z2),
 ):
     before = await (await db.execute("SELECT date FROM training_sessions WHERE id = ?", (session_id,))).fetchone()
-    row = _row_to_dict(await update_row(db, "training_sessions", session_id, update.model_dump(exclude_unset=True),
-                                        "Session not found", json_cols=_JSON_COLS))
+    values = update.model_dump(exclude_unset=True)
+    row = _row_to_dict(await update_row(db, "training_sessions", session_id, values, "Session not found",
+                                        json_cols=_JSON_COLS))
+    # Only a change of steps relinks, so marking a session done can't resave a deleted workout
+    if "segments" in values or "sport_type" in values:
+        row = await _link_saved_workout(tasks, z2, db, row)
     return await _queue_watch_sync(tasks, z2, db, row, before["date"] if before else None)
 
 
@@ -344,11 +357,8 @@ async def delete_session(
     db: aiosqlite.Connection = Depends(get_db),
     z2: Zone2 = Depends(get_z2),
 ):
-    before = await (await db.execute("SELECT date, garmin_workout_id FROM training_sessions WHERE id = ?",
-                                     (session_id,))).fetchone()
     await delete_row(db, "training_sessions", session_id, "Session not found")
-    if before["garmin_workout_id"] is not None and before["date"] >= date.today().isoformat():
-        tasks.add_task(garmin_workouts.remove_workout, z2, before["garmin_workout_id"])
+    tasks.add_task(garmin_workouts.forget_session, z2, session_id)
 
 
 class WatchWorkoutsUpdate(BaseModel):
@@ -357,7 +367,7 @@ class WatchWorkoutsUpdate(BaseModel):
 
 @router.get("/watch-workouts")
 async def get_watch_workouts(db: aiosqlite.Connection = Depends(get_db), z2: Zone2 = Depends(get_z2)):
-    """Whether planned runs go to the Garmin watch (`available`: Garmin is configured)."""
+    """Whether saved run workouts and planned runs go to Garmin (`available`: Garmin is configured)."""
     return {"available": bool(z2.garmin_client.email), "enabled": await garmin_workouts.is_enabled(z2, db)}
 
 
@@ -368,8 +378,8 @@ async def set_watch_workouts(
     db: aiosqlite.Connection = Depends(get_db),
     z2: Zone2 = Depends(get_z2),
 ):
-    """Turn sending on (upcoming runs go to the watch) or off (their workouts are removed)."""
+    """Turn sending on, or off: then upcoming entries and the library workouts no past entry uses are removed."""
     await set_setting(db, garmin_workouts.SETTING_KEY, "1" if update.enabled else "0")
-    await garmin_workouts.mark_pending_upcoming(z2, db)
+    await garmin_workouts.mark_due_pending(z2, db)
     tasks.add_task(garmin_workouts.reconcile, z2)
     return await get_watch_workouts(db, z2)
