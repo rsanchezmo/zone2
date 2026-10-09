@@ -64,12 +64,17 @@ def _extract_sleep(p: dict) -> dict[str, Any]:
 
 def _extract_hrv(p: dict) -> dict[str, Any]:
     s = p.get("hrvSummary") or {}
+    baseline = s.get("baseline") or {}
     return {
         "last_night_avg": s.get("lastNightAvg"),
         "weekly_avg": s.get("weeklyAvg"),
         "last_night_5min_high": s.get("lastNight5MinHigh"),
         "status": s.get("status"),
         "feedback_phrase": s.get("feedbackPhrase"),
+        # Garmin's personal range: balanced between these two, low below low_upper
+        "balanced_low": baseline.get("balancedLow"),
+        "balanced_upper": baseline.get("balancedUpper"),
+        "low_upper": baseline.get("lowUpper"),
     }
 
 
@@ -251,6 +256,7 @@ SUMMARY_METRICS: tuple[str, ...] = tuple(EXTRACTORS)
 SUMMARY_VERSIONS: dict[str, int] = {
     "body_battery": 2,        # end_of_day from the last reading
     "intensity_minutes": 2,   # weekly goal read from weekGoal, weekly total added
+    "hrv": 2,                 # baseline range added
 }
 
 

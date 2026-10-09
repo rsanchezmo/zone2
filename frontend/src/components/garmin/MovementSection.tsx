@@ -18,7 +18,7 @@ import {
 export default function MovementSection({ trends: t, days }: { trends: GarminTrends | undefined; days: number }) {
   const { theme, colors } = useTheme()
   const isLight = theme === 'light'
-  const { chartMargin, xAxisProps, yAxisProps, tooltipProps } = useGarminChartProps()
+  const { chartMargin, xAxisProps, yAxisProps, tooltipProps, dayClick } = useGarminChartProps()
 
   const stepsData = useMemo(() => (t?.metrics.daily_steps ?? []).map(r => ({
     date: r.date,
@@ -89,7 +89,7 @@ export default function MovementSection({ trends: t, days }: { trends: GarminTre
         </>}
       >
         <ResponsiveContainer width="100%" height={220}>
-          <BarChart data={stepsData} margin={chartMargin}>
+          <BarChart data={stepsData} margin={chartMargin} {...dayClick}>
             <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
             <XAxis {...xAxisProps} />
             <YAxis {...yAxisProps}
@@ -114,7 +114,7 @@ export default function MovementSection({ trends: t, days }: { trends: GarminTre
           legend={<LegendSwatch color={ACCENT} label="km / day" />}
         >
           <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={distanceData} margin={chartMargin}>
+            <BarChart data={distanceData} margin={chartMargin} {...dayClick}>
               <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
               <XAxis {...xAxisProps} />
               <YAxis {...yAxisProps} tickFormatter={(v) => `${v}`} />
@@ -129,7 +129,7 @@ export default function MovementSection({ trends: t, days }: { trends: GarminTre
           legend={<LegendSwatch color={ACCENT} label="floors / day" />}
         >
           <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={floorsData} margin={chartMargin}>
+            <BarChart data={floorsData} margin={chartMargin} {...dayClick}>
               <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
               <XAxis {...xAxisProps} />
               <YAxis {...yAxisProps} tickFormatter={(v) => `${Math.round(v)}`} />
@@ -147,7 +147,7 @@ export default function MovementSection({ trends: t, days }: { trends: GarminTre
           </>}
         >
           <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={caloriesData} margin={chartMargin}>
+            <BarChart data={caloriesData} margin={chartMargin} {...dayClick}>
               <defs>
                 <linearGradient id="kcalBmr" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%"  stopColor="#94a3b8" stopOpacity={0.85} />
@@ -182,7 +182,7 @@ export default function MovementSection({ trends: t, days }: { trends: GarminTre
         </>}
       >
         <ResponsiveContainer width="100%" height={220}>
-          <BarChart data={imData} margin={chartMargin}>
+          <BarChart data={imData} margin={chartMargin} {...dayClick}>
             <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
             <XAxis {...xAxisProps} />
             <YAxis {...yAxisProps} tickFormatter={(v) => `${v}`} />
@@ -210,7 +210,7 @@ export default function MovementSection({ trends: t, days }: { trends: GarminTre
           </div>
         ) : (
           <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={vo2Data} margin={chartMargin}>
+            <LineChart data={vo2Data} margin={chartMargin} {...dayClick}>
               <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
               <XAxis {...xAxisProps} />
               {/* Pad the y-domain so the relevant zone bands sit visible

@@ -17,7 +17,7 @@ import { FactorBars, LoadBalanceBars } from './GarminTiles'
 export default function ReadinessSection({ trends: t, days, card }: { trends: GarminTrends | undefined; days: number; card: GarminCard }) {
   const { theme, colors } = useTheme()
   const isLight = theme === 'light'
-  const { chartMargin, xAxisProps, yAxisProps, tooltipProps } = useGarminChartProps()
+  const { chartMargin, xAxisProps, yAxisProps, tooltipProps, dayClick } = useGarminChartProps()
 
   const recoveryData = useMemo(() => (t?.metrics.training_readiness ?? []).map(r => {
     const recoveryMins = num(r.recovery_time_min)
@@ -63,7 +63,7 @@ export default function ReadinessSection({ trends: t, days, card }: { trends: Ga
         </>}
       >
             <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={readinessData} margin={chartMargin}>
+              <LineChart data={readinessData} margin={chartMargin} {...dayClick}>
                 <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
                 <XAxis {...xAxisProps} />
                 <YAxis {...yAxisProps} domain={[0, 100]} />
@@ -111,7 +111,7 @@ export default function ReadinessSection({ trends: t, days, card }: { trends: Ga
             </div>
           ) : (
             <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={acwrData} margin={chartMargin}>
+              <LineChart data={acwrData} margin={chartMargin} {...dayClick}>
                 <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
                 <XAxis {...xAxisProps} />
                 <YAxis {...yAxisProps} domain={[0, 'dataMax + 0.3']}
@@ -158,7 +158,7 @@ export default function ReadinessSection({ trends: t, days, card }: { trends: Ga
           </>}
         >
           <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={recoveryData} margin={chartMargin}>
+            <BarChart data={recoveryData} margin={chartMargin} {...dayClick}>
               <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
               <XAxis {...xAxisProps} />
               <YAxis {...yAxisProps} tickFormatter={(v) => `${Math.round(v)}h`} />

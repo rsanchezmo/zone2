@@ -12,7 +12,7 @@ import { ACCENT, ACCENT_LIGHT, displayNum, num, useGarminChartProps } from './ga
 export default function BodySection({ trends: t, days }: { trends: GarminTrends | undefined; days: number }) {
   const { theme, colors } = useTheme()
   const isLight = theme === 'light'
-  const { chartMargin, xAxisProps, yAxisProps, tooltipProps } = useGarminChartProps()
+  const { chartMargin, xAxisProps, yAxisProps, tooltipProps, dayClick } = useGarminChartProps()
 
   // Weigh-ins are sparse (manual or scale days only) — keep only real readings
   // so the line connects across gaps instead of breaking on missing days.
@@ -57,7 +57,7 @@ export default function BodySection({ trends: t, days }: { trends: GarminTrends 
           </div>
         ) : (
           <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={weightData} margin={chartMargin}>
+            <LineChart data={weightData} margin={chartMargin} {...dayClick}>
               <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
               <XAxis {...xAxisProps} />
               <YAxis {...yAxisProps} domain={['dataMin - 0.5', 'dataMax + 0.5']}

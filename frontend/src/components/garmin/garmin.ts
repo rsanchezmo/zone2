@@ -1,3 +1,4 @@
+import { createContext, useContext } from 'react'
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { useTheme } from '../../hooks/useTheme'
 import type { GarminLatestResponse, GarminTrendRow as TrendRow, GarminTrends } from '../../api/hooks'
@@ -7,6 +8,15 @@ import type { GarminLatestResponse, GarminTrendRow as TrendRow, GarminTrends } f
 export const ACCENT = '#06b6d4'           // cyan-500 (brand)
 export const ACCENT_LIGHT = '#67e8f9'     // cyan-300 (light)
 export const MUTED = '#94a3b8'            // slate-400 — only for "not garmin" series
+export const SLEEP_STAGE_COLORS = {
+  deep:  '#6366f1',  // indigo-500
+  rem:   '#a855f7',  // purple-500
+  light: '#22d3ee',  // cyan-400
+  awake: '#94a3b8',  // slate-400
+} as const
+
+/** Opens a day in the page's day timeline; the charts call it when a day is clicked. */
+export const GarminDayContext = createContext<((day: string) => void) | null>(null)
 // Semantic tones — used for qualitative status (qualifier pills, factor dots,
 // ACWR readout, sleep/HRV/readiness verdicts). Cyan stays the page accent;
 // these only appear on elements that mean "good" or "bad".
@@ -76,6 +86,12 @@ export const acwrZoneColor = (r: number) =>
     : NEG
 export const readinessZoneColor = (v: number) =>
   v >= 75 ? POS : v >= 50 ? ACCENT : v >= 25 ? AMBER : NEG
+// A night's HRV against Garmin's personal baseline: balanced, unbalanced, or low.
+export const hrvZoneColor = (v: number, balancedLow: number | null, balancedUpper: number | null, lowUpper: number | null) =>
+  balancedLow == null || balancedUpper == null ? ACCENT
+    : lowUpper != null && v < lowUpper ? NEG
+    : v < balancedLow || v > balancedUpper ? AMBER
+    : POS
 // VO2 max — Garmin's adult-male 30s bands. Their app uses 5 named tiers:
 // Superior · Excellent · Good · Fair · Poor, with red→orange→green→blue→purple
 // (lower-better-is-worse here so we don't reuse our generic POS/NEG palette).
@@ -325,6 +341,7 @@ export type GarminCard = ReturnType<typeof cardValues>
 export function useGarminChartProps() {
   const { colors } = useTheme()
   const isMobile = useIsMobile()
+  const openDay = useContext(GarminDayContext)
 // Common chart props
 const chartMargin = { top: 8, right: 8, left: 4, bottom: 8 }
 const xAxisProps = {
@@ -342,5 +359,13 @@ const yAxisProps = {
   width: isMobile ? 42 : 60,
 }
 const tooltipProps = { ...colors.tooltip, labelFormatter: fmtDate }
-  return { chartMargin, xAxisProps, yAxisProps, tooltipProps }
+// Spread on a daily chart so clicking a day opens it in the timeline
+const dayClick = openDay ? {
+  onClick: (state: { activeLabel?: unknown }) => {
+    const label = state.activeLabel
+    if (typeof label === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(label)) openDay(label)
+  },
+  style: { cursor: 'pointer' },
+} : {}
+  return { chartMargin, xAxisProps, yAxisProps, tooltipProps, dayClick }
 }
