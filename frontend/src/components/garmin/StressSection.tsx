@@ -15,7 +15,7 @@ import {
 export default function StressSection({ trends: t, days }: { trends: GarminTrends | undefined; days: number }) {
   const { theme, colors } = useTheme()
   const isLight = theme === 'light'
-  const { chartMargin, xAxisProps, yAxisProps, tooltipProps } = useGarminChartProps()
+  const { chartMargin, xAxisProps, yAxisProps, tooltipProps, dayClick } = useGarminChartProps()
 
   const stressData = useMemo(() => (t?.metrics.stress ?? []).map(r => ({
     date: r.date,
@@ -54,7 +54,7 @@ export default function StressSection({ trends: t, days }: { trends: GarminTrend
           </>}
         >
           <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={stressData} margin={chartMargin}>
+            <LineChart data={stressData} margin={chartMargin} {...dayClick}>
               <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
               <XAxis {...xAxisProps} />
               <YAxis {...yAxisProps} domain={[0, 100]} />
@@ -100,7 +100,7 @@ export default function StressSection({ trends: t, days }: { trends: GarminTrend
           </>}
         >
           <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={bbData} margin={chartMargin}>
+            <BarChart data={bbData} margin={chartMargin} {...dayClick}>
               <defs>
                 <linearGradient id="bbCharged" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%"  stopColor="#34d399" stopOpacity={0.95} />
@@ -134,7 +134,7 @@ export default function StressSection({ trends: t, days }: { trends: GarminTrend
         </>}
       >
         <ResponsiveContainer width="100%" height={220}>
-          <LineChart data={respSpo2Data} margin={chartMargin}>
+          <LineChart data={respSpo2Data} margin={chartMargin} {...dayClick}>
             <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
             <XAxis {...xAxisProps} />
             <YAxis yAxisId="spo2" {...yAxisProps} domain={[85, 100]}

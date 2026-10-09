@@ -1266,6 +1266,35 @@ export interface ActivityScoreResponse {
   score: ExecutionScore;
 }
 
+export interface ActivityCost {
+  body_battery: { impact: number | null; start: number | null; end: number | null; effect: string | null } | null;
+  recovery_hours: number | null;
+  night: {
+    date: string;
+    sleep_score: number | null;
+    sleep_score_normal: number | null;
+    sleep_seconds: number | null;
+    hrv: number | null;
+    hrv_balanced_low: number | null;
+    hrv_balanced_upper: number | null;
+    hrv_status: string | null;
+    resting_hr: number | null;
+    resting_hr_normal: number | null;
+    body_battery_charged: number | null;
+    readiness: number | null;
+    readiness_level: string | null;
+  } | null;
+}
+
+export function useActivityCost(activityId?: number) {
+  return useQuery<ActivityCost>({
+    queryKey: ['activity-cost', activityId],
+    queryFn: () => api.get(`/garmin/activity-cost/${activityId}`).then(r => r.data),
+    enabled: !!activityId,
+    staleTime: 1000 * 60 * 30,
+  });
+}
+
 export function useActivityScore(activityId?: number) {
   return useQuery<ActivityScoreResponse | null>({
     queryKey: ['activity-score', activityId],
@@ -1535,6 +1564,31 @@ export interface GarminStatus {
   total_days: number;
   total_rows: number;
   per_metric: GarminMetricCoverage[];
+}
+
+/** One day of Garmin intraday data. Times are local wall-clock ms: format them as UTC. */
+export interface GarminDay {
+  date: string;
+  start: number;
+  end: number;
+  heart_rate: [number, number][];
+  stress: [number, number][];
+  body_battery: [number, number][];
+  respiration: [number, number][];
+  spo2: [number, number][];
+  sleep: { start: number; end: number; stage: 'deep' | 'light' | 'rem' | 'awake' }[];
+  activities: { id: number; name: string | null; sport_type: string | null; start: number; end: number }[];
+}
+
+export function useGarminDay(day: string | null) {
+  return useQuery<GarminDay>({
+    queryKey: ['garmin-day', day],
+    queryFn: () => api.get(`/garmin/day/${day}`).then(r => r.data),
+    enabled: !!day,
+    retry: false,
+    staleTime: 1000 * 60 * 10,
+    placeholderData: keepPreviousData,
+  });
 }
 
 export function useGarminStatus() {

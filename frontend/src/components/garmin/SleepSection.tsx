@@ -8,14 +8,14 @@ import type { GarminTrends } from '../../api/hooks'
 import ChartPanel, { LegendSwatch } from '../shared/ChartPanel'
 import { StatusPill } from './GarminTiles'
 import {
-  ACCENT, ACCENT_LIGHT, displayNum, hrvTone, num, secondsToMinutes, toneColor,
+  ACCENT, ACCENT_LIGHT, POS, SLEEP_STAGE_COLORS, displayNum, dotProps, hrvTone, hrvZoneColor, num, secondsToMinutes, toneColor,
   useGarminChartProps, type GarminCard,
 } from './garmin'
 
 /** Sleep stages, heart rate and HRV overnight. */
 export default function SleepSection({ trends: t, days, card }: { trends: GarminTrends | undefined; days: number; card: GarminCard }) {
   const { colors } = useTheme()
-  const { chartMargin, xAxisProps, yAxisProps, tooltipProps } = useGarminChartProps()
+  const { chartMargin, xAxisProps, yAxisProps, tooltipProps, dayClick } = useGarminChartProps()
 
   const sleepData = useMemo(() => (t?.metrics.sleep ?? []).map(r => ({
     date: r.date,
@@ -34,11 +34,26 @@ export default function SleepSection({ trends: t, days, card }: { trends: Garmin
     max: num(r.max),
   })), [t])
 
-  const hrvData = useMemo(() => (t?.metrics.hrv ?? []).map(r => ({
-    date: r.date,
-    last_night: num(r.last_night_avg),
-    weekly: num(r.weekly_avg),
-  })), [t])
+  const hrvData = useMemo(() => (t?.metrics.hrv ?? []).map(r => {
+    const low = num(r.balanced_low)
+    const upper = num(r.balanced_upper)
+    return {
+      date: r.date,
+      last_night: num(r.last_night_avg),
+      weekly: num(r.weekly_avg),
+      balanced: low != null && upper != null ? [low, upper] : null,
+      balanced_low: low,
+      balanced_upper: upper,
+      low_upper: num(r.low_upper),
+    }
+  }), [t])
+  const hrvDot = (r: number) => (props: unknown) => {
+    const dot = dotProps(props)
+    const v = num(dot?.payload.last_night)
+    if (!dot || v == null) return <g />
+    const c = hrvZoneColor(v, num(dot.payload.balanced_low), num(dot.payload.balanced_upper), num(dot.payload.low_upper))
+    return <circle cx={dot.cx} cy={dot.cy} r={r} fill={c} stroke={c} />
+  }
 
   return (
     <>
@@ -52,12 +67,7 @@ export default function SleepSection({ trends: t, days, card }: { trends: Garmin
         // at the top edge, dropping toward transparent at the bottom.
         // Mirrors the atmospheric "area-chart fade" look used by the HR
         // panel below.
-        const STAGE = {
-          deep:  '#6366f1',  // indigo-500
-          rem:   '#a855f7',  // purple-500
-          light: '#22d3ee',  // cyan-400
-          awake: '#94a3b8',  // slate-400
-        }
+        const STAGE = SLEEP_STAGE_COLORS
         const grad = (id: string, color: string) => (
           <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%"  stopColor={color} stopOpacity={0.95} />
@@ -76,7 +86,7 @@ export default function SleepSection({ trends: t, days, card }: { trends: Garmin
             </>}
           >
             <ResponsiveContainer width="100%" height={260}>
-              <ComposedChart data={sleepData} margin={chartMargin}>
+              <ComposedChart data={sleepData} margin={chartMargin} {...dayClick}>
                 <defs>
                   {grad('sleepDeep',  STAGE.deep)}
                   {grad('sleepRem',   STAGE.rem)}
@@ -125,7 +135,7 @@ export default function SleepSection({ trends: t, days, card }: { trends: Garmin
           </>}
         >
           <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={hrData} margin={chartMargin}>
+            <LineChart data={hrData} margin={chartMargin} {...dayClick}>
               <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
               <XAxis {...xAxisProps} />
               <YAxis {...yAxisProps} domain={['dataMin - 3', 'dataMax + 3']} />
@@ -147,7 +157,7 @@ export default function SleepSection({ trends: t, days, card }: { trends: Garmin
           legend={<LegendSwatch color={ACCENT} label="Daily peak" />}
         >
           <ResponsiveContainer width="100%" height={220}>
-            <AreaChart data={hrData} margin={chartMargin}>
+            <AreaChart data={hrData} margin={chartMargin} {...dayClick}>
               <defs>
                 <linearGradient id="hrMax" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%"  stopColor={ACCENT} stopOpacity={0.55} />
@@ -178,22 +188,28 @@ export default function SleepSection({ trends: t, days, card }: { trends: Garmin
           legend={<>
             <LegendSwatch color={ACCENT} label="Last night" />
             <LegendSwatch color={ACCENT_LIGHT} label="7-day avg" variant="dashed" />
+            <LegendSwatch color={POS} label="Balanced range" />
           </>}
         >
           <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={hrvData} margin={chartMargin}>
+            <ComposedChart data={hrvData} margin={chartMargin} {...dayClick}>
               <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
               <XAxis {...xAxisProps} />
               <YAxis {...yAxisProps} domain={['dataMin - 3', 'dataMax + 3']} />
-              <Tooltip {...tooltipProps} formatter={(v: unknown) => `${displayNum(v)} ms`} />
+              <Tooltip {...tooltipProps}
+                formatter={(v: unknown, name) => name === 'balanced' && Array.isArray(v)
+                  ? [`${v[0]}–${v[1]} ms`, 'Balanced']
+                  : [`${displayNum(v)} ms`, name === 'weekly' ? '7-day avg' : 'Last night']} />
+              <Area type="stepAfter" dataKey="balanced"
+                stroke="none" fill={POS} fillOpacity={0.12}
+                activeDot={false} isAnimationActive={false} />
               <Line type="monotone" dataKey="weekly"
                 stroke={ACCENT_LIGHT} strokeWidth={1.5} strokeDasharray="4 3"
                 dot={false} isAnimationActive={false} />
               <Line type="monotone" dataKey="last_night"
                 stroke={ACCENT} strokeWidth={2}
-                dot={{ r: 2.5, fill: ACCENT, stroke: ACCENT }}
-                activeDot={{ r: 4, fill: ACCENT }} isAnimationActive={false} />
-            </LineChart>
+                dot={hrvDot(2.5)} activeDot={hrvDot(4)} isAnimationActive={false} />
+            </ComposedChart>
           </ResponsiveContainer>
         </ChartPanel>
 
@@ -202,7 +218,7 @@ export default function SleepSection({ trends: t, days, card }: { trends: Garmin
           legend={<LegendSwatch color={ACCENT} label="Sleep HR" />}
         >
           <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={sleepData} margin={chartMargin}>
+            <LineChart data={sleepData} margin={chartMargin} {...dayClick}>
               <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
               <XAxis {...xAxisProps} />
               <YAxis {...yAxisProps} domain={['dataMin - 3', 'dataMax + 3']}

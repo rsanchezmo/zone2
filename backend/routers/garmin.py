@@ -16,6 +16,8 @@ Endpoints
 - GET  /courses            — the user's courses (name, distance, start)
 - GET  /courses/{id}/points — a course's line
 - GET  /devices            — watches that take courses, the primary one first
+- GET  /activity-cost/{id} — body battery used, recovery time and the night after
+- GET  /day/{date}         — one day's intraday series, sleep stages and activities
 """
 
 from __future__ import annotations
@@ -30,6 +32,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from backend._ttl_cache import TTLCache
 from backend.dependencies import get_z2
 from backend.routers.athlete import sync_garmin_zones
+from backend.services.activity_cost import activity_cost
+from backend.services.day_timeline import day_timeline
 from backend.services.garmin_workouts import reconcile as reconcile_workouts
 from zone2.garmin_client import GarminUnavailable
 from zone2.garmin_extractors import SUMMARY_METRICS
@@ -128,6 +132,28 @@ def cancel_sync(z2: Zone2 = Depends(get_z2)):
         return {"status": "not_running"}
     z2.garmin_cache.request_cancel()
     return {"status": "cancelling"}
+
+
+# ---------------------------------------------------------------------- /activity-cost
+
+
+@router.get("/activity-cost/{activity_id}")
+def get_activity_cost(activity_id: int, z2: Zone2 = Depends(get_z2)):
+    cost = activity_cost(z2, activity_id)
+    if cost is None:
+        raise HTTPException(status_code=404, detail="Activity not found")
+    return cost
+
+
+# ---------------------------------------------------------------------- /day
+
+
+@router.get("/day/{day}")
+def get_day(day: date_t, z2: Zone2 = Depends(get_z2)):
+    timeline = day_timeline(z2, day)
+    if timeline is None:
+        raise HTTPException(status_code=404, detail="No Garmin data for this day")
+    return timeline
 
 
 # ---------------------------------------------------------------------- /latest

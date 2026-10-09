@@ -1,11 +1,13 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import { useTheme } from '../hooks/useTheme'
 import {
   useGarminStatus, useGarminLatest, useGarminTrends, useTriggerGarminSync, useCancelGarminSync,
 } from '../api/hooks'
 import PageHeader from '../components/shared/PageHeader'
-import { cardValues, fmtDate, lastDays } from '../components/garmin/garmin'
+import { GarminDayContext, cardValues, fmtDate, lastDays } from '../components/garmin/garmin'
+import DayTimeline from '../components/garmin/DayTimeline'
 import { GarminSkeleton } from '../components/garmin/GarminTiles'
 import { TodaySection, VitalsSection } from '../components/garmin/GarminToday'
 import MoveIqPanel from '../components/garmin/MoveIqPanel'
@@ -49,6 +51,22 @@ export default function GarminPage() {
     : 'Garmin Connect is not configured'
 
   const card = useMemo(() => cardValues(latest), [latest])
+
+  // The day in the timeline, in the URL so an activity can link to its day
+  const [searchParams, setSearchParams] = useSearchParams()
+  const day = searchParams.get('day') ?? status?.latest_date ?? null
+  const timelineRef = useRef<HTMLElement>(null)
+  const showDay = useCallback((next: string) => {
+    setSearchParams(prev => {
+      const params = new URLSearchParams(prev)
+      params.set('day', next)
+      return params
+    }, { replace: true })
+  }, [setSearchParams])
+  const openDay = useCallback((next: string) => {
+    showDay(next)
+    timelineRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [showDay])
 
   if (latestLoading || trendsLoading) return <GarminSkeleton isLight={isLight} />
 
@@ -134,6 +152,12 @@ export default function GarminPage() {
         <VitalsSection card={card} />
       </section>
 
+      {enabled && day && (
+        <section ref={timelineRef} className="scroll-mt-6">
+          <DayTimeline day={day} latest={status?.latest_date ?? null} onDayChange={showDay} />
+        </section>
+      )}
+
       {!enabled && (
         <div className={clsx('text-center text-xs py-12', isLight ? 'text-gray-400' : 'text-gray-600')}>
           Configure Garmin Connect to start collecting trends.
@@ -141,7 +165,7 @@ export default function GarminPage() {
       )}
 
       {enabled && (
-        <>
+        <GarminDayContext.Provider value={openDay}>
           <MoveIqPanel />
           <WeeklyRhythm trends={rhythmTrends} days={rhythmDays} onDaysChange={setRhythmDays} loading={rhythmLoading} />
           <ReadinessSection trends={trends} days={days} card={card} />
@@ -149,7 +173,7 @@ export default function GarminPage() {
           <StressSection trends={trends} days={days} />
           <MovementSection trends={trends} days={days} />
           <BodySection trends={trends} days={days} />
-        </>
+        </GarminDayContext.Provider>
       )}
     </div>
   )

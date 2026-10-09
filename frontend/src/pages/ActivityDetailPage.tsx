@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import {
-  useActivity, useAthleteZones, useSimilarActivities, useActivityScore, useActivityRoute,
+  useActivity, useAthleteZones, useSimilarActivities, useActivityScore, useActivityRoute, useActivityCost,
 } from '../api/hooks'
 import ChartPanel from '../components/shared/ChartPanel'
 import HrZoneDistributionChart from '../components/shared/HrZoneDistributionChart'
@@ -12,6 +12,7 @@ import ActivityHeader from '../components/activity/ActivityHeader'
 import RouteMap from '../components/activity/RouteMap'
 import { ActivityMetrics, BestEfforts } from '../components/activity/ActivityMetrics'
 import ExecutionScore from '../components/activity/ExecutionScore'
+import ActivityCost from '../components/activity/ActivityCost'
 import { LapsTable, SplitsTable } from '../components/activity/ActivityTables'
 import StreamCharts from '../components/activity/StreamCharts'
 import RoutePerformance from '../components/activity/RoutePerformance'
@@ -25,6 +26,7 @@ export default function ActivityDetailPage() {
   const { data: similarActivities } = useSimilarActivities(Number(id))
   const { data: activityScore } = useActivityScore(Number(id))
   const { data: matched } = useActivityRoute(Number(id))
+  const { data: cost } = useActivityCost(Number(id))
 
   const { positions, velocities, streamSeries, gapSpeeds, overallGap } = useMemo(() => buildStreamData(activity), [activity])
   const splits = useMemo(() => buildSplits(activity, gapSpeeds), [activity, gapSpeeds])
@@ -47,6 +49,7 @@ export default function ActivityDetailPage() {
       <ActivityMetrics activity={activity} overallGap={overallGap} />
       <BestEfforts activity={activity} />
       {activityScore?.score && <ExecutionScore result={activityScore} sportType={activity.sport_type} />}
+      <ActivityCost cost={cost} day={activity.start_date_local?.slice(0, 10)} />
       {hrHistogram && hrZoneBounds && hrZoneBounds.length >= 5 && (
         <ChartPanel title="HR zone distribution" glow={false}>
           <HrZoneDistributionChart histogram={hrHistogram} zones={hrZoneBounds} />
