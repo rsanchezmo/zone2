@@ -5,7 +5,7 @@ import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from backend.db import get_db
+from backend.db import connect_db, get_db
 from backend.dependencies import get_z2
 from backend.routers.exports import clear_export_cache
 from backend.routers.stats import clear_stats_cache
@@ -13,6 +13,7 @@ from backend.services.zones import (
     DEFAULT_SOURCE,
     Source,
     get_setting,
+    refresh_garmin_zones,
     resolve_hr_zones,
     set_setting,
 )
@@ -49,7 +50,7 @@ async def get_athlete_zones(
     z2: Zone2 = Depends(get_z2),
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    """Return HR zones using the user-selected source (strava / estimated / manual)."""
+    """Return HR zones using the user-selected source (strava / estimated / manual / garmin)."""
     resolved = await resolve_hr_zones(z2, db)
     return {
         "heart_rate": {
@@ -58,6 +59,7 @@ async def get_athlete_zones(
             "source": resolved["source"],
             "requested_source": resolved["requested_source"],
             "fallback_reason": resolved["fallback_reason"],
+            "threshold_hr": resolved["threshold_hr"],
         }
     }
 
@@ -72,8 +74,27 @@ class ZonesSettings(BaseModel):
     manual_zones: list[ZoneBound] | None = None
 
 
+def _drop_zone_caches(z2: Zone2) -> None:
+    """Drop caches so downstream analytics rebuild against the current zones."""
+    z2.strava_analytics._hr_zones_cache = None
+    z2.strava_analytics._training_load_cache = {}
+    clear_stats_cache()
+    clear_export_cache()
+
+
+async def sync_garmin_zones(z2: Zone2) -> None:
+    """Refresh Garmin's zones after a Garmin sync, rebuilding what uses them
+    when they moved and are the ones in use."""
+    if not await refresh_garmin_zones(z2):
+        return
+    async with connect_db() as db:
+        if await get_setting(db, "hr_zones_source") == "garmin":
+            logger.info("Garmin HR zones changed: rebuilding zone-based stats")
+            _drop_zone_caches(z2)
+
+
 @router.get("/zones-settings")
-async def get_zones_settings(db: aiosqlite.Connection = Depends(get_db)):
+async def get_zones_settings(db: aiosqlite.Connection = Depends(get_db), z2: Zone2 = Depends(get_z2)):
     source = (await get_setting(db, "hr_zones_source")) or DEFAULT_SOURCE
     raw = await get_setting(db, "manual_hr_zones")
     manual = None
@@ -82,7 +103,7 @@ async def get_zones_settings(db: aiosqlite.Connection = Depends(get_db)):
             manual = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             manual = None
-    return {"source": source, "manual_zones": manual}
+    return {"source": source, "manual_zones": manual, "garmin_available": bool(z2.garmin_client.email)}
 
 
 @router.put("/zones-settings")
@@ -119,13 +140,10 @@ async def update_zones_settings(
             "manual_hr_zones",
             json.dumps([z.model_dump() for z in payload.manual_zones]),
         )
+    if payload.source == "garmin":
+        await refresh_garmin_zones(z2)
     await set_setting(db, "hr_zones_source", payload.source)
-
-    # Drop caches so downstream analytics rebuild against the new source.
-    z2.strava_analytics._hr_zones_cache = None
-    z2.strava_analytics._training_load_cache = {}
-    clear_stats_cache()
-    clear_export_cache()
+    _drop_zone_caches(z2)
 
     return {"source": payload.source}
 
