@@ -862,7 +862,7 @@ export interface HrZoneBound {
   max: number;
 }
 
-export type HrZonesSource = 'strava' | 'estimated' | 'manual';
+export type HrZonesSource = 'strava' | 'estimated' | 'manual' | 'garmin';
 
 export interface AthleteZonesResponse {
   heart_rate: {
@@ -871,6 +871,8 @@ export interface AthleteZonesResponse {
     source: HrZonesSource;
     requested_source: HrZonesSource;
     fallback_reason: string | null;
+    /** Lactate threshold the zones are built on (Garmin only) */
+    threshold_hr: number | null;
   };
 }
 
@@ -885,6 +887,7 @@ export function useAthleteZones() {
 export interface ZonesSettings {
   source: HrZonesSource;
   manual_zones: HrZoneBound[] | null;
+  garmin_available: boolean;
 }
 
 export function useZonesSettings() {

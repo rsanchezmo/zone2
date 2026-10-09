@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import clsx from 'clsx'
 import {
-  useUpdateZonesSettings, type AthleteZonesResponse, type ZonesSettings,
+  useUpdateZonesSettings, type AthleteZonesResponse, type HrZonesSource, type ZonesSettings,
 } from '../../api/hooks'
 import ChartPanel from '../shared/ChartPanel'
 import { useTheme } from '../../hooks/useTheme'
@@ -27,6 +27,7 @@ export default function HeartRateZones({ zones, zonesSettings }: {
       toolbar={
         <ZoneSourceSelector
           current={zonesSettings?.source ?? 'estimated'}
+          garmin={zonesSettings?.garmin_available ?? false}
           onChange={source => updateZonesSettings.mutate({ source })}
           isLight={isLight}
           pending={updateZonesSettings.isPending}
@@ -38,6 +39,7 @@ export default function HeartRateZones({ zones, zonesSettings }: {
             {zones?.heart_rate?.source === 'strava' && `Custom zones from Strava · max HR ${maxHr ?? '?'} bpm`}
             {zones?.heart_rate?.source === 'manual' && `Manual zones · max HR ${maxHr ?? '?'} bpm`}
             {zones?.heart_rate?.source === 'estimated' && `Estimated from activity data · max HR ${maxHr ?? '?'} bpm`}
+            {zones?.heart_rate?.source === 'garmin' && `Zones from Garmin Connect${zones.heart_rate.threshold_hr ? ` · lactate threshold ${zones.heart_rate.threshold_hr} bpm` : ''} · max HR ${maxHr ?? '?'} bpm`}
           </div>
           {zones?.heart_rate?.fallback_reason && (
             <div className="text-[11px] text-amber-400">
@@ -95,20 +97,22 @@ export default function HeartRateZones({ zones, zonesSettings }: {
 }
 
 // ────────────────────────────────────────────────────────
-// ZoneSourceSelector — pick strava / estimated / manual
+// ZoneSourceSelector — pick estimated / strava / garmin / manual
 // ────────────────────────────────────────────────────────
 
 function ZoneSourceSelector({
-  current, onChange, isLight, pending,
+  current, garmin, onChange, isLight, pending,
 }: {
-  current: 'strava' | 'estimated' | 'manual'
-  onChange: (source: 'strava' | 'estimated' | 'manual') => void
+  current: HrZonesSource
+  garmin: boolean
+  onChange: (source: HrZonesSource) => void
   isLight: boolean
   pending: boolean
 }) {
-  const options: Array<{ value: 'strava' | 'estimated' | 'manual'; label: string }> = [
+  const options: Array<{ value: HrZonesSource; label: string }> = [
     { value: 'estimated', label: 'Estimated' },
     { value: 'strava', label: 'Strava' },
+    ...(garmin || current === 'garmin' ? [{ value: 'garmin' as const, label: 'Garmin' }] : []),
     { value: 'manual', label: 'Manual' },
   ]
   return (

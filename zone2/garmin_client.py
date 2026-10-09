@@ -385,6 +385,12 @@ class GarminClient:
     def list_workouts(self) -> list[dict]:
         return self._logged_in().get_workouts(0, 500)
 
+    def hr_zones(self) -> list[dict]:
+        """The HR zones Garmin Connect and the watch use, one entry per sport
+        (DEFAULT, RUNNING…), with the method and threshold they're built on.
+        The Connect web app's endpoint; the lib has none."""
+        return self._request("GET", "/biometric-service/heartRateZones").json()
+
     # ------------------------------------------------------------------ orchestration
 
     PER_DAY_DISPATCH: dict[str, str] = {
