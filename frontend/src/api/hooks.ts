@@ -560,10 +560,36 @@ export interface TrainingPace {
   speed_max_mps: number;
 }
 
+export type FadeVerdict = 'holds_pace' | 'typical' | 'fades';
+
+export interface FadeAnchor {
+  distance_m: number;
+  time_s: number;
+  date: string;
+  activity_id: number;
+  activity_name: string;
+  is_race: boolean;
+  weight_share: number;
+}
+
+/** How much slower the athlete gets as distance grows: the weighted Riegel
+ *  exponent the predictions use, with the efforts behind it. */
+export interface Fade {
+  exponent: number;
+  stderr: number | null;
+  typical: number;
+  /** Null when too few independent efforts to bound the exponent. */
+  verdict: FadeVerdict | null;
+  /** Strongest first. */
+  anchors: FadeAnchor[];
+}
+
 export interface RacePredictionsResponse {
   predictions: RacePrediction[];
   athlete_vdot: number | null;
   fitted_exponent: number | null;
+  /** Running only. */
+  fade: Fade | null;
   /** Daniels' paces at the VDOT the calibrated predictions imply; running only. */
   training_paces: { vdot: number; paces: TrainingPace[] } | null;
   confidence: 'high' | 'medium' | 'low';

@@ -12,7 +12,7 @@ from zone2.utils import (
     get_sport_category, vdot_from_time_distance,
     predicted_time_from_vdot, riegel_predict, fit_riegel_exponent,
     compute_trimp_banister, compute_trimp_zone_weighted, hr_zone_counts, df_rows,
-    training_paces_from_vdot,
+    training_paces_from_vdot, FadeVerdict, RIEGEL_TYPICAL_EXPONENT,
 )
 
 logger = logging.getLogger(__name__)
@@ -760,7 +760,8 @@ class StravaAnalytics:
     def _get_per_activity_bests_df(self, sport_category: str) -> pd.DataFrame:
         """Return a table of per-activity best efforts for the given sport:
             columns = activity_id, activity_name, date (pd.Timestamp UTC),
-                      distance_m, time_s.
+                      distance_m, time_s, is_race (the effort is a race at
+                      its own distance), avg_hr.
         Built from the persisted per-activity best efforts and cached;
         windowed queries filter by date and take a groupby-min. Invalidated
         on sync via `invalidate_caches`.
@@ -794,7 +795,9 @@ class StravaAnalytics:
                 activity_id = row.get("id")
                 activity_name = row.get("name", "")
                 act_date = row.get("start_date_local")
-                is_race = activity_id in race_ids
+                # A race is a maximal effort at its own distance only: its
+                # splits at shorter distances were paced for the whole race.
+                race_distance = max(efforts) if activity_id in race_ids else None
                 avg_hr = row.get("average_heartrate")
                 avg_hr = float(avg_hr) if avg_hr is not None and not pd.isna(avg_hr) else None
 
@@ -805,7 +808,7 @@ class StravaAnalytics:
                         "date": act_date,
                         "distance_m": target_m,
                         "time_s": best_time,
-                        "is_race": is_race,
+                        "is_race": target_m == race_distance,
                         "avg_hr": avg_hr,
                     })
 
@@ -976,8 +979,8 @@ class StravaAnalytics:
         running; for other sports the fitted exponent matters more. We still
         report it and let the caller see `fitted_exponent` to judge quality.
 
-        Returns {predictions, athlete_vdot, fitted_exponent}. No caching, no
-        data_quality — caller wraps as needed.
+        Returns {predictions, athlete_vdot, fitted_exponent, fade}. No caching,
+        no data_quality — caller wraps as needed.
         """
         if reference_date is None:
             reference_date = datetime.now(timezone.utc)
@@ -1051,14 +1054,8 @@ class StravaAnalytics:
                     if tot > 0 else None
                 )
 
-        # Fit personalized Riegel exponent from the per-distance top-1 efforts
-        # only — passing multiple samples per distance would bias the fit
-        # toward distances with the most samples. Sub-3-minute efforts are
-        # excluded: Riegel's power law is calibrated for aerobic race
-        # durations, and anaerobic 400m/1K points skew the exponent that is
-        # then applied to *every* distance.
-        top1_bests = [b for b in recent_bests if b.get("is_top1") and b["time_s"] >= 180]
-        fitted_exp = fit_riegel_exponent(top1_bests) if len(top1_bests) >= 3 else None
+        fade = self._fit_fade(recent_bests, anchor_weights)
+        fitted_exp = fade["exponent"] if fade else None
 
         # Distance-proximity decay exponent. k=1 is the classical exp(-|log2|);
         # k=1.5 dampens cross-distance contributions from far-away anchors
@@ -1109,7 +1106,7 @@ class StravaAnalytics:
             # Per-input Riegel (fixed 1.06) projections weighted by distance
             # proximity AND recency×quality of the underlying best.
             riegel_inputs = [
-                (riegel_predict(b["time_s"], b["distance_m"], dist_m, 1.06),
+                (riegel_predict(b["time_s"], b["distance_m"], dist_m),
                  _dist_weight(b["distance_m"], dist_m) * rw)
                 for b, rw in zip(recent_bests, anchor_weights)
             ]
@@ -1196,6 +1193,69 @@ class StravaAnalytics:
             "predictions": predictions,
             "athlete_vdot": athlete_vdot,
             "fitted_exponent": fitted_exp,
+            "fade": fade,
+        }
+
+    # Shortest effort the fade is fit on: Riegel's power law is calibrated for
+    # aerobic race durations, and anaerobic 400m/1K points skew the exponent
+    # that is then applied to every distance.
+    FADE_MIN_TIME_S = 180
+    # Longest over shortest fitted distance: closer distances say little about
+    # how pace holds as races get longer.
+    FADE_MIN_SPAN = 2.0
+
+    def _fit_fade(self, recent_bests: list[dict], anchor_weights: list[float]) -> dict | None:
+        """How much the athlete slows as distance grows: the Riegel exponent fit
+        over the recent best efforts, weighted by the same recency × quality as
+        the predictions, so an old short PR can't outweigh this month's long race.
+        Each distance counts once: its efforts share the weight of its strongest
+        one, so a distance with more efforts doesn't pull the fit.
+
+        The verdict compares the exponent ± its standard error to Riegel's
+        typical 1.06; while that range includes 1.06 the efforts can't tell
+        speed from endurance."""
+        by_distance: dict[int, list[tuple[dict, float]]] = {}
+        for b, w in zip(recent_bests, anchor_weights):
+            if b["time_s"] >= self.FADE_MIN_TIME_S and w > 0:
+                by_distance.setdefault(b["distance_m"], []).append((b, w))
+        if len(by_distance) < 3 or max(by_distance) / min(by_distance) < self.FADE_MIN_SPAN:
+            return None
+
+        anchors: list[tuple[dict, float]] = []
+        for efforts in by_distance.values():
+            total, strongest = sum(w for _, w in efforts), max(w for _, w in efforts)
+            anchors += [(b, strongest * w / total) for b, w in efforts]
+        fit = fit_riegel_exponent([b for b, _ in anchors], [w for _, w in anchors])
+        if fit is None:
+            return None
+
+        exponent, stderr = fit
+        verdict: FadeVerdict | None = None
+        if stderr is not None:
+            if exponent - stderr > RIEGEL_TYPICAL_EXPONENT:
+                verdict = FadeVerdict.FADES
+            elif exponent + stderr < RIEGEL_TYPICAL_EXPONENT:
+                verdict = FadeVerdict.HOLDS_PACE
+            else:
+                verdict = FadeVerdict.TYPICAL
+        total_w = sum(w for _, w in anchors)
+        return {
+            "exponent": exponent,
+            "stderr": stderr,
+            "typical": RIEGEL_TYPICAL_EXPONENT,
+            "verdict": verdict,
+            "anchors": [
+                {
+                    "distance_m": b["distance_m"],
+                    "time_s": b["time_s"],
+                    "date": b["date"],
+                    "activity_id": b["activity_id"],
+                    "activity_name": b["activity_name"],
+                    "is_race": b["is_race"],
+                    "weight_share": round(w / total_w, 3),
+                }
+                for b, w in sorted(anchors, key=lambda a: -a[1])
+            ],
         }
 
     def _compute_race_residuals(self, sport_category: str) -> list[tuple[pd.Timestamp, float]]:
@@ -1348,8 +1408,8 @@ class StravaAnalytics:
             recency-decayed inside the window — reflecting *current* fitness
             rather than lifetime bests.
           • Central estimate blends VDOT (running only, 50% weight) with a
-            closer-anchor-weighted Riegel family (fixed 1.06 + personalized
-            exponent when ≥3 inputs are available). Race-flagged anchors are
+            closer-anchor-weighted Riegel family (fixed 1.06 + the personalized
+            fade exponent when it can be fit). Race-flagged anchors are
             boosted; clearly sub-maximal anchors are down-weighted.
           • Uncertainty band is the weighted p25–p75 (IQR) of the projection
             pool.
@@ -1424,6 +1484,8 @@ class StravaAnalytics:
             "predictions": core["predictions"],
             "athlete_vdot": core["athlete_vdot"],
             "fitted_exponent": core["fitted_exponent"],
+            # Riegel's typical exponent is a running figure.
+            "fade": core["fade"] if sport_category == "running" else None,
             "training_paces": (
                 self._training_paces(core["predictions"]) if sport_category == "running" else None
             ),
