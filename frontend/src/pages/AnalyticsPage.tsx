@@ -13,6 +13,7 @@ import { useIsMobile } from '../hooks/useIsMobile'
 import clsx from 'clsx'
 import PageHeader from '../components/shared/PageHeader'
 import FitnessForm from '../components/analytics/FitnessForm'
+import FadeSummary from '../components/analytics/FadeSummary'
 
 const SPORTS: { key: string; label: string; sportType: string }[] = [
   { key: 'running', label: 'Running', sportType: 'Run' },
@@ -50,6 +51,10 @@ export default function AnalyticsPage() {
     () => predictions.filter(
       (p): p is RacePrediction & { predicted_time_s: number } => p.predicted_time_s != null,
     ),
+    [predictions],
+  )
+  const predictionLabels = useMemo(
+    () => new Map(predictions.map(p => [p.distance_m, p.label])),
     [predictions],
   )
 
@@ -208,6 +213,10 @@ export default function AnalyticsPage() {
               )
             })}
           </div>
+        )}
+
+        {sport === 'running' && preds?.fade && (
+          <FadeSummary fade={preds.fade} labels={predictionLabels} accent={accent} isLight={isLight} />
         )}
 
         {preds?.data_quality?.warnings && preds.data_quality.warnings.length > 0 && (

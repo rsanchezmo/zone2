@@ -337,28 +337,50 @@ def training_paces_from_vdot(vdot: float) -> dict[TrainingPace, tuple[float, flo
     return {zone: speeds[zone] for zone in TrainingPace}
 
 
-def riegel_predict(t1_s: float, d1_m: float, d2_m: float, exponent: float = 1.06) -> float:
+RIEGEL_TYPICAL_EXPONENT = 1.06
+
+
+class FadeVerdict(StrEnum):
+    HOLDS_PACE = "holds_pace"
+    TYPICAL = "typical"
+    FADES = "fades"
+
+
+def riegel_predict(t1_s: float, d1_m: float, d2_m: float, exponent: float = RIEGEL_TYPICAL_EXPONENT) -> float:
     """Predict race time using Riegel's formula: t2 = t1 * (d2/d1)^exponent."""
     return t1_s * (d2_m / d1_m) ** exponent
 
 
-def fit_riegel_exponent(prs: list[dict]) -> float | None:
-    """Fit a personalized Riegel exponent from personal records.
+def fit_riegel_exponent(efforts: list[dict], weights: list[float] | None = None) -> tuple[float, float | None] | None:
+    """Fit a personalized Riegel exponent as the weighted least-squares slope
+    of log(time) on log(distance), with its standard error.
 
-    Each PR dict must have 'distance_m' and 'time_s' keys.
-    Returns None if fewer than 3 PRs.
+    Each effort dict must have 'distance_m' and 'time_s' keys. Returns None
+    with fewer than 3 efforts or an implausible slope; the standard error is
+    None when the weights leave fewer than 3 effective efforts.
     """
-    if len(prs) < 3:
+    if len(efforts) < 3:
         return None
-    distances = np.array([pr['distance_m'] for pr in prs])
-    times = np.array([pr['time_s'] for pr in prs])
-    # log(t) = exponent * log(d) + c
-    coeffs = np.polyfit(np.log(distances), np.log(times), 1)
-    exponent = float(coeffs[0])
-    # Sanity check: exponent should be roughly 1.0-1.2
+    x = np.log([e['distance_m'] for e in efforts])
+    y = np.log([e['time_s'] for e in efforts])
+    w = np.ones(len(efforts)) if weights is None else np.asarray(weights, dtype=np.float64)
+    if w.sum() <= 0:
+        return None
+    w = w / w.sum()
+    x_mean, y_mean = float(w @ x), float(w @ y)
+    sxx = float(w @ (x - x_mean) ** 2)
+    if sxx <= 0:
+        return None
+    exponent = float(w @ ((x - x_mean) * (y - y_mean))) / sxx
     if exponent < 0.8 or exponent > 1.5:
         return None
-    return round(exponent, 4)
+    n_eff = 1.0 / float(w @ w)
+    stderr = None
+    if n_eff > 2:
+        resid = y - (y_mean + exponent * (x - x_mean))
+        variance = float(w @ resid ** 2) * n_eff / (n_eff - 2)
+        stderr = round(math.sqrt(variance / (sxx * n_eff)), 4)
+    return round(exponent, 4), stderr
 
 
 def compute_trimp_banister(duration_min: np.ndarray, avg_hr: np.ndarray, hr_rest: float, hr_max: float,
