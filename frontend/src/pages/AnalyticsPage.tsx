@@ -3,7 +3,8 @@ import {
   ComposedChart, Area, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
 import {
-  useRacePredictions, useRacePredictionsHistory, type RacePrediction, type TrainingPace, type TrainingPaceZone,
+  useRacePredictions, useRacePredictionsHistory, type RacePrediction, type RacePredictionsResponse,
+  type TrainingPace, type TrainingPaceZone,
 } from '../api/hooks'
 import { getSportColor } from '../constants/sportColors'
 import { formatSpeed, formatClockDuration, formatPace } from '../utils/formatSpeed'
@@ -14,6 +15,7 @@ import clsx from 'clsx'
 import PageHeader from '../components/shared/PageHeader'
 import FitnessForm from '../components/analytics/FitnessForm'
 import FadeSummary from '../components/analytics/FadeSummary'
+import StatusPill, { type PillTone } from '../components/shared/StatusPill'
 
 const SPORTS: { key: string; label: string; sportType: string }[] = [
   { key: 'running', label: 'Running', sportType: 'Run' },
@@ -27,6 +29,10 @@ const TRAINING_PACE_META: Record<TrainingPaceZone, { label: string; use: string;
   T: { label: 'Threshold', use: 'Tempo, cruise intervals' },
   I: { label: 'Interval', use: '3–5 min reps', splitM: 400 },
   R: { label: 'Repetition', use: '200–400 m reps', splitM: 200 },
+}
+
+const CONFIDENCE_TONE: Record<RacePredictionsResponse['confidence'], PillTone> = {
+  high: 'good', medium: 'warn', low: 'bad',
 }
 
 function formatPaceRange(p: TrainingPace): string {
@@ -132,14 +138,7 @@ export default function AnalyticsPage() {
             <span className="eyebrow">Race predictor</span>
           </div>
           {preds?.confidence && (
-            <span className={clsx(
-              'text-[10px] uppercase tracking-[0.15em] font-semibold px-2 py-0.5 rounded-full border',
-              preds.confidence === 'high' && 'text-emerald-400 border-emerald-400/40',
-              preds.confidence === 'medium' && 'text-amber-400 border-amber-400/40',
-              preds.confidence === 'low' && 'text-rose-400 border-rose-400/40',
-            )}>
-              {preds.confidence} confidence
-            </span>
+            <StatusPill size="md" tone={CONFIDENCE_TONE[preds.confidence]}>{preds.confidence} confidence</StatusPill>
           )}
         </div>
 
@@ -176,15 +175,7 @@ export default function AnalyticsPage() {
                 >
                   <div className="flex items-center justify-between gap-2 mb-1">
                     <span className="eyebrow" style={{ color: isFocused ? accent : undefined }}>{p.label}</span>
-                    <span
-                      className={clsx(
-                        'text-[8.5px] uppercase tracking-[0.12em] font-semibold px-1.5 py-0.5 rounded-full border whitespace-nowrap',
-                        isRecent ? 'border-current' : isLight ? 'text-gray-400 border-gray-300' : 'text-gray-500 border-surface-500',
-                      )}
-                      style={isRecent ? { color: accent, borderColor: `${accent}60`, backgroundColor: `${accent}15` } : undefined}
-                    >
-                      {isRecent ? 'Anchored' : 'Estimation'}
-                    </span>
+                    <StatusPill accent={isRecent ? accent : undefined}>{isRecent ? 'Anchored' : 'Estimation'}</StatusPill>
                   </div>
                   <div className={clsx('text-xl md:text-2xl font-bold font-mono tabular-nums', isLight ? 'text-gray-900' : 'text-gray-100')}>
                     {formatClockDuration(p.predicted_time_s)}
@@ -234,12 +225,7 @@ export default function AnalyticsPage() {
             <div className="section-head flex-1">
               <span className="eyebrow">Training paces</span>
             </div>
-            <span className={clsx(
-              'text-[10px] uppercase tracking-[0.15em] font-semibold font-mono px-2 py-0.5 rounded-full border',
-              isLight ? 'text-gray-500 border-gray-300' : 'text-gray-400 border-surface-500',
-            )}>
-              VDOT {preds.training_paces.vdot.toFixed(1)}
-            </span>
+            <StatusPill size="md" className="font-mono">VDOT {preds.training_paces.vdot.toFixed(1)}</StatusPill>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             {preds.training_paces.paces.map(p => {

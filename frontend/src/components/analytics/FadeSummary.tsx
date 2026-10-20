@@ -3,6 +3,7 @@ import clsx from 'clsx'
 import type { Fade, FadeAnchor, FadeVerdict } from '../../api/hooks'
 import { formatClockDuration } from '../../utils/formatSpeed'
 import { localDateStr, parseLocalDate } from '../../utils/dates'
+import StatusPill from '../shared/StatusPill'
 
 const VERDICT_META: Record<FadeVerdict, { label: string; text: string }> = {
   holds_pace: {
@@ -59,15 +60,7 @@ export default function FadeSummary({ fade, labels, accent, isLight }: {
             <span className="text-[11px] text-gray-500 font-mono tabular-nums">± {fade.stderr.toFixed(3)}</span>
           )}
           {meta && (
-            <span
-              className={clsx(
-                'text-[8.5px] uppercase tracking-[0.12em] font-semibold px-1.5 py-0.5 rounded-full border whitespace-nowrap self-center',
-                fade.verdict === 'typical' && (isLight ? 'text-gray-500 border-gray-300' : 'text-gray-400 border-surface-500'),
-              )}
-              style={fade.verdict !== 'typical' ? { color: accent, borderColor: `${accent}60`, backgroundColor: `${accent}15` } : undefined}
-            >
-              {meta.label}
-            </span>
+            <StatusPill accent={fade.verdict !== 'typical' ? accent : undefined} className="self-center">{meta.label}</StatusPill>
           )}
         </div>
         <span className="text-[10px] text-gray-500 font-mono tabular-nums">typical {fade.typical.toFixed(2)}</span>

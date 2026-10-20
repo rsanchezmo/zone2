@@ -18,6 +18,8 @@ export interface ActivityStreamPoint {
   temp?: number;
   moving?: boolean;
   grade_smooth?: number;
+  /** Runs only: speed on the flat at the same energy cost (Minetti), from the backend. */
+  grade_adjusted_speed?: number;
   lat?: number;
   lng?: number;
   /** Pre-columnar wire format; current backend always splits into lat/lng. */
@@ -168,10 +170,37 @@ export interface ActivityStop {
   duration_s: number;
 }
 
+export type DriftVerdict = 'steady' | 'drifting' | 'high';
+
+/** How far HR climbed at a steady grade-adjusted pace, past the first 10 min; runs only. */
+export type ActivityDrift =
+  | { status: 'no_heart_rate' }
+  | { status: 'too_short'; minutes: number; min_minutes: number; skipped_min: number }
+  | { status: 'unsteady'; minutes: number; pace_cv_pct: number; max_pace_cv_pct: number }
+  | {
+      status: 'measured';
+      verdict: DriftVerdict;
+      decoupling_pct: number;
+      drift_bpm_per_10min: number;
+      rise_bpm: number;
+      minutes: number;
+      /** First half, second half. */
+      metres_per_beat: [number, number];
+      pace_cv_pct: number;
+      start_km: number;
+      half_km: number;
+      end_km: number;
+      skipped_min: number;
+      steady_below_pct: number;
+      /** [km, bpm]: the HR the pace alone explains at the start's cost. */
+      no_drift_hr: [number, number][];
+    };
+
 /** Detail endpoint adds streams, detected stops and the raw Strava detail sub-payloads. */
 export interface ActivityDetail extends Activity {
   streams?: ActivityStreamPoint[] | null;
   stops?: ActivityStop[];
+  drift?: ActivityDrift | null;
   photos?: ActivityPhoto[] | null;
   splits_metric?: ActivitySplitMetric[] | null;
   best_efforts?: ActivityBestEffort[] | null;
