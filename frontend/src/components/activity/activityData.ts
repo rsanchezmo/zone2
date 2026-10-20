@@ -15,52 +15,6 @@ export interface Split {
   elevLoss: number
 }
 
-/** Minetti metabolic cost factor for a given grade (as fraction, e.g. 0.05 = 5%) */
-function minettiCostFactor(grade: number): number {
-  const g = grade
-  return 155.4 * g ** 5 - 30.4 * g ** 4 - 43.3 * g ** 3 + 46.3 * g ** 2 + 19.5 * g + 3.6
-}
-
-const FLAT_COST = 3.6 // minettiCostFactor(0)
-
-/** Smooth an array with a simple moving average of given window size */
-function smoothArray(arr: number[], window: number): number[] {
-  const half = Math.floor(window / 2)
-  return arr.map((_, i) => {
-    let sum = 0
-    let count = 0
-    for (let j = Math.max(0, i - half); j <= Math.min(arr.length - 1, i + half); j++) {
-      sum += arr[j]
-      count++
-    }
-    return sum / count
-  })
-}
-
-/** Compute GAP-adjusted speed for each stream point (running only) */
-function computeGapSpeeds(streams: StreamPoint[]): number[] {
-  if (streams.length < 2) return []
-
-  // Compute raw grades
-  const rawGrades: number[] = [0]
-  for (let i = 1; i < streams.length; i++) {
-    const dDist = (streams[i].distance ?? 0) - (streams[i - 1].distance ?? 0)
-    const dAlt = (streams[i].altitude ?? 0) - (streams[i - 1].altitude ?? 0)
-    rawGrades.push(dDist > 0.5 ? dAlt / dDist : 0) // grade as fraction
-  }
-
-  // Smooth grades
-  const grades = smoothArray(rawGrades, 10)
-
-  // Compute GAP speed per point
-  return streams.map((pt, i) => {
-    const speed = pt.velocity_smooth ?? 0
-    if (speed <= 0.3) return 0
-    const cost = minettiCostFactor(grades[i])
-    return speed * (cost / FLAT_COST)
-  })
-}
-
 export const SEG_TYPE_LABELS: Record<string, string> = {
   warmup: 'Warmup', work: 'Work', recovery: 'Recovery', cooldown: 'Cooldown', rest: 'Rest',
 }
@@ -206,9 +160,8 @@ export function buildStreamData(activity: ActivityDetail | undefined): StreamDat
     const streams = activity.streams
     const isRunning = getSportCategory(activity?.sport_type) === 'running'
 
-    // Compute GAP speeds for running
     if (isRunning) {
-      gSpeeds = computeGapSpeeds(streams)
+      gSpeeds = streams.map(pt => pt.grade_adjusted_speed ?? 0)
     }
 
     let gapSum = 0

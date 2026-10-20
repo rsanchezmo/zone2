@@ -38,6 +38,8 @@ interface StreamChartProps {
   xUnit?: string
   /** Formatter for the X-axis values (stored in km). Defaults to `v.toFixed(1)`. */
   xFormatter?: (v: number) => string
+  /** Rendered under the chart, inside its panel. */
+  footer?: ReactNode
 }
 
 /** Error boundary to prevent chart crashes from taking down the whole page */
@@ -109,6 +111,33 @@ function resampleByDistance(
   return result
 }
 
+/** Each primary point with the secondary value nearest in distance; none outside the secondary's range. */
+function withSecondary(
+  primary: { distance: number; value: number }[],
+  secondary: { distance: number; value: number }[],
+): { distance: number; value: number; secondary?: number }[] {
+  if (secondary.length === 0) return primary
+  const first = secondary[0].distance
+  const last = secondary[secondary.length - 1].distance
+  const secMap = new Map<number, number>()
+  for (const pt of secondary) {
+    secMap.set(Math.round(pt.distance * 100), pt.value)
+  }
+  return primary.map(pt => {
+    if (pt.distance < first || pt.distance > last) return pt
+    let closest = secMap.get(Math.round(pt.distance * 100))
+    if (closest === undefined) {
+      let minDiff = Infinity
+      for (const s of secondary) {
+        const diff = Math.abs(s.distance - pt.distance)
+        if (diff < minDiff) { minDiff = diff; closest = s.value }
+        if (diff > minDiff) break
+      }
+    }
+    return { ...pt, secondary: closest }
+  })
+}
+
 function StreamChart({
   title, data, color, gradientId, unit,
   reversed = false, yDomain, formatValue,
@@ -118,6 +147,7 @@ function StreamChart({
   markersLegend,
   xUnit = 'km',
   xFormatter = (v: number) => v.toFixed(1),
+  footer,
 }: StreamChartProps) {
   const { colors } = useTheme()
   const isMobile = useIsMobile()
@@ -134,25 +164,7 @@ function StreamChart({
       // Distance-based resampling for numeric axis
       const primary = resampleByDistance(data, maxPoints)
       if (!secondaryData || secondaryData.length === 0) return primary
-
-      const secondary = resampleByDistance(secondaryData, maxPoints)
-      const secMap = new Map<number, number>()
-      for (const pt of secondary) {
-        secMap.set(Math.round(pt.distance * 100), pt.value)
-      }
-      return primary.map(pt => {
-        const key = Math.round(pt.distance * 100)
-        let closest = secMap.get(key)
-        if (closest === undefined && secondary.length > 0) {
-          let minDiff = Infinity
-          for (const s of secondary) {
-            const diff = Math.abs(s.distance - pt.distance)
-            if (diff < minDiff) { minDiff = diff; closest = s.value }
-            if (diff > minDiff) break
-          }
-        }
-        return { ...pt, secondary: closest }
-      })
+      return withSecondary(primary, resampleByDistance(secondaryData, maxPoints))
     }
 
     // Index-based sampling for category axis (original behavior)
@@ -162,25 +174,7 @@ function StreamChart({
     if (!secondaryData || secondaryData.length === 0) return primary
 
     const secStep = secondaryData.length > maxPoints ? Math.ceil(secondaryData.length / maxPoints) : 1
-    const secondary = secStep > 1 ? secondaryData.filter((_, i) => i % secStep === 0) : secondaryData
-    const secMap = new Map<number, number>()
-    for (const pt of secondary) {
-      secMap.set(Math.round(pt.distance * 100), pt.value)
-    }
-    return primary.map(pt => {
-      const key = Math.round(pt.distance * 100)
-      const secVal = secMap.get(key)
-      let closest = secVal
-      if (closest === undefined && secondary.length > 0) {
-        let minDiff = Infinity
-        for (const s of secondary) {
-          const diff = Math.abs(s.distance - pt.distance)
-          if (diff < minDiff) { minDiff = diff; closest = s.value }
-          if (diff > minDiff) break
-        }
-      }
-      return { ...pt, secondary: closest }
-    })
+    return withSecondary(primary, secStep > 1 ? secondaryData.filter((_, i) => i % secStep === 0) : secondaryData)
   }, [data, secondaryData, hasZones])
 
   const fmt = formatValue ?? ((v: number) => v.toFixed(0))
@@ -349,6 +343,7 @@ function StreamChart({
             )}
           </AreaChart>
         </ResponsiveContainer>
+        {footer}
       </div>
     </ChartErrorBoundary>
   )

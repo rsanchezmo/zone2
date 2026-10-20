@@ -101,10 +101,17 @@ class StreamsStore:
         with self._lock:
             table = self._load_summaries().setdefault(name, {})
             ids = [int(a) for a in activity_ids]
-            missing = [a for a in ids if a not in table and self._year_for(a) is not None]
-            if missing:
-                for aid, streams in self.get_many(missing).items():
+            missing_by_year: dict[int, list[int]] = {}
+            for a in ids:
+                year = self._year_for(a)
+                if a not in table and year is not None:
+                    missing_by_year.setdefault(year, []).append(a)
+            # A year at a time: a first build spans the whole history, whose
+            # streams don't fit in memory at once on a Pi.
+            for year_ids in missing_by_year.values():
+                for aid, streams in self.get_many(year_ids).items():
                     table[aid] = compute(streams)
+            if missing_by_year:
                 self._write_atomic(self.store_dir / _SUMMARIES_FILE, self._summaries)
             return {a: table[a] for a in ids if a in table}
 
@@ -282,6 +289,47 @@ def columnar_to_points(streams: dict) -> list[dict]:
                 p["lng"] = ll[1]
         out.append(p)
     return out
+
+
+def float_column(streams: dict, key: str) -> np.ndarray | None:
+    """A channel as floats, NaN where a sample is missing; None when the
+    channel is absent or not aligned with the stream."""
+    col = streams.get(key)
+    if not col or len(col) != stream_length(streams):
+        return None
+    return np.asarray([np.nan if v is None else v for v in col], dtype=np.float64)
+
+
+# Minetti's measurements span ±45%; the polynomial runs wild beyond.
+MAX_GRADE = 0.45
+# GPS altitude over a few metres is noise that would read as hills.
+GRADE_WINDOW_M = 100
+_FLAT_COST = 3.6
+
+
+def _minetti_cost(grade: np.ndarray) -> np.ndarray:
+    """Energy cost of running (J/kg/m) at a grade given as a fraction."""
+    return (155.4 * grade ** 5 - 30.4 * grade ** 4 - 43.3 * grade ** 3
+            + 46.3 * grade ** 2 + 19.5 * grade + _FLAT_COST)
+
+
+def grade_adjusted_speeds(streams: dict) -> np.ndarray | None:
+    """Per-sample speed on the flat at the same energy cost (Minetti), NaN
+    where speed is missing; plain speed where there's no altitude."""
+    speed = float_column(streams, "velocity_smooth")
+    if speed is None:
+        return None
+    alt, dist = float_column(streams, "altitude"), float_column(streams, "distance")
+    if alt is None or dist is None or np.isnan(alt).all() or np.isnan(dist).any():
+        return speed
+    n = len(speed)
+    alt = np.interp(np.arange(n), np.flatnonzero(~np.isnan(alt)), alt[~np.isnan(alt)])
+    dist = np.maximum.accumulate(dist)
+    half = GRADE_WINDOW_M / 2
+    rise = np.interp(dist + half, dist, alt) - np.interp(dist - half, dist, alt)
+    run = np.minimum(dist + half, dist[-1]) - np.maximum(dist - half, dist[0])
+    grade = np.clip(np.divide(rise, run, out=np.zeros(n), where=run > 1), -MAX_GRADE, MAX_GRADE)
+    return speed * _minetti_cost(grade) / _FLAT_COST
 
 
 def stream_length(streams: dict) -> int:

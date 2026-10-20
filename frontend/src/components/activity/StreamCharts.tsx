@@ -7,12 +7,16 @@ import {
 import StreamChart, { type ChartMarker, type ChartZone } from '../shared/StreamChart'
 import { getSegmentColor } from '../shared/segmentUtils'
 import { SEG_TYPE_LABELS, STOP_COLOR, paceUnitOf, type StreamSeries } from './activityData'
+import HeartRateDrift from './HeartRateDrift'
 
 // Hoisted StreamChart props so its React.memo sees stable references
 const ELEVATION_Y_DOMAIN: [string, string] = ['dataMin - 10', 'dataMax + 10']
+const HR_Y_DOMAIN: [string, string] = ['dataMin - 5', 'dataMax + 5']
 const speedTickFormatter = (v: number): string => v.toFixed(1)
 const paceTickFormatter = (v: number): string => formatPace(v, false)
 const swimXFormatter = (v: number): string => String(Math.round(v * 1000))
+const NO_DRIFT_COLOR = '#a1a1aa'
+const SKIPPED_COLOR = '#6b7280'
 
 /** Elevation, pace, heart rate and cadence along the distance, with planned segments and stops marked. */
 export default function StreamCharts({ activity, activityScore, streamSeries }: {
@@ -61,6 +65,30 @@ export default function StreamCharts({ activity, activityScore, streamSeries }: 
       color: STOP_COLOR,
     }
   }, [activity])
+
+  const drift = activity.drift
+  const measuredDrift = drift?.status === 'measured' ? drift : null
+  const noDriftHr = useMemo(
+    () => measuredDrift?.no_drift_hr.map(([distance, value]) => ({ distance, value })) ?? [],
+    [measuredDrift],
+  )
+  // Planned segments already split a structured workout, which never gets a drift figure.
+  const hrZones = useMemo<ChartZone[]>(() => {
+    if (segmentZones.length > 0 || !measuredDrift) return segmentZones
+    return [{ x1: 0, x2: measuredDrift.start_km, color: SKIPPED_COLOR, label: `Skipped: first ${measuredDrift.skipped_min} min`, opacity: 0.15 }]
+  }, [segmentZones, measuredDrift])
+  const hrMarkers = useMemo<ChartMarker[]>(
+    () => measuredDrift
+      ? [...stopMarkers, { x: measuredDrift.half_km, label: 'half', color: NO_DRIFT_COLOR }]
+      : stopMarkers,
+    [stopMarkers, measuredDrift],
+  )
+  const driftFooter = useMemo(
+    () => drift && drift.status !== 'no_heart_rate'
+      ? <HeartRateDrift drift={drift} />
+      : undefined,
+    [drift],
+  )
 
   const hasPace = streamSeries.pace.length > 0
   const hasHR = streamSeries.heartrate.length > 0
@@ -117,11 +145,16 @@ export default function StreamCharts({ activity, activityScore, streamSeries }: 
           color="#ec4899"
           gradientId="hrGrad"
           unit="bpm"
-          zones={segmentZones.length > 0 ? segmentZones : undefined}
-          markers={stopMarkers}
+          yDomain={HR_Y_DOMAIN}
+          secondaryData={noDriftHr.length > 0 ? noDriftHr : undefined}
+          secondaryColor={NO_DRIFT_COLOR}
+          secondaryLabel="No-drift HR"
+          zones={hrZones.length > 0 ? hrZones : undefined}
+          markers={hrMarkers}
           markersLegend={stopsLegend}
           xUnit={streamXUnit}
           xFormatter={streamXFormatter}
+          footer={driftFooter}
         />
       )}
 
