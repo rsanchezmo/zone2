@@ -166,3 +166,7 @@ export function ExternalLinkIcon(p: IconProps) {
     </Svg>
   )
 }
+
+export function ChevronDownIcon(p: IconProps) {
+  return <Svg {...p}><path d="M4 6l4 4 4-4" /></Svg>
+}

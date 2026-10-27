@@ -3,6 +3,7 @@ import clsx from 'clsx'
 import { getDistUnit } from '../../utils/formatSpeed'
 import {
   SEGMENT_TYPES,
+  formatSegmentAmount,
   getSegmentColor,
   getSegmentLabel,
   type Segment,
@@ -322,11 +323,8 @@ export function SegmentSummary({ segments }: { segments: Segment[] }) {
       {segments.map((seg, idx) => {
         const color = getSegmentColor(seg.type)
         const reps = seg.repetitions ?? 1
-        const dist = seg.distance_km
-        const dur = seg.duration_mins
-        let label = getSegmentLabel(seg.type)
-        if (dist) label += ` ${dist >= 1 ? `${dist}km` : `${Math.round(dist * 1000)}m`}`
-        else if (dur) label += ` ${dur}'`
+        const amount = formatSegmentAmount(seg.distance_km, seg.duration_mins)
+        let label = amount ? `${getSegmentLabel(seg.type)} ${amount}` : getSegmentLabel(seg.type)
         if (reps > 1) label = `${reps}x ${label}`
         return (
           <span

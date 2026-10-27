@@ -7,10 +7,11 @@ import {
 import { errorDetail } from '../api/client'
 import { getSportColor } from '../constants/sportColors'
 import { formatDist, formatDurationHM, getPaceUnit } from '../utils/formatSpeed'
-import { DeviceIcon, ExternalLinkIcon } from '../components/icons'
+import { ChevronDownIcon, DeviceIcon, ExternalLinkIcon } from '../components/icons'
 import SportTypeCombobox from '../components/shared/SportTypeCombobox'
 import SegmentListBuilder, { SegmentSummary, type Segment } from '../components/shared/SegmentListBuilder'
 import RowActions from '../components/shared/RowActions'
+import WorkoutProfile from '../components/shared/WorkoutProfile'
 import clsx from 'clsx'
 import { useTheme } from '../hooks/useTheme'
 import { useToast } from '../hooks/useToast'
@@ -20,7 +21,8 @@ const SPORT_FILTERS = ['All', 'Run', 'Ride', 'Swim', 'Walk', 'Hike'] as const
 
 const garminWorkoutUrl = (id: number) => `https://connect.garmin.com/modern/workout/${id}`
 
-/** A workout as a card: name, sport, a meta line, actions and its segments. */
+/** A workout as a card: name, sport, a meta line, actions and its segments;
+ *  clicking it unfolds the workout's profile. */
 function WorkoutCard({ name, sportType, description, meta, actions, segments }: {
   name: string
   sportType: string
@@ -30,25 +32,45 @@ function WorkoutCard({ name, sportType, description, meta, actions, segments }: 
   segments: Segment[]
 }) {
   const color = getSportColor(sportType)
+  const [open, setOpen] = useState(false)
+  const expandable = segments.length > 0
   return (
     <div className="panel p-4 transition-colors" style={{ borderLeftWidth: 2, borderLeftColor: color }}>
-      <div className="flex items-start justify-between mb-3 gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap mb-1">
-            <span className="font-semibold text-sm tracking-tight text-gray-100">{name}</span>
-            <span
-              className="text-[10px] uppercase tracking-[0.15em] rounded-full px-2 py-0.5 border font-semibold"
-              style={{ color, borderColor: `${color}40`, backgroundColor: `${color}15` }}
-            >
-              {sportType}
-            </span>
+      <div
+        className={clsx(expandable && 'cursor-pointer')}
+        onClick={e => { if (expandable && !(e.target as HTMLElement).closest('a, button')) setOpen(o => !o) }}
+      >
+        <div className="flex items-start justify-between mb-3 gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <span className="font-semibold text-sm tracking-tight text-gray-100">{name}</span>
+              <span
+                className="text-[10px] uppercase tracking-[0.15em] rounded-full px-2 py-0.5 border font-semibold"
+                style={{ color, borderColor: `${color}40`, backgroundColor: `${color}15` }}
+              >
+                {sportType}
+              </span>
+            </div>
+            {!!description && <div className="text-xs text-gray-500">{description}</div>}
+            {meta && <div className="flex items-center gap-3 flex-wrap mt-1">{meta}</div>}
           </div>
-          {!!description && <div className="text-xs text-gray-500">{description}</div>}
-          {meta && <div className="flex items-center gap-3 flex-wrap mt-1">{meta}</div>}
+          {actions}
         </div>
-        {actions}
+        <div className="flex items-center gap-2">
+          <div className="flex-1 min-w-0"><SegmentSummary segments={segments} /></div>
+          {expandable && (
+            <button
+              onClick={() => setOpen(o => !o)}
+              aria-expanded={open}
+              aria-label={open ? 'Hide workout profile' : 'Show workout profile'}
+              className="shrink-0 text-gray-500 hover:text-gray-300"
+            >
+              <ChevronDownIcon className={clsx('transition-transform', open && 'rotate-180')} />
+            </button>
+          )}
+        </div>
       </div>
-      <SegmentSummary segments={segments} />
+      {open && <div className="mt-4"><WorkoutProfile segments={segments} sportType={sportType} /></div>}
     </div>
   )
 }
@@ -247,6 +269,7 @@ export default function WorkoutsPage() {
               paceUnit={getPaceUnit(sportType)}
               sportType={sportType}
             />
+            {segments.length > 0 && <div className="mt-4"><WorkoutProfile segments={segments} sportType={sportType} /></div>}
           </div>
 
           <div className="flex gap-2 pt-1">
