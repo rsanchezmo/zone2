@@ -46,11 +46,15 @@ _STEPS_CHUNK_DAYS = 365
 _BODY_BATTERY_CHUNK_DAYS = 28
 _BODY_COMPOSITION_CHUNK_DAYS = 90
 _RACE_PREDICTIONS_CHUNK_DAYS = 28
+_MAX_METRICS_CHUNK_DAYS = 365
 
 # Backfill floor detection scans body_battery (watch-only — ignores phone-step
 # history) backwards until this many consecutive days have no data, so a
 # non-wear gap shorter than a year can't truncate the detected history.
 _SCAN_EMPTY_DAYS_TO_STOP = 365
+# VO2 max predates that floor: older watches estimated it without recording
+# body battery, so its backfill reaches this far back instead.
+_MAX_METRICS_HISTORY_DAYS = 3650
 
 
 def _encode_payload(payload: Any) -> bytes:
@@ -381,6 +385,7 @@ class GarminDailyStatsCache:
             + self._sync_chunked(start, end, self._sync_daily_steps, _STEPS_CHUNK_DAYS)
             + self._sync_chunked(start, end, self._sync_body_composition, _BODY_COMPOSITION_CHUNK_DAYS)
             + self._sync_chunked(start, end, self._sync_race_predictions, _RACE_PREDICTIONS_CHUNK_DAYS)
+            + self._sync_chunked(start, end, self._sync_max_metrics, _MAX_METRICS_CHUNK_DAYS)
         )
 
     def _sync_chunked(self, start: date_t, end: date_t, fn, chunk_days: int) -> int:
@@ -426,6 +431,23 @@ class GarminDailyStatsCache:
                 rows.append((str(d), "race_predictions", entry))
         self.upsert_many(rows)
         return len(rows)
+
+    def _sync_max_metrics(self, start: date_t, end: date_t) -> int:
+        data = self.client.fetch_max_metrics(start, end)
+        time.sleep(_PER_CALL_DELAY_S)
+        rows = []
+        for entry in data or []:
+            d = (entry.get("generic") or {}).get("calendarDate")
+            if d:
+                rows.append((str(d), "max_metrics", entry))
+        self.upsert_many(rows)
+        return len(rows)
+
+    def sync_max_metrics_history(self, before: date_t) -> int:
+        """VO2 max for the years before `before` (the wellness floor), which the
+        per-day backfill never reaches."""
+        start = date_t.today() - timedelta(days=_MAX_METRICS_HISTORY_DAYS)
+        return self._sync_chunked(start, before - timedelta(days=1), self._sync_max_metrics, _MAX_METRICS_CHUNK_DAYS)
 
     def _sync_body_composition(self, start: date_t, end: date_t) -> int:
         data = self.client.fetch_body_composition(start, end)
@@ -531,7 +553,7 @@ class GarminDailyStatsCache:
         # Only sync range metrics on a clean finish — a cancelled/timed-out run
         # is resumable, so don't prolong it with the trailing range fetches.
         if stop_reason == "complete":
-            rows_written += self.sync_range_metrics(floor, today)
+            rows_written += self.sync_range_metrics(floor, today) + self.sync_max_metrics_history(floor)
 
         return {
             "started": True,

@@ -1,24 +1,33 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import clsx from 'clsx'
 import {
   ResponsiveContainer, BarChart, LineChart, Bar, Line, Cell, XAxis, YAxis, Tooltip, CartesianGrid,
   ReferenceLine, ReferenceArea,
 } from 'recharts'
 import { useTheme } from '../../hooks/useTheme'
-import type { GarminTrends } from '../../api/hooks'
+import { useGarminTrends, type GarminTrends } from '../../api/hooks'
 import ChartPanel, { LegendSwatch } from '../shared/ChartPanel'
-import { todayLocalStr } from '../../utils/dates'
+import { parseLocalDate, todayLocalStr } from '../../utils/dates'
 import { StatusPill } from './GarminTiles'
 import {
   ACCENT, ACCENT_LIGHT, MUTED, POS, VO2, displayNum, dotProps, num, useGarminChartProps,
   vo2ZoneColor,
 } from './garmin'
 
+// VO2 max only has rows on the days Garmin updated it, so its whole history is a small fetch
+const VO2_HISTORY_DAYS = 3650
+// A longer silence than Garmin leaves between updates means the watch wasn't worn: the line breaks there
+const VO2_GAP_DAYS = 60
+const DAY_MS = 86_400_000
+
 /** Steps, distance, floors, calories, intensity minutes and VO2 max. */
 export default function MovementSection({ trends: t, days }: { trends: GarminTrends | undefined; days: number }) {
   const { theme, colors } = useTheme()
   const isLight = theme === 'light'
   const { chartMargin, xAxisProps, yAxisProps, tooltipProps, dayClick } = useGarminChartProps()
+  const [vo2AllTime, setVo2AllTime] = useState(false)
+  const { data: vo2History, isLoading: vo2HistoryLoading } = useGarminTrends(VO2_HISTORY_DAYS, ['max_metrics'], vo2AllTime)
+  const vo2Source = vo2AllTime ? vo2History : t
 
   const stepsData = useMemo(() => (t?.metrics.daily_steps ?? []).map(r => ({
     date: r.date,
@@ -70,9 +79,28 @@ export default function MovementSection({ trends: t, days }: { trends: GarminTre
     floors: num(r.floors_climbed),
   })), [t])
 
-  const vo2Data = useMemo(() => (t?.metrics.training_status ?? [])
-    .map(r => ({ date: r.date, vo2max: num(r.vo2max) }))
-    .filter(r => r.vo2max !== null), [t])
+  // On a time axis, since the updates are irregular
+  const vo2Data = useMemo(() => {
+    const points: { t: number; vo2max: number | null }[] = []
+    for (const r of vo2Source?.metrics.max_metrics ?? []) {
+      const v = num(r.vo2max)
+      if (v == null) continue
+      const ts = parseLocalDate(r.date).getTime()
+      const prev = points.at(-1)
+      if (prev && ts - prev.t > VO2_GAP_DAYS * DAY_MS) points.push({ t: prev.t + DAY_MS, vo2max: null })
+      points.push({ t: ts, vo2max: v })
+    }
+    return points
+  }, [vo2Source])
+  const vo2Domain: [number, number] | undefined = vo2Source && [
+    vo2AllTime && vo2Data.length ? vo2Data[0].t : parseLocalDate(vo2Source.start_date).getTime(),
+    parseLocalDate(vo2Source.end_date).getTime(),
+  ]
+  const fmtVo2Tick = (ts: number) => new Date(ts).toLocaleDateString(undefined,
+    vo2AllTime ? { month: 'short', year: '2-digit' } : { month: 'short', day: 'numeric' })
+  const fmtVo2Day = (ts: unknown) => typeof ts === 'number'
+    ? new Date(ts).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+    : ''
 
   return (
     <>
@@ -195,7 +223,13 @@ export default function MovementSection({ trends: t, days }: { trends: GarminTre
       </ChartPanel>
 
       {/* ── VO2 max (full width) ─────────────────────────────── */}
-      <ChartPanel title="VO2 max" sublabel={`last ${days}d`} accent={ACCENT}
+      <ChartPanel title="VO2 max" sublabel={vo2AllTime ? 'all time' : `last ${days}d`} accent={ACCENT}
+        toolbar={
+          <div className="flex items-center gap-0.5" role="tablist">
+            <button className="chip" data-active={!vo2AllTime} onClick={() => setVo2AllTime(false)}>{days}d</button>
+            <button className="chip" data-active={vo2AllTime} onClick={() => setVo2AllTime(true)}>All</button>
+          </div>
+        }
         legend={<>
           <LegendSwatch color={VO2.superior}  label="Superior ≥55" />
           <LegendSwatch color={VO2.excellent} label="Excellent 49–55" />
@@ -206,20 +240,21 @@ export default function MovementSection({ trends: t, days }: { trends: GarminTre
       >
         {vo2Data.length === 0 ? (
           <div className={clsx('flex items-center justify-center h-[220px] text-xs', isLight ? 'text-gray-400' : 'text-gray-500')}>
-            No VO2 max updates in this window
+            {vo2AllTime && vo2HistoryLoading ? 'Loading…' : 'No VO2 max updates in this window'}
           </div>
         ) : (
           <ResponsiveContainer width="100%" height={240}>
             <LineChart data={vo2Data} margin={chartMargin} {...dayClick}>
               <CartesianGrid stroke={colors.gridStroke} strokeDasharray="3 3" vertical={false} />
-              <XAxis {...xAxisProps} />
+              <XAxis {...xAxisProps} dataKey="t" type="number" scale="time" domain={vo2Domain}
+                tickFormatter={fmtVo2Tick} interval="preserveStartEnd" />
               {/* Pad the y-domain so the relevant zone bands sit visible
                   regardless of tight measured-value variation. */}
               <YAxis {...yAxisProps} domain={[
                 (min: number) => Math.min(min - 1, 39),
                 (max: number) => Math.max(max + 1, 60),
               ]} />
-              <Tooltip {...tooltipProps}
+              <Tooltip {...tooltipProps} labelFormatter={fmtVo2Day}
                 formatter={(v: unknown) => `${displayNum(v).toFixed(1)} ml/kg/min`} />
               <ReferenceArea y1={0}  y2={39} fill={VO2.poor}      fillOpacity={0.10} />
               <ReferenceArea y1={39} y2={44} fill={VO2.fair}      fillOpacity={0.10} />
@@ -236,7 +271,7 @@ export default function MovementSection({ trends: t, days }: { trends: GarminTre
                   const v = num(dot.payload.vo2max)
                   if (v == null) return <g />
                   const c = vo2ZoneColor(v)
-                  return <circle cx={dot.cx} cy={dot.cy} r={3.5}
+                  return <circle cx={dot.cx} cy={dot.cy} r={vo2AllTime ? 2 : 3.5}
                     fill={c} stroke={c} strokeWidth={1.5} />
                 }}
                 activeDot={(props: unknown) => {

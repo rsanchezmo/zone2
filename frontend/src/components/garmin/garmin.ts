@@ -2,6 +2,7 @@ import { createContext, useContext } from 'react'
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { useTheme } from '../../hooks/useTheme'
 import type { GarminLatestResponse, GarminTrendRow as TrendRow, GarminTrends } from '../../api/hooks'
+import { dateToLocalStr } from '../../utils/dates'
 
 // Single accent for the whole page. Variations come from opacity / tints
 // within the same cyan family, never from switching hues.
@@ -245,7 +246,7 @@ export function lastDays(trends: GarminTrends | undefined, days: number): Garmin
   if (!trends || trends.days <= days) return trends
   const from = new Date(`${trends.end_date}T00:00:00`)
   from.setDate(from.getDate() - (days - 1))
-  const fromIso = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, '0')}-${String(from.getDate()).padStart(2, '0')}`
+  const fromIso = dateToLocalStr(from)
   const metrics = Object.fromEntries(
     Object.entries(trends.metrics).map(([metric, rows]) => [metric, rows.filter(r => r.date >= fromIso)]),
   )
@@ -362,7 +363,8 @@ const tooltipProps = { ...colors.tooltip, labelFormatter: fmtDate }
 // Spread on a daily chart so clicking a day opens it in the timeline
 const dayClick = openDay ? {
   onClick: (state: { activeLabel?: unknown }) => {
-    const label = state.activeLabel
+    // Time-scaled charts report the day as a timestamp
+    const label = typeof state.activeLabel === 'number' ? dateToLocalStr(new Date(state.activeLabel)) : state.activeLabel
     if (typeof label === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(label)) openDay(label)
   },
   style: { cursor: 'pointer' },
