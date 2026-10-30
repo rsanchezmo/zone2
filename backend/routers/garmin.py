@@ -229,7 +229,8 @@ def events(
 
 @router.get("/trends")
 def trends(
-    days: int = Query(default=30, ge=1, le=365),
+    days: int = Query(default=30, ge=1, le=3650),
+    metrics: str | None = Query(default=None, description="Comma-separated subset of the summary metrics"),
     z2: Zone2 = Depends(get_z2),
 ) -> dict[str, Any]:
     """Pre-shaped per-day numeric series across all metrics. One call powers
@@ -248,7 +249,10 @@ def trends(
         "days": days,
         "metrics": {},
     }
-    for metric in SUMMARY_METRICS:
+    wanted = SUMMARY_METRICS if metrics is None else tuple(
+        m for m in (m.strip() for m in metrics.split(",")) if m in SUMMARY_METRICS
+    )
+    for metric in wanted:
         rows = z2.garmin_cache.get_summary_range(metric, s_iso, e_iso)
         out["metrics"][metric] = [
             {"date": r["date"], **r["summary"]} for r in rows

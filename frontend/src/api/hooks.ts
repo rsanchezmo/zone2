@@ -1822,12 +1822,14 @@ export interface GarminTrends {
   metrics: Record<string, GarminTrendRow[]>;
 }
 
-export function useGarminTrends(days: number = 30) {
+/** `metrics` narrows the payload to those summaries (all of them when omitted). */
+export function useGarminTrends(days: number = 30, metrics?: readonly string[], enabled: boolean = true) {
   return useQuery<GarminTrends>({
-    queryKey: ['garmin-trends', days],
-    queryFn: () => api.get('/garmin/trends', { params: { days } }).then(r => r.data),
+    queryKey: ['garmin-trends', days, metrics?.join(',') ?? 'all'],
+    queryFn: () => api.get('/garmin/trends', { params: { days, metrics: metrics?.join(',') } }).then(r => r.data),
     staleTime: 1000 * 60 * 5,
     placeholderData: keepPreviousData,
+    enabled,
   });
 }
 

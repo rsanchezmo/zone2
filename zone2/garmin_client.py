@@ -101,6 +101,7 @@ class GarminClient:
         "daily_steps",
         "body_composition",
         "race_predictions",
+        "max_metrics",
     )
     ALL_METRICS: tuple[str, ...] = METRICS_PER_DAY + METRICS_RANGE
 
@@ -256,6 +257,14 @@ class GarminClient:
         """Returns list[dict] — Garmin's race predictor (time5K/time10K/
         timeHalfMarathon/timeMarathon, seconds), one entry per day."""
         return self._call("get_race_predictions", self._iso(start), self._iso(end), "daily") or []
+
+    def fetch_max_metrics(self, start, end):
+        """Returns list[dict] — VO2 max (`generic` for running, `cycling`) and
+        fitness age, one entry per day Garmin updated them. The lib only asks
+        for a single day; the endpoint takes a span."""
+        return self._call(
+            "connectapi", f"/metrics-service/metrics/maxmet/daily/{self._iso(start)}/{self._iso(end)}",
+        ) or []
 
     # ------------------------------------------------------------------ courses
     # The Connect web app's course endpoints (the lib has none). User actions,

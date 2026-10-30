@@ -18,10 +18,14 @@ export function parseLocalDate(value: string): Date {
   return new Date(stripped.includes('T') ? stripped : `${stripped}T00:00:00`)
 }
 
-/** Today's local calendar date as "yyyy-MM-dd". */
-export function todayLocalStr(): string {
-  const d = new Date()
+/** A Date's local calendar date as "yyyy-MM-dd". */
+export function dateToLocalStr(d: Date): string {
   const m = (d.getMonth() + 1).toString().padStart(2, '0')
   const day = d.getDate().toString().padStart(2, '0')
   return `${d.getFullYear()}-${m}-${day}`
+}
+
+/** Today's local calendar date as "yyyy-MM-dd". */
+export function todayLocalStr(): string {
+  return dateToLocalStr(new Date())
 }

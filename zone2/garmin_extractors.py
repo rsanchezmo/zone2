@@ -149,16 +149,12 @@ def _extract_user_summary(p: dict) -> dict[str, Any]:
 
 
 def _extract_training_status(p: dict) -> dict[str, Any]:
-    vo2 = _safe_get(p, "mostRecentVO2Max", "generic") or {}
     load_dev = _first_device_value(_safe_get(p, "mostRecentTrainingLoadBalance",
                                              "metricsTrainingLoadBalanceDTOMap"))
     status_dev = _first_device_value(_safe_get(p, "mostRecentTrainingStatus",
                                                "latestTrainingStatusData"))
     acute = (status_dev or {}).get("acuteTrainingLoadDTO") or {}
     return {
-        "vo2max": vo2.get("vo2MaxPreciseValue") or vo2.get("vo2MaxValue"),
-        "vo2max_date": vo2.get("calendarDate"),
-        "fitness_age": vo2.get("fitnessAge"),
         # Training status (PRODUCTIVE / MAINTAINING / RECOVERY / PEAKING / …)
         "status_phrase": (status_dev or {}).get("trainingStatusFeedbackPhrase"),
         "sport": (status_dev or {}).get("sport"),
@@ -185,6 +181,11 @@ def _extract_training_status(p: dict) -> dict[str, Any]:
         ],
         "load_balance_phrase": (load_dev or {}).get("trainingBalanceFeedbackPhrase"),
     }
+
+
+def _extract_max_metrics(p: dict) -> dict[str, Any]:
+    generic = p.get("generic") or {}
+    return {"vo2max": generic.get("vo2MaxPreciseValue") or generic.get("vo2MaxValue")}
 
 
 def _extract_race_predictions(p: dict) -> dict[str, Any]:
@@ -242,6 +243,7 @@ EXTRACTORS: dict[str, Any] = {
     "daily_steps": _extract_daily_steps,
     "intensity_minutes": _extract_intensity_minutes,
     "race_predictions": _extract_race_predictions,
+    "max_metrics": _extract_max_metrics,
     "user_summary": _extract_user_summary,
     "spo2": _extract_spo2,
     "respiration": _extract_respiration,
@@ -257,6 +259,7 @@ SUMMARY_VERSIONS: dict[str, int] = {
     "body_battery": 2,        # end_of_day from the last reading
     "intensity_minutes": 2,   # weekly goal read from weekGoal, weekly total added
     "hrv": 2,                 # baseline range added
+    "training_status": 2,     # VO2 max moved to max_metrics
 }
 
 
