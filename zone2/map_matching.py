@@ -10,6 +10,7 @@ from enum import StrEnum
 from pathlib import Path
 
 import geopandas as gpd
+import h3
 import matplotlib.lines as mlines
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -214,6 +215,8 @@ class StravaMapMatcher:
     # treated as a real subdivision. Below this the city isn't administratively
     # mapped in OSM (e.g. Palma) and we fall back to a single whole-city district.
     MIN_DISTRICT_COVERAGE = 0.4
+    # ~0.74 km² cells: finer than most neighbourhoods, coarse enough to read at city zoom
+    HEX_RESOLUTION = 8
     # Per-segment attributes persisted per city (streets / connectors); the
     # rest of the OSM tags only decide the way's role at download.
     EDGE_COLUMNS = ('u', 'v', 'key', 'highway', 'name', 'length', 'geometry')
@@ -1636,19 +1639,43 @@ class StravaMapMatcher:
             return [StravaMapMatcher._round_coords(x) for x in obj]
         return round(obj, 5)
 
+    def load_hexes(self, resolution: int = HEX_RESOLUTION) -> gpd.GeoDataFrame:
+        """The H3 cells overlapping the city, named by cell id."""
+        city = self._city_boundary.union_all()
+        # A cell overlapping the city has its centre within one edge length of
+        # it; twice the average edge allows for the cells larger than average.
+        reach_m = 2 * h3.average_hexagon_edge_length(resolution, unit='m')
+        search = gpd.GeoSeries([city.buffer(reach_m)], crs=self._city_boundary.crs).to_crs('EPSG:4326').iloc[0]
+        cells = h3.geo_to_cells(search, resolution)
+        hexes = gpd.GeoDataFrame(
+            {'name': cells},
+            geometry=[ShapelyPolygon([(lng, lat) for lat, lng in h3.cell_to_boundary(c)]) for c in cells],
+            crs='EPSG:4326',
+        ).to_crs(self._city_boundary.crs)
+        return hexes[hexes.intersects(city)].reset_index(drop=True)
+
     def coverage_by_district(self, admin_level: int = 9, include_geometry: bool = False,
                              streets_only: bool = False) -> list[dict]:
-        """Coverage stats per administrative district, best-covered first.
+        """Coverage stats per administrative district, best-covered first."""
+        return self._coverage_by_polygon(self.load_districts(admin_level), include_geometry, streets_only)
 
-        Segments count for their district, border streets split between the
-        districts they border (see _district_shares). With include_geometry,
-        each district carries its simplified boundary as a GeoJSON geometry.
+    def coverage_by_hex(self, resolution: int = HEX_RESOLUTION, include_geometry: bool = False,
+                        streets_only: bool = False) -> list[dict]:
+        """Coverage stats per H3 cell with streets, best-covered first."""
+        return self._coverage_by_polygon(self.load_hexes(resolution), include_geometry, streets_only)
+
+    def _coverage_by_polygon(self, polys: gpd.GeoDataFrame, include_geometry: bool,
+                             streets_only: bool) -> list[dict]:
+        """Coverage stats per named polygon with streets, best-covered first.
+
+        Segments count for their polygon, border streets split between the
+        polygons they border (see _district_shares). With include_geometry,
+        each polygon carries its simplified boundary as a GeoJSON geometry.
         """
-        districts = self.load_districts(admin_level)
         und = self.undirected_with_covered(streets_only=streets_only)
-        shares = self._district_shares(und, districts)
+        shares = self._district_shares(und, polys)
         seg, share = shares['seg'].to_numpy(), shares['share'].to_numpy()
-        per_district = pd.DataFrame({
+        per_polygon = pd.DataFrame({
             'district': shares['district'].to_numpy(),
             'total_m': und['length'].to_numpy()[seg] * share,
             'covered_m': und['covered_m'].to_numpy()[seg] * share,
@@ -1656,23 +1683,21 @@ class StravaMapMatcher:
             'num_covered': und['covered'].to_numpy()[seg] * share,
         }).groupby('district').sum()
 
-        geoms_4326 = None
-        if include_geometry:
-            geoms_4326 = districts.set_index('name').geometry.simplify(20).to_crs('EPSG:4326')
+        by_name = polys.set_index('name').geometry
+        bounds = by_name.to_crs('EPSG:4326').bounds
+        geoms_4326 = by_name.simplify(20).to_crs('EPSG:4326') if include_geometry else None
 
         results = []
-        for name, row in per_district.iterrows():
+        for name, row in per_polygon.iterrows():
             stats = self._scoped_stats(row['total_m'], row['covered_m'], row['num_streets'], row['num_covered'])
-            geom = districts.loc[districts['name'] == name, 'geometry']
-            bounds = gpd.GeoSeries(geom, crs=districts.crs).to_crs('EPSG:4326').total_bounds
+            b = bounds.loc[name]
             entry = {
                 'name': name,
                 **stats,
                 # [south, west, north, east] for map fitBounds
-                'bbox': [round(bounds[1], 5), round(bounds[0], 5),
-                         round(bounds[3], 5), round(bounds[2], 5)],
+                'bbox': [round(b['miny'], 5), round(b['minx'], 5), round(b['maxy'], 5), round(b['maxx'], 5)],
             }
-            if geoms_4326 is not None and name in geoms_4326.index:
+            if geoms_4326 is not None:
                 gj = shapely_mapping(geoms_4326[name])
                 entry['geometry'] = {
                     'type': gj['type'],
