@@ -1902,6 +1902,9 @@ export interface DistrictCoverage {
   geometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon;
 }
 
+// 9 = administrative districts, 10 = neighbourhoods, 'hex' = the H3 grid
+export type DistrictLevel = 9 | 10 | 'hex';
+
 export interface AreaCoverage {
   total_km: number;
   covered_km: number;
@@ -1970,13 +1973,14 @@ export function useCoverageEdges(slug?: string) {
   });
 }
 
-export function useCoverageDistricts(slug?: string, adminLevel = 9) {
+export function useCoverageDistricts(slug?: string, level: DistrictLevel = 9) {
   return useQuery<DistrictCoverage[]>({
-    queryKey: ['coverage-districts', slug, adminLevel],
+    queryKey: ['coverage-districts', slug, level],
     queryFn: () =>
-      api.get(`/coverage/${slug}/districts`, {
-        params: { admin_level: adminLevel, geometry: true },
-      }).then(r => r.data),
+      (level === 'hex'
+        ? api.get(`/coverage/${slug}/hexes`, { params: { geometry: true } })
+        : api.get(`/coverage/${slug}/districts`, { params: { admin_level: level, geometry: true } })
+      ).then(r => r.data),
     enabled: !!slug,
     staleTime: 5 * 60 * 1000,
     placeholderData: keepPreviousData,

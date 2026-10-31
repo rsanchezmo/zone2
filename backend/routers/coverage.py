@@ -521,6 +521,21 @@ def coverage_districts(
                         _state_version(slug, districts_fp) + (_LAYERS_FORMAT,), build)
 
 
+@router.get("/{slug}/hexes")
+def coverage_hexes(
+    slug: str,
+    resolution: int = Query(StravaMapMatcher.HEX_RESOLUTION, ge=7, le=9),
+    geometry: bool = Query(False),
+    streets_only: bool = Query(False),
+):
+    def build():
+        return _get_matcher(slug).coverage_by_hex(
+            resolution=resolution, include_geometry=geometry, streets_only=streets_only
+        )
+    return _cached_json(("hexes", slug, resolution, geometry, streets_only),
+                        _state_version(slug) + (_LAYERS_FORMAT,), build)
+
+
 class AreaRequest(BaseModel):
     # Polygon vertices as [lat, lon]
     points: list[tuple[float, float]] = Field(min_length=3)

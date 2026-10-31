@@ -9,7 +9,7 @@ import {
   useCoverageSyncStatus, useTriggerCoverageSync, useUncoveredEdges,
   useAddCity, useAddCityStatus, useGeocodeCity, useDeleteCity, type GeocodeSuggestion,
   useAppConfig,
-  type AreaCoverage, type CoverageSummary, type DistrictCoverage,
+  type AreaCoverage, type CoverageSummary, type DistrictCoverage, type DistrictLevel,
 } from '../api/hooks'
 import { useNow } from '../hooks/useNow'
 import { useTheme } from '../hooks/useTheme'
@@ -26,6 +26,8 @@ import { selectionKey, useLoopPlanner, type RouteSelection } from '../hooks/useL
 import PageHeader from '../components/shared/PageHeader'
 
 const COVERED_ACCENT = '#fb2c36'
+// Districts with less street than this don't set the overlay's shading scale
+const MIN_SHADE_SCALE_KM = 1
 
 // Magma stops for the traversal-frequency heatmap: streets run once stay cool
 // and dim, the daily loops glow hot.
@@ -309,10 +311,10 @@ export default function CoveragePage() {
   // refetch returning the same data (structurally shared) doesn't. Style
   // changes are applied in place through their memoized style props.
   const { data: edges, isLoading: edgesLoading } = useCoverageEdges(activeSlug)
-  // 9 = administrative districts, 10 = neighbourhoods (finer). Cities OSM
-  // doesn't subdivide at the chosen level collapse to a whole-city district.
-  const [adminLevel, setAdminLevel] = useState<9 | 10>(9)
-  const { data: districts, dataUpdatedAt: districtsAt } = useCoverageDistricts(activeSlug, adminLevel)
+  // Cities OSM doesn't subdivide at the chosen admin level collapse to a
+  // whole-city district; the hex grid is the same everywhere.
+  const [districtLevel, setDistrictLevel] = useState<DistrictLevel>(9)
+  const { data: districts, dataUpdatedAt: districtsAt } = useCoverageDistricts(activeSlug, districtLevel)
   const [showDistricts, setShowDistricts] = useState(true)
   const [flyBbox, setFlyBbox] = useState<[number, number, number, number] | null>(null)
 
@@ -372,11 +374,13 @@ export default function CoveragePage() {
 
   // Shaded relative to the best-covered district (square root, so the low end
   // still differs): every district is far from complete, and the tooltip has
-  // the real percentage.
-  const maxDistrictPct = useMemo(
-    () => (districts ?? []).reduce((m: number, d: DistrictCoverage) => Math.max(m, d.coverage_pct), 0),
-    [districts],
-  )
+  // the real percentage. Hexes the city edge cuts down to a few hundred metres
+  // of street would set that scale with a lucky 100%.
+  const maxDistrictPct = useMemo(() => {
+    const all = districts ?? []
+    const sized = all.filter((d: DistrictCoverage) => d.total_km >= MIN_SHADE_SCALE_KM)
+    return (sized.length ? sized : all).reduce((m: number, d: DistrictCoverage) => Math.max(m, d.coverage_pct), 0)
+  }, [districts])
 
   const districtStyle = useCallback((feature?: GeoJSON.Feature): L.PathOptions => {
     const pct = (feature?.properties as { pct?: number } | null)?.pct ?? 0
@@ -772,8 +776,8 @@ export default function CoveragePage() {
           )}
           {showDistricts && !planMode && (
             <div className={clsx('flex items-center gap-0.5 px-1 py-0.5', overlayClass)}>
-              {([[9, 'Districts'], [10, 'Neighborhoods']] as const).map(([lvl, label]) => (
-                <button key={lvl} onClick={() => setAdminLevel(lvl)} className="chip whitespace-nowrap" data-active={adminLevel === lvl}>
+              {([[9, 'Districts'], [10, 'Neighborhoods'], ['hex', 'Hexes']] as const).map(([lvl, label]) => (
+                <button key={lvl} onClick={() => setDistrictLevel(lvl)} className="chip whitespace-nowrap" data-active={districtLevel === lvl}>
                   {label}
                 </button>
               ))}
