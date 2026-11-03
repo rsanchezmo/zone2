@@ -6,8 +6,9 @@ import {
 } from '../../utils/formatSpeed'
 import StreamChart, { type ChartMarker, type ChartZone } from '../shared/StreamChart'
 import { getSegmentColor } from '../shared/segmentUtils'
-import { SEG_TYPE_LABELS, STOP_COLOR, paceUnitOf, type StreamSeries } from './activityData'
+import { SEG_TYPE_LABELS, STOP_COLOR, dropKey, formatDrop, paceUnitOf, type StreamSeries } from './activityData'
 import HeartRateDrift from './HeartRateDrift'
+import HeartRateRecovery from './HeartRateRecovery'
 
 // Hoisted StreamChart props so its React.memo sees stable references
 const ELEVATION_Y_DOMAIN: [string, string] = ['dataMin - 10', 'dataMax + 10']
@@ -17,6 +18,8 @@ const paceTickFormatter = (v: number): string => formatPace(v, false)
 const swimXFormatter = (v: number): string => String(Math.round(v * 1000))
 const NO_DRIFT_COLOR = '#a1a1aa'
 const SKIPPED_COLOR = '#6b7280'
+const RECOVERY_COLOR = '#22d3ee'
+const MAX_LABELLED_REPS = 6
 
 /** Elevation, pace, heart rate and cadence along the distance, with planned segments and stops marked. */
 export default function StreamCharts({ activity, activityScore, streamSeries }: {
@@ -77,18 +80,24 @@ export default function StreamCharts({ activity, activityScore, streamSeries }: 
     if (segmentZones.length > 0 || !measuredDrift) return segmentZones
     return [{ x1: 0, x2: measuredDrift.start_km, color: SKIPPED_COLOR, label: `Skipped: first ${measuredDrift.skipped_min} min`, opacity: 0.15 }]
   }, [segmentZones, measuredDrift])
-  const hrMarkers = useMemo<ChartMarker[]>(
-    () => measuredDrift
+  const recovery = activity.hr_recovery?.status === 'measured' ? activity.hr_recovery : null
+  const hrMarkers = useMemo<ChartMarker[]>(() => {
+    const markers = measuredDrift
       ? [...stopMarkers, { x: measuredDrift.half_km, label: 'half', color: NO_DRIFT_COLOR }]
-      : stopMarkers,
-    [stopMarkers, measuredDrift],
-  )
-  const driftFooter = useMemo(
-    () => drift && drift.status !== 'no_heart_rate'
-      ? <HeartRateDrift drift={drift} />
-      : undefined,
-    [drift],
-  )
+      : stopMarkers
+    if (!recovery) return markers
+    const key = dropKey(recovery)
+    // Past a handful of reps the labels collide; the tiles under the chart carry the figures.
+    const labelled = recovery.reps.length <= MAX_LABELLED_REPS
+    return [...markers, ...recovery.reps.map(rep => ({
+      x: rep.end_km, label: labelled ? formatDrop(rep[key]) : '', color: RECOVERY_COLOR,
+    }))]
+  }, [stopMarkers, measuredDrift, recovery])
+  // An interval session's drift note only says its pace was too uneven, so its recovery takes the place.
+  const hrFooter = useMemo(() => {
+    if (recovery) return <HeartRateRecovery recovery={recovery} />
+    return drift && drift.status !== 'no_heart_rate' ? <HeartRateDrift drift={drift} /> : undefined
+  }, [recovery, drift])
 
   const hasPace = streamSeries.pace.length > 0
   const hasHR = streamSeries.heartrate.length > 0
@@ -154,7 +163,7 @@ export default function StreamCharts({ activity, activityScore, streamSeries }: 
           markersLegend={stopsLegend}
           xUnit={streamXUnit}
           xFormatter={streamXFormatter}
-          footer={driftFooter}
+          footer={hrFooter}
         />
       )}
 

@@ -1,5 +1,5 @@
 import polyline from '@mapbox/polyline'
-import type { ActivityDetail, ActivityStreamPoint as StreamPoint } from '../../api/hooks'
+import type { ActivityDetail, ActivityHrRecovery, ActivityStreamPoint as StreamPoint } from '../../api/hooks'
 import { convertSpeed, getSportCategory } from '../../utils/formatSpeed'
 
 export interface Split {
@@ -121,6 +121,19 @@ export const MIN_STOPPED_S_SHOWN = 10
 export const STOP_COLOR = '#f59e0b'
 
 /** The unit `convertSpeed` reports for a sport: min/km, km/h or min/100m. */
+export type MeasuredHrRecovery = Extract<ActivityHrRecovery, { status: 'measured' }>
+
+/** The 60 s drop when most reps have one, else the 30 s one (recoveries under a minute). */
+export function dropKey(recovery: MeasuredHrRecovery): 'drop_30' | 'drop_60' {
+  const with60 = recovery.reps.filter(r => r.drop_60 != null).length
+  return with60 * 2 >= recovery.reps.length ? 'drop_60' : 'drop_30'
+}
+
+export function formatDrop(bpm: number | null): string {
+  if (bpm == null) return '—'
+  return bpm > 0 ? `−${bpm}` : bpm < 0 ? `+${-bpm}` : '0'
+}
+
 export function paceUnitOf(sportType: string | undefined): string {
   return convertSpeed(1, sportType).unit
 }

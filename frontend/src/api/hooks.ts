@@ -196,11 +196,40 @@ export type ActivityDrift =
       no_drift_hr: [number, number][];
     };
 
+export interface RepRecovery {
+  start_km: number;
+  end_km: number;
+  duration_s: number;
+  speed_ms: number;
+  peak_km: number;
+  peak_hr: number | null;
+  /** bpm below the peak 30 and 60 s after the rep ended; null when the next rep started first. */
+  drop_30: number | null;
+  drop_60: number | null;
+  /** Seconds to the next rep; null after the last one. */
+  recovery_s: number | null;
+  /** False when the minute after was walked or stood, which drops HR faster. */
+  jogged: boolean;
+}
+
+/** How fast HR came down after each rep of an interval session; runs only. */
+export type ActivityHrRecovery =
+  | { status: 'no_heart_rate' }
+  | { status: 'no_reps'; reps: number; min_reps: number }
+  | {
+      status: 'measured';
+      reps: RepRecovery[];
+      drop_30_mean: number | null;
+      drop_60_mean: number | null;
+      jog_speed_ms: number;
+    };
+
 /** Detail endpoint adds streams, detected stops and the raw Strava detail sub-payloads. */
 export interface ActivityDetail extends Activity {
   streams?: ActivityStreamPoint[] | null;
   stops?: ActivityStop[];
   drift?: ActivityDrift | null;
+  hr_recovery?: ActivityHrRecovery | null;
   photos?: ActivityPhoto[] | null;
   splits_metric?: ActivitySplitMetric[] | null;
   best_efforts?: ActivityBestEffort[] | null;
