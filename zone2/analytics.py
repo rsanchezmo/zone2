@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 from zone2.activities_cache import StravaActivitiesCache
 from zone2.drift import DRIFT_VERSION, HeartRateDrift, heart_rate_drift
+from zone2.hr_recovery import HR_RECOVERY_VERSION, HeartRateRecovery, heart_rate_recovery
 from zone2.user_cache import StravaUserCache
 from zone2.utils import (
     get_sport_category, vdot_from_time_distance,
@@ -105,7 +106,9 @@ class StravaAnalytics:
         if not activities.empty:
             self._activity_heartrate_counts(activities['id'].astype('int64').tolist())
             runs = activities[activities['sport_type'].map(get_sport_category) == "running"]
-            self.activity_heart_rate_drift(runs['id'].astype('int64').tolist())
+            run_ids = runs['id'].astype('int64').tolist()
+            self.activity_heart_rate_drift(run_ids)
+            self.activity_heart_rate_recovery(run_ids)
 
     def _get_hr_zones_cached(self):
         """Cache HR zones to avoid repeated user cache reads."""
@@ -685,6 +688,13 @@ class StravaAnalytics:
         persisted in the StreamsStore (computed once per activity)."""
         return self.strava_activities_cache.get_stream_summaries(
             f"heart_rate_drift:v{DRIFT_VERSION}", activity_ids, heart_rate_drift
+        )
+
+    def activity_heart_rate_recovery(self, activity_ids: list[int]) -> dict[int, HeartRateRecovery]:
+        """{activity_id: heart_rate_recovery summary} for runs with streams,
+        persisted in the StreamsStore (computed once per activity)."""
+        return self.strava_activities_cache.get_stream_summaries(
+            f"heart_rate_recovery:v{HR_RECOVERY_VERSION}", activity_ids, heart_rate_recovery
         )
 
     @staticmethod

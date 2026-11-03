@@ -300,6 +300,22 @@ def float_column(streams: dict, key: str) -> np.ndarray | None:
     return np.asarray([np.nan if v is None else v for v in col], dtype=np.float64)
 
 
+def on_grid(t: np.ndarray, values: np.ndarray, grid: np.ndarray) -> np.ndarray:
+    """A channel (NaN where missing) resampled at the `grid` times; all NaN
+    when it has fewer than two samples."""
+    valid = ~np.isnan(values)
+    return np.interp(grid, t[valid], values[valid]) if valid.sum() >= 2 else np.full(len(grid), np.nan)
+
+
+def sample_gaps(t: np.ndarray, values: np.ndarray, grid: np.ndarray) -> np.ndarray:
+    """Seconds from each `grid` time to the channel's nearest recorded sample,
+    which tells data from interpolation across a gap (a pause, a dropout).
+    Needs at least two samples."""
+    sampled = t[~np.isnan(values)]
+    nearest = np.searchsorted(sampled, grid).clip(1, len(sampled) - 1)
+    return np.minimum(np.abs(grid - sampled[nearest - 1]), np.abs(sampled[nearest] - grid))
+
+
 # Minetti's measurements span ±45%; the polynomial runs wild beyond.
 MAX_GRADE = 0.45
 # GPS altitude over a few metres is noise that would read as hills.

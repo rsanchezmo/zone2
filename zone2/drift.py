@@ -7,7 +7,7 @@ from typing import Literal, NotRequired, TypedDict
 import numpy as np
 from scipy.ndimage import median_filter, uniform_filter1d
 
-from zone2.streams_store import float_column, grade_adjusted_speeds
+from zone2.streams_store import float_column, grade_adjusted_speeds, on_grid, sample_gaps
 
 # Bump whenever heart_rate_drift changes: it names the persisted summaries.
 DRIFT_VERSION = 1
@@ -108,15 +108,8 @@ def heart_rate_drift(streams: dict | None, with_series: bool = False) -> HeartRa
         dist = np.concatenate([[0.0], np.cumsum(np.nan_to_num(speed[1:]) * np.diff(t))])
 
     grid = np.arange(t[0], t[-1] + 1e-9, STEP_S)
-
-    def on_grid(values: np.ndarray) -> np.ndarray:
-        valid = ~np.isnan(values)
-        return np.interp(grid, t[valid], values[valid]) if valid.sum() >= 2 else np.full(len(grid), np.nan)
-
-    g_hr, g_gap, g_speed, g_dist = on_grid(hr), on_grid(gap), on_grid(speed), on_grid(dist)
-    hr_t = t[~np.isnan(hr)]
-    nearest = np.searchsorted(hr_t, grid).clip(1, len(hr_t) - 1)
-    hr_gap = np.minimum(np.abs(grid - hr_t[nearest - 1]), np.abs(hr_t[nearest] - grid))
+    g_hr, g_gap, g_speed, g_dist = (on_grid(t, v, grid) for v in (hr, gap, speed, dist))
+    hr_gap = sample_gaps(t, hr, grid)
     glitch = np.abs(g_hr - median_filter(g_hr, size=2 * (60 // STEP_S) + 1, mode="nearest")) > HR_GLITCH_BPM
 
     moving = g_speed >= MIN_SPEED_MS

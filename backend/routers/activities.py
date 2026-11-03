@@ -9,6 +9,7 @@ from backend.dependencies import get_z2
 from zone2.activities_cache import _has_full_photo_list
 from zone2.core import Zone2
 from zone2.drift import heart_rate_drift
+from zone2.hr_recovery import heart_rate_recovery
 from zone2.utils import df_rows, format_pace_or_speed, get_sport_category
 from zone2.streams_store import columnar_to_points, detect_stops, grade_adjusted_speeds
 
@@ -87,6 +88,7 @@ def _activity_to_dict(row: pd.Series, include_streams: bool = False, streams: di
         d["streams"] = columnar_to_points(streams) if streams else None
         d["stops"] = detect_stops(streams) if streams else []
         d["drift"] = heart_rate_drift(streams, with_series=True) if is_run else None
+        d["hr_recovery"] = heart_rate_recovery(streams) if is_run else None
 
         # Include detail-only fields when showing full activity
         for field in ("photos", "splits_metric", "best_efforts", "laps", "gear", "segment_efforts", "similar_activities"):
