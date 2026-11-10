@@ -25,6 +25,5 @@ zone2_workdir/
 # Misc
 *.md
 LICENSE
-readme_data/
 visualizations/
 .claude/
