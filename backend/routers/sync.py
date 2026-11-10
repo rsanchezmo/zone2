@@ -1,4 +1,6 @@
+import asyncio
 import logging
+from datetime import datetime, timedelta
 from threading import Lock
 
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, Query
@@ -66,21 +68,50 @@ def _finalize_sync(z2: Zone2, error: str | None, version_before: int) -> str | N
     return error
 
 
-def _run_sync(z2: Zone2, full_sync: bool, include_streams: bool):
+def _sync_activities(z2: Zone2, full_sync: bool, include_streams: bool) -> str | None:
+    """Fetch and store new activities, refresh what depends on them and free the sync slot.
+    Returns the error, if any."""
     err: str | None = None
     version = z2.strava_activities_cache.cache_version
     try:
         z2.sync_activities(full_sync=full_sync, include_streams=include_streams)
     except Exception as e:
         err = str(e)
-    finally:
-        err = _finalize_sync(z2, err, version)
-    if err is None:
-        # New runs show up on the coverage map without a manual per-city sync
-        try:
-            sync_all_cities(z2)
-        except Exception:
-            logger.exception("Coverage sync after the Strava sync failed")
+    return _finalize_sync(z2, err, version)
+
+
+def _sync_coverage(z2: Zone2) -> None:
+    # New runs show up on the coverage map without a manual per-city sync
+    try:
+        sync_all_cities(z2)
+    except Exception:
+        logger.exception("Coverage sync after the Strava sync failed")
+
+
+def _run_sync(z2: Zone2, full_sync: bool, include_streams: bool):
+    if _sync_activities(z2, full_sync, include_streams) is None:
+        _sync_coverage(z2)
+
+
+def catch_up(z2: Zone2, max_age: timedelta) -> asyncio.Future[str | None] | None:
+    """An incremental sync, with the new activities' streams, when the last one is older than
+    `max_age` and no other sync is running. The future resolves once the new activities are
+    stored and the caches refreshed; the coverage sync carries on after it."""
+    last = z2.strava_activities_cache.get_last_sync_time()
+    if last is not None and datetime.now() - last < max_age:
+        return None
+    if not _try_claim_sync():
+        return None
+    loop = asyncio.get_running_loop()
+    # Executor futures keep running when the caller stops waiting, unlike a dropped task
+    synced = loop.run_in_executor(None, _sync_activities, z2, False, True)
+
+    def then_coverage(done: asyncio.Future[str | None]) -> None:
+        if not done.cancelled() and done.result() is None:
+            loop.run_in_executor(None, _sync_coverage, z2)
+
+    synced.add_done_callback(then_coverage)
+    return synced
 
 
 @router.post("")

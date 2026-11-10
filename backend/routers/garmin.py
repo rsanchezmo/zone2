@@ -22,8 +22,9 @@ Endpoints
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from datetime import date as date_t, timedelta
+from datetime import UTC, date as date_t, datetime, timedelta
 from threading import Lock
 from typing import Any
 
@@ -64,20 +65,33 @@ def _release(error: str | None, summary: dict | None = None) -> None:
             _garmin_sync_status["last_summary"] = summary
 
 
-def _run_garmin_sync(z2: Zone2, full: bool) -> None:
+def _run_garmin_sync(z2: Zone2, full: bool, days: int = 14) -> None:
     err: str | None = None
     summary: dict | None = None
     try:
         if full:
             summary = z2.garmin_cache.sync_full()
         else:
-            rows = z2.garmin_cache.sync_recent(days=14)
+            rows = z2.garmin_cache.sync_recent(days=days)
             summary = {"rows_written": rows}
     except Exception as e:
         err = f"{type(e).__name__}: {e}"
         logger.exception("Garmin sync failed")
     finally:
         _release(err, summary)
+
+
+def catch_up(z2: Zone2, max_age: timedelta) -> asyncio.Future[None] | None:
+    """Today's and yesterday's wellness when Garmin's last sync is older than `max_age`, the
+    client is logged in and no other Garmin sync is running."""
+    if not z2.garmin_client.enabled:
+        return None
+    last = z2.garmin_cache.status()["last_sync_at"]
+    if last is not None and datetime.now(UTC) - datetime.fromisoformat(last) < max_age:
+        return None
+    if not _try_claim():
+        return None
+    return asyncio.get_running_loop().run_in_executor(None, _run_garmin_sync, z2, False, 2)
 
 
 # ---------------------------------------------------------------------- /status

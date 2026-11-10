@@ -1,3 +1,8 @@
+import asyncio
+from collections.abc import AsyncIterator
+from datetime import timedelta
+from typing import Any
+
 import aiosqlite
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -7,11 +12,17 @@ from backend.agent import preferences
 from backend.agent import usage as agent_usage
 from backend.db import connect_db, get_db
 from backend.dependencies import get_z2
+from backend.routers import garmin as garmin_sync, sync as strava_sync
 from zone2.core import Zone2
 
 router = APIRouter()
 
 # The agent itself (Pydantic AI, ~60 MB) is imported on the first chat, not at startup.
+
+# Data older than this is brought up to date before the coach answers a message
+FRESH_FOR = timedelta(minutes=15)
+# How long the reply waits for that sync; a slower one finishes in the background
+SYNC_WAIT_S = 20
 
 
 @router.get("/usage")
@@ -96,8 +107,8 @@ async def chat_turn(turn: ChatTurn, tasks: BackgroundTasks, z2: Zone2 = Depends(
     from backend.agent import chat
     from backend.agent.conversations import MAIN
     conversation_id = turn.conversation_id or MAIN
-    return _streamed(chat, z2, tasks, conversation_id=conversation_id, page=turn.page, message=turn.message,
-                     voice=turn.voice)
+    return _streamed(chat, z2, tasks, catch_up=True, conversation_id=conversation_id, page=turn.page,
+                     message=turn.message, voice=turn.voice)
 
 
 @router.post("/approve")
@@ -144,8 +155,22 @@ async def speak(speech: Speech):
     return StreamingResponse(body(), media_type="audio/mpeg", headers={"Cache-Control": "no-cache"})
 
 
-def _streamed(chat, z2: Zone2, tasks: BackgroundTasks, **turn) -> StreamingResponse:
+async def _catch_up(z2: Zone2) -> AsyncIterator[dict[str, Any]]:
+    """A `sync` step, when Strava or Garmin last synced longer ago than FRESH_FOR, so the
+    coach answers from your latest run and night."""
+    syncs = [s for s in (strava_sync.catch_up(z2, FRESH_FOR), garmin_sync.catch_up(z2, FRESH_FOR)) if s]
+    if not syncs:
+        return
+    yield {"type": "tool", "tool": "sync", "args": {}}
+    await asyncio.wait(syncs, timeout=SYNC_WAIT_S)
+    yield {"type": "tool_done", "tool": "sync"}
+
+
+def _streamed(chat, z2: Zone2, tasks: BackgroundTasks, *, catch_up: bool = False, **turn) -> StreamingResponse:
     async def body():
+        if catch_up:
+            async for event in _catch_up(z2):
+                yield chat.sse(event)
         # Its own connection: the stream outlives the request's dependencies
         async with connect_db() as db:
             async for event in chat.stream(z2, db, tasks.add_task, **turn):

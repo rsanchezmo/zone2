@@ -2510,9 +2510,14 @@ export type AgentStreamEvent =
   | { type: 'error'; detail: string };
 
 /** After a turn: refresh the cost, and whatever a write or a note may have changed on screen. */
+/** Everything the pages show, so they refetch after the coach changed or synced your data. */
+export function refreshPages(qc: QueryClient) {
+  qc.invalidateQueries({ predicate: q => !String(q.queryKey[0]).startsWith('agent-') });
+}
+
 export function refreshAfterAgentTurn(qc: QueryClient, turn: AgentTurn) {
   qc.invalidateQueries({ queryKey: ['agent-usage'] });
-  if (turn.changed) qc.invalidateQueries({ predicate: q => !String(q.queryKey[0]).startsWith('agent-') });
+  if (turn.changed) refreshPages(qc);
 }
 
 /** One agent turn, streamed as it runs: `onEvent` sees each step (tools, the reply as it is

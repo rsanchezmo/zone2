@@ -63,7 +63,7 @@ def _turn(result: AgentRunResult[Output], conversation_id: str) -> dict[str, Any
     }
 
 
-def _sse(event: dict[str, Any]) -> str:
+def sse(event: dict[str, Any]) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
 
 
@@ -109,7 +109,7 @@ async def stream(z2: Zone2, db: aiosqlite.Connection, schedule: Schedule, *, con
     task = asyncio.create_task(run())
     try:
         while (event := await events.get()) is not None:
-            yield _sse(event)
+            yield sse(event)
     finally:
         await task
 

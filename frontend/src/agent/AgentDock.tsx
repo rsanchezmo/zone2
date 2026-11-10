@@ -5,7 +5,7 @@ import clsx from 'clsx'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
-  refreshAfterAgentTurn, streamAgentTurn, useAgentConversation, useAgentStatus,
+  refreshAfterAgentTurn, refreshPages, streamAgentTurn, useAgentConversation, useAgentStatus,
   type AgentPendingWrite, type AgentStreamEvent, type AgentTranscriptItem, type AgentTurn,
 } from '../api/hooks'
 import { useTheme } from '../hooks/useTheme'
@@ -48,6 +48,7 @@ const WRITE_LABEL: Record<string, string> = {
 
 /** What each tool is doing, in words, while it runs. */
 const STEP_LABEL: Record<string, string> = {
+  sync: 'Syncing your latest activities',
   today: 'Checking today',
   athlete: 'Reading your zones',
   find_activities: 'Searching your activities',
@@ -179,6 +180,7 @@ export default function AgentDock() {
     setThinking(false)
     // Outside the state update, which React may run twice
     if (event.type === 'text') speaker.current?.feed(event.delta)
+    if (event.type === 'tool_done' && event.tool === 'sync') refreshPages(qc)
     setItems(prev => {
       const next = [...(prev ?? [])]
       const last = next[next.length - 1]
