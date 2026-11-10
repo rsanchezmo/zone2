@@ -24,6 +24,7 @@ from typing import Any
 
 import aiosqlite
 
+from backend._ttl_cache import TTLCache
 from backend.db import connect_db, row_dict
 from backend.services.calendar_feed import format_distance_km, format_target_pace, session_description
 from backend.services.zones import get_setting
@@ -53,6 +54,8 @@ class SyncState(StrEnum):
 
 # One Garmin change at a time, so a quick second edit can't add a session twice
 _lock = asyncio.Lock()
+# The Garmin library as listed for the Workouts page; a deleted copy leaves it once Garmin deleted it
+library_listing = TTLCache(maxsize=1, ttl_seconds=600)
 
 
 # ── Workout JSON ─────────────────────────────────────────────────────────
@@ -307,6 +310,7 @@ async def delete_copy(z2: Zone2, workout_id: int) -> None:
         except Exception as e:
             logger.warning("Deleting Garmin workout %s failed: %s: %s", workout_id, type(e).__name__, e)
             return
+        library_listing.clear()
         await db.execute("DELETE FROM garmin_workout_schedules WHERE workout_id = ?", (workout_id,))
         await db.commit()
 

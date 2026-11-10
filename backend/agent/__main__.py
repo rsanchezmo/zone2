@@ -14,6 +14,7 @@ and record what each turn cost. Garmin pushes after a calendar write are skipped
 
 import argparse
 import asyncio
+import functools
 import inspect
 import json
 import os
@@ -29,11 +30,12 @@ from pydantic_ai.messages import RetryPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from backend.agent import conversations, notes
-from backend.agent.agent import Output, build_agent, run_turn
+from backend.agent.agent import ON_DEMAND, Output, build_agent, run_turn
 from backend.agent.chat import model_error, pending_calls
 from backend.agent.tools import AgentDeps
 from backend.config import settings
 from backend.db import connect_db, init_db
+from backend.routers.sync import sync_now
 from backend.services.races import refresh_race_activities
 from zone2.core import Zone2
 
@@ -41,14 +43,21 @@ DIM, BOLD, RESET = "\033[2m", "\033[1m", "\033[0m"
 
 
 def _scripted(tool: str, args: dict[str, Any]) -> FunctionModel:
-    """A stand-in model that calls one tool, then answers with what it returned."""
+    """A stand-in model that calls one tool, loading its capability first when it has one,
+    then answers with what it returned."""
+    capability = next((id for id, (toolset, _) in ON_DEMAND.items() if tool in toolset.tools), None)
+
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         last = messages[-1]
         for part in last.parts if isinstance(last, ModelRequest) else []:
+            if isinstance(part, ToolReturnPart) and part.tool_name == "load_capability":
+                return ModelResponse(parts=[ToolCallPart(tool, args)])
             if isinstance(part, ToolReturnPart):
                 return ModelResponse(parts=[TextPart(part.model_response_str())])
             if isinstance(part, RetryPromptPart):
                 return ModelResponse(parts=[TextPart(f"(the tool asked for a retry) {part.model_response()}")])
+        if capability and not any(t.name == tool for t in info.function_tools):
+            return ModelResponse(parts=[ToolCallPart("load_capability", {"id": capability})])
         return ModelResponse(parts=[ToolCallPart(tool, args)])
     return FunctionModel(respond, model_name="scripted")
 
@@ -113,7 +122,8 @@ async def main(args: argparse.Namespace) -> None:
     agent = build_agent(args.model)
 
     async with connect_db() as db:
-        deps = AgentDeps(z2=z2, db=db, schedule=garmin.schedule, page=args.page)
+        deps = AgentDeps(z2=z2, db=db, schedule=garmin.schedule, page=args.page,
+                         sync=functools.partial(sync_now, z2))
 
         if args.command == "tools":
             print((await agent.run("list", deps=deps, model=_listing())).output)

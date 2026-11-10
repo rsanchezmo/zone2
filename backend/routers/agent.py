@@ -1,4 +1,5 @@
 import asyncio
+import functools
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from typing import Any
@@ -173,7 +174,8 @@ def _streamed(chat, z2: Zone2, tasks: BackgroundTasks, *, catch_up: bool = False
                 yield chat.sse(event)
         # Its own connection: the stream outlives the request's dependencies
         async with connect_db() as db:
-            async for event in chat.stream(z2, db, tasks.add_task, **turn):
+            async for event in chat.stream(z2, db, tasks.add_task, sync=functools.partial(strava_sync.sync_now, z2),
+                                           **turn):
                 yield event
     # The Garmin pushes a write queues run once the stream ends
     return StreamingResponse(body(), media_type="text/event-stream", background=tasks,

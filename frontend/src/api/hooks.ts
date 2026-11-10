@@ -2506,6 +2506,7 @@ export type AgentStreamEvent =
   | { type: 'tool'; tool: string; args: Record<string, unknown> }
   | { type: 'tool_done'; tool: string }
   | { type: 'text'; delta: string }
+  | { type: 'open'; path: string }
   | { type: 'done'; turn: AgentTurn }
   | { type: 'error'; detail: string };
 

@@ -6,9 +6,10 @@ from threading import Lock
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, Query
 
 from backend.dependencies import get_z2
+from backend.routers import garmin as garmin_sync
 from backend.routers.coverage import sync_all_cities
 from backend.routers.exports import clear_export_cache
-from backend.routers.gear import clear_gear_cache
+from backend.services.gear import clear_gear_cache
 from backend.services.stats_cache import clear_stats_cache
 from backend.services.races import refresh_race_activities
 from zone2.core import Zone2
@@ -149,15 +150,9 @@ def backfill_streams(
     return {"status": "started"}
 
 
-@router.post("/activity/{activity_id}")
-def resync_activity(
-    activity_id: int,
-    include_streams: bool = Query(default=False),
-    z2: Zone2 = Depends(get_z2),
-):
-    """Refresh a single activity from Strava (e.g., to pick up a renamed activity)."""
-    if not _try_claim_sync():
-        return {"status": "already_running"}
+def _resync_activity(z2: Zone2, activity_id: int, include_streams: bool) -> tuple[bool, str | None]:
+    """Fetch one activity again, in the sync slot the caller claimed: whether Strava returned
+    it, and the error, if any."""
     err: str | None = None
     found = False
     version = z2.strava_activities_cache.cache_version
@@ -169,13 +164,39 @@ def resync_activity(
         )
     except Exception as e:
         err = str(e)
-    finally:
-        err = _finalize_sync(z2, err, version)
+    return found, _finalize_sync(z2, err, version)
+
+
+@router.post("/activity/{activity_id}")
+def resync_activity(
+    activity_id: int,
+    include_streams: bool = Query(default=False),
+    z2: Zone2 = Depends(get_z2),
+):
+    """Refresh a single activity from Strava (e.g., to pick up a renamed activity)."""
+    if not _try_claim_sync():
+        return {"status": "already_running"}
+    found, err = _resync_activity(z2, activity_id, include_streams)
     if err:
         raise HTTPException(status_code=502, detail=err)
     if not found:
         raise HTTPException(status_code=404, detail="Activity not found or no detail returned")
     return {"status": "success"}
+
+
+async def sync_now(z2: Zone2, activity_id: int | None = None) -> str | None:
+    """Sync Strava and Garmin's last two days now, or fetch one activity again with its streams,
+    and wait for it. Returns what went wrong, if anything."""
+    if activity_id is not None:
+        if not _try_claim_sync():
+            return "A sync is already running; try again in a minute."
+        found, err = await asyncio.to_thread(_resync_activity, z2, activity_id, True)
+        return err or (None if found else f"Strava has no activity {activity_id}.")
+    strava = catch_up(z2, timedelta(0))
+    garmin = garmin_sync.catch_up(z2, timedelta(0))
+    if strava is None:
+        return "A sync is already running; try again in a minute."
+    return (await asyncio.gather(strava, *([garmin] if garmin else [])))[0]
 
 
 @router.get("/cache-completeness")

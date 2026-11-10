@@ -68,6 +68,7 @@ Nothing else combines the whole loop: plan by conversation, write to the calenda
     - reading z2's metrics and their caveats.
   - The coaching method comes from coaching a real 10K block.
   - Each guide is a folder with a `SKILL.md`. The instructions list the guides, and the agent reads one in full when the conversation calls for it.
+- **Rarely needed tools load on demand too.** Gear, history (a year's totals, all-time totals, streaks), one night's sleep in detail, and the workout library's writes are capabilities with their own tools, listed next to the guides (`ON_DEMAND` in `agent.py`). Their tools cost no tokens until a turn loads them; everyday tools stay always on, since loading costs an extra request.
 - **MCP comes later, as a thin adapter.** The agent calls its tools in-process. An MCP server over the same functions is only needed to use z2 from other AI apps, such as Claude or ChatGPT.
 
 ## Layout

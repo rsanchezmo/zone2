@@ -1,11 +1,18 @@
 """How planned sessions went: which activity fulfilled each, and its execution score.
 Shared by the calendar router, the coach's plans and the agent."""
 
+import asyncio
+import logging
+
+import aiosqlite
 import pandas as pd
 
 from backend._serialize import sanitize as _sanitize
-from backend.scoring import compute_execution_score, match_activity
+from backend.scoring import compute_execution_score, has_targets, match_activity
+from backend.services.zones import resolve_hr_zones
 from zone2.core import Zone2
+
+logger = logging.getLogger(__name__)
 
 _SCORING_COLUMNS = ("id", "sport_type", "distance", "moving_time", "elapsed_time", "average_speed",
                     "start_date_local", "average_heartrate")
@@ -62,6 +69,20 @@ def score_sessions(z2: Zone2, sessions: list[dict], date_from: str, date_to: str
         streams = streams_map.get(int(matched["id"])) if matched.get("id") is not None else None
         result[session["id"]] = compute_execution_score(session, matched, hr_zones, streams)
     return result
+
+
+async def scores(z2: Zone2, db: aiosqlite.Connection, sessions: list[dict], date_from: str,
+                 date_to: str) -> dict[int, dict | None]:
+    """Execution score per session that has targets, in your HR zones when they resolve."""
+    scorable = [s for s in sessions if has_targets(s)]
+    if not scorable:
+        return {}
+    hr_zones = None
+    try:
+        hr_zones = (await resolve_hr_zones(z2, db))["zones"]
+    except Exception as e:
+        logger.debug("Could not load HR zones for scoring: %s", e)
+    return await asyncio.to_thread(score_sessions, z2, scorable, date_from, date_to, hr_zones)
 
 
 def accomplished(session: dict, day_activities: list[dict]) -> bool:

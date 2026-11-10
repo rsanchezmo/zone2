@@ -9,15 +9,18 @@ from decimal import Decimal
 from pathlib import Path
 
 from pydantic_ai import (
-    Agent, AgentRunResult, DeferredToolRequests, DeferredToolResults, RunContext, capture_run_messages,
+    Agent, AgentRunResult, DeferredToolRequests, DeferredToolResults, FunctionToolset, RunContext, capture_run_messages,
 )
 from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.capabilities import Capability
 from pydantic_ai.models import Model
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import Skills
 
 from backend.agent import conversations, notes, usage
-from backend.agent.tools import AgentDeps, memory_tools, read_tools, write_tools
+from backend.agent.tools import (
+    AgentDeps, app_tools, gear_tools, history_tools, memory_tools, read_tools, sleep_tools, workout_tools, write_tools,
+)
 from backend.config import settings
 
 HERE = Path(__file__).parent
@@ -61,15 +64,32 @@ async def _first_name(z2) -> str | None:
     return (profile or {}).get("firstname") or None
 
 
+ON_DEMAND: dict[str, tuple[FunctionToolset[AgentDeps], str]] = {
+    "gear": (gear_tools, "Shoes and bikes: km on each, when they were used, retiring a pair, which to race in."),
+    "history": (history_tools, "Years and streaks: a year's totals against another year, all-time totals per "
+                               "sport, the longest and current streaks."),
+    "sleep": (sleep_tools, "One night in detail: sleep stages hour by hour, awake spells, and heart rate, HRV, "
+                           "stress, breathing and body battery through the night."),
+    "workouts": (workout_tools, "The workout library: save a new workout, change or delete a saved one (each "
+                                "needs the athlete's approval)."),
+}
+"""Capabilities whose tools the model loads when a question needs them."""
+
+
 def build_agent(model: str | Model | None = None) -> Agent[AgentDeps, Output]:
     return Agent(
         model or settings.agent_model,
         deps_type=AgentDeps,
         output_type=[str, DeferredToolRequests],
         instructions=[INSTRUCTIONS, _athlete_notes, _now_and_page],
-        toolsets=[read_tools, memory_tools, write_tools],
-        # Its own workspace, so the guides are readable without giving the run any file access
-        capabilities=[Skills("guides", workspace=LocalWorkspaceBackend(HERE))],
+        toolsets=[read_tools, memory_tools, app_tools, write_tools],
+        capabilities=[
+            # Its own workspace, so the guides are readable without giving the run any file access
+            Skills("guides", workspace=LocalWorkspaceBackend(HERE)),
+            # Asked about now and then, so their tools cost nothing until a turn loads them
+            *(Capability(id=id, toolsets=[toolset], description=description, defer_loading=True)
+              for id, (toolset, description) in ON_DEMAND.items()),
+        ],
         defer_model_check=True,
     )
 

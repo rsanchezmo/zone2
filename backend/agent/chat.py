@@ -3,7 +3,7 @@ renders (the reply, the tools it used, the writes waiting for a yes)."""
 
 import asyncio
 import json
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from typing import Any
 
 import aiosqlite
@@ -15,12 +15,14 @@ from pydantic_ai import (
 
 from backend.agent import conversations, preferences
 from backend.agent.agent import Output, build_agent, run_turn
-from backend.agent.tools import AgentDeps, memory_tools, write_tools
+from backend.agent.tools import AgentDeps, memory_tools, workout_tools, write_tools
 from backend.services.sessions import Schedule
 from zone2.core import Zone2
 
+# The tools that wait for the user's yes
+WRITE_TOOLS = set(write_tools.tools) | set(workout_tools.tools)
 # Tools whose results change what pages show, so the panel refreshes them
-CHANGING_TOOLS = set(write_tools.tools) | set(memory_tools.tools)
+CHANGING_TOOLS = WRITE_TOOLS | set(memory_tools.tools) | {"sync_now"}
 _agent = None
 
 
@@ -69,7 +71,8 @@ def sse(event: dict[str, Any]) -> str:
 
 async def stream(z2: Zone2, db: aiosqlite.Connection, schedule: Schedule, *, conversation_id: str,
                  page: str | None, message: str | None = None,
-                 approvals: dict[str, bool] | None = None, voice: bool = False) -> AsyncIterator[str]:
+                 approvals: dict[str, bool] | None = None, voice: bool = False,
+                 sync: Callable[[int | None], Awaitable[str | None]] | None = None) -> AsyncIterator[str]:
     """One turn as server-sent events, so the panel shows the run as it happens:
     `thinking`, each `tool` call and its `tool_done`, the reply's `text` as it is written,
     then `done` with the whole turn (or `error`)."""
@@ -81,6 +84,8 @@ async def stream(z2: Zone2, db: aiosqlite.Connection, schedule: Schedule, *, con
                 await events.put({"type": "tool", "tool": event.part.tool_name, "args": event.part.args_as_dict()})
             elif isinstance(event, FunctionToolResultEvent):
                 await events.put({"type": "tool_done", "tool": event.part.tool_name})
+                if event.part.tool_name == "open_page" and isinstance(event.part, ToolReturnPart):
+                    await events.put({"type": "open", "path": event.part.content})
             elif isinstance(event, PartStartEvent) and isinstance(event.part, TextPart) and event.part.content:
                 await events.put({"type": "text", "delta": event.part.content})
             elif isinstance(event, PartStartEvent) and isinstance(event.part, ThinkingPart):
@@ -91,7 +96,7 @@ async def stream(z2: Zone2, db: aiosqlite.Connection, schedule: Schedule, *, con
     model = await preferences.model(db)
 
     async def run() -> None:
-        deps = AgentDeps(z2=z2, db=db, schedule=schedule, page=page, voice=voice)
+        deps = AgentDeps(z2=z2, db=db, schedule=schedule, page=page, voice=voice, sync=sync)
         results = DeferredToolResults(approvals={
             call_id: True if yes else ToolDenied("The user said no.") for call_id, yes in approvals.items()
         }) if approvals is not None else None
@@ -139,9 +144,8 @@ def pending_calls(messages: list[ModelMessage]) -> list[ToolCallPart]:
         return []
     last = responses[-1]
     answered = {p.tool_call_id for m in messages[last + 1:] for p in m.parts if isinstance(p, ToolReturnPart)}
-    writes = set(write_tools.tools)
     return [p for p in messages[last].parts
-            if isinstance(p, ToolCallPart) and p.tool_name in writes and p.tool_call_id not in answered]
+            if isinstance(p, ToolCallPart) and p.tool_name in WRITE_TOOLS and p.tool_call_id not in answered]
 
 
 async def history(db: aiosqlite.Connection, conversation_id: str) -> dict[str, Any]:

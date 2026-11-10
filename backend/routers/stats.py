@@ -12,7 +12,7 @@ from backend.services.stats_cache import stats_cache as _stats_cache
 from backend.services.zones import resolve_hr_zones
 from backend.services.resting_hr import resolve_resting_hr
 from zone2.core import Zone2
-from zone2.utils import df_rows, get_sport_category, previous_week
+from zone2.utils import get_sport_category, previous_week
 
 router = APIRouter()
 
@@ -95,19 +95,6 @@ async def weekly_report(
     return await _cached_json_in_threadpool(key, build)
 
 
-def _get_year_in_sport_cached(z2: Zone2, year: int, main_sport: str, cutoff):
-    key = ("year_in_sport", year, main_sport, cutoff, z2.strava_activities_cache.cache_version)
-    cached = _stats_cache.get(key)
-    if cached is not None:
-        return cached
-    result = {
-        "main": z2.strava_analytics.get_year_in_sport(year, main_sport, cutoff_month_day=cutoff),
-        "all": z2.strava_analytics.get_all_year_in_sport(year, cutoff_month_day=cutoff),
-    }
-    _stats_cache.set(key, result)
-    return result
-
-
 @router.get("/year-in-sport")
 @_cached_json
 def year_in_sport(
@@ -123,7 +110,7 @@ def year_in_sport(
     # Only apply cutoff when viewing the current (incomplete) year
     cutoff = (today.month, today.day) if is_current_year else None
 
-    data = _get_year_in_sport_cached(z2, year, main_sport, cutoff)
+    data = training.year_in_sport(z2, year, main_sport, cutoff)
 
     result = {
         "main_sport": _serialize_enum_dict(data["main"]),
@@ -133,7 +120,7 @@ def year_in_sport(
     }
 
     if comparison_year:
-        comp_data = _get_year_in_sport_cached(z2, comparison_year, main_sport, cutoff)
+        comp_data = training.year_in_sport(z2, comparison_year, main_sport, cutoff)
         result["comparison"] = {
             "main_sport": _serialize_enum_dict(comp_data["main"]),
             "all_sports": _serialize_enum_dict(comp_data["all"]),
@@ -199,144 +186,7 @@ def streaks(
     z2: Zone2 = Depends(get_z2),
 ):
     """Compute current and longest activity streaks (consecutive days with activities)."""
-    activities = z2.strava_activities_cache.get_prepared_view()
-    active_dates = sorted(activities["start_date_local"].dt.date.unique())
-
-    if not len(active_dates):
-        return {"current_streak": 0, "longest_streak": 0, "longest_streak_start": None, "longest_streak_end": None}
-
-    today = date.today()
-    # Build streaks
-    longest = 1
-    longest_start = active_dates[0]
-    longest_end = active_dates[0]
-    current = 1
-    streak_start = active_dates[0]
-
-    for i in range(1, len(active_dates)):
-        if (active_dates[i] - active_dates[i - 1]).days == 1:
-            current += 1
-        else:
-            if current > longest:
-                longest = current
-                longest_start = streak_start
-                longest_end = active_dates[i - 1]
-            current = 1
-            streak_start = active_dates[i]
-
-    # Final check
-    if current > longest:
-        longest = current
-        longest_start = streak_start
-        longest_end = active_dates[-1]
-
-    # Current streak: must include today or yesterday
-    last_active = active_dates[-1]
-    if (today - last_active).days > 1:
-        current_streak = 0
-    else:
-        current_streak = 1
-        for i in range(len(active_dates) - 2, -1, -1):
-            if (active_dates[i + 1] - active_dates[i]).days == 1:
-                current_streak += 1
-            else:
-                break
-
-    # ── Week streaks (consecutive ISO weeks with at least 1 activity) ──
-    active_weeks = sorted({d.isocalendar()[:2] for d in active_dates})  # (year, week)
-
-    def week_diff(a: tuple, b: tuple) -> int:
-        """Return the number of ISO weeks between two (year, week) tuples."""
-        d_a = date.fromisocalendar(a[0], a[1], 1)
-        d_b = date.fromisocalendar(b[0], b[1], 1)
-        return (d_b - d_a).days // 7
-
-    longest_week = 0
-    longest_week_start = None
-    longest_week_end = None
-    current_week_streak = 0
-
-    if active_weeks:
-        cur = 1
-        cur_start = active_weeks[0]
-        for i in range(1, len(active_weeks)):
-            if week_diff(active_weeks[i - 1], active_weeks[i]) == 1:
-                cur += 1
-            else:
-                if cur > longest_week:
-                    longest_week = cur
-                    longest_week_start = cur_start
-                    longest_week_end = active_weeks[i - 1]
-                cur = 1
-                cur_start = active_weeks[i]
-        if cur > longest_week:
-            longest_week = cur
-            longest_week_start = cur_start
-            longest_week_end = active_weeks[-1]
-
-        # Current week streak: must include this week or last week
-        last_week_date = today - timedelta(days=7)
-        last_week = last_week_date.isocalendar()[:2]
-        last_active_week = active_weeks[-1]
-        if last_active_week >= last_week:
-            current_week_streak = 1
-            for i in range(len(active_weeks) - 2, -1, -1):
-                if week_diff(active_weeks[i], active_weeks[i + 1]) == 1:
-                    current_week_streak += 1
-                else:
-                    break
-
-    def week_label(yw: tuple | None) -> str | None:
-        if yw is None:
-            return None
-        return date.fromisocalendar(yw[0], yw[1], 1).isoformat()
-
-    return {
-        "current_streak": current_streak,
-        "longest_streak": longest,
-        "longest_streak_start": longest_start.isoformat() if longest_start else None,
-        "longest_streak_end": longest_end.isoformat() if longest_end else None,
-        "current_week_streak": current_week_streak,
-        "longest_week_streak": longest_week,
-        "longest_week_streak_start": week_label(longest_week_start),
-        "longest_week_streak_end": week_label(longest_week_end),
-    }
-
-
-def _compute_sport_totals(z2: Zone2) -> dict:
-    """Compute total distance (km) and time (seconds) per sport category."""
-    activities = z2.strava_activities_cache.activities_raw
-    if activities.empty:
-        return {}
-    RUNNING_TYPES = {"run", "trailrun", "virtualrun"}
-    CYCLING_TYPES = {"ride", "virtualride", "ebikeride", "gravelride", "mountainbikeride", "emountainbikeride", "handcycle", "velomobile"}
-    SWIMMING_TYPES = {"swim"}
-
-    def _category(sport_type: str | None) -> str | None:
-        st = (sport_type or "").lower().replace(" ", "")
-        if st in RUNNING_TYPES:
-            return "running"
-        if st in CYCLING_TYPES:
-            return "cycling"
-        if st in SWIMMING_TYPES:
-            return "swimming"
-        return None
-
-    totals: dict[str, dict] = {}
-    for row in df_rows(activities, "sport_type", "distance", "moving_time"):
-        cat = _category(row.get("sport_type"))
-        if cat is None:
-            continue
-        if cat not in totals:
-            totals[cat] = {"distance_km": 0.0, "time_s": 0.0, "count": 0}
-        totals[cat]["distance_km"] += (row.get("distance") or 0) / 1000.0
-        totals[cat]["time_s"] += row.get("moving_time") or 0
-        totals[cat]["count"] += 1
-    # Round values
-    for cat in totals:
-        totals[cat]["distance_km"] = round(totals[cat]["distance_km"], 1)
-        totals[cat]["time_s"] = round(totals[cat]["time_s"])
-    return totals
+    return training.streaks(z2)
 
 
 @router.get("/personal-records")
@@ -350,7 +200,7 @@ def personal_records(z2: Zone2 = Depends(get_z2)):
 @_cached_json
 def sport_totals(z2: Zone2 = Depends(get_z2)):
     """Overall totals (distance, time, count) per sport category."""
-    return _compute_sport_totals(z2)
+    return training.sport_totals(z2)
 
 
 @router.get("/weekly-totals")

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import Markdown from 'react-markdown'
@@ -44,6 +44,9 @@ const WRITE_LABEL: Record<string, string> = {
   set_goal: 'Set a goal',
   change_goal: 'Change a goal',
   remove_goal: 'Remove a goal',
+  save_workout: 'Save a workout',
+  change_workout: 'Change a saved workout',
+  remove_workout: 'Delete a saved workout',
 }
 
 /** What each tool is doing, in words, while it runs. */
@@ -53,6 +56,7 @@ const STEP_LABEL: Record<string, string> = {
   athlete: 'Reading your zones',
   find_activities: 'Searching your activities',
   activity_detail: 'Opening the activity',
+  similar_activities: 'Finding runs like it',
   personal_records: 'Checking your records',
   race_predictions: 'Checking race predictions',
   fitness: 'Checking fitness and form',
@@ -68,10 +72,30 @@ const STEP_LABEL: Record<string, string> = {
   remember: 'Noting that',
   forget: 'Forgetting a note',
   log_entry: "Writing to the coach's log",
+  close_suggestion: 'Closing a suggestion',
+  sync_now: 'Syncing Strava and Garmin',
+  open_page: 'Opening the page',
+  gear: 'Reading your gear',
+  gear_detail: 'Looking at the pair',
+  year_stats: 'Adding up the year',
+  totals: 'Adding up all time',
+  streaks: 'Counting streaks',
+  night: 'Reading the night',
+}
+
+/** The capabilities the coach loads with their tools; any other id is a guide. */
+const CAPABILITY_LABEL: Record<string, string> = {
+  gear: 'Looking at your gear',
+  history: 'Looking back at your years',
+  sleep: 'Looking at your sleep',
+  workouts: 'Opening the workout library',
 }
 
 function stepLabel(tool: string, args?: Record<string, unknown>): string {
-  if (tool === 'load_capability') return `Reading the ${String(args?.id ?? '')} guide`.replace('  ', ' ')
+  if (tool === 'load_capability') {
+    const id = String(args?.id ?? '').replace(/^capability:/, '')
+    return CAPABILITY_LABEL[id] ?? `Reading the ${id.replace(/-/g, ' ')} guide`
+  }
   return STEP_LABEL[tool] ?? WRITE_LABEL[tool] ?? tool
 }
 
@@ -135,6 +159,7 @@ export default function AgentDock() {
   const isLight = theme === 'light'
   const qc = useQueryClient()
   const location = useLocation()
+  const navigate = useNavigate()
   const page = pageContext(location.pathname, location.search)
   const { data: status } = useAgentStatus()
   const [open, setOpen] = useState(false)
@@ -177,6 +202,11 @@ export default function AgentDock() {
   /** Fold one streamed event into the live transcript. */
   function apply(event: AgentStreamEvent) {
     if (event.type === 'thinking') return setThinking(true)
+    if (event.type === 'open') {
+      // The page opens behind the chat, so an expanded chat steps aside for this once
+      setExpanded(false)
+      return navigate(event.path)
+    }
     setThinking(false)
     // Outside the state update, which React may run twice
     if (event.type === 'text') speaker.current?.feed(event.delta)

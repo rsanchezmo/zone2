@@ -10,9 +10,9 @@ from backend.db import get_db
 from backend.dependencies import get_z2
 from backend.scoring import compute_execution_score, has_targets
 from backend.routers.activities import activities_on_dates
-from backend.services import garmin_workouts, sessions as planned_sessions
+from backend.services import garmin_workouts, session_scores, sessions as planned_sessions
 from backend.services.briefing import today_briefing
-from backend.services.session_scores import accomplished, activities_by_day, score_sessions, session_matches
+from backend.services.session_scores import accomplished, activities_by_day, session_matches
 from backend.services.sessions import session_dict
 from backend.services.zones import resolve_hr_zones, set_setting
 from zone2.core import Zone2
@@ -109,20 +109,8 @@ async def get_session_scores(
         "SELECT * FROM training_sessions WHERE date >= ? AND date <= ? ORDER BY date",
         (date_from, date_to),
     )
-    rows = await cursor.fetchall()
-    sessions = [session_dict(row) for row in rows]
-
-    sessions_with_targets = [s for s in sessions if has_targets(s)]
-    if not sessions_with_targets:
-        return {}
-
-    hr_zones = None
-    try:
-        hr_zones = (await resolve_hr_zones(z2, db))["zones"]
-    except Exception as e:
-        logger.debug("Could not load HR zones for scoring: %s", e)
-
-    return await run_in_threadpool(score_sessions, z2, sessions_with_targets, date_from, date_to, hr_zones)
+    sessions = [session_dict(row) for row in await cursor.fetchall()]
+    return await session_scores.scores(z2, db, sessions, date_from, date_to)
 
 
 @router.get("/sessions/accomplishment")

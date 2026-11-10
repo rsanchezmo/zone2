@@ -6,6 +6,7 @@ import pandas as pd
 from backend._serialize import sanitize as _sanitize
 from backend._ttl_cache import TTLCache
 from backend.dependencies import get_z2
+from backend.services import activities
 from zone2.activities_cache import _has_full_photo_list
 from zone2.core import Zone2
 from zone2.drift import heart_rate_drift
@@ -280,37 +281,7 @@ def get_similar_activities(
     limit: int = Query(5, ge=1, le=20),
     z2: Zone2 = Depends(get_z2),
 ):
-    target = z2.strava_activities_cache.get_activity_by_id(activity_id)
-    if target is None:
+    df = activities.similar(z2, activity_id, limit)
+    if df is None:
         raise HTTPException(status_code=404, detail="Activity not found")
-
-    activities = z2.strava_activities_cache.activities_raw
-    if activities.empty:
-        return []
-
-    sport = target.get("sport_type")
-    distance = target.get("distance")
-    elevation = target.get("total_elevation_gain")
-
-    if not sport or distance is None or pd.isna(distance):
-        return []
-
-    df = activities.copy()
-    df = df[df["sport_type"] == sport]
-    df = df[df["id"] != activity_id]
-
-    # Distance within ±10%
-    dist_lo = float(distance) * 0.9
-    dist_hi = float(distance) * 1.1
-    df = df[(df["distance"] >= dist_lo) & (df["distance"] <= dist_hi)]
-
-    # Elevation within ±20% (if target has elevation)
-    if elevation is not None and not pd.isna(elevation) and float(elevation) > 0:
-        elev_lo = float(elevation) * 0.8
-        elev_hi = float(elevation) * 1.2
-        df = df[df["total_elevation_gain"].fillna(0).between(elev_lo, elev_hi)]
-
-    df["start_date_local"] = pd.to_datetime(df["start_date_local"])
-    df = df.sort_values("start_date_local", ascending=False).head(limit)
-
     return [_activity_to_dict(row) for _, row in df.iterrows()]

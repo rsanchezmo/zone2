@@ -1,6 +1,4 @@
-import json
 import logging
-from datetime import date
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
@@ -8,20 +6,16 @@ from starlette.concurrency import run_in_threadpool
 import aiosqlite
 
 from backend._ttl_cache import TTLCache
-from backend.db import delete_row, get_db, insert_row, row_dict, update_row
+from backend.db import get_db
 from backend.dependencies import get_z2
-from backend.services import garmin_workouts
-from backend.services.workout_library import find_same
+from backend.services import garmin_workouts, workout_library
 from zone2.core import Zone2
 from zone2.garmin_client import GarminClient, GarminUnavailable
 
 logger = logging.getLogger(__name__)
 
-_JSON_COLS = ("segments",)
-
 router = APIRouter()
 
-_garmin_library_cache = TTLCache(maxsize=1, ttl_seconds=600)
 # Parsed steps per (workout, Garmin version): they only change when the workout is edited
 _garmin_steps_cache = TTLCache(maxsize=512, ttl_seconds=7 * 86400)
 
@@ -40,22 +34,11 @@ class WorkoutTemplateUpdate(BaseModel):
     segments: list[dict] | None = None
 
 
-def _template(row: aiosqlite.Row) -> dict:
-    return row_dict(row, json_cols=("segments",))
-
-
-async def _reject_duplicate(db: aiosqlite.Connection, sport_type: str, segments: list[dict],
-                            exclude_id: int | None = None) -> None:
-    same = await find_same(db, sport_type, segments, exclude_id)
-    if same is not None:
-        raise HTTPException(status_code=409, detail=f"Same steps as “{same['name']}”")
-
-
 @router.get("")
 async def list_templates(db: aiosqlite.Connection = Depends(get_db), z2: Zone2 = Depends(get_z2)):
     """Saved workouts, newest first, with the state of their Garmin copy (runs)
     and how many planned sessions use them."""
-    templates = [_template(r) for r in await (await db.execute(
+    templates = [workout_library.template_dict(r) for r in await (await db.execute(
         "SELECT * FROM workout_templates ORDER BY created_at DESC")).fetchall()]
     uses = {r[0]: r[1] for r in await (await db.execute(
         "SELECT workout_template_id, COUNT(*) FROM training_sessions WHERE workout_template_id IS NOT NULL "
@@ -71,10 +54,10 @@ async def list_templates(db: aiosqlite.Connection = Depends(get_db), z2: Zone2 =
 def _garmin_workouts(client: GarminClient, ours: set[int]) -> list[dict]:
     """The library's workouts other than z2's copies, newest first, with their
     steps as z2 segments (each fetched once per Garmin version)."""
-    listed = _garmin_library_cache.get("library")
+    listed = garmin_workouts.library_listing.get("library")
     if listed is None:
         listed = sorted(client.list_workouts(), key=lambda w: w.get("createdDate") or "", reverse=True)
-        _garmin_library_cache.set("library", listed)
+        garmin_workouts.library_listing.set("library", listed)
     workouts = []
     for w in listed:
         if w["workoutId"] in ours:
@@ -120,10 +103,7 @@ async def create_template(
     db: aiosqlite.Connection = Depends(get_db),
     z2: Zone2 = Depends(get_z2),
 ):
-    await _reject_duplicate(db, template.sport_type, template.segments)
-    row = _template(await insert_row(db, "workout_templates", template.model_dump(), json_cols=_JSON_COLS))
-    tasks.add_task(garmin_workouts.sync_library, z2)
-    return row
+    return await workout_library.create(z2, db, template.model_dump(), tasks.add_task)
 
 
 @router.put("/{template_id}")
@@ -134,27 +114,7 @@ async def update_template(
     db: aiosqlite.Connection = Depends(get_db),
     z2: Zone2 = Depends(get_z2),
 ):
-    values = update.model_dump(exclude_unset=True)
-    if "segments" in values or "sport_type" in values:
-        current = await (await db.execute("SELECT * FROM workout_templates WHERE id = ?", (template_id,))).fetchone()
-        if current is not None:
-            current = _template(current)
-            await _reject_duplicate(db, values.get("sport_type") or current["sport_type"],
-                                    values.get("segments") or current["segments"] or [], template_id)
-    row = _template(await update_row(db, "workout_templates", template_id, values, "Template not found",
-                                     json_cols=_JSON_COLS))
-    if "segments" in values:
-        # Upcoming sessions planned from it follow; past ones keep the steps they had
-        await db.execute("UPDATE training_sessions SET segments = ? WHERE workout_template_id = ? AND date >= ?",
-                         (json.dumps(row["segments"]), template_id, date.today().isoformat()))
-        await db.commit()
-    if row["garmin_workout_id"] is not None and not garmin_workouts.is_run_workout(row):
-        await db.execute("UPDATE workout_templates SET garmin_workout_id = NULL, garmin_sync_hash = NULL WHERE id = ?",
-                         (template_id,))
-        await db.commit()
-        tasks.add_task(garmin_workouts.delete_copy, z2, row["garmin_workout_id"])
-    tasks.add_task(garmin_workouts.sync_library, z2)
-    return row
+    return await workout_library.update(z2, db, template_id, update.model_dump(exclude_unset=True), tasks.add_task)
 
 
 @router.delete("/{template_id}", status_code=204)
@@ -166,12 +126,4 @@ async def delete_template(
 ):
     """Its Garmin copy is deleted, and Garmin takes the copy's calendar entries
     with it. Planned sessions stay in the calendar with their steps."""
-    row = await (await db.execute("SELECT garmin_workout_id FROM workout_templates WHERE id = ?",
-                                  (template_id,))).fetchone()
-    await delete_row(db, "workout_templates", template_id, "Template not found")
-    await db.execute("UPDATE training_sessions SET workout_template_id = NULL, garmin_sync_state = NULL, "
-                     "garmin_sync_error = NULL WHERE workout_template_id = ?", (template_id,))
-    await db.commit()
-    if row["garmin_workout_id"] is not None:
-        _garmin_library_cache.clear()
-        tasks.add_task(garmin_workouts.delete_copy, z2, row["garmin_workout_id"])
+    await workout_library.delete(z2, db, template_id, tasks.add_task)
