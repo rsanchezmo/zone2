@@ -2445,6 +2445,8 @@ export interface AgentStatus {
   model: string;
   /** A spoken question gets its reply read aloud. */
   speak_replies: boolean;
+  /** The coach's reviews of new activities since the chat was last opened. */
+  unread: number;
 }
 
 export interface AgentModelOption { id: string; name: string; input_usd: number | null; output_usd: number | null }
@@ -2479,7 +2481,9 @@ export type AgentTranscriptItem =
   | { role: 'agent'; text: string }
   | { role: 'tool'; tool: string }
   /** A new session began here, after a pause: the coach started fresh from your notes and log. */
-  | { role: 'session'; at: string };
+  | { role: 'session'; at: string }
+  /** The coach wrote on its own here, e.g. "After your run: Test 5k" once a sync brought it in. */
+  | { role: 'event'; text: string; at: string };
 
 export interface AgentTurn {
   conversation_id: string;
@@ -2496,7 +2500,17 @@ export function useAgentStatus() {
   return useQuery<AgentStatus>({
     queryKey: ['agent-status'],
     queryFn: () => api.get('/agent/status').then(r => r.data),
-    staleTime: 1000 * 60 * 5,
+    // Often enough that a review written after a sync shows up on the robot
+    refetchInterval: 1000 * 60,
+  });
+}
+
+/** The chat is open: the coach's reviews so far are read. */
+export function useMarkCoachSeen() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post('/agent/seen').then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['agent-status'] }),
   });
 }
 

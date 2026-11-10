@@ -34,6 +34,7 @@ import starlette.middleware.gzip
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from backend.agent import reviews
 from backend.config import settings
 from backend.dependencies import set_zone2
 from backend.routers import agent, coach, activities, stats, exports, calendar, calendar_feed, sync, athlete, gear, goals, workouts, races, health, garmin, coverage, plans, config as config_router
@@ -210,6 +211,8 @@ async def lifespan(app: FastAPI):
     # background, so startup isn't held up by a first full pass over streams.
     warm_task = asyncio.create_task(asyncio.to_thread(_warm_stats_caches, z2))
     unload_task = asyncio.create_task(_unload_idle_cities_loop())
+    # The coach reviews new activities that fulfil a planned session
+    review_task = asyncio.create_task(reviews.worker(z2))
 
     sync_task: asyncio.Task | None = None
     if settings.auto_sync_hours > 0:
@@ -224,7 +227,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        for task in (sync_task, garmin_sync_task, warm_task, unload_task):
+        for task in (sync_task, garmin_sync_task, warm_task, unload_task, review_task):
             if task is not None:
                 task.cancel()
                 try:

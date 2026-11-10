@@ -5,6 +5,7 @@ from threading import Lock
 
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, Query
 
+from backend.agent import reviews
 from backend.dependencies import get_z2
 from backend.routers.coverage import sync_all_cities
 from backend.routers.exports import clear_export_cache
@@ -69,15 +70,22 @@ def _finalize_sync(z2: Zone2, error: str | None, version_before: int) -> str | N
 
 
 def _sync_activities(z2: Zone2, full_sync: bool, include_streams: bool) -> str | None:
-    """Fetch and store new activities, refresh what depends on them and free the sync slot.
-    Returns the error, if any."""
+    """Fetch and store new activities, refresh what depends on them, free the sync slot and
+    queue the new ones for the coach to review. Returns the error, if any."""
     err: str | None = None
     version = z2.strava_activities_cache.cache_version
+    before = reviews.activity_ids(z2)
     try:
         z2.sync_activities(full_sync=full_sync, include_streams=include_streams)
     except Exception as e:
         err = str(e)
-    return _finalize_sync(z2, err, version)
+    err = _finalize_sync(z2, err, version)
+    if err is None and z2.strava_activities_cache.cache_version != version:
+        try:
+            reviews.queue_new(z2, before)
+        except Exception:
+            logger.exception("Queueing the new activities for review failed")
+    return err
 
 
 def _sync_coverage(z2: Zone2) -> None:

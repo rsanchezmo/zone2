@@ -4,13 +4,34 @@ where it stopped. The app keeps one conversation; the model works from its curre
 from datetime import datetime, timedelta, timezone
 
 import aiosqlite
-from pydantic_ai import ModelMessage, ModelMessagesTypeAdapter, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai import (
+    ModelMessage, ModelMessagesTypeAdapter, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart,
+    UserPromptPart,
+)
 
 # The app's one conversation with the coach
 MAIN = "coach"
 # A pause this long starts a new session: the model starts fresh, with the notes and the
 # coach's log carrying what lasts. The whole conversation stays stored and visible.
 SESSION_GAP = timedelta(minutes=30)
+# Starts a prompt the coach gave itself, such as a review after a sync; its first line is what
+# the chat shows in its place ("After your run: Test 5k")
+EVENT_MARK = "⟳ "
+
+
+def event_title(prompt: str) -> str | None:
+    """The line the chat shows for a prompt the coach gave itself; None for the athlete's own."""
+    return prompt[len(EVENT_MARK):].split("\n", 1)[0] if prompt.startswith(EVENT_MARK) else None
+
+
+def unanswered_calls(messages: list[ModelMessage]) -> list[ToolCallPart]:
+    """The last response's tool calls that have no result yet: the writes waiting for a yes."""
+    responses = [i for i, m in enumerate(messages) if isinstance(m, ModelResponse)]
+    if not responses:
+        return []
+    last = responses[-1]
+    answered = {p.tool_call_id for m in messages[last + 1:] for p in m.parts if isinstance(p, ToolReturnPart)}
+    return [p for p in messages[last].parts if isinstance(p, ToolCallPart) and p.tool_call_id not in answered]
 
 
 def _opens_turn(message: ModelMessage) -> bool:
@@ -48,7 +69,8 @@ def recap(messages: list[ModelMessage]) -> str | None:
     for message in messages:
         for part in message.parts:
             if isinstance(message, ModelRequest) and isinstance(part, UserPromptPart) and isinstance(part.content, str):
-                lines.append(("You", part.content))
+                title = event_title(part.content)
+                lines.append(("Event", title) if title else ("You", part.content))
             elif isinstance(message, ModelResponse) and isinstance(part, TextPart) and part.content.strip():
                 if lines and lines[-1][0] == "Coach":
                     lines[-1] = ("Coach", f"{lines[-1][1]}\n{part.content}")

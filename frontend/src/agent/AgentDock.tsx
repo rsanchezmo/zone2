@@ -5,7 +5,7 @@ import clsx from 'clsx'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
-  refreshAfterAgentTurn, refreshPages, streamAgentTurn, useAgentConversation, useAgentStatus,
+  refreshAfterAgentTurn, refreshPages, streamAgentTurn, useAgentConversation, useAgentStatus, useMarkCoachSeen,
   type AgentPendingWrite, type AgentStreamEvent, type AgentTranscriptItem, type AgentTurn,
 } from '../api/hooks'
 import { useTheme } from '../hooks/useTheme'
@@ -106,7 +106,8 @@ type Step = Extract<LiveItem, { role: 'step' | 'tool' }>
 
 const SESSION_AT = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 
-type Group = { kind: 'user'; text: string } | { kind: 'agent'; text: string } | { kind: 'session'; at: string } | { kind: 'steps'; steps: Step[] }
+type Group = { kind: 'user'; text: string } | { kind: 'agent'; text: string } | { kind: 'session'; at: string }
+  | { kind: 'event'; text: string; at: string } | { kind: 'steps'; steps: Step[] }
 
 /** Consecutive tool steps grouped, so a finished turn's tools fold into one line. */
 function groups(items: LiveItem[]): Group[] {
@@ -114,6 +115,7 @@ function groups(items: LiveItem[]): Group[] {
   for (const item of items) {
     const last = out[out.length - 1]
     if (item.role === 'session') out.push({ kind: 'session', at: item.at })
+    else if (item.role === 'event') out.push({ kind: 'event', text: item.text, at: item.at })
     else if (item.role === 'user') out.push({ kind: 'user', text: item.text })
     else if (item.role === 'agent') out.push({ kind: 'agent', text: item.text })
     else if (last?.kind === 'steps') last.steps.push(item)
@@ -178,6 +180,14 @@ export default function AgentDock() {
   const [open, setOpen] = useState(false)
   const [expanded, setExpanded] = useState(() => stored(EXPANDED_KEY) === '1')
   const { data: history } = useAgentConversation(open ? CONVERSATION : null)
+  const { mutate: markSeen } = useMarkCoachSeen()
+  const unread = status?.unread ?? 0
+  // Opening the chat, or a review arriving while it's open, reads what the coach wrote
+  useEffect(() => {
+    if (!open || unread === 0) return
+    markSeen()
+    qc.invalidateQueries({ queryKey: ['agent-conversation', CONVERSATION] })
+  }, [open, unread, markSeen, qc])
   const [items, setItems] = useState<LiveItem[] | null>(null)
   const [pending, setPending] = useState<AgentPendingWrite[] | null>(null)
   const [busy, setBusy] = useState(false)
@@ -415,6 +425,13 @@ export default function AgentDock() {
                   >{group.text}</div>
                 </div>
               )
+              if (group.kind === 'event') return (
+                <div key={g} className="flex items-center gap-3 text-[10px] pt-2" style={{ color: coach }}>
+                  <span className="flex-1 h-px bg-current opacity-30" aria-hidden="true" />
+                  {group.text} · {SESSION_AT.format(new Date(group.at))}
+                  <span className="flex-1 h-px bg-current opacity-30" aria-hidden="true" />
+                </div>
+              )
               if (group.kind === 'session') return (
                 <div key={g} className="flex items-center gap-3 text-[10px] text-gray-500 pt-2" title="After a pause the coach starts fresh, from your notes and its log">
                   <span className="flex-1 h-px bg-current opacity-20" aria-hidden="true" />
@@ -548,7 +565,7 @@ export default function AgentDock() {
       <button
         type="button"
         onClick={() => setOpen(o => !o)}
-        aria-label={offline ? 'Coach, not connected' : open ? 'Close the coach' : 'Talk to the coach'}
+        aria-label={offline ? 'Coach, not connected' : open ? 'Close the coach' : unread > 0 ? `Talk to the coach, ${unread} new` : 'Talk to the coach'}
         title={offline ? `Not connected: no key for ${status?.model}` : 'Coach'}
         aria-expanded={open}
         className={clsx(
@@ -561,6 +578,11 @@ export default function AgentDock() {
         )}
       >
         <RobotIcon size={24} aria-hidden="true" />
+        {unread > 0 && !open && (
+          <span className="absolute -top-0.5 -right-0.5 min-w-5 h-5 px-1 rounded-full bg-red-500 text-white text-[11px] font-semibold leading-5 text-center tabular-nums">
+            {unread}
+          </span>
+        )}
       </button>
     </>
   )

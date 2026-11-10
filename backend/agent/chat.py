@@ -2,6 +2,7 @@
 renders (the reply, the tools it used, the writes waiting for a yes)."""
 
 import asyncio
+import inspect
 import json
 import logging
 import time
@@ -18,8 +19,9 @@ from pydantic_ai import (
 from backend.agent import conversations, preferences
 from backend.agent.agent import Output, build_agent, run_turn
 from backend.agent.tools import AgentDeps, memory_tools, workout_tools, write_tools
-from backend.services.sessions import Schedule
+from backend.db import connect_db
 from zone2.core import Zone2
+from zone2.utils import get_sport_category
 
 logger = logging.getLogger(__name__)
 
@@ -28,13 +30,35 @@ WRITE_TOOLS = set(write_tools.tools) | set(workout_tools.tools)
 # Tools whose results change what pages show, so the panel refreshes them
 CHANGING_TOOLS = WRITE_TOOLS | set(memory_tools.tools) | {"sync_now"}
 _agent = None
+# Turns and their follow-ups run on their own, so they finish when the panel closes or the
+# phone locks; this keeps them referenced until they do
+_running: set[asyncio.Task] = set()
 
 
-def _the_agent():
+def the_agent():
     global _agent
     if _agent is None:
         _agent = build_agent()
     return _agent
+
+
+def _keep(task: asyncio.Task) -> None:
+    _running.add(task)
+    task.add_done_callback(_running.discard)
+
+
+def spawn(fn: Callable[..., Any], *args: Any) -> None:
+    """Run a write's follow-up (a Garmin push) in the background, the `schedule` of turns that
+    may outlive the request that started them."""
+    async def call() -> None:
+        try:
+            if inspect.iscoroutinefunction(fn):
+                await fn(*args)
+            else:
+                await asyncio.to_thread(fn, *args)
+        except Exception:
+            logger.exception("%s failed in the background", getattr(fn, "__name__", fn))
+    _keep(asyncio.create_task(call()))
 
 
 def model_error(e: ModelAPIError, model: str) -> str:
@@ -73,14 +97,14 @@ def sse(event: dict[str, Any]) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
 
 
-async def stream(z2: Zone2, db: aiosqlite.Connection, schedule: Schedule, *, conversation_id: str,
-                 page: str | None, message: str | None = None,
+async def stream(z2: Zone2, *, conversation_id: str, page: str | None, message: str | None = None,
                  approvals: dict[str, bool] | None = None, voice: bool = False,
                  sync: Callable[[int | None], Awaitable[str | None]] | None = None,
                  garmin_sync: asyncio.Future[None] | None = None) -> AsyncIterator[str]:
     """One turn as server-sent events, so the panel shows the run as it happens:
     `thinking`, each `tool` call and its `tool_done`, the reply's `text` as it is written,
-    then `done` with the whole turn (or `error`)."""
+    then `done` with the whole turn (or `error`). The turn runs on its own with its own
+    connection: if the panel goes away mid-turn, it still finishes and is saved."""
     events: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
     started = time.monotonic()
     tool_started: dict[str, float] = {}
@@ -104,16 +128,19 @@ async def stream(z2: Zone2, db: aiosqlite.Connection, schedule: Schedule, *, con
             elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta) and event.delta.content_delta:
                 await events.put({"type": "text", "delta": event.delta.content_delta})
 
-    model = await preferences.model(db)
+    results = DeferredToolResults(approvals={
+        call_id: True if yes else ToolDenied("The user said no.") for call_id, yes in approvals.items()
+    }) if approvals is not None else None
 
     async def run() -> None:
-        deps = AgentDeps(z2=z2, db=db, schedule=schedule, page=page, voice=voice, sync=sync, garmin_sync=garmin_sync)
-        results = DeferredToolResults(approvals={
-            call_id: True if yes else ToolDenied("The user said no.") for call_id, yes in approvals.items()
-        }) if approvals is not None else None
+        model = "the coach's model"
         try:
-            result = await run_turn(_the_agent(), deps, conversation_id, prompt=message, approvals=results,
-                                    model=model, surface="chat", on_events=relay)
+            async with connect_db() as db:
+                model = await preferences.model(db)
+                deps = AgentDeps(z2=z2, db=db, schedule=spawn, page=page, voice=voice, sync=sync,
+                                 garmin_sync=garmin_sync)
+                result = await run_turn(the_agent(), deps, conversation_id, prompt=message, approvals=results,
+                                        model=model, surface="chat", on_events=relay)
             logger.info("Coach turn took %.1fs on %s: %d model requests; tools: %s", time.monotonic() - started,
                         model, result.usage.requests, ", ".join(tool_times) or "none")
             await events.put({"type": "done", "turn": _turn(result, conversation_id)})
@@ -124,41 +151,78 @@ async def stream(z2: Zone2, db: aiosqlite.Connection, schedule: Schedule, *, con
         finally:
             await events.put(None)
 
-    task = asyncio.create_task(run())
-    try:
-        while (event := await events.get()) is not None:
-            yield sse(event)
-    finally:
-        await task
+    _keep(asyncio.create_task(run()))
+    while (event := await events.get()) is not None:
+        yield sse(event)
+
+
+REVIEW_PROMPT = """{mark}After your {kind}: {name}
+The athlete isn't here: z2 just synced activity {activity_id} ({name}, {when}), which fulfils the \
+planned session {session_id} ("{title}" on {date}{plan}). Review it the way you review a session, and \
+log the review. Then write it to them as your message, which they'll read later: the verdict first, \
+then the one or two numbers that matter, in a few lines. If the session is a plan's checkpoint, apply \
+its rule, looking up any metric it names, and propose record_checkpoint and any change the rule calls \
+for as write calls, with your message: they wait for the athlete's yes. Change nothing else, and ask \
+nothing."""
+KIND = {"running": "run", "cycling": "ride", "swimming": "swim"}
+
+
+async def review(z2: Zone2, activity_id: int, session: dict[str, Any]) -> None:
+    """The coach's review of a new activity against the planned session it fulfils, left in
+    the conversation for the athlete to read later. Writes it proposes wait for their yes."""
+    started = time.monotonic()
+    row = z2.strava_activities_cache.get_activity_by_id(activity_id)
+    prompt = REVIEW_PROMPT.format(
+        mark=conversations.EVENT_MARK, kind=KIND.get(get_sport_category(row.get("sport_type")) or "", "session"),
+        name=row.get("name"), activity_id=activity_id, when=str(row.get("start_date_local"))[:16],
+        session_id=session["id"], title=session["title"], date=session["date"],
+        plan=f", plan {session['plan_id']} ({session['plan_name']})" if session.get("plan_id") else "",
+    )
+    async with connect_db() as db:
+        model = await preferences.model(db)
+        deps = AgentDeps(z2=z2, db=db, schedule=spawn)
+        result = await run_turn(the_agent(), deps, conversations.MAIN, prompt=prompt, model=model, surface="review")
+    logger.info("Coach review of activity %s took %.1fs on %s: %d model requests", activity_id,
+                time.monotonic() - started, model, result.usage.requests)
 
 
 def transcript(messages: list[ModelMessage]) -> list[dict[str, Any]]:
     """The conversation as the panel shows it: your words, the agent's, the tools between,
-    and where each session after the first began."""
+    and where each session after the first began. A review the coach gave itself that ended
+    on a write waiting for a yes, without a word, shows the review it logged instead."""
     out: list[dict[str, Any]] = []
     starts = set(conversations.session_starts(messages)[1:])
+    event_turn, said, logged = False, False, None
+
+    def close_turn() -> None:
+        if event_turn and not said and logged:
+            out.append({"role": "agent", "text": logged})
+
     for i, message in enumerate(messages):
         if i in starts:
             out.append({"role": "session", "at": message.timestamp.isoformat()})
         for part in message.parts:
             if isinstance(message, ModelRequest) and isinstance(part, UserPromptPart) and isinstance(part.content, str):
-                out.append({"role": "user", "text": part.content})
+                close_turn()
+                title = conversations.event_title(part.content)
+                event_turn, said, logged = title is not None, False, None
+                out.append({"role": "event", "text": title, "at": message.timestamp.isoformat()} if title
+                           else {"role": "user", "text": part.content})
             elif isinstance(message, ModelResponse) and isinstance(part, TextPart) and part.content.strip():
+                said = True
                 out.append({"role": "agent", "text": part.content})
             elif isinstance(message, ModelResponse) and isinstance(part, ToolCallPart):
+                if part.tool_name == "log_entry":
+                    entry = part.args_as_dict()
+                    logged = f"**{entry.get('title', '')}**\n\n{entry.get('body') or ''}".strip()
                 out.append({"role": "tool", "tool": part.tool_name})
+    close_turn()
     return out
 
 
 def pending_calls(messages: list[ModelMessage]) -> list[ToolCallPart]:
     """The writes the conversation's last response asked approval for and that have no answer yet."""
-    responses = [i for i, m in enumerate(messages) if isinstance(m, ModelResponse)]
-    if not responses:
-        return []
-    last = responses[-1]
-    answered = {p.tool_call_id for m in messages[last + 1:] for p in m.parts if isinstance(p, ToolReturnPart)}
-    return [p for p in messages[last].parts
-            if isinstance(p, ToolCallPart) and p.tool_name in WRITE_TOOLS and p.tool_call_id not in answered]
+    return [c for c in conversations.unanswered_calls(messages) if c.tool_name in WRITE_TOOLS]
 
 
 async def history(db: aiosqlite.Connection, conversation_id: str) -> dict[str, Any]:

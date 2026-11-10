@@ -196,6 +196,15 @@ CREATE TABLE IF NOT EXISTS agent_usage (
     cost_usd REAL                     -- NULL when the model has no known price
 );
 CREATE INDEX IF NOT EXISTS idx_agent_usage_created ON agent_usage(created_at);
+
+-- The coach's own reviews: a sync queues each new activity, and one that fulfils a planned
+-- session gets a review in the chat
+CREATE TABLE IF NOT EXISTS agent_reviews (
+    activity_id INTEGER PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'queued',   -- queued, done, skipped, failed
+    queued_at TEXT DEFAULT (datetime('now')),
+    done_at TEXT
+);
 """
 
 

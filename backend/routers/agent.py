@@ -3,11 +3,11 @@ import functools
 from datetime import timedelta
 
 import aiosqlite
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from backend.agent import preferences
+from backend.agent import preferences, reviews
 from backend.agent import usage as agent_usage
 from backend.db import connect_db, get_db
 from backend.dependencies import get_z2
@@ -38,11 +38,25 @@ async def usage(days: int = Query(default=30, ge=1, le=365), db: aiosqlite.Conne
 
 @router.get("/status")
 async def status(db: aiosqlite.Connection = Depends(get_db)):
-    """Whether the agent can answer (a key for its model's provider), its model, and whether
-    spoken questions get their reply read aloud."""
+    """Whether the agent can answer (a key for its model's provider), its model, whether
+    spoken questions get their reply read aloud, and how many of its reviews are unread."""
     model = await preferences.model(db)
     return {"available": preferences.has_key(model), "model": model,
-            "speak_replies": await preferences.speak_replies(db)}
+            "speak_replies": await preferences.speak_replies(db), "unread": await reviews.unread(db)}
+
+
+@router.post("/seen")
+async def seen(db: aiosqlite.Connection = Depends(get_db)):
+    """The athlete opened the chat: its reviews so far are read."""
+    await reviews.mark_seen(db)
+    return {"unread": 0}
+
+
+@router.post("/review/{activity_id}")
+async def review(activity_id: int):
+    """Have the coach review an activity again, as it does each new one after a sync."""
+    await asyncio.to_thread(reviews.queue, [activity_id], True)
+    return {"status": "queued"}
 
 
 @router.get("/settings")
@@ -99,23 +113,23 @@ async def _check_available(model: str | None = None) -> None:
 
 
 @router.post("/chat")
-async def chat_turn(turn: ChatTurn, tasks: BackgroundTasks, z2: Zone2 = Depends(get_z2)):
+async def chat_turn(turn: ChatTurn, z2: Zone2 = Depends(get_z2)):
     """One message to the agent, streamed as server-sent events (see `chat.stream`). Writes
     it wants to make come back as `pending` in the final `done` event, for approval."""
     await _check_available()
     from backend.agent import chat
     from backend.agent.conversations import MAIN
     conversation_id = turn.conversation_id or MAIN
-    return _streamed(chat, z2, tasks, catch_up=True, conversation_id=conversation_id, page=turn.page,
+    return _streamed(chat, z2, catch_up=True, conversation_id=conversation_id, page=turn.page,
                      message=turn.message, voice=turn.voice)
 
 
 @router.post("/approve")
-async def approve_turn(turn: ApprovalTurn, tasks: BackgroundTasks, z2: Zone2 = Depends(get_z2)):
+async def approve_turn(turn: ApprovalTurn, z2: Zone2 = Depends(get_z2)):
     """Your yes or no to each pending write; the agent then carries on, streamed like a chat turn."""
     await _check_available()
     from backend.agent import chat
-    return _streamed(chat, z2, tasks, conversation_id=turn.conversation_id, page=turn.page, approvals=turn.approvals,
+    return _streamed(chat, z2, conversation_id=turn.conversation_id, page=turn.page, approvals=turn.approvals,
                      voice=turn.voice)
 
 
@@ -154,7 +168,7 @@ async def speak(speech: Speech):
     return StreamingResponse(body(), media_type="audio/mpeg", headers={"Cache-Control": "no-cache"})
 
 
-def _streamed(chat, z2: Zone2, tasks: BackgroundTasks, *, catch_up: bool = False, **turn) -> StreamingResponse:
+def _streamed(chat, z2: Zone2, *, catch_up: bool = False, **turn) -> StreamingResponse:
     """The turn as server-sent events. With `catch_up`, data older than FRESH_FOR syncs first:
     the reply waits for Strava, a `sync` step, so it answers from your latest run; Garmin's
     slower sync runs alongside, and only the tools that read Garmin wait for it."""
@@ -166,11 +180,8 @@ def _streamed(chat, z2: Zone2, tasks: BackgroundTasks, *, catch_up: bool = False
                 yield chat.sse({"type": "tool", "tool": "sync", "args": {}})
                 await asyncio.wait([strava], timeout=SYNC_WAIT_S)
                 yield chat.sse({"type": "tool_done", "tool": "sync"})
-        # Its own connection: the stream outlives the request's dependencies
-        async with connect_db() as db:
-            async for event in chat.stream(z2, db, tasks.add_task, sync=functools.partial(strava_sync.sync_now, z2),
-                                           garmin_sync=garmin, **turn):
-                yield event
-    # The Garmin pushes a write queues run once the stream ends
-    return StreamingResponse(body(), media_type="text/event-stream", background=tasks,
+        async for event in chat.stream(z2, sync=functools.partial(strava_sync.sync_now, z2), garmin_sync=garmin,
+                                       **turn):
+            yield event
+    return StreamingResponse(body(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

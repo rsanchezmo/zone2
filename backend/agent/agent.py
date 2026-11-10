@@ -9,7 +9,8 @@ from decimal import Decimal
 from pathlib import Path
 
 from pydantic_ai import (
-    Agent, AgentRunResult, DeferredToolRequests, DeferredToolResults, FunctionToolset, RunContext, capture_run_messages,
+    Agent, AgentRunResult, DeferredToolRequests, DeferredToolResults, FunctionToolset, RunContext, ToolDenied,
+    capture_run_messages,
 )
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.capabilities import Capability
@@ -113,7 +114,13 @@ async def run_turn(
     # Turns of one conversation run one after another: each saves the whole history it loaded
     async with _turn_locks[conversation_id]:
         stored = await conversations.load(deps.db, conversation_id)
-        start = conversations.current_session(stored, new_message=prompt is not None)
+        # A new message while writes wait for a yes is a no to them, in the same session
+        waiting = conversations.unanswered_calls(stored) if prompt is not None and approvals is None else []
+        if waiting:
+            approvals = DeferredToolResults(approvals={
+                c.tool_call_id: ToolDenied("Not answered: the conversation moved on.") for c in waiting
+            })
+        start = conversations.current_session(stored, new_message=prompt is not None and not waiting)
         if start > 0:
             deps = dataclasses.replace(deps, earlier=conversations.recap(stored[:start]))
         if deps.first_name is None and deps.z2 is not None:
