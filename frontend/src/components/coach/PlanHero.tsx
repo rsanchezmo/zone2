@@ -123,7 +123,7 @@ export default function PlanHero({ plan }: { plan: CoachPlan }) {
                 Day <span style={{ color: accent }}>{dayOfBlock}</span> / {blockDays}
               </span>
             </div>
-            <div className={clsx('h-[3px] rounded-full overflow-hidden', isLight ? 'bg-gray-200' : 'bg-surface-700')}>
+            <div className={clsx('h-[3px] rounded-full overflow-hidden', isLight ? 'bg-surface-600' : 'bg-surface-700')}>
               <div
                 className="h-full rounded-full transition-all duration-700 ease-out"
                 style={{ width: `${(dayOfBlock / blockDays) * 100}%`, backgroundColor: accent, opacity: 0.8 }}

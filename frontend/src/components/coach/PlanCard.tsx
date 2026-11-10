@@ -20,7 +20,7 @@ function CompletionThumb({ plan, color }: { plan: CoachPlanSummary; color: strin
   const pace = plan.status === 'active' && total ? due / total : null
   return (
     <div
-      className={clsx('shrink-0 rounded-lg border flex items-center justify-center', isLight ? 'bg-gray-50 border-gray-200' : 'bg-surface-700 border-surface-600')}
+      className={'shrink-0 rounded-lg border flex items-center justify-center bg-surface-700 border-surface-600'}
       style={{ width: SIZE, height: SIZE }}
       aria-hidden="true"
     >
@@ -75,7 +75,7 @@ export default function PlanCard({ plan }: { plan: CoachPlanSummary }) {
       to={`/coach/${plan.id}`}
       className={clsx(
         'group flex items-center gap-3.5 rounded-xl border card-glow transition-all duration-200 p-3.5',
-        isLight ? 'bg-white border-gray-200 hover:border-gray-300' : 'bg-surface-800 border-surface-600 hover:border-surface-500',
+        'bg-surface-800 border-surface-600 hover:border-surface-500',
       )}
       style={{ borderLeftWidth: 3, borderLeftColor: color, '--card-accent': color } as React.CSSProperties}
     >

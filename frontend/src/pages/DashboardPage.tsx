@@ -729,7 +729,7 @@ function HeroBlock(props: HeroBlockProps) {
                 Day <span style={{ color: sportColor }}>{daysElapsed}</span> / {daysInYear}
               </span>
             </div>
-            <div className={clsx('h-[3px] rounded-full overflow-hidden', isLight ? 'bg-gray-200' : 'bg-surface-700')}>
+            <div className={clsx('h-[3px] rounded-full overflow-hidden', isLight ? 'bg-surface-600' : 'bg-surface-700')}>
               <div
                 className="h-full rounded-full transition-all duration-700 ease-out"
                 style={{ width: `${yearPace * 100}%`, backgroundColor: sportColor, opacity: 0.8 }}

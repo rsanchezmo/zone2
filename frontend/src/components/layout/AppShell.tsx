@@ -9,7 +9,7 @@ import { useClickOutside } from '../../hooks/useClickOutside'
 import { useToast } from '../../hooks/useToast'
 import PageErrorBoundary from './PageErrorBoundary'
 import AgentDock from '../../agent/AgentDock'
-import { WhistleIcon } from '../icons'
+import { RobotIcon } from '../icons'
 import clsx from 'clsx'
 
 const RouteBackdrop = lazy(() => import('./RouteBackdrop'))
@@ -20,7 +20,7 @@ const NAV_ITEMS: { to: string; label: string; color: string; icon: React.ReactNo
       <rect x="2" y="3" width="12" height="11" rx="1.5" /><path d="M5 1v3M11 1v3M2 7h12" />
     </svg>
   )},
-  { to: '/coach', label: 'Coach', color: '#2dd4bf', icon: <WhistleIcon size={22} /> },
+  { to: '/coach', label: 'Coach', color: '#2dd4bf', icon: <RobotIcon size={22} /> },
   { to: '/activities', label: 'Activities', color: '#34d399', icon: (
     <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M2 4h12M2 8h12M2 12h8" />

@@ -35,7 +35,7 @@ export function CoachLog({ entries }: { entries: CoachLogEntry[] }) {
                   <span className="text-[11px] text-gray-500 sm:w-24 shrink-0">{fmtDayDate(e.date)}</span>
                   <span className={clsx(
                     'text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border shrink-0',
-                    open ? 'border-amber-500/60 text-amber-500' : isLight ? 'border-gray-300 text-gray-500' : 'border-surface-500 text-gray-400',
+                    open ? 'border-amber-500/60 text-amber-500' : 'border-surface-500 text-gray-400',
                   )}>
                     {KIND_LABEL[e.kind]}{e.kind === 'suggestion' && e.status !== 'open' && ` · ${e.status}`}
                   </span>
@@ -90,7 +90,7 @@ export function CoachNotes() {
         disabled={!notes.length}
         className={clsx(
           'w-full flex flex-wrap items-baseline gap-x-4 gap-y-2 text-left rounded-xl border px-4 py-3 transition-colors',
-          isLight ? 'border-gray-200 hover:border-gray-300' : 'border-surface-600 hover:border-surface-500',
+          'border-surface-600 hover:border-surface-500',
         )}
       >
         <span className={clsx('text-[13px] font-medium', isLight ? 'text-gray-900' : 'text-gray-100')}>

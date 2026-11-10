@@ -111,14 +111,15 @@ export function CheckIcon(p: IconProps) {
   )
 }
 
-/** The coach: a whistle, kept apart from the waveform that means talking. */
-export function WhistleIcon(p: IconProps) {
+/** The coach: a robot head, kept apart from the waveform that means talking. */
+export function RobotIcon(p: IconProps) {
   return (
     <Svg {...p}>
-      <circle cx="6" cy="9.5" r="3.5" />
-      <path d="M6 6h8.5v3H9.4" />
-      <circle cx="6" cy="9.5" r="0.75" fill="currentColor" stroke="none" />
-      <path d="M3.6 6.9L2 5.3" />
+      <rect x="3" y="5" width="10" height="8" rx="2" />
+      <path d="M8 5V3M6.5 11h3M1.5 8.5v2M14.5 8.5v2" />
+      <circle cx="8" cy="2.2" r="0.8" fill="currentColor" stroke="none" />
+      <circle cx="6" cy="8.6" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="10" cy="8.6" r="0.9" fill="currentColor" stroke="none" />
     </Svg>
   )
 }

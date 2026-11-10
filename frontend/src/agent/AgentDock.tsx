@@ -10,13 +10,14 @@ import {
 } from '../api/hooks'
 import { useTheme } from '../hooks/useTheme'
 import { useEscapeKey } from '../hooks/useEscapeKey'
-import { WhistleIcon } from '../components/icons'
+import { RobotIcon } from '../components/icons'
 import { pageContext } from './pageContext'
 import { Speaker } from './speaker'
 
 // The app's one conversation with the coach (backend/agent/conversations.py MAIN)
 const CONVERSATION = 'coach'
 const EXPANDED_KEY = 'z2-agent-expanded'
+// z-[1100]: above Leaflet's panes and controls (up to 1000) on the map pages, below dialogs (~10000)
 // The coach's own colour, the teal of its menu item; teal-600 keeps contrast on light surfaces
 const COACH = { dark: '#2dd4bf', light: '#0d9488' }
 
@@ -280,7 +281,7 @@ export default function AgentDock() {
     setListening(false)
   }
 
-  const surface = isLight ? 'bg-white/95 border-gray-200 text-gray-900' : 'bg-surface-800/95 border-surface-600 text-gray-100'
+  const surface = clsx('bg-surface-800/95 border-surface-600', isLight ? 'text-gray-900' : 'text-gray-100')
   const coach = isLight ? COACH.light : COACH.dark
   const running = transcript.some(it => it.role === 'step' && it.running)
   const writing = busy && transcript[transcript.length - 1]?.role === 'agent'
@@ -292,17 +293,17 @@ export default function AgentDock() {
           role="dialog"
           aria-label="Coach"
           className={clsx(
-            'fixed z-[90] rounded-2xl border backdrop-blur flex flex-col overflow-hidden shadow-2xl',
+            'fixed z-[1100] rounded-2xl border backdrop-blur flex flex-col overflow-hidden shadow-2xl',
             expanded
-              ? 'inset-x-2 top-2 bottom-20 sm:inset-x-auto sm:right-6 sm:top-6 sm:bottom-24 sm:w-[min(760px,calc(100vw-8rem))]'
+              ? 'inset-x-2 top-16 bottom-20 sm:inset-x-auto sm:right-6 sm:top-6 sm:bottom-24 sm:w-[min(760px,calc(100vw-8rem))]'
               : 'right-4 bottom-24 sm:right-6 w-[calc(100vw-2rem)] sm:w-[380px] h-[min(70vh,620px)]',
             surface,
           )}
           style={{ ['--coach' as string]: coach, borderTopColor: coach, borderTopWidth: 2 }}
         >
-          <div className={clsx('flex items-center gap-3 px-4 py-3 border-b', isLight ? 'border-gray-200' : 'border-surface-600')}>
+          <div className={'flex items-center gap-3 px-4 py-3 border-b border-surface-600'}>
             <span className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: `${coach}22`, color: coach }} aria-hidden="true">
-              <WhistleIcon size={17} />
+              <RobotIcon size={17} />
             </span>
             <div className="min-w-0 flex-1">
               <div className="eyebrow" style={{ color: coach }}>Coach</div>
@@ -366,7 +367,7 @@ export default function AgentDock() {
               if (group.kind === 'agent') return (
                 <div key={g} className="flex gap-2.5">
                   <span className="w-6 h-6 mt-0.5 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: `${coach}22`, color: coach }} aria-hidden="true">
-                    <WhistleIcon size={13} />
+                    <RobotIcon size={13} />
                   </span>
                   <div className="agent-markdown min-w-0 flex-1">
                     <Markdown remarkPlugins={[remarkGfm]}>{group.text}</Markdown>
@@ -378,7 +379,7 @@ export default function AgentDock() {
                 const running = step.role === 'step' && step.running
                 return (
                   <div key={i} className={clsx('flex items-center gap-2 text-[11px]', running ? (isLight ? 'text-gray-700' : 'text-gray-300') : 'text-gray-500')}>
-                    <span className={clsx('w-1.5 h-1.5 rounded-full shrink-0', running ? 'bg-[var(--coach)] animate-pulse' : isLight ? 'bg-gray-300' : 'bg-surface-500')} aria-hidden="true" />
+                    <span className={clsx('w-1.5 h-1.5 rounded-full shrink-0', running ? 'bg-[var(--coach)] animate-pulse' : 'bg-surface-500')} aria-hidden="true" />
                     {stepLabel(step.tool, step.role === 'step' ? step.args : undefined)}
                   </div>
                 )
@@ -431,7 +432,7 @@ export default function AgentDock() {
           </div>
 
           <form
-            className={clsx('border-t p-3 flex items-end gap-2', isLight ? 'border-gray-200' : 'border-surface-600')}
+            className={'border-t border-surface-600 p-3 flex items-end gap-2'}
             onSubmit={e => { e.preventDefault(); send() }}
           >
             <textarea
@@ -486,7 +487,7 @@ export default function AgentDock() {
         title={offline ? `Not connected: no key for ${status?.model}` : 'Coach'}
         aria-expanded={open}
         className={clsx(
-          'fixed z-[90] right-4 bottom-4 sm:right-6 sm:bottom-6 w-14 h-14 rounded-full border backdrop-blur flex items-center justify-center transition-colors',
+          'fixed z-[1100] right-4 bottom-4 sm:right-6 sm:bottom-6 w-14 h-14 rounded-full border backdrop-blur flex items-center justify-center transition-colors',
           offline
             ? 'bg-red-500/15 border-red-500/50 text-red-500'
             : isLight ? 'bg-teal-50/95 border-teal-300 text-teal-700 hover:border-teal-500' : 'bg-teal-400/10 border-teal-400/40 text-teal-300 hover:border-teal-300/70',
@@ -494,7 +495,7 @@ export default function AgentDock() {
           speaking && 'ring-2 ring-teal-400/40',
         )}
       >
-        <WhistleIcon size={24} aria-hidden="true" />
+        <RobotIcon size={24} aria-hidden="true" />
       </button>
     </>
   )
