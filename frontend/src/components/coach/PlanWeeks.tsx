@@ -13,6 +13,9 @@ function mondayOf(iso: string): string {
 }
 
 function Status({ s, today }: { s: CoachPlanSession; today: string }) {
+  if (s.done && s.activity_id != null) return (
+    <Link to={`/activities/${s.activity_id}`} className="text-green-500 hover:text-green-400" title="Done: open the activity">✓</Link>
+  )
   if (s.done) return <span className="text-green-500" title="Done">✓</span>
   if (s.date < today) return <span className="text-red-500" title="Missed">✗</span>
   return <span className="text-gray-500" title={s.date === today ? 'Today' : 'Upcoming'}>{s.date === today ? '●' : '·'}</span>
@@ -61,7 +64,9 @@ export function PlanWeeks({ plan }: { plan: CoachPlan }) {
                         <span className="font-mono tabular-nums text-[12px] font-semibold" style={{ color: scoreColor(s.score) }} title="Execution score">{s.score}</span>
                       )}
                       {s.activity_id != null && (
-                        <Link to={`/activities/${s.activity_id}`} className="text-[11px] text-gray-500 hover:text-cyan-500">run ›</Link>
+                        <Link to={`/activities/${s.activity_id}`} className="text-[11px] text-gray-500 hover:text-cyan-500">
+                          {s.sport_type === 'Run' ? 'run' : 'activity'} ›
+                        </Link>
                       )}
                     </li>
                   ))}

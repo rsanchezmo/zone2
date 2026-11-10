@@ -11,7 +11,7 @@ import aiosqlite
 
 from backend.db import insert_row, row_dict, update_row
 from backend.services import training
-from backend.services.session_scores import accomplished, activities_by_day, score_sessions
+from backend.services.session_scores import accomplished, activities_by_day, score_sessions, session_matches
 from backend.services.sessions import session_dict
 from backend.services.zones import resolve_hr_zones
 from backend.scoring import has_targets
@@ -160,13 +160,15 @@ async def progress(z2: Zone2, db: aiosqlite.Connection, plan: dict, *, detail: b
 
     status: dict[int, dict[str, Any]] = {}
     due = done = 0
+    # The activity that fulfilled each session, scored or not, so every done session links to it
+    fulfilled = {s["id"]: a.get("id") for s, a in session_matches(sessions, activity_map)}
     for s in sessions:
         is_done = s["date"] <= today_iso and accomplished(s, activity_map.get(s["date"], []))
         # Today's session isn't missed until the day is over
         if s["date"] < today_iso or is_done:
             due += 1
             done += is_done
-        status[s["id"]] = {"done": is_done, "score": None, "activity_id": None}
+        status[s["id"]] = {"done": is_done, "score": None, "activity_id": fulfilled.get(s["id"]) if is_done else None}
 
     scorable = [s for s in sessions if s["date"] <= today_iso and has_targets(s)]
     if scorable:
