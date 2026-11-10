@@ -21,10 +21,10 @@ export default function StatCard({ label, value, unit, delta, sublabel, color, t
     return (
       <div className={clsx(
         'rounded-xl p-4 border animate-pulse',
-        isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
+        isLight ? 'bg-white border-surface-600' : 'bg-surface-800 border-surface-600',
       )}>
-        <div className={clsx('h-3 w-16 rounded mb-3', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
-        <div className={clsx('h-7 w-24 rounded', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
+        <div className={clsx('h-3 w-16 rounded mb-3', isLight ? 'bg-surface-600' : 'bg-surface-700')} />
+        <div className={clsx('h-7 w-24 rounded', isLight ? 'bg-surface-600' : 'bg-surface-700')} />
       </div>
     )
   }
@@ -34,7 +34,7 @@ export default function StatCard({ label, value, unit, delta, sublabel, color, t
       className={clsx(
         'rounded-xl p-4 border group relative overflow-hidden transition-all duration-200',
         isLight
-          ? 'bg-white border-gray-200 hover:border-gray-300'
+          ? 'bg-white border-surface-600 hover:border-surface-500'
           : 'bg-surface-800 border-surface-600 hover:border-surface-500',
       )}
       style={accent ? {
@@ -51,7 +51,7 @@ export default function StatCard({ label, value, unit, delta, sublabel, color, t
           style={{ background: `radial-gradient(ellipse at top left, ${accent}08, transparent 70%)` }}
         />
       )}
-      <div className={clsx('text-[11px] uppercase tracking-wider mb-1.5 relative', isLight ? 'text-gray-500' : 'text-gray-500')}>{label}</div>
+      <div className={clsx('text-[11px] uppercase tracking-wider mb-1.5 relative', 'text-gray-500')}>{label}</div>
       <div className="flex items-baseline gap-2 relative">
         <div className={clsx('text-2xl font-bold tabular-nums tracking-tight', color ?? (isLight ? 'text-gray-900' : 'text-gray-100'))}>
           {value}

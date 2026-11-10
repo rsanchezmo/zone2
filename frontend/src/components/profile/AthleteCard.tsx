@@ -19,12 +19,12 @@ export default function AthleteCard({ profile }: { profile: AthleteProfile }) {
         <img
           src={profile.profile_medium}
           alt={fullName}
-          className={clsx('w-24 h-24 rounded-full border object-cover shrink-0', isLight ? 'border-gray-200' : 'border-surface-600')}
+          className={clsx('w-24 h-24 rounded-full border object-cover shrink-0', 'border-surface-600')}
         />
       ) : (
         <div className={clsx(
           'w-24 h-24 rounded-full border flex items-center justify-center text-3xl font-semibold shrink-0',
-          isLight ? 'border-gray-200 bg-gray-100 text-gray-400' : 'border-surface-600 bg-surface-700 text-gray-500',
+          isLight ? 'border-surface-600 bg-surface-700 text-gray-400' : 'border-surface-600 bg-surface-700 text-gray-500',
         )}>
           {(profile.firstname?.[0] ?? '?').toUpperCase()}
         </div>
@@ -39,12 +39,12 @@ export default function AthleteCard({ profile }: { profile: AthleteProfile }) {
         </h1>
         <div className="flex items-center gap-3 mt-1.5 flex-wrap text-[11px] font-mono tabular-nums">
           {profile.username && (
-            <span className={isLight ? 'text-gray-500' : 'text-gray-500'}>@{profile.username}</span>
+            <span className={'text-gray-500'}>@{profile.username}</span>
           )}
           {location && (
             <>
               {profile.username && <span className={isLight ? 'text-gray-300' : 'text-gray-700'}>·</span>}
-              <span className={isLight ? 'text-gray-500' : 'text-gray-500'}>{location}</span>
+              <span className={'text-gray-500'}>{location}</span>
             </>
           )}
           {(profile.premium || profile.summit) && (

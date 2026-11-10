@@ -76,7 +76,7 @@ function GearTimeline({ items, isLight }: { items: GearSummary[]; isLight: boole
                 {g.label}
               </Link>
               <Link to={`/gear/${g.id}`} className="relative h-6 md:h-5 flex items-center group">
-                <div className={clsx('absolute inset-x-0 h-px', isLight ? 'bg-gray-100' : 'bg-surface-700')} aria-hidden="true" />
+                <div className={clsx('absolute inset-x-0 h-px', 'bg-surface-700')} aria-hidden="true" />
                 <div
                   className="absolute h-2.5 rounded-full transition-all duration-200 group-hover:h-3.5"
                   style={{
@@ -140,7 +140,7 @@ function GearGroup({ title, items, isLight, accent }: { title: string; items: Ge
                 <div className="flex-1 min-w-0 flex items-baseline gap-2 flex-wrap">
                   <span className={clsx('text-sm font-medium truncate', isLight ? 'text-gray-900' : 'text-gray-100')}>{g.label}</span>
                   {secondary && (
-                    <span className={clsx('text-[11px] truncate', isLight ? 'text-gray-500' : 'text-gray-500')}>{secondary}</span>
+                    <span className={clsx('text-[11px] truncate', 'text-gray-500')}>{secondary}</span>
                   )}
                   {g.primary && (
                     <span
@@ -151,7 +151,7 @@ function GearGroup({ title, items, isLight, accent }: { title: string; items: Ge
                     </span>
                   )}
                   {g.retired && (
-                    <span className={clsx('text-[9px] uppercase tracking-[0.15em] px-1.5 py-0.5 rounded border', isLight ? 'border-gray-300 text-gray-400' : 'border-gray-700 text-gray-500')}>Retired</span>
+                    <span className={clsx('text-[9px] uppercase tracking-[0.15em] px-1.5 py-0.5 rounded border', isLight ? 'border-surface-500 text-gray-400' : 'border-gray-700 text-gray-500')}>Retired</span>
                   )}
                 </div>
                 <span className={clsx('text-sm font-mono tabular-nums shrink-0', isLight ? 'text-gray-700' : 'text-gray-300')}>
@@ -163,7 +163,7 @@ function GearGroup({ title, items, isLight, accent }: { title: string; items: Ge
               <div className="flex items-center gap-3 mt-1.5">
                 {/* Without a fixed target a lone item always fills the track. */}
                 {(wear || items.length > 1) && (
-                  <div className={clsx('flex-1 h-1 rounded-full overflow-hidden', isLight ? 'bg-gray-100' : 'bg-surface-700')}>
+                  <div className={clsx('flex-1 h-1 rounded-full overflow-hidden', 'bg-surface-700')}>
                     <div
                       className="h-full rounded-full"
                       style={{ width: `${fill * 100}%`, backgroundColor: wear?.spent ? WEAR_SPENT_COLOR : accent, opacity: 0.75 }}

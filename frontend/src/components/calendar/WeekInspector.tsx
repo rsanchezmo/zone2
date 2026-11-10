@@ -194,7 +194,7 @@ export default function WeekInspector(props: WeekInspectorProps) {
       {loading ? (
         <div className="grid grid-cols-2 gap-2 animate-pulse">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className={clsx('h-16 rounded-lg', isLight ? 'bg-gray-100' : 'bg-surface-700')} />
+            <div key={i} className={clsx('h-16 rounded-lg', 'bg-surface-700')} />
           ))}
         </div>
       ) : (
@@ -251,7 +251,7 @@ export default function WeekInspector(props: WeekInspectorProps) {
                 to={`/activities/${a.id}`}
                 className={clsx(
                   'flex items-center gap-2 py-1.5 border-t first:border-t-0 group',
-                  isLight ? 'border-gray-200' : 'border-surface-600',
+                  'border-surface-600',
                 )}
               >
                 <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: getSportColor(a.sport_type) }} />
@@ -276,7 +276,7 @@ export default function WeekInspector(props: WeekInspectorProps) {
                 onClick={() => setShowAll(v => !v)}
                 className={clsx(
                   'w-full text-center text-[11px] font-medium py-1.5 border-t text-blue-400 hover:text-blue-300',
-                  isLight ? 'border-gray-200' : 'border-surface-600',
+                  'border-surface-600',
                 )}
               >
                 {showAll ? 'Show less' : `Show ${hidden} more`}
@@ -286,7 +286,7 @@ export default function WeekInspector(props: WeekInspectorProps) {
         )}
       </section>
 
-      <div className={clsx('mt-auto pt-3 border-t border-dashed', isLight ? 'border-gray-300' : 'border-surface-500')}>
+      <div className={clsx('mt-auto pt-3 border-t border-dashed', 'border-surface-500')}>
         <PlannedSessions sessions={planned} todayStr={todayStr} weekStart={weekStart} onPickDay={onPickDay} />
       </div>
     </aside>
@@ -305,7 +305,7 @@ function InspectorKpi({ label, value, unit, delta }: {
   // A change that rounds to zero reads as "-0%", which says nothing.
   const showDelta = delta === 'new' || (typeof delta === 'number' && Math.abs(delta) >= 0.5)
   return (
-    <div className={clsx('rounded-lg border px-3 py-2.5', isLight ? 'bg-gray-50 border-gray-200' : 'bg-surface-700/60 border-surface-600')}>
+    <div className={clsx('rounded-lg border px-3 py-2.5', isLight ? 'bg-gray-50 border-surface-600' : 'bg-surface-700/60 border-surface-600')}>
       <div className="text-[10px] uppercase tracking-[0.12em] text-gray-500 mb-1">{label}</div>
       <div className="flex items-baseline gap-1.5">
         <span className={clsx('text-xl font-bold font-mono tabular-nums tracking-tight', isLight ? 'text-gray-900' : 'text-gray-100')}>

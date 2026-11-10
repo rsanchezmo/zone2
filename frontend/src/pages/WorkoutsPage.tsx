@@ -300,10 +300,10 @@ export default function WorkoutsPage() {
             {Array.from({ length: 3 }).map((_, i) => (
               <div key={i} className="panel p-4 animate-pulse">
                 <div className="flex items-center gap-2 mb-3">
-                  <div className={clsx('h-4 w-32 rounded', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
-                  <div className={clsx('h-4 w-12 rounded-full', isLight ? 'bg-gray-100' : 'bg-surface-700')} />
+                  <div className={clsx('h-4 w-32 rounded', isLight ? 'bg-surface-600' : 'bg-surface-700')} />
+                  <div className={clsx('h-4 w-12 rounded-full', 'bg-surface-700')} />
                 </div>
-                <div className={clsx('h-8 rounded', isLight ? 'bg-gray-100' : 'bg-surface-700')} />
+                <div className={clsx('h-8 rounded', 'bg-surface-700')} />
               </div>
             ))}
           </div>
@@ -312,7 +312,7 @@ export default function WorkoutsPage() {
             <svg className={clsx('w-9 h-9', isLight ? 'text-gray-300' : 'text-gray-600')} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
             </svg>
-            <div className={clsx('text-sm', isLight ? 'text-gray-500' : 'text-gray-500')}>No saved workouts yet</div>
+            <div className={clsx('text-sm', 'text-gray-500')}>No saved workouts yet</div>
             <div className={clsx('text-[11px]', isLight ? 'text-gray-400' : 'text-gray-600')}>Create one from the button above, or plan a structured session in the calendar</div>
           </div>
         ) : (

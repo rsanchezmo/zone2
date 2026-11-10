@@ -16,8 +16,8 @@ export function StatusPill({ color, children }: { color: string; children: React
   )
 }
 
-export function GarminSkeleton({ isLight }: { isLight: boolean }) {
-  const bar = isLight ? 'bg-gray-100' : 'bg-surface-700'
+export function GarminSkeleton() {
+  const bar = 'bg-surface-700'
   return (
     <div className="max-w-5xl mx-auto space-y-10 pb-12">
       <div className={clsx('h-12 panel animate-pulse rounded-xl')} />
@@ -88,7 +88,7 @@ export function HeroTile({
         </div>
       )}
       {detail && (
-        <div className={clsx('relative text-[11px] mt-1', isLight ? 'text-gray-500' : 'text-gray-500')}>
+        <div className={clsx('relative text-[11px] mt-1', 'text-gray-500')}>
           {detail}
         </div>
       )}
@@ -127,7 +127,7 @@ export function RhythmTile({
         isLight ? 'text-gray-900' : 'text-gray-100')}>
         {WEEKDAYS_FULL[pattern.bestIdx]}
       </div>
-      <div className={clsx('relative text-[11px] mt-0.5 mb-3', isLight ? 'text-gray-500' : 'text-gray-500')}>
+      <div className={clsx('relative text-[11px] mt-0.5 mb-3', 'text-gray-500')}>
         avg {format(pattern.bestMean)}
         {delta != null && Math.abs(delta) >= 0.5 && (
           <span style={{ color: ACCENT }}>
@@ -189,14 +189,14 @@ export function FactorBars({
         return (
           <div key={f.label} className="space-y-1.5">
             <div className="flex items-baseline justify-between gap-2">
-              <span className={clsx('text-[11px] uppercase tracking-[0.15em]', isLight ? 'text-gray-500' : 'text-gray-500')}>
+              <span className={clsx('text-[11px] uppercase tracking-[0.15em]', 'text-gray-500')}>
                 {f.label}
               </span>
               <span className="text-[11px] font-mono tabular-nums">
                 <span style={{ color: c }}>{f.value != null ? `${Math.round(v)}%` : '–'}</span>
               </span>
             </div>
-            <div className={clsx('relative h-2.5 rounded-full overflow-hidden', isLight ? 'bg-gray-100' : 'bg-surface-700')}>
+            <div className={clsx('relative h-2.5 rounded-full overflow-hidden', 'bg-surface-700')}>
               <div
                 className="h-full rounded-full transition-all duration-300"
                 style={{
@@ -271,7 +271,7 @@ export function LoadBalanceBars({ load, isLight }: { load: LoadData | null; isLi
         return (
           <div key={b.key}>
             <div className="flex items-baseline justify-between mb-1.5">
-              <span className={clsx('text-[11px] uppercase tracking-[0.15em]', isLight ? 'text-gray-500' : 'text-gray-500')}>
+              <span className={clsx('text-[11px] uppercase tracking-[0.15em]', 'text-gray-500')}>
                 {b.label}
               </span>
               <span className="text-[11px] font-mono tabular-nums" style={{ color: barColor }}>

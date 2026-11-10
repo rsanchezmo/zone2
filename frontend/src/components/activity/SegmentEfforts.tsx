@@ -51,7 +51,7 @@ export default function SegmentEfforts({ activity }: { activity: ActivityDetail 
                 'rounded-lg border p-3',
                 prRank === 1
                   ? (isLight ? 'border-amber-300 bg-amber-50/50' : 'border-amber-500/40 bg-amber-500/5')
-                  : (isLight ? 'border-gray-200' : 'border-surface-600/60'),
+                  : (isLight ? 'border-surface-600' : 'border-surface-600/60'),
               )}
             >
               {/* Top row: name + badges + time */}
@@ -64,7 +64,7 @@ export default function SegmentEfforts({ activity }: { activity: ActivityDetail 
                     </span>
                   )}
                   {prRank != null && prRank > 1 && prRank <= 3 && (
-                    <span className={clsx('text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0', isLight ? 'bg-gray-100 text-gray-500' : 'bg-surface-700 text-gray-400')}>
+                    <span className={clsx('text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0', isLight ? 'bg-surface-700 text-gray-500' : 'bg-surface-700 text-gray-400')}>
                       {prRank === 2 ? '2nd' : '3rd'}
                     </span>
                   )}

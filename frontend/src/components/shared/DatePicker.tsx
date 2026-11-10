@@ -128,13 +128,13 @@ export default function DatePicker({ value, onChange, label, inputClassName }: D
         <div
           className={clsx(
             'absolute top-full mt-1 z-50 border rounded-xl p-3 shadow-xl w-[250px]',
-            isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
+            isLight ? 'bg-white border-surface-600' : 'bg-surface-800 border-surface-600',
           )}
         >
           {/* Year nav */}
           <div className="flex items-center justify-between mb-1">
             <button onClick={() => setViewMonth(m => new Date(m.getFullYear() - 1, m.getMonth(), 1))} className={clsx('px-1 text-[11px]', isLight ? 'text-gray-400 hover:text-gray-900' : 'text-gray-500 hover:text-gray-100')}>&larr;</button>
-            <span className={clsx('text-[11px]', isLight ? 'text-gray-500' : 'text-gray-500')}>{viewMonth.getFullYear()}</span>
+            <span className={clsx('text-[11px]', 'text-gray-500')}>{viewMonth.getFullYear()}</span>
             <button onClick={() => setViewMonth(m => new Date(m.getFullYear() + 1, m.getMonth(), 1))} className={clsx('px-1 text-[11px]', isLight ? 'text-gray-400 hover:text-gray-900' : 'text-gray-500 hover:text-gray-100')}>&rarr;</button>
           </div>
           {/* Month nav */}
@@ -165,8 +165,8 @@ export default function DatePicker({ value, onChange, label, inputClassName }: D
                   className={clsx(
                     'text-[11px] py-1 rounded transition-colors',
                     !inMonth && (isLight ? 'text-gray-300' : 'text-gray-700'),
-                    inMonth && !isSelected && !isTodayDate && (isLight ? 'text-gray-600 hover:bg-gray-100' : 'text-gray-400 hover:bg-surface-700'),
-                    isTodayDate && !isSelected && (isLight ? 'bg-gray-100 text-gray-700' : 'bg-surface-600 text-gray-300'),
+                    inMonth && !isSelected && !isTodayDate && (isLight ? 'text-gray-600 hover:bg-surface-700' : 'text-gray-400 hover:bg-surface-700'),
+                    isTodayDate && !isSelected && (isLight ? 'bg-surface-700 text-gray-700' : 'bg-surface-600 text-gray-300'),
                     isSelected && (isLight ? 'bg-gray-900/10 text-gray-900 font-bold' : 'bg-gray-400/20 text-gray-100 font-bold'),
                   )}
                 >
@@ -180,14 +180,14 @@ export default function DatePicker({ value, onChange, label, inputClassName }: D
           <div className="flex gap-1 mt-2">
             <button
               onClick={() => { selectDay(new Date()) }}
-              className={clsx('flex-1 text-[11px] py-1 rounded', isLight ? 'text-gray-600 hover:text-gray-900 bg-gray-100' : 'text-gray-400 hover:text-gray-100 bg-surface-700')}
+              className={clsx('flex-1 text-[11px] py-1 rounded', isLight ? 'text-gray-600 hover:text-gray-900 bg-surface-700' : 'text-gray-400 hover:text-gray-100 bg-surface-700')}
             >
               Today
             </button>
             {value && (
               <button
                 onClick={() => { onChange(''); setOpen(false) }}
-                className={clsx('flex-1 text-[11px] py-1 rounded', isLight ? 'text-gray-600 hover:text-gray-900 bg-gray-100' : 'text-gray-400 hover:text-gray-100 bg-surface-700')}
+                className={clsx('flex-1 text-[11px] py-1 rounded', isLight ? 'text-gray-600 hover:text-gray-900 bg-surface-700' : 'text-gray-400 hover:text-gray-100 bg-surface-700')}
               >
                 Clear
               </button>

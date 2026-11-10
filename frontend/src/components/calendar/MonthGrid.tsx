@@ -54,7 +54,7 @@ export default function MonthGrid({
                   key={c}
                   className={clsx(
                     'min-h-[54px] md:min-h-[120px] rounded-lg border animate-pulse',
-                    isLight ? 'bg-gray-100 border-gray-200' : 'bg-surface-800 border-surface-600',
+                    isLight ? 'bg-surface-700 border-surface-600' : 'bg-surface-800 border-surface-600',
                   )}
                 />
               ))}
@@ -74,7 +74,7 @@ export default function MonthGrid({
                   'rounded-xl p-1 border transition-colors cursor-pointer',
                   selected
                     ? (isLight ? 'bg-blue-50/70 border-blue-200' : 'bg-blue-400/[0.05] border-blue-400/25')
-                    : (isLight ? 'border-transparent hover:border-gray-200' : 'border-transparent hover:border-surface-600'),
+                    : 'border-transparent hover:border-surface-600',
                 )}
               >
                 <div className="grid grid-cols-7 gap-0.5 md:gap-1">
@@ -94,9 +94,9 @@ export default function MonthGrid({
                           'relative min-h-[54px] md:min-h-[120px] p-1 md:p-2 rounded-lg border transition-all duration-150',
                           'cursor-pointer',
                           inMonth
-                            ? isLight ? 'border-gray-200 bg-white' : 'border-surface-600 bg-surface-800'
+                            ? isLight ? 'border-surface-600 bg-white' : 'border-surface-600 bg-surface-800'
                             : isLight ? 'border-transparent bg-gray-50/50' : 'border-transparent bg-surface-900/50',
-                          isToday(day) && (isLight ? 'ring-1 ring-gray-400/40 border-gray-300' : 'ring-1 ring-gray-500/30 border-gray-500/40'),
+                          isToday(day) && (isLight ? 'ring-1 ring-[#9ca3af]/40 border-surface-500' : 'ring-1 ring-gray-500/30 border-gray-500/40'),
                           dragOverDate === dateStr ? 'border-gray-400/60 ring-2 ring-gray-400/20 bg-gray-400/[0.03]' : 'hover:border-surface-500',
                         )}
                       >

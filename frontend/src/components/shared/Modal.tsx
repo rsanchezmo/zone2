@@ -24,7 +24,7 @@ export default function Modal({ onClose, className, children }: {
         aria-modal="true"
         className={clsx(
           'border rounded-xl w-full overflow-y-auto animate-[scaleIn_150ms_ease-out]',
-          isLight ? 'bg-white border-gray-200 shadow-xl' : 'bg-surface-800 border-surface-600 shadow-2xl',
+          isLight ? 'bg-white border-surface-600 shadow-xl' : 'bg-surface-800 border-surface-600 shadow-2xl',
           className,
         )}
         onClick={e => e.stopPropagation()}

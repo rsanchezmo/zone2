@@ -108,7 +108,7 @@ export default function SportTypeCombobox({ value, onChange, className, isLight 
           ref={listRef}
           className={clsx(
             'absolute z-50 left-0 right-0 mt-1 max-h-52 overflow-y-auto rounded-lg border shadow-lg',
-            isLight ? 'bg-white border-gray-200' : 'bg-surface-700 border-surface-600',
+            isLight ? 'bg-white border-surface-600' : 'bg-surface-700 border-surface-600',
           )}
         >
           {filtered.length === 0 ? (
@@ -122,7 +122,7 @@ export default function SportTypeCombobox({ value, onChange, className, isLight 
                 className={clsx(
                   'px-3 py-1.5 text-sm cursor-pointer transition-colors',
                   i === highlightIndex
-                    ? (isLight ? 'bg-gray-100' : 'bg-surface-600')
+                    ? (isLight ? 'bg-surface-700' : 'bg-surface-600')
                     : '',
                 )}
                 style={{ color: getSportColor(s) }}

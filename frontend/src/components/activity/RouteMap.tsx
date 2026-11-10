@@ -2,7 +2,6 @@ import { useMemo } from 'react'
 import clsx from 'clsx'
 import type { ActivityDetail, ActivityRoute } from '../../api/hooks'
 import { getSportColor } from '../../constants/sportColors'
-import { useTheme } from '../../hooks/useTheme'
 import {
   getSportCategory, convertSpeed, formatPace, formatClockDuration, isSpeedSport,
 } from '../../utils/formatSpeed'
@@ -17,8 +16,6 @@ export default function RouteMap({ activity, positions, velocities, splits, matc
   splits: Split[]
   matched: ActivityRoute | null | undefined
 }) {
-  const { theme } = useTheme()
-  const isLight = theme === 'light'
   const sportCategory = getSportCategory(activity.sport_type)
   const useSpeedUnit = isSpeedSport(activity.sport_type)
   const sportAccent = getSportColor(activity.sport_type)
@@ -87,7 +84,7 @@ export default function RouteMap({ activity, positions, velocities, splits, matc
   return (
     <section>
       <div className="section-head mb-4"><span className="eyebrow">Route</span></div>
-      <div className={clsx('h-[300px] md:h-[400px] rounded-xl overflow-hidden border', isLight ? 'border-gray-200' : 'border-surface-600')}>
+      <div className={clsx('h-[300px] md:h-[400px] rounded-xl overflow-hidden border', 'border-surface-600')}>
         <MapView
           positions={positions}
           color={sportAccent}

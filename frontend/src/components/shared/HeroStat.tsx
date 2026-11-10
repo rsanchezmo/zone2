@@ -36,7 +36,7 @@ export default function HeroStat({ label, value, unit, footnote, accent, tone = 
         )}
       </div>
       {footnote && (
-        <div className={clsx('text-[11px] mt-1', isLight ? 'text-gray-500' : 'text-gray-500')}>{footnote}</div>
+        <div className={clsx('text-[11px] mt-1', 'text-gray-500')}>{footnote}</div>
       )}
     </div>
   )

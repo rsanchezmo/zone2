@@ -285,7 +285,7 @@ export default function DashboardPage() {
           </div>
           <div className={clsx(
             'panel px-5 py-4 grid grid-cols-2 md:grid-cols-4 divide-y md:divide-y-0 md:divide-x',
-            isLight ? 'divide-gray-200' : 'divide-surface-600',
+            'divide-surface-600',
           )}>
             <TelemetryCell
               label="Total activities"
@@ -557,7 +557,7 @@ export default function DashboardPage() {
                   return (
                     <div key={d.name} className="flex items-center gap-3">
                       <span className={clsx('text-xs w-24 shrink-0 text-right truncate', isLight ? 'text-gray-500' : 'text-gray-400')}>{d.name}</span>
-                      <div className={clsx('flex-1 h-5 rounded overflow-hidden relative', isLight ? 'bg-gray-100' : 'bg-surface-700')}>
+                      <div className={clsx('flex-1 h-5 rounded overflow-hidden relative', 'bg-surface-700')}>
                         <div
                           className="h-full rounded flex items-center px-2"
                           style={{ width: `${Math.max(pct, 8)}%`, backgroundColor: d.color, opacity: 0.72 }}
@@ -656,7 +656,7 @@ function HeroBlock(props: HeroBlockProps) {
       <div className="flex items-center justify-center md:justify-start">
         {loading ? (
           <div
-            className={clsx('rounded-full animate-pulse', isLight ? 'bg-gray-100' : 'bg-surface-700')}
+            className={clsx('rounded-full animate-pulse', 'bg-surface-700')}
             style={{ width: 260, height: 260 }}
           />
         ) : (

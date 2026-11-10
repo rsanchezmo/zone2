@@ -75,7 +75,7 @@ export default function FadeSummary({ fade, labels, accent, isLight }: {
             to={`/activities/${a.activity_id}`}
             className={clsx(
               'text-[10px] font-mono tabular-nums px-2 py-1 rounded-md border transition-colors max-w-full truncate',
-              isLight ? 'border-gray-200 text-gray-600 hover:bg-gray-100' : 'border-surface-600 text-gray-400 hover:bg-surface-700',
+              isLight ? 'border-surface-600 text-gray-600 hover:bg-surface-700' : 'border-surface-600 text-gray-400 hover:bg-surface-700',
             )}
             title={a.activity_name}
           >

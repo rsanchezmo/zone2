@@ -79,13 +79,13 @@ export default function AggregationsPage() {
         routes={activities}
         loading={isLoading}
         onExpandedChange={setExpanded}
-        className={clsx('h-[calc(100vh-8rem)] rounded-xl overflow-hidden border', isLight ? 'border-gray-200' : 'border-surface-600')}
+        className={clsx('h-[calc(100vh-8rem)] rounded-xl overflow-hidden border', 'border-surface-600')}
         emptyState={
           <>
             <svg className={clsx('w-10 h-10', isLight ? 'text-gray-300' : 'text-gray-600')} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 6.75V15m6-6v8.25m.503 3.498l4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 00-1.006 0L3.622 5.689C3.24 5.88 3 6.27 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.158.69.158 1.006 0z" />
             </svg>
-            <p className={clsx('text-sm', isLight ? 'text-gray-500' : 'text-gray-500')}>No routes found</p>
+            <p className={clsx('text-sm', 'text-gray-500')}>No routes found</p>
             <p className={clsx('text-[11px]', isLight ? 'text-gray-400' : 'text-gray-600')}>Try adjusting your filters</p>
           </>
         }
@@ -111,7 +111,7 @@ export default function AggregationsPage() {
                   ))}
                 </select>
               </div>
-              <div className={clsx('w-px h-8 self-center', isLight ? 'bg-gray-200' : 'bg-surface-600')} aria-hidden="true" />
+              <div className={clsx('w-px h-8 self-center', 'bg-surface-600')} aria-hidden="true" />
               <div className="flex flex-col gap-0.5">
                 <span className="eyebrow text-[9px]">Routes</span>
                 <span className={clsx('text-sm font-mono tabular-nums font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>

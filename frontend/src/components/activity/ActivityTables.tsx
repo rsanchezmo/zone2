@@ -158,7 +158,7 @@ export function SplitsTable({ activity, splits, hasGap }: { activity: ActivityDe
                   </td>
                   <td className="py-2 px-3 text-right font-mono">
                     <div className="flex items-center justify-end gap-2">
-                      <div className={clsx('w-16 h-1.5 rounded-full overflow-hidden hidden sm:block', isLight ? 'bg-gray-200' : 'bg-surface-600')}>
+                      <div className={clsx('w-16 h-1.5 rounded-full overflow-hidden hidden sm:block', 'bg-surface-600')}>
                         <div
                           className="h-full rounded-full"
                           style={{

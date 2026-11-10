@@ -81,10 +81,10 @@ export function BestEfforts({ activity }: { activity: ActivityDetail }) {
                 prRank === 1
                   ? (isLight ? 'border-amber-300 bg-amber-50' : 'border-amber-500/40 bg-amber-500/10')
                   : prRank === 2
-                    ? (isLight ? 'border-gray-300 bg-gray-50' : 'border-gray-400/30 bg-gray-400/10')
+                    ? (isLight ? 'border-surface-500 bg-gray-50' : 'border-gray-400/30 bg-gray-400/10')
                     : prRank === 3
                       ? (isLight ? 'border-orange-300 bg-orange-50' : 'border-orange-500/30 bg-orange-500/10')
-                      : (isLight ? 'border-gray-200' : 'border-surface-600'),
+                      : 'border-surface-600',
               )}
             >
               <span className={clsx('text-xs', isLight ? 'text-gray-600' : 'text-gray-400')}>

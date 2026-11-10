@@ -70,7 +70,7 @@ function WeekPopover({ currentWeekStart, onSelect, onClose }: {
   return (
     <div className={clsx(
       'absolute top-full mt-1 z-50 rounded-xl p-3 shadow-xl w-[260px] border',
-      isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
+      isLight ? 'bg-white border-surface-600' : 'bg-surface-800 border-surface-600',
     )}>
       <div className="flex items-center justify-between mb-2">
         <button onClick={() => setViewMonth(m => subMonths(m, 1))} className={clsx('px-1', isLight ? 'text-gray-400 hover:text-gray-700' : 'text-gray-400 hover:text-gray-100')}>&larr;</button>
@@ -98,9 +98,9 @@ function WeekPopover({ currentWeekStart, onSelect, onClose }: {
                 isSelected
                   ? isLight ? 'bg-gray-900/10 text-gray-900 font-bold' : 'bg-gray-400/20 text-gray-100 font-bold'
                   : isCurrent
-                    ? isLight ? 'bg-gray-100 text-gray-700' : 'bg-surface-600 text-gray-300'
+                    ? isLight ? 'bg-surface-700 text-gray-700' : 'bg-surface-600 text-gray-300'
                     : inMonth
-                      ? isLight ? 'text-gray-600 hover:bg-gray-100' : 'text-gray-400 hover:bg-surface-700'
+                      ? isLight ? 'text-gray-600 hover:bg-surface-700' : 'text-gray-400 hover:bg-surface-700'
                       : isLight ? 'text-gray-300 hover:bg-gray-50' : 'text-gray-600 hover:bg-surface-700',
               )}
             >
@@ -116,7 +116,7 @@ function WeekPopover({ currentWeekStart, onSelect, onClose }: {
         }}
         className={clsx(
           'mt-2 w-full text-[11px] py-1 rounded transition-colors',
-          isLight ? 'text-gray-500 hover:text-gray-800 bg-gray-100 hover:bg-gray-200' : 'text-gray-400 hover:text-gray-100 bg-surface-700',
+          isLight ? 'text-gray-500 hover:text-gray-800 bg-surface-700 hover:bg-surface-600' : 'text-gray-400 hover:text-gray-100 bg-surface-700',
         )}
       >
         This week
@@ -142,7 +142,7 @@ function MonthPopover({ current, onSelect, onClose }: {
   return (
     <div className={clsx(
       'absolute top-full mt-1 z-50 rounded-xl p-3 shadow-xl w-[220px] border',
-      isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
+      isLight ? 'bg-white border-surface-600' : 'bg-surface-800 border-surface-600',
     )}>
       <div className="flex items-center justify-between mb-2">
         <button onClick={() => setViewYear(y => y - 1)} className={clsx('px-1', isLight ? 'text-gray-400 hover:text-gray-700' : 'text-gray-400 hover:text-gray-100')}>&larr;</button>
@@ -162,8 +162,8 @@ function MonthPopover({ current, onSelect, onClose }: {
                 isSelected
                   ? isLight ? 'bg-gray-900/10 text-gray-900 font-bold' : 'bg-gray-400/20 text-gray-100 font-bold'
                   : isCurrent
-                    ? isLight ? 'bg-gray-100 text-gray-700' : 'bg-surface-600 text-gray-300'
-                    : isLight ? 'text-gray-600 hover:bg-gray-100' : 'text-gray-400 hover:bg-surface-700',
+                    ? isLight ? 'bg-surface-700 text-gray-700' : 'bg-surface-600 text-gray-300'
+                    : isLight ? 'text-gray-600 hover:bg-surface-700' : 'text-gray-400 hover:bg-surface-700',
               )}
             >
               {name}
@@ -175,7 +175,7 @@ function MonthPopover({ current, onSelect, onClose }: {
         onClick={() => { onSelect(new Date(nowYear, nowMonth, 1)); onClose() }}
         className={clsx(
           'mt-2 w-full text-[11px] py-1 rounded transition-colors',
-          isLight ? 'text-gray-500 hover:text-gray-800 bg-gray-100 hover:bg-gray-200' : 'text-gray-400 hover:text-gray-100 bg-surface-700',
+          isLight ? 'text-gray-500 hover:text-gray-800 bg-surface-700 hover:bg-surface-600' : 'text-gray-400 hover:text-gray-100 bg-surface-700',
         )}
       >
         This month

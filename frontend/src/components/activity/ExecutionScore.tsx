@@ -135,7 +135,7 @@ function ExecutionScoreCollapsible({
           <span className="text-xs text-gray-500 uppercase">Execution Score</span>
           <span className="text-2xl font-bold font-mono" style={{ color: scoreColor(overall) }}>{overall}</span>
           {isSegmented && (
-            <span className={clsx('text-[10px] text-gray-500 border rounded-full px-2 py-0.5', isLight ? 'border-gray-300' : 'border-surface-600')}>structured</span>
+            <span className={clsx('text-[10px] text-gray-500 border rounded-full px-2 py-0.5', isLight ? 'border-surface-500' : 'border-surface-600')}>structured</span>
           )}
         </div>
         <div className="flex items-center gap-3">

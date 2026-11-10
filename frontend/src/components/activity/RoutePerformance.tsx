@@ -30,7 +30,7 @@ export default function RoutePerformance({ activity }: { activity: ActivityDetai
     ? (isLight ? 'bg-green-50 text-green-700 border-green-200' : 'bg-green-500/10 text-green-400 border-green-500/30')
     : trendDir < 0
       ? (isLight ? 'bg-red-50 text-red-700 border-red-200' : 'bg-red-500/10 text-red-400 border-red-500/30')
-      : (isLight ? 'bg-gray-100 text-gray-600 border-gray-200' : 'bg-surface-700 text-gray-400 border-surface-600')
+      : (isLight ? 'bg-surface-700 text-gray-600 border-surface-600' : 'bg-surface-700 text-gray-400 border-surface-600')
 
   // Chart data: convert speed (m/s) → pace/speed display values, with labels
   const chartData = trend && trend.speeds.length > 1
@@ -53,7 +53,7 @@ export default function RoutePerformance({ activity }: { activity: ActivityDetai
         </span>
       )}
       {sa.pr_rank != null && sa.pr_rank > 1 && (
-        <span className={clsx('text-[10px] px-2 py-0.5 rounded-full', isLight ? 'bg-gray-100 text-gray-500' : 'bg-surface-700 text-gray-500')}>
+        <span className={clsx('text-[10px] px-2 py-0.5 rounded-full', 'bg-surface-700 text-gray-500')}>
           #{sa.pr_rank}/{sa.effort_count}
         </span>
       )}

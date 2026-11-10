@@ -33,7 +33,7 @@ export default function WeekView({
     <div
       className={clsx(
         'rounded-xl border overflow-hidden divide-y',
-        isLight ? 'bg-white border-gray-200 divide-gray-200' : 'bg-surface-800 border-surface-600 divide-surface-600',
+        isLight ? 'bg-white border-surface-600 divide-surface-600' : 'bg-surface-800 border-surface-600 divide-surface-600',
       )}
       style={{ animation: 'fadeIn 200ms ease-out' }}
     >

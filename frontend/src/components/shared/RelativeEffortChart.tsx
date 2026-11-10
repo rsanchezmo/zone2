@@ -36,7 +36,7 @@ export default function RelativeEffortChart({ sportType }: { sportType?: string 
   const latest = weeks[weeks.length - 1]
 
   if (isLoading) {
-    return <div className={clsx('h-[300px] rounded-xl animate-pulse', isLight ? 'bg-gray-100' : 'bg-surface-700/50')} />
+    return <div className={clsx('h-[300px] rounded-xl animate-pulse', isLight ? 'bg-surface-700' : 'bg-surface-700/50')} />
   }
   if (!weeks.length) return null
 

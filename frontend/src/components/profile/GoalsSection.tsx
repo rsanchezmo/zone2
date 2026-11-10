@@ -209,19 +209,19 @@ export default function GoalsSection({ goals, progress: goalProgressData, sportT
                 key={goal.id as number}
                 className={clsx(
                   'rounded-xl border p-3 group transition-all duration-200',
-                  isLight ? 'bg-white border-gray-200 hover:border-gray-300' : 'bg-surface-800 border-surface-600 hover:border-surface-500',
+                  isLight ? 'bg-white border-surface-600 hover:border-surface-500' : 'bg-surface-800 border-surface-600 hover:border-surface-500',
                 )}
                 style={{ borderLeftWidth: 3, borderLeftColor: barColor }}
               >
                 {/* Top row: sport, metric, period, actions */}
-                <div className="flex items-center gap-2 mb-2">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-2">
                   <span className={clsx('text-sm font-medium', isLight ? 'text-gray-800' : 'text-gray-200')}>
                     {sport === '__all__' ? 'All Sports' : sport}
                   </span>
-                  <span className={clsx('text-[11px] px-1.5 py-0.5 rounded-md', isLight ? 'bg-gray-100 text-gray-500' : 'bg-surface-700 text-gray-400')}>
+                  <span className={clsx('text-[11px] px-1.5 py-0.5 rounded-md', isLight ? 'bg-surface-700 text-gray-500' : 'bg-surface-700 text-gray-400')}>
                     {metricLabel(metric, sport)}
                   </span>
-                  <span className={clsx('text-[11px] px-1.5 py-0.5 rounded-md', isLight ? 'bg-gray-100 text-gray-500' : 'bg-surface-700 text-gray-400')}>
+                  <span className={clsx('text-[11px] px-1.5 py-0.5 rounded-md', isLight ? 'bg-surface-700 text-gray-500' : 'bg-surface-700 text-gray-400')}>
                     {periodLabel(goal.period).toLowerCase()}
                   </span>
                   <span className="text-[11px] text-gray-500 font-mono">{goal.year}</span>
@@ -272,7 +272,7 @@ export default function GoalsSection({ goals, progress: goalProgressData, sportT
                         ? (isLight ? 'bg-green-100 text-green-700' : 'bg-green-500/15 text-green-400')
                         : pct >= 70
                           ? (isLight ? 'bg-blue-100 text-blue-700' : 'bg-blue-500/15 text-blue-400')
-                          : (isLight ? 'bg-gray-100 text-gray-600' : 'bg-surface-700 text-gray-400'),
+                          : (isLight ? 'bg-surface-700 text-gray-600' : 'bg-surface-700 text-gray-400'),
                     )}>
                       {pct >= 100 ? 'Done!' : `${Math.round(pct)}%`}
                     </span>

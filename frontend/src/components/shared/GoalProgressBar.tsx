@@ -11,7 +11,7 @@ export default function GoalProgressBar({ percentage, color, className }: {
 }) {
   const { theme } = useTheme()
   return (
-    <div className={clsx('rounded-full overflow-hidden', theme === 'light' ? 'bg-gray-200' : 'bg-surface-700', className)}>
+    <div className={clsx('rounded-full overflow-hidden', theme === 'light' ? 'bg-surface-600' : 'bg-surface-700', className)}>
       <div
         className="h-full rounded-full transition-all duration-500"
         style={{ width: `${Math.min(percentage, 100)}%`, backgroundColor: percentage >= 100 ? GOAL_DONE_COLOR : color }}

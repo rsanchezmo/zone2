@@ -142,7 +142,7 @@ function ExportDialogContent({
         {/* Header */}
         <div className={clsx(
           'flex items-center justify-between px-5 py-4 border-b',
-          isLight ? 'border-gray-100' : 'border-surface-600',
+          isLight ? 'border-surface-700' : 'border-surface-600',
         )}>
           <div>
             <div className="eyebrow mb-0.5">Export</div>
@@ -157,7 +157,7 @@ function ExportDialogContent({
             onClick={onClose}
             className={clsx(
               'w-7 h-7 rounded-md flex items-center justify-center transition-colors',
-              isLight ? 'hover:bg-gray-100 text-gray-400' : 'hover:bg-surface-600 text-gray-500',
+              isLight ? 'hover:bg-surface-700 text-gray-400' : 'hover:bg-surface-600 text-gray-500',
             )}
             aria-label="Close"
           >
@@ -171,7 +171,7 @@ function ExportDialogContent({
           {/* Preview */}
           <div className={clsx(
             'relative rounded-lg overflow-hidden border',
-            isLight ? 'border-gray-200 bg-gray-50' : 'border-surface-600 bg-surface-900'
+            isLight ? 'border-surface-600 bg-gray-50' : 'border-surface-600 bg-surface-900'
           )}>
             <div className="relative flex items-center justify-center" style={{ minHeight: '180px', maxHeight: '420px' }}>
               {previewLoading && (
@@ -232,7 +232,7 @@ function ExportDialogContent({
                 'backdrop-blur-sm border',
                 previewLoading && 'opacity-50',
                 isLight
-                  ? 'bg-white/80 border-gray-200 text-gray-500 hover:bg-white hover:text-gray-700'
+                  ? 'bg-white/80 border-surface-600 text-gray-500 hover:bg-white hover:text-gray-700'
                   : 'bg-surface-800/80 border-surface-600 text-gray-400 hover:bg-surface-700 hover:text-gray-200'
               )}
               title="Refresh preview"
@@ -313,7 +313,7 @@ function ExportDialogContent({
                     'relative inline-flex items-center w-10 h-[22px] rounded-full transition-colors duration-200 shrink-0',
                     showTitle
                       ? 'bg-blue-500'
-                      : isLight ? 'bg-gray-300' : 'bg-surface-600'
+                      : isLight ? 'bg-surface-500' : 'bg-surface-600'
                   )}
                 >
                   <span className={clsx(
@@ -329,7 +329,7 @@ function ExportDialogContent({
         {/* Footer actions */}
         <div className={clsx(
           'flex items-center justify-end gap-2 px-5 py-4 border-t',
-          isLight ? 'border-gray-100' : 'border-surface-600'
+          isLight ? 'border-surface-700' : 'border-surface-600'
         )}>
           <button onClick={onClose} className="btn">
             Cancel

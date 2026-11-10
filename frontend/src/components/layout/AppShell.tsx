@@ -123,10 +123,10 @@ function SyncPopover({ isLight, placement }: { isLight: boolean; placement: Popo
           'absolute w-56 rounded-xl border p-3 space-y-2 shadow-xl',
           POPOVER_PLACEMENT[placement],
           isLight
-            ? 'bg-white/90 backdrop-blur-xl border-gray-200'
+            ? 'bg-white/90 backdrop-blur-xl border-surface-600'
             : 'bg-surface-800/90 backdrop-blur-xl border-surface-600',
         )}>
-          <div className={clsx('text-[11px] space-y-0.5', isLight ? 'text-gray-500' : 'text-gray-500')}>
+          <div className={clsx('text-[11px] space-y-0.5', 'text-gray-500')}>
             {syncStatus?.athlete_name && (
               <div className={clsx('font-medium', isLight ? 'text-gray-700' : 'text-gray-300')}>{syncStatus.athlete_name}</div>
             )}
@@ -140,7 +140,7 @@ function SyncPopover({ isLight, placement }: { isLight: boolean; placement: Popo
               syncStatus?.syncing
                 ? 'bg-blue-500/10 text-blue-400 animate-pulse'
                 : isLight
-                  ? 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  ? 'bg-surface-700 text-gray-600 hover:bg-surface-600'
                   : 'bg-white/[0.06] text-gray-300 hover:bg-white/[0.1]',
             )}
           >
@@ -153,7 +153,7 @@ function SyncPopover({ isLight, placement }: { isLight: boolean; placement: Popo
             className={clsx(
               'w-full rounded-lg text-xs font-medium py-1.5 transition-colors',
               isLight
-                ? 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                ? 'bg-surface-700 text-gray-600 hover:bg-surface-600'
                 : 'bg-white/[0.06] text-gray-300 hover:bg-white/[0.1]',
             )}
           >
@@ -322,7 +322,7 @@ function MobileNav({ isLight, location }: { isLight: boolean; location: { pathna
           // page content and expanded maps.
           'fixed top-3 left-3 z-[9990] w-11 h-11 flex items-center justify-center rounded-xl border shadow-lg backdrop-blur-sm transition-colors',
           isLight
-            ? 'bg-white/80 border-gray-200 text-gray-700 hover:bg-white'
+            ? 'bg-white/80 border-surface-600 text-gray-700 hover:bg-white'
             : 'bg-black/40 border-white/10 text-gray-200 hover:bg-black/60',
         )}
       >
@@ -344,17 +344,17 @@ function MobileNav({ isLight, location }: { isLight: boolean; location: { pathna
       <aside
         className={clsx(
           'fixed top-0 left-0 bottom-0 z-[10003] w-[82%] max-w-[320px] border-r shadow-2xl transition-transform duration-250 ease-out flex flex-col',
-          isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600',
+          isLight ? 'bg-white border-surface-600' : 'bg-surface-800 border-surface-600',
           open ? 'translate-x-0' : '-translate-x-full',
         )}
       >
         {/* Drawer header */}
-        <div className={clsx('flex items-center justify-between px-4 py-3 border-b', isLight ? 'border-gray-200' : 'border-surface-600')}>
+        <div className={clsx('flex items-center justify-between px-4 py-3 border-b', 'border-surface-600')}>
           <span className={clsx('text-[11px] uppercase tracking-[0.2em] font-semibold', isLight ? 'text-gray-500' : 'text-gray-400')}>Navigation</span>
           <button
             onClick={() => setOpen(false)}
             aria-label="Close navigation"
-            className={clsx('w-8 h-8 flex items-center justify-center rounded-lg', isLight ? 'text-gray-500 hover:bg-gray-100' : 'text-gray-400 hover:bg-surface-700')}
+            className={clsx('w-8 h-8 flex items-center justify-center rounded-lg', isLight ? 'text-gray-500 hover:bg-surface-700' : 'text-gray-400 hover:bg-surface-700')}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M3 3l10 10M13 3l-10 10" />
@@ -374,7 +374,7 @@ function MobileNav({ isLight, location }: { isLight: boolean; location: { pathna
                 className={clsx(
                   'flex items-center gap-3 px-4 py-3 text-sm font-medium transition-colors',
                   isActive
-                    ? (isLight ? 'bg-gray-100' : 'bg-white/5')
+                    ? (isLight ? 'bg-surface-700' : 'bg-white/5')
                     : (isLight ? 'hover:bg-gray-50' : 'hover:bg-white/[0.03]'),
                 )}
                 style={{ color: isActive ? item.color : (isLight ? '#374151' : '#d1d5db') }}
@@ -389,7 +389,7 @@ function MobileNav({ isLight, location }: { isLight: boolean; location: { pathna
         </nav>
 
         {/* Utilities footer */}
-        <div className={clsx('border-t p-3 flex items-center gap-2', isLight ? 'border-gray-200' : 'border-surface-600')}>
+        <div className={clsx('border-t p-3 flex items-center gap-2', 'border-surface-600')}>
           <div className="flex-1">
             <SyncPopover isLight={isLight} placement="above-start" />
           </div>
@@ -398,7 +398,7 @@ function MobileNav({ isLight, location }: { isLight: boolean; location: { pathna
             aria-label="Toggle theme"
             className={clsx(
               'w-11 h-11 flex items-center justify-center rounded-xl transition-colors',
-              isLight ? 'text-gray-500 hover:bg-gray-100' : 'text-gray-400 hover:bg-white/5',
+              isLight ? 'text-gray-500 hover:bg-surface-700' : 'text-gray-400 hover:bg-white/5',
             )}
           >
             {isLight ? (
@@ -560,7 +560,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             'flex items-center rounded-2xl border shadow-2xl',
             isBottom ? 'flex-row py-2 px-3 gap-1' : 'flex-col py-3 px-2',
             isLight
-              ? 'bg-white/40 border-gray-200/40 shadow-black/5'
+              ? 'bg-white/40 border-surface-600/40 shadow-black/5'
               : 'bg-black/30 border-white/[0.04] shadow-black/30',
             'backdrop-blur-sm',
           )}
@@ -578,7 +578,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           {/* Divider */}
           <div className={clsx(
             isBottom ? 'w-px h-8 mx-1' : 'h-px w-8 my-2',
-            isLight ? 'bg-gray-200' : 'bg-white/10',
+            isLight ? 'bg-surface-600' : 'bg-white/10',
           )} />
 
           {/* Utility buttons */}

@@ -260,7 +260,7 @@ export function LoopPlanPanel({ planner, slug, className, isLight, onClose }: {
         )}
       </div>
       {loop && props && (
-        <div className={clsx('flex flex-col gap-1.5 pt-1.5 border-t', isLight ? 'border-gray-200' : 'border-surface-600')}>
+        <div className={clsx('flex flex-col gap-1.5 pt-1.5 border-t', 'border-surface-600')}>
           <div className="flex items-center gap-1.5">
             <input
               value={name ?? defaultName}

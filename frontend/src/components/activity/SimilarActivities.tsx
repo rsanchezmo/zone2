@@ -15,7 +15,7 @@ export default function SimilarActivities({ similar, sportType }: { similar: Act
 
   return (
     <ChartPanel title="Similar activities" accent={sportAccent} glow={false}>
-      <div className={clsx('divide-y', isLight ? 'divide-gray-100' : 'divide-surface-700')}>
+      <div className={clsx('divide-y', 'divide-surface-700')}>
         {similar.map(sa => (
           <Link
             key={sa.id as number}

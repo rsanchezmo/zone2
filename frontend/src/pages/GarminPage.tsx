@@ -68,7 +68,7 @@ export default function GarminPage() {
     timelineRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [showDay])
 
-  if (latestLoading || trendsLoading) return <GarminSkeleton isLight={isLight} />
+  if (latestLoading || trendsLoading) return <GarminSkeleton />
 
   return (
     <div className="max-w-5xl mx-auto space-y-10 pb-12">

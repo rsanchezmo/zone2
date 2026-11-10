@@ -123,7 +123,7 @@ function ActivityCard({ activity: a, compactDate }: ActivityCardProps) {
       className={clsx(
         'group flex items-center gap-3.5 rounded-xl border card-glow transition-all duration-200 p-3.5',
         isLight
-          ? 'bg-white border-gray-200 hover:border-gray-300'
+          ? 'bg-white border-surface-600 hover:border-surface-500'
           : 'bg-surface-800 border-surface-600 hover:border-surface-500',
       )}
       style={{
@@ -156,7 +156,7 @@ function ActivityCard({ activity: a, compactDate }: ActivityCardProps) {
                 <span className="w-1 h-1 rounded-full" style={{ backgroundColor: sportColor }} aria-hidden="true" />
                 {a.sport_type}
               </span>
-              <span className={clsx('text-[11px] font-mono tabular-nums', isLight ? 'text-gray-500' : 'text-gray-500')}>{dateStr}</span>
+              <span className={clsx('text-[11px] font-mono tabular-nums', 'text-gray-500')}>{dateStr}</span>
             </div>
           </div>
           {/* Arrow indicator */}
@@ -389,7 +389,7 @@ export default function ActivitiesPage() {
         <div
           className={clsx(
             'inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-[11px] uppercase tracking-[0.15em]',
-            isLight ? 'bg-white border-gray-200 text-gray-700' : 'bg-surface-800 border-surface-600 text-gray-300',
+            isLight ? 'bg-white border-surface-600 text-gray-700' : 'bg-surface-800 border-surface-600 text-gray-300',
           )}
         >
           <span className={isLight ? 'text-gray-400' : 'text-gray-500'}>Gear</span>
@@ -523,8 +523,8 @@ export default function ActivitiesPage() {
               key={i}
               className="panel p-4 animate-pulse"
             >
-              <div className={clsx('h-4 rounded w-1/3 mb-3', isLight ? 'bg-gray-100' : 'bg-surface-700')} />
-              <div className={clsx('h-3 rounded w-1/4', isLight ? 'bg-gray-100' : 'bg-surface-700')} />
+              <div className={clsx('h-4 rounded w-1/3 mb-3', 'bg-surface-700')} />
+              <div className={clsx('h-3 rounded w-1/4', 'bg-surface-700')} />
             </div>
           ))}
         </div>
@@ -533,7 +533,7 @@ export default function ActivitiesPage() {
           <svg className={clsx('w-9 h-9', isLight ? 'text-gray-300' : 'text-gray-600')} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
           </svg>
-          <p className={clsx('text-sm', isLight ? 'text-gray-500' : 'text-gray-500')}>No activities found</p>
+          <p className={clsx('text-sm', 'text-gray-500')}>No activities found</p>
           <p className={clsx('text-[11px]', isLight ? 'text-gray-400' : 'text-gray-600')}>Try adjusting your filters</p>
         </div>
       ) : (
@@ -586,7 +586,7 @@ export default function ActivitiesPage() {
                 disabled={page === 1}
                 className={clsx(
                   'px-2 py-1 rounded text-xs transition-colors disabled:opacity-20',
-                  isLight ? 'hover:bg-gray-100 text-gray-500' : 'hover:bg-surface-700 text-gray-500',
+                  'hover:bg-surface-700 text-gray-500',
                 )}
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -598,7 +598,7 @@ export default function ActivitiesPage() {
                 disabled={page === 1}
                 className={clsx(
                   'px-2 py-1 rounded text-xs transition-colors disabled:opacity-20',
-                  isLight ? 'hover:bg-gray-100 text-gray-500' : 'hover:bg-surface-700 text-gray-500',
+                  'hover:bg-surface-700 text-gray-500',
                 )}
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -618,9 +618,7 @@ export default function ActivitiesPage() {
                       ? isLight
                         ? 'bg-gray-900 text-white font-semibold'
                         : 'bg-white/10 text-white font-semibold'
-                      : isLight
-                        ? 'text-gray-500 hover:bg-gray-100'
-                        : 'text-gray-500 hover:bg-surface-700',
+                      : 'text-gray-500 hover:bg-surface-700',
                   )}
                   aria-label={`Page ${p}`}
                   aria-current={p === page ? 'page' : undefined}
@@ -636,7 +634,7 @@ export default function ActivitiesPage() {
                 disabled={page === totalPages}
                 className={clsx(
                   'px-2 py-1 rounded text-xs transition-colors disabled:opacity-20',
-                  isLight ? 'hover:bg-gray-100 text-gray-500' : 'hover:bg-surface-700 text-gray-500',
+                  'hover:bg-surface-700 text-gray-500',
                 )}
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -648,7 +646,7 @@ export default function ActivitiesPage() {
                 disabled={page === totalPages}
                 className={clsx(
                   'px-2 py-1 rounded text-xs transition-colors disabled:opacity-20',
-                  isLight ? 'hover:bg-gray-100 text-gray-500' : 'hover:bg-surface-700 text-gray-500',
+                  'hover:bg-surface-700 text-gray-500',
                 )}
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

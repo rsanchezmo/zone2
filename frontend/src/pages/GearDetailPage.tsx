@@ -135,7 +135,7 @@ export default function GearDetailPage() {
         </div>
       )}
 
-      <RouteMapPanel gearId={data.gear.id} accent={accent} isLight={isLight} />
+      <RouteMapPanel gearId={data.gear.id} accent={accent} />
 
       {data.activities.length > 0 && (
         <CumulativePanel data={data} accent={accent} colors={colors} isMobile={isMobile} />
@@ -194,13 +194,13 @@ function GearHero({ data, accent, isLight }: { data: GearDetail; accent: string;
               </span>
             )}
             {gear.retired && (
-              <span className={clsx('text-[9px] uppercase tracking-[0.15em] px-1.5 py-0.5 rounded border', isLight ? 'border-gray-300 text-gray-400' : 'border-gray-700 text-gray-500')}>
+              <span className={clsx('text-[9px] uppercase tracking-[0.15em] px-1.5 py-0.5 rounded border', isLight ? 'border-surface-500 text-gray-400' : 'border-gray-700 text-gray-500')}>
                 Retired
               </span>
             )}
           </div>
           {gear.nickname && gear.name !== gear.nickname && (
-            <p className={clsx('text-sm mt-1', isLight ? 'text-gray-500' : 'text-gray-500')}>{gear.name}</p>
+            <p className={clsx('text-sm mt-1', 'text-gray-500')}>{gear.name}</p>
           )}
           {gear.first_activity && gear.last_activity && (
             <p className={clsx('text-[11px] font-mono mt-2', isLight ? 'text-gray-400' : 'text-gray-600')}>
@@ -223,7 +223,7 @@ function GearHero({ data, accent, isLight }: { data: GearDetail; accent: string;
       </div>
 
       <div className="mt-5">
-        <div className={clsx('h-2 rounded-full overflow-hidden', isLight ? 'bg-gray-100' : 'bg-surface-700')}>
+        <div className={clsx('h-2 rounded-full overflow-hidden', 'bg-surface-700')}>
           <div
             className="h-full rounded-full transition-[width] duration-700"
             style={{
@@ -259,7 +259,7 @@ function GearHero({ data, accent, isLight }: { data: GearDetail; accent: string;
 // Every route these shoes ran — neon overlay, no basemap
 // ────────────────────────────────────────────────────────
 
-function RouteMapPanel({ gearId, accent, isLight }: { gearId: string; accent: string; isLight: boolean }) {
+function RouteMapPanel({ gearId, accent }: { gearId: string; accent: string }) {
   const { data, isLoading } = usePolylines(undefined, undefined, true, gearId)
   const routes = useMemo(() => decodeRoutes(data), [data])
   // Open on the home network; trips further out are still there to zoom out to.
@@ -275,7 +275,7 @@ function RouteMapPanel({ gearId, accent, isLight }: { gearId: string; accent: st
         fitTo={fitTo}
         loading={isLoading}
         colorFor={colorFor}
-        className={clsx('h-[420px] rounded-lg overflow-hidden border', isLight ? 'border-gray-200' : 'border-surface-600')}
+        className={clsx('h-[420px] rounded-lg overflow-hidden border', 'border-surface-600')}
       />
     </ChartPanel>
   )
@@ -494,7 +494,7 @@ function PacePanel({ data, accent, colors, isLight, isMobile }: {
                   <div className="font-mono tabular-nums" style={{ color: sportColor }}>
                     {formatSpeed(p.speed_ms as number, p.sport_type)} · {p.distance_km.toFixed(1)} km
                   </div>
-                  <div className={clsx('font-mono text-[11px] mt-0.5', isLight ? 'text-gray-500' : 'text-gray-500')}>
+                  <div className={clsx('font-mono text-[11px] mt-0.5', 'text-gray-500')}>
                     {formatDay(p.date)}{p.heartrate ? ` · ${p.heartrate} bpm` : ''}
                   </div>
                 </div>

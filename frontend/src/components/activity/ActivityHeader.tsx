@@ -86,7 +86,7 @@ export default function ActivityHeader({ activity, id }: { activity: ActivityDet
               <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: sportAccent }} aria-hidden="true" />
               {activity.sport_type}
             </span>
-            <span className={clsx('text-[11px] font-mono tabular-nums', isLight ? 'text-gray-500' : 'text-gray-500')}>
+            <span className={clsx('text-[11px] font-mono tabular-nums', 'text-gray-500')}>
               {activity.start_date_local ? parseLocalDate(activity.start_date_local).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' }) : ''}
             </span>
           </div>
@@ -167,7 +167,7 @@ function MetaPill({
       ? (isLight ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-amber-500/10 text-amber-400 border-amber-500/30')
       : tone === 'green'
         ? (isLight ? 'bg-green-50 text-green-700 border-green-200' : 'bg-green-500/10 text-green-400 border-green-500/30')
-        : (isLight ? 'bg-gray-50 text-gray-600 border-gray-200' : 'bg-surface-700/60 text-gray-400 border-surface-600')
+        : (isLight ? 'bg-gray-50 text-gray-600 border-surface-600' : 'bg-surface-700/60 text-gray-400 border-surface-600')
   return (
     <span className={clsx(
       'inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full border font-medium',

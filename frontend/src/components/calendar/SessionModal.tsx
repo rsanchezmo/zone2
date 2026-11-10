@@ -388,7 +388,7 @@ export default function SessionModal({
                     const mEnd = endOfWeek(endOfMonth(copyMonth), { weekStartsOn: 1 })
                     const mDays = eachDayOfInterval({ start: mStart, end: mEnd })
                     return (
-                      <div className={clsx('mt-1 p-2 border rounded-lg', isLight ? 'bg-gray-50 border-gray-200' : 'bg-surface-700/50 border-surface-600')}>
+                      <div className={clsx('mt-1 p-2 border rounded-lg', isLight ? 'bg-gray-50 border-surface-600' : 'bg-surface-700/50 border-surface-600')}>
                         <div className="flex items-center justify-between mb-2">
                           <button onClick={() => setCopyMonth(m => subMonths(m, 1))} className="text-gray-400 hover:text-gray-200 text-xs px-1">&lt;</button>
                           <span className="text-xs text-gray-300 font-medium">{format(copyMonth, 'MMM yyyy')}</span>
@@ -716,11 +716,11 @@ export default function SessionModal({
               {editingId ? 'Save Changes' : 'Add'}
             </button>
             {editingId ? (
-              <button onClick={cancelEdit} className={clsx('flex-1 rounded py-2 text-sm text-gray-400', isLight ? 'bg-gray-100 hover:text-gray-700' : 'bg-surface-700 hover:text-gray-200')}>
+              <button onClick={cancelEdit} className={clsx('flex-1 rounded py-2 text-sm text-gray-400', isLight ? 'bg-surface-700 hover:text-gray-700' : 'bg-surface-700 hover:text-gray-200')}>
                 Discard Changes
               </button>
             ) : (
-              <button onClick={onClose} className={clsx('flex-1 rounded py-2 text-sm text-gray-400', isLight ? 'bg-gray-100 hover:text-gray-700' : 'bg-surface-700 hover:text-gray-200')}>
+              <button onClick={onClose} className={clsx('flex-1 rounded py-2 text-sm text-gray-400', isLight ? 'bg-surface-700 hover:text-gray-700' : 'bg-surface-700 hover:text-gray-200')}>
                 Cancel
               </button>
             )}

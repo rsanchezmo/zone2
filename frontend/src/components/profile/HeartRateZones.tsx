@@ -35,7 +35,7 @@ export default function HeartRateZones({ zones, zonesSettings }: {
       }
       footer={
         <div className="space-y-0.5">
-          <div className={clsx('text-[11px]', isLight ? 'text-gray-500' : 'text-gray-500')}>
+          <div className={clsx('text-[11px]', 'text-gray-500')}>
             {zones?.heart_rate?.source === 'strava' && `Custom zones from Strava · max HR ${maxHr ?? '?'} bpm`}
             {zones?.heart_rate?.source === 'manual' && `Manual zones · max HR ${maxHr ?? '?'} bpm`}
             {zones?.heart_rate?.source === 'estimated' && `Estimated from activity data · max HR ${maxHr ?? '?'} bpm`}
@@ -63,7 +63,7 @@ export default function HeartRateZones({ zones, zonesSettings }: {
             <div key={i} className="flex items-center gap-3">
               <span className="text-xs font-mono w-6 text-center font-bold" style={{ color }}>Z{i + 1}</span>
               <span className="text-sm text-gray-400 w-20 shrink-0">{name}</span>
-              <div className={clsx('flex-1 h-7 rounded overflow-hidden relative', isLight ? 'bg-gray-100' : 'bg-surface-700')}>
+              <div className={clsx('flex-1 h-7 rounded overflow-hidden relative', 'bg-surface-700')}>
                 <div
                   className="absolute h-full rounded flex items-center justify-center"
                   style={{
@@ -116,7 +116,7 @@ function ZoneSourceSelector({
     { value: 'manual', label: 'Manual' },
   ]
   return (
-    <div className={clsx('inline-flex rounded-md overflow-hidden border', isLight ? 'border-gray-200' : 'border-surface-600')}>
+    <div className={clsx('inline-flex rounded-md overflow-hidden border', 'border-surface-600')}>
       {options.map((o, i) => {
         const selected = current === o.value
         return (
@@ -126,7 +126,7 @@ function ZoneSourceSelector({
             disabled={pending}
             className={clsx(
               'text-[10px] uppercase tracking-[0.1em] px-2.5 py-1.5 md:py-1 transition-colors',
-              i > 0 && (isLight ? 'border-l border-gray-200' : 'border-l border-surface-600'),
+              i > 0 && 'border-l border-surface-600',
               selected
                 ? (isLight ? 'bg-gray-900 text-white' : 'bg-gray-200 text-gray-900')
                 : (isLight ? 'bg-white text-gray-600 hover:bg-gray-50' : 'bg-surface-800 text-gray-400 hover:bg-surface-700'),
@@ -180,7 +180,7 @@ function ManualZonesEditor({
 
   const accent = '#60a5fa' // blue — primary action
   return (
-    <div className={clsx('mt-5 pt-4 border-t', isLight ? 'border-gray-200' : 'border-surface-600')}>
+    <div className={clsx('mt-5 pt-4 border-t', 'border-surface-600')}>
       <div className={clsx('text-[10px] uppercase tracking-[0.15em] mb-3', isLight ? 'text-gray-400' : 'text-gray-500')}>
         Manual thresholds <span className="normal-case tracking-normal">— upper bpm of each zone</span>
       </div>

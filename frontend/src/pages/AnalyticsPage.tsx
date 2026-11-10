@@ -145,7 +145,7 @@ export default function AnalyticsPage() {
         {predsLoading ? (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className={clsx('p-3 rounded-lg border animate-pulse h-24', isLight ? 'bg-gray-50 border-gray-200' : 'bg-surface-700/50 border-surface-600')} />
+              <div key={i} className={clsx('p-3 rounded-lg border animate-pulse h-24', isLight ? 'bg-gray-50 border-surface-600' : 'bg-surface-700/50 border-surface-600')} />
             ))}
           </div>
         ) : validPredictions.length === 0 ? (
@@ -166,7 +166,7 @@ export default function AnalyticsPage() {
                   onClick={() => setFocusDistance(p.distance_m)}
                   className={clsx(
                     'text-left p-3 rounded-lg border transition-colors',
-                    isLight ? 'bg-gray-50 border-gray-200 hover:bg-gray-100' : 'bg-surface-700/50 border-surface-600 hover:bg-surface-700',
+                    isLight ? 'bg-gray-50 border-surface-600 hover:bg-surface-700' : 'bg-surface-700/50 border-surface-600 hover:bg-surface-700',
                   )}
                   style={isFocused ? {
                     borderColor: `${accent}80`,
@@ -236,7 +236,7 @@ export default function AnalyticsPage() {
                   className={clsx(
                     'p-3 rounded-lg border',
                     p.zone === 'E' && 'col-span-2 md:col-span-1',
-                    isLight ? 'bg-gray-50 border-gray-200' : 'bg-surface-700/50 border-surface-600',
+                    isLight ? 'bg-gray-50 border-surface-600' : 'bg-surface-700/50 border-surface-600',
                   )}
                 >
                   <div className="flex items-baseline gap-1.5 mb-1">
@@ -280,7 +280,7 @@ export default function AnalyticsPage() {
         </div>
 
         {histLoading ? (
-          <div className={clsx('h-[280px] rounded-lg animate-pulse', isLight ? 'bg-gray-100' : 'bg-surface-700/50')} />
+          <div className={clsx('h-[280px] rounded-lg animate-pulse', isLight ? 'bg-surface-700' : 'bg-surface-700/50')} />
         ) : chartData.length === 0 ? (
           <div className="h-[280px] flex items-center justify-center text-sm text-gray-500">
             Not enough historical data to plot evolution.

@@ -41,17 +41,17 @@ export default function ProfilePage() {
     return (
       <div className="max-w-4xl mx-auto space-y-10 pb-12">
         <div className="panel p-6 flex items-center gap-6 animate-pulse">
-          <div className={clsx('w-20 h-20 rounded-full', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
+          <div className={clsx('w-20 h-20 rounded-full', isLight ? 'bg-surface-600' : 'bg-surface-700')} />
           <div className="flex-1 space-y-3">
-            <div className={clsx('h-6 w-40 rounded', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
-            <div className={clsx('h-4 w-28 rounded', isLight ? 'bg-gray-100' : 'bg-surface-700')} />
+            <div className={clsx('h-6 w-40 rounded', isLight ? 'bg-surface-600' : 'bg-surface-700')} />
+            <div className={clsx('h-4 w-28 rounded', 'bg-surface-700')} />
           </div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="panel p-4 animate-pulse">
-              <div className={clsx('h-3 w-16 rounded mb-3', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
-              <div className={clsx('h-6 w-20 rounded', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
+              <div className={clsx('h-3 w-16 rounded mb-3', isLight ? 'bg-surface-600' : 'bg-surface-700')} />
+              <div className={clsx('h-6 w-20 rounded', isLight ? 'bg-surface-600' : 'bg-surface-700')} />
             </div>
           ))}
         </div>

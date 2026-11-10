@@ -293,7 +293,7 @@ export default function RacesPage() {
           {upcoming.length === 0 && past.length === 0 && !showForm && (
             <div className="panel p-10 text-center flex flex-col items-center gap-3">
               <div style={{ color: RACE_ACCENT }}><FlagIcon size={32} /></div>
-              <div className={clsx('text-sm', isLight ? 'text-gray-500' : 'text-gray-500')}>No races yet</div>
+              <div className={clsx('text-sm', 'text-gray-500')}>No races yet</div>
               <button
                 onClick={() => { setEditing(null); setShowForm(true) }}
                 className="text-[11px] uppercase tracking-[0.15em] font-semibold"

@@ -243,7 +243,7 @@ export default function MoveIqPanel() {
                 <span className={clsx('text-xs font-mono tabular-nums w-24 shrink-0', isLight ? 'text-gray-500' : 'text-gray-400')}>
                   {fmtDayDate(day.date)}
                 </span>
-                <div className={clsx('relative flex-1 h-7 rounded', isLight ? 'bg-gray-100' : 'bg-surface-700/40')}>
+                <div className={clsx('relative flex-1 h-7 rounded', isLight ? 'bg-surface-700' : 'bg-surface-700/40')}>
                   {LANE_HOUR_TICKS.map(h => (
                     <span
                       key={h}

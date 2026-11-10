@@ -44,10 +44,10 @@ export default function PersonalRecordsPage() {
             key={i}
             className="panel p-5 animate-pulse"
           >
-            <div className={clsx('h-3 w-24 rounded mb-5', isLight ? 'bg-gray-200' : 'bg-surface-700')} />
+            <div className={clsx('h-3 w-24 rounded mb-5', isLight ? 'bg-surface-600' : 'bg-surface-700')} />
             <div className="space-y-3">
               {Array.from({ length: 5 }).map((_, j) => (
-                <div key={j} className={clsx('h-6 rounded', isLight ? 'bg-gray-100' : 'bg-surface-700')} />
+                <div key={j} className={clsx('h-6 rounded', 'bg-surface-700')} />
               ))}
             </div>
           </div>
@@ -84,9 +84,9 @@ export default function PersonalRecordsPage() {
                 totals ? (
                   <div className={clsx('hidden sm:flex items-center gap-4 text-[11px] font-mono tabular-nums', isLight ? 'text-gray-500' : 'text-gray-400')}>
                     <TotalCell label="Activities" value={totals.count.toLocaleString()} />
-                    <span className={clsx('w-px h-4', isLight ? 'bg-gray-200' : 'bg-surface-600')} aria-hidden="true" />
+                    <span className={clsx('w-px h-4', 'bg-surface-600')} aria-hidden="true" />
                     <TotalCell label="Distance" value={formatDistance(totals.distance_km, category)} accent={color} />
-                    <span className={clsx('w-px h-4', isLight ? 'bg-gray-200' : 'bg-surface-600')} aria-hidden="true" />
+                    <span className={clsx('w-px h-4', 'bg-surface-600')} aria-hidden="true" />
                     <TotalCell label="Time" value={formatDurationHM(totals.time_s)} />
                   </div>
                 ) : undefined
@@ -97,7 +97,7 @@ export default function PersonalRecordsPage() {
               {totals && (
                 <div className={clsx(
                   'sm:hidden grid grid-cols-3 mb-4 -mt-1',
-                  isLight ? 'divide-x divide-gray-200' : 'divide-x divide-surface-600',
+                  'divide-x divide-surface-600',
                 )}>
                   <TotalCellBlock label="Activities" value={totals.count.toLocaleString()} />
                   <TotalCellBlock label="Distance" value={formatDistance(totals.distance_km, category)} accent={color} />
@@ -127,7 +127,7 @@ export default function PersonalRecordsPage() {
           >
             <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-4.5A3.375 3.375 0 0012.75 10.5h-1.5A3.375 3.375 0 007.875 13.875v4.875m9 0H7.875" />
           </svg>
-          <p className={clsx('text-sm', isLight ? 'text-gray-500' : 'text-gray-500')}>No personal records found</p>
+          <p className={clsx('text-sm', 'text-gray-500')}>No personal records found</p>
           <p className={clsx('text-xs', isLight ? 'text-gray-400' : 'text-gray-600')}>
             Make sure your activities have GPS streams — run a stream backfill from the Profile page.
           </p>

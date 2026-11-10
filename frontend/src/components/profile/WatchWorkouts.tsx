@@ -22,7 +22,7 @@ export default function WatchWorkouts() {
   return (
     <section>
       <div className="eyebrow mb-3">Garmin watch</div>
-      <div className={clsx('rounded-lg border px-4 py-3 flex items-center justify-between gap-4', isLight ? 'bg-white border-gray-200' : 'bg-surface-800 border-surface-600')}>
+      <div className={clsx('rounded-lg border px-4 py-3 flex items-center justify-between gap-4', isLight ? 'bg-white border-surface-600' : 'bg-surface-800 border-surface-600')}>
         <div className="min-w-0 space-y-0.5">
           <div className="text-sm">Send planned workouts to my watch</div>
           <p className="text-[11px] text-gray-500 leading-relaxed">
@@ -38,7 +38,7 @@ export default function WatchWorkouts() {
           disabled={setEnabled.isPending}
           className={clsx(
             'relative w-9 h-5 rounded-full shrink-0 transition-colors disabled:opacity-60',
-            on ? 'bg-blue-500' : isLight ? 'bg-gray-300' : 'bg-surface-600',
+            on ? 'bg-blue-500' : isLight ? 'bg-surface-500' : 'bg-surface-600',
           )}
         >
           <span className={clsx('absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform', on && 'translate-x-4')} />

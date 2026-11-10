@@ -84,7 +84,7 @@ export default function RouteThumbnail({ encodedPolyline, color, size = 88 }: Ro
     <div
       className={clsx(
         'shrink-0 rounded-lg border overflow-hidden flex items-center justify-center',
-        isLight ? 'bg-gray-50 border-gray-200' : 'bg-surface-700 border-surface-600',
+        isLight ? 'bg-gray-50 border-surface-600' : 'bg-surface-700 border-surface-600',
       )}
       style={{ width: size, height: size }}
       aria-hidden="true"

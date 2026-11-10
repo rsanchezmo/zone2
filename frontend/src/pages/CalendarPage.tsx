@@ -187,10 +187,10 @@ export default function CalendarPage() {
   // Shared sport color map for weekly section
   const weekDetailSkeleton = (
     <div className="space-y-4">
-      <div className={clsx('rounded-xl h-56 border animate-pulse', isLight ? 'bg-gray-100 border-gray-200' : 'bg-surface-800 border-surface-600')} />
+      <div className={clsx('rounded-xl h-56 border animate-pulse', isLight ? 'bg-surface-700 border-surface-600' : 'bg-surface-800 border-surface-600')} />
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className={clsx('rounded-xl h-48 border animate-pulse', isLight ? 'bg-gray-100 border-gray-200' : 'bg-surface-800 border-surface-600')} />
-        <div className={clsx('rounded-xl h-48 border animate-pulse', isLight ? 'bg-gray-100 border-gray-200' : 'bg-surface-800 border-surface-600')} />
+        <div className={clsx('rounded-xl h-48 border animate-pulse', isLight ? 'bg-surface-700 border-surface-600' : 'bg-surface-800 border-surface-600')} />
+        <div className={clsx('rounded-xl h-48 border animate-pulse', isLight ? 'bg-surface-700 border-surface-600' : 'bg-surface-800 border-surface-600')} />
       </div>
     </div>
   )

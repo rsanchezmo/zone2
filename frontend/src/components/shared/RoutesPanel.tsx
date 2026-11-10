@@ -49,7 +49,7 @@ export default function RoutesPanel({ slug, accent, activeKey, onShow }: {
 
   return (
     <ChartPanel title="Routes" sublabel="loops you saved and your Garmin courses here" accent={PLAN_ACCENT}>
-      <ul className={clsx('divide-y text-xs', isLight ? 'divide-gray-100' : 'divide-surface-700')}>
+      <ul className={clsx('divide-y text-xs', 'divide-surface-700')}>
         {rows.map(row => {
           const key = selectionKey(row.selection)
           const pct = row.newKm === null || !row.cityKm ? null : coveredPct(row.cityKm, row.newKm)
@@ -76,7 +76,7 @@ export default function RoutesPanel({ slug, accent, activeKey, onShow }: {
                 <span className="flex items-center gap-1.5 w-24 justify-end" title={pct === null ? undefined : `${pct}% of it already run${row.cityKm !== null && row.cityKm < 0.8 * row.km ? ` (of its ${row.cityKm.toFixed(1)} km in this city)` : ''}`}>
                   {pct !== null && (
                     <>
-                      <span className={clsx('h-1.5 w-12 rounded-full overflow-hidden', isLight ? 'bg-gray-200' : 'bg-surface-600')}>
+                      <span className={clsx('h-1.5 w-12 rounded-full overflow-hidden', 'bg-surface-600')}>
                         <span className="block h-full rounded-full" style={{ width: `${pct}%`, background: accent }} />
                       </span>
                       <span className={clsx('font-mono tabular-nums w-9 text-right', pct === 100 ? 'text-emerald-400' : 'text-gray-400')}>

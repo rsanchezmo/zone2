@@ -171,7 +171,7 @@ function TipButton({ tip, onClick, className, isLight, children }: {
         className={clsx(
           'absolute right-full mr-2 top-1/2 -translate-y-1/2 px-2 py-1 rounded-md text-[10px] whitespace-nowrap',
           'opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity',
-          isLight ? 'bg-white/95 text-gray-700 border border-gray-200 shadow-sm' : 'bg-surface-800/95 text-gray-200 border border-surface-600',
+          isLight ? 'bg-white/95 text-gray-700 border border-surface-600 shadow-sm' : 'bg-surface-800/95 text-gray-200 border border-surface-600',
         )}
       >
         {tip}
@@ -418,7 +418,7 @@ export default function CoveragePage() {
 
   const overlayClass = clsx(
     'rounded-lg border backdrop-blur-md',
-    isLight ? 'bg-white/85 border-gray-200/80 shadow-sm' : 'bg-surface-800/85 border-surface-600/80',
+    isLight ? 'bg-white/85 border-surface-600/80 shadow-sm' : 'bg-surface-800/85 border-surface-600/80',
   )
   const buttonClass = clsx(
     'rounded-lg p-2 transition-colors',
@@ -516,7 +516,7 @@ export default function CoveragePage() {
         ref={mapRef}
         className={expanded
           ? 'fixed inset-0 z-50 w-screen h-screen'
-          : clsx('relative h-[calc(100vh-8rem)] rounded-xl overflow-hidden border', isLight ? 'border-gray-200' : 'border-surface-600')}
+          : clsx('relative h-[calc(100vh-8rem)] rounded-xl overflow-hidden border', 'border-surface-600')}
       >
         <MapContainer
           center={[0, 0]}
@@ -670,7 +670,7 @@ export default function CoveragePage() {
               className={clsx(
                 'absolute right-full mr-2 top-1/2 -translate-y-1/2 px-2 py-1 rounded-md text-[10px] whitespace-nowrap',
                 'opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity',
-                isLight ? 'bg-white/95 text-gray-700 border border-gray-200 shadow-sm' : 'bg-surface-800/95 text-gray-200 border border-surface-600',
+                isLight ? 'bg-white/95 text-gray-700 border border-surface-600 shadow-sm' : 'bg-surface-800/95 text-gray-200 border border-surface-600',
               )}
             >
               {mapStyle === 'satellite' ? 'Switch to street map' : 'Switch to satellite imagery'}
