@@ -27,10 +27,8 @@ class Settings(BaseSettings):
     # OPENAI_API_KEY; a local model runs through Ollama ("ollama:<model>",
     # with OLLAMA_BASE_URL).
     agent_model: str = "openai:gpt-6-luna"
-    # Voice around the agent: speech to text, and text to speech
-    agent_transcribe_model: str = "gpt-4o-mini-transcribe"
-    agent_speech_model: str = "gpt-4o-mini-tts"
-    agent_voice: str = "ash"
+    # Live speech to text for talking to the agent (backend/agent/voice.py)
+    agent_transcribe_model: str = "gpt-live-transcribe"
 
     model_config = {"env_prefix": "STRAVA_WEB_", "env_file": ".env", "extra": "ignore"}
 

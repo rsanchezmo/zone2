@@ -101,10 +101,18 @@ def _run_sync(z2: Zone2, full_sync: bool, include_streams: bool):
         _sync_coverage(z2)
 
 
+# The catch-up running now, which a later caller waits for instead of starting another
+_catching_up: asyncio.Future[str | None] | None = None
+
+
 def catch_up(z2: Zone2, max_age: timedelta) -> asyncio.Future[str | None] | None:
     """An incremental sync, with the new activities' streams, when the last one is older than
-    `max_age` and no other sync is running. The future resolves once the new activities are
-    stored and the caches refreshed; the coverage sync carries on after it."""
+    `max_age` and no other sync is running, or the catch-up already running. The future
+    resolves once the new activities are stored and the caches refreshed; the coverage sync
+    carries on after it."""
+    global _catching_up
+    if _catching_up is not None and not _catching_up.done():
+        return _catching_up
     last = z2.strava_activities_cache.get_last_sync_time()
     if last is not None and datetime.now() - last < max_age:
         return None
@@ -121,6 +129,7 @@ def catch_up(z2: Zone2, max_age: timedelta) -> asyncio.Future[str | None] | None
             loop.run_in_executor(None, _sync_coverage, z2)
 
     synced.add_done_callback(then_coverage)
+    _catching_up = synced
     return synced
 
 

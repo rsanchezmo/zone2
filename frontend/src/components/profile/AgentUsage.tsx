@@ -22,7 +22,7 @@ function price(value: number | null): string {
   return value == null ? '?' : `$${value < 1 ? value.toFixed(2) : value.toFixed(value % 1 ? 2 : 0)}`
 }
 
-/** The coach on the Profile page: its model, reading replies aloud, the credit left, and what it cost. */
+/** The coach on the Profile page: its model, the credit left, and what it cost. */
 export default function AgentUsage() {
   const { data } = useAgentUsage(DAYS)
   return (
@@ -44,7 +44,6 @@ function CoachSettings({ credit }: { credit: Usage['credit'] }) {
   const save = useSetAgentSettings()
   const [topUp, setTopUp] = useState('')
   if (!settings) return null
-  const speak = save.isPending && save.variables?.speak_replies != null ? save.variables.speak_replies : settings.speak_replies
   const row = 'flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3'
   const amount = Number(topUp)
 
@@ -67,23 +66,6 @@ function CoachSettings({ credit }: { credit: Usage['credit'] }) {
           ))}
           {!settings.models.some(m => m.id === settings.model) && <option value={settings.model}>{settings.model}</option>}
         </select>
-      </div>
-
-      <div className={row}>
-        <div className="min-w-0 space-y-0.5">
-          <div className="text-sm">Read replies aloud</div>
-          <p className="text-[11px] text-gray-500">When you talk to the coach, it answers out loud in a few short sentences. Off, it answers in text as usual.</p>
-        </div>
-        <button
-          role="switch"
-          aria-checked={speak}
-          aria-label="Read replies aloud"
-          onClick={() => save.mutate({ speak_replies: !speak })}
-          disabled={save.isPending}
-          className={clsx('relative w-9 h-5 rounded-full shrink-0 transition-colors disabled:opacity-60', speak ? 'bg-blue-500' : isLight ? 'bg-surface-500' : 'bg-surface-600')}
-        >
-          <span className={clsx('absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform', speak && 'translate-x-4')} />
-        </button>
       </div>
 
       <div className={row}>

@@ -174,7 +174,8 @@ CREATE TABLE IF NOT EXISTS agent_conversations (
     updated_at TEXT DEFAULT (datetime('now'))
 );
 
--- What the agent keeps about the athlete across conversations (see backend/agent/notes.py).
+-- What the agent keeps across conversations (see backend/agent/notes.py): notes about the
+-- athlete, and with plan_id the agreements of one plan.
 CREATE TABLE IF NOT EXISTS agent_notes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     note TEXT NOT NULL,
@@ -241,6 +242,7 @@ async def init_db():
         ])
         await _add_missing_columns(db, "agent_notes", [
             ("topic", "TEXT"),  # backend/agent/notes.py Topic
+            ("plan_id", "INTEGER"),  # the plan an agreement belongs to (training_plans)
         ])
         await _add_missing_columns(db, "workout_templates", [
             # Its copy in the Garmin library, and a fingerprint of the version there

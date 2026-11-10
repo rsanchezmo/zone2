@@ -98,7 +98,7 @@ def sse(event: dict[str, Any]) -> str:
 
 
 async def stream(z2: Zone2, *, conversation_id: str, page: str | None, message: str | None = None,
-                 approvals: dict[str, bool] | None = None, voice: bool = False,
+                 approvals: dict[str, bool] | None = None,
                  sync: Callable[[int | None], Awaitable[str | None]] | None = None,
                  garmin_sync: asyncio.Future[None] | None = None) -> AsyncIterator[str]:
     """One turn as server-sent events, so the panel shows the run as it happens:
@@ -137,7 +137,7 @@ async def stream(z2: Zone2, *, conversation_id: str, page: str | None, message: 
         try:
             async with connect_db() as db:
                 model = await preferences.model(db)
-                deps = AgentDeps(z2=z2, db=db, schedule=spawn, page=page, voice=voice, sync=sync,
+                deps = AgentDeps(z2=z2, db=db, schedule=spawn, page=page, sync=sync,
                                  garmin_sync=garmin_sync)
                 result = await run_turn(the_agent(), deps, conversation_id, prompt=message, approvals=results,
                                         model=model, surface="chat", on_events=relay)
@@ -181,7 +181,8 @@ async def review(z2: Zone2, activity_id: int, session: dict[str, Any]) -> None:
     async with connect_db() as db:
         model = await preferences.model(db)
         deps = AgentDeps(z2=z2, db=db, schedule=spawn)
-        result = await run_turn(the_agent(), deps, conversations.MAIN, prompt=prompt, model=model, surface="review")
+        result = await run_turn(the_agent(), deps, conversations.MAIN, prompt=prompt, model=model, surface="review",
+                                model_settings=None)
     logger.info("Coach review of activity %s took %.1fs on %s: %d model requests", activity_id,
                 time.monotonic() - started, model, result.usage.requests)
 

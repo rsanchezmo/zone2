@@ -1,9 +1,10 @@
 import asyncio
 import functools
+import importlib
 from datetime import timedelta
 
 import aiosqlite
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -16,9 +17,9 @@ from zone2.core import Zone2
 
 router = APIRouter()
 
-# The agent itself (Pydantic AI, ~60 MB) is imported on the first chat, not at startup.
+# The agent itself (Pydantic AI, ~60 MB) is imported when the chat first opens, not at startup.
 
-# Data older than this is brought up to date when a message arrives
+# Data older than this is brought up to date when the chat opens and when a message arrives
 FRESH_FOR = timedelta(minutes=15)
 # How long the reply waits for Strava's sync; a slower one finishes in the background
 SYNC_WAIT_S = 20
@@ -38,11 +39,10 @@ async def usage(days: int = Query(default=30, ge=1, le=365), db: aiosqlite.Conne
 
 @router.get("/status")
 async def status(db: aiosqlite.Connection = Depends(get_db)):
-    """Whether the agent can answer (a key for its model's provider), its model, whether
-    spoken questions get their reply read aloud, and how many of its reviews are unread."""
+    """Whether the agent can answer (a key for its model's provider), its model, and how many
+    of its reviews are unread."""
     model = await preferences.model(db)
-    return {"available": preferences.has_key(model), "model": model,
-            "speak_replies": await preferences.speak_replies(db), "unread": await reviews.unread(db)}
+    return {"available": preferences.has_key(model), "model": model, "unread": await reviews.unread(db)}
 
 
 @router.post("/seen")
@@ -50,6 +50,15 @@ async def seen(db: aiosqlite.Connection = Depends(get_db)):
     """The athlete opened the chat: its reviews so far are read."""
     await reviews.mark_seen(db)
     return {"unread": 0}
+
+
+@router.post("/open")
+async def opened(z2: Zone2 = Depends(get_z2)):
+    """The athlete opened the chat: data older than FRESH_FOR starts syncing and the agent loads
+    while they type, so their message finds both ready, or waits only for the rest."""
+    strava, garmin = strava_sync.catch_up(z2, FRESH_FOR), garmin_sync.catch_up(z2, FRESH_FOR)
+    asyncio.get_running_loop().run_in_executor(None, importlib.import_module, "backend.agent.chat")
+    return {"strava_syncing": strava is not None, "garmin_syncing": garmin is not None}
 
 
 @router.post("/review/{activity_id}")
@@ -61,22 +70,20 @@ async def review(activity_id: int):
 
 @router.get("/settings")
 async def get_settings(db: aiosqlite.Connection = Depends(get_db)):
-    """The coach's settings on the Profile page: its model (with the models offered and their
-    prices per million tokens) and reading replies aloud."""
-    return {"model": await preferences.model(db), "speak_replies": await preferences.speak_replies(db),
-            "models": preferences.options()}
+    """The coach's settings on the Profile page: its model, with the models offered and their
+    prices per million tokens."""
+    return {"model": await preferences.model(db), "models": preferences.options()}
 
 
 class SettingsUpdate(BaseModel):
     model: str | None = None
-    speak_replies: bool | None = None
     credit_usd: float | None = None  # a top-up on the OpenAI account; counting starts today
 
 
 @router.put("/settings")
 async def put_settings(update: SettingsUpdate, db: aiosqlite.Connection = Depends(get_db)):
     try:
-        await preferences.save(db, model_id=update.model, speak=update.speak_replies, credit_usd=update.credit_usd)
+        await preferences.save(db, model_id=update.model, credit_usd=update.credit_usd)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     return await get_settings(db)
@@ -93,21 +100,18 @@ class ChatTurn(BaseModel):
     message: str
     conversation_id: str | None = None
     page: str | None = None
-    voice: bool = False  # spoken: the reply is short, for reading aloud
 
 
 class ApprovalTurn(BaseModel):
     conversation_id: str
     approvals: dict[str, bool]
     page: str | None = None
-    voice: bool = False
 
 
-async def _check_available(model: str | None = None) -> None:
-    """503 unless the model can answer; voice always needs an OpenAI key."""
-    if model is None:
-        async with connect_db() as db:
-            model = await preferences.model(db)
+async def _check_available() -> None:
+    """503 unless the coach's model can answer."""
+    async with connect_db() as db:
+        model = await preferences.model(db)
     if not preferences.has_key(model):
         raise HTTPException(status_code=503, detail=f"The coach has no key for {model}")
 
@@ -121,7 +125,7 @@ async def chat_turn(turn: ChatTurn, z2: Zone2 = Depends(get_z2)):
     from backend.agent.conversations import MAIN
     conversation_id = turn.conversation_id or MAIN
     return _streamed(chat, z2, catch_up=True, conversation_id=conversation_id, page=turn.page,
-                     message=turn.message, voice=turn.voice)
+                     message=turn.message)
 
 
 @router.post("/approve")
@@ -129,43 +133,18 @@ async def approve_turn(turn: ApprovalTurn, z2: Zone2 = Depends(get_z2)):
     """Your yes or no to each pending write; the agent then carries on, streamed like a chat turn."""
     await _check_available()
     from backend.agent import chat
-    return _streamed(chat, z2, conversation_id=turn.conversation_id, page=turn.page, approvals=turn.approvals,
-                     voice=turn.voice)
+    return _streamed(chat, z2, conversation_id=turn.conversation_id, page=turn.page, approvals=turn.approvals)
 
 
-# A spoken message can't usefully run longer than this; it also caps the upload
-MAX_AUDIO_BYTES = 10 * 1024 * 1024
-
-
-@router.post("/transcribe")
-async def transcribe(audio: UploadFile, db: aiosqlite.Connection = Depends(get_db)):
-    """What you said, as text, for the chat."""
-    await _check_available("openai:")
+@router.websocket("/listen")
+async def listen(socket: WebSocket):
+    """What you say, as you say it, for the chat's box (see `voice.listen`)."""
+    if not preferences.has_key("openai:"):
+        await socket.close(code=1008, reason="The coach has no key for OpenAI")
+        return
     from backend.agent import voice
-    data = await audio.read(MAX_AUDIO_BYTES + 1)
-    if len(data) > MAX_AUDIO_BYTES:
-        raise HTTPException(status_code=413, detail="That recording is too long")
-    try:
-        return {"text": await voice.transcribe(db, data, audio.filename or "speech.webm", audio.content_type or "audio/webm")}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Couldn't transcribe that: {e}") from e
-
-
-class Speech(BaseModel):
-    text: str
-
-
-@router.post("/speak")
-async def speak(speech: Speech):
-    """A reply read aloud, as streamed MP3."""
-    await _check_available("openai:")
-    from backend.agent import voice
-
-    async def body():
-        async with connect_db() as db:
-            async for chunk in voice.speak(db, speech.text[:4000]):
-                yield chunk
-    return StreamingResponse(body(), media_type="audio/mpeg", headers={"Cache-Control": "no-cache"})
+    async with connect_db() as db:
+        await voice.listen(socket, db)
 
 
 def _streamed(chat, z2: Zone2, *, catch_up: bool = False, **turn) -> StreamingResponse:

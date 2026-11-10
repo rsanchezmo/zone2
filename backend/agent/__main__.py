@@ -135,7 +135,8 @@ async def main(args: argparse.Namespace) -> None:
             elif args.action == "rm":
                 print("Forgot it." if await notes.delete(db, int(args.text[0])) else "No such note.")
             for n in await notes.all_notes(db):
-                print(f"[{n['id']}] {n['note']} {DIM}({n['added']}){RESET}")
+                plan = f"plan {n['plan_id']}, " if n["plan_id"] is not None else ""
+                print(f"[{n['id']}] {n['note']} {DIM}({plan}{n['added']}){RESET}")
             return
 
         if args.command == "call":

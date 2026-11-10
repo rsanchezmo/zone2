@@ -1,6 +1,5 @@
-"""The athlete's choices for the coach, set on the Profile page: which model answers, whether
-spoken questions get their reply read aloud, and the credit topped up on the provider's
-account. Imports nothing from Pydantic AI."""
+"""The athlete's choices for the coach, set on the Profile page: which model answers, and the
+credit topped up on the provider's account. Imports nothing from Pydantic AI."""
 
 import os
 from datetime import date
@@ -13,7 +12,6 @@ from backend.config import settings
 from backend.services.zones import get_setting, set_setting
 
 MODEL_KEY = "agent_model"
-SPEAK_KEY = "agent_speak_replies"
 # OpenAI has no API for an account's prepaid balance: the athlete enters a top-up, and z2
 # counts down from it with the spend it records
 CREDIT_KEY = "agent_credit_usd"
@@ -35,25 +33,17 @@ async def model(db: aiosqlite.Connection) -> str:
     return await get_setting(db, MODEL_KEY) or settings.agent_model
 
 
-async def speak_replies(db: aiosqlite.Connection) -> bool:
-    """Whether a spoken question gets its reply read aloud. On unless turned off."""
-    return await get_setting(db, SPEAK_KEY) != "0"
-
-
 async def credit(db: aiosqlite.Connection) -> tuple[float, str] | None:
     """The top-up the athlete entered, and the day it starts counting from."""
     amount, since = await get_setting(db, CREDIT_KEY), await get_setting(db, CREDIT_SINCE_KEY)
     return (float(amount), since) if amount and since else None
 
 
-async def save(db: aiosqlite.Connection, *, model_id: str | None = None, speak: bool | None = None,
-               credit_usd: float | None = None) -> None:
+async def save(db: aiosqlite.Connection, *, model_id: str | None = None, credit_usd: float | None = None) -> None:
     if model_id is not None:
         if model_id not in {m for m, _ in MODELS}:
             raise ValueError(f"{model_id} isn't one of the offered models")
         await set_setting(db, MODEL_KEY, model_id)
-    if speak is not None:
-        await set_setting(db, SPEAK_KEY, "1" if speak else "0")
     if credit_usd is not None:
         if credit_usd < 0:
             raise ValueError("A credit can't be negative")

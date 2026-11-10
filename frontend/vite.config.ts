@@ -9,6 +9,8 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+        // The mic's live transcription is a WebSocket (/api/agent/listen)
+        ws: true,
       },
     },
   },

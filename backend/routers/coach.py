@@ -41,7 +41,8 @@ async def list_plans(db: aiosqlite.Connection = Depends(get_db), z2: Zone2 = Dep
 
 @router.get("/plans/{plan_id}")
 async def get_plan(plan_id: int, db: aiosqlite.Connection = Depends(get_db), z2: Zone2 = Depends(get_z2)):
-    """One plan in full: progress, its sessions with how each went, checkpoints, and the coach's log."""
+    """One plan in full: progress, its sessions with how each went, checkpoints, the agreements
+    the coach keeps for it, and the coach's log."""
     plan = await _plan_or_404(db, plan_id)
     progress = await plans.progress(z2, db, plan)
     status = progress.pop("session_status")
@@ -51,6 +52,7 @@ async def get_plan(plan_id: int, db: aiosqlite.Connection = Depends(get_db), z2:
         "progress": progress,
         "sessions": [{**s, **status[s["id"]]} for s in await plans.plan_sessions(db, plan_id)],
         "checkpoints": await plans.checkpoints(db, plan_id),
+        "agreements": await notes.plan_notes(db, plan_id),
         "log": await coach_log.entries(db, plan_id),
     }
 
@@ -70,17 +72,20 @@ async def update_suggestion(entry_id: int, update: SuggestionUpdate, db: aiosqli
 class NoteCreate(BaseModel):
     note: str
     topic: notes.Topic | None = None
+    plan_id: int | None = None
 
 
 @router.get("/notes")
 async def list_notes(db: aiosqlite.Connection = Depends(get_db)):
-    """What the coach keeps about the athlete."""
-    return await notes.all_notes(db)
+    """What the coach keeps about the athlete; a plan's agreements come with the plan."""
+    return await notes.athlete_notes(db)
 
 
 @router.post("/notes", status_code=201)
 async def add_note(note: NoteCreate, db: aiosqlite.Connection = Depends(get_db)):
-    return {"id": await notes.add(db, note.note, note.topic)}
+    if note.plan_id is not None:
+        await _plan_or_404(db, note.plan_id)
+    return {"id": await notes.add(db, note.note, note.topic, note.plan_id)}
 
 
 @router.delete("/notes/{note_id}", status_code=204)

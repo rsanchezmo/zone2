@@ -2,7 +2,8 @@ import { useState } from 'react'
 import clsx from 'clsx'
 import { Link } from 'react-router-dom'
 import {
-  useCoachNotes, useDeleteCoachNote, useUpdateSuggestion, type CoachLogEntry, type CoachLogKind, type CoachNoteTopic,
+  useCoachNotes, useDeleteCoachNote, useUpdateSuggestion, type CoachLogEntry, type CoachLogKind, type CoachNote,
+  type CoachNoteTopic,
 } from '../../api/hooks'
 import { useTheme } from '../../hooks/useTheme'
 import { fmtDayDate } from '../garmin/garmin'
@@ -61,26 +62,58 @@ export function CoachLog({ entries }: { entries: CoachLogEntry[] }) {
   )
 }
 
-const TOPICS: { key: CoachNoteTopic | null; label: string }[] = [
-  { key: 'plan', label: 'The plan' },
-  { key: 'rules', label: 'Training rules' },
+const TOPICS: { key: CoachNoteTopic; label: string }[] = [
+  { key: 'rules', label: 'Your week' },
   { key: 'body', label: 'Body and baselines' },
   { key: 'kit', label: 'Kit and data' },
   { key: 'preferences', label: 'How you like it' },
-  { key: null, label: 'Other' },
 ]
 
-/** What the coach keeps about you across conversations: one line, folded open by topic. */
+/** Notes with the coach's forget button, which shows on hover. */
+function NoteList({ notes }: { notes: CoachNote[] }) {
+  const { theme } = useTheme()
+  const isLight = theme === 'light'
+  const remove = useDeleteCoachNote()
+  return (
+    <ul className="space-y-2">
+      {notes.map(n => (
+        <li key={n.id} className="group flex items-start gap-2">
+          <span className={clsx('min-w-0 flex-1 text-[12px] leading-relaxed [overflow-wrap:anywhere]', isLight ? 'text-gray-600' : 'text-gray-400')}>{n.note}</span>
+          <button
+            aria-label="Forget this note"
+            title="Forget this note"
+            className="text-gray-500 hover:text-red-500 opacity-0 group-hover:opacity-100 focus:opacity-100 shrink-0 leading-none"
+            onClick={() => remove.mutate(n.id)}
+          >×</button>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** What the coach keeps for one plan only: it reads these with the plan, not in every turn. */
+export function PlanAgreements({ notes }: { notes: CoachNote[] }) {
+  if (!notes.length) return null
+  return (
+    <section>
+      <div className="section-head mb-4"><span className="eyebrow">Agreed for this plan</span></div>
+      <div className="panel p-4"><NoteList notes={notes} /></div>
+    </section>
+  )
+}
+
+/** The notes about you the coach reads in every conversation: one line, folded open by topic. */
 export function CoachNotes() {
   const { theme } = useTheme()
   const isLight = theme === 'light'
   const { data: notes } = useCoachNotes()
-  const remove = useDeleteCoachNote()
   const [open, setOpen] = useState(false)
   if (!notes) return null
-  const groups = TOPICS
-    .map(t => ({ ...t, notes: notes.filter(n => (n.topic ?? null) === t.key) }))
-    .filter(g => g.notes.length)
+  const known = new Set<string>(TOPICS.map(t => t.key))
+  const groups = [
+    ...TOPICS.map(t => ({ label: t.label, notes: notes.filter(n => n.topic === t.key) })),
+    { label: 'Other', notes: notes.filter(n => !n.topic || !known.has(n.topic)) },
+  ].filter(g => g.notes.length)
   return (
     <section>
       <button
@@ -94,7 +127,7 @@ export function CoachNotes() {
         )}
       >
         <span className={clsx('text-[13px] font-medium', isLight ? 'text-gray-900' : 'text-gray-100')}>
-          {notes.length ? `The coach remembers ${notes.length} things about you` : 'The coach hasn\'t noted anything about you yet'}
+          {notes.length ? `The coach keeps ${notes.length} ${notes.length === 1 ? 'note' : 'notes'} about you` : 'The coach hasn\'t noted anything about you yet'}
         </span>
         <span className="flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-gray-500">
           {groups.map(g => <span key={g.label}>{g.label} <span className="font-mono">{g.notes.length}</span></span>)}
@@ -102,25 +135,16 @@ export function CoachNotes() {
         {notes.length > 0 && <span className="ml-auto text-[12px] text-gray-500">{open ? 'Hide' : 'Show'}</span>}
       </button>
       {open && (
-        <div className="mt-4 grid gap-x-8 gap-y-6 sm:grid-cols-2">
-          {groups.map(g => (
-            <div key={g.label}>
-              <h3 className={clsx('text-[12px] font-semibold mb-2', isLight ? 'text-gray-900' : 'text-gray-100')}>{g.label}</h3>
-              <ul className="space-y-2">
-                {g.notes.map(n => (
-                  <li key={n.id} className="group flex items-start gap-2">
-                    <span className={clsx('min-w-0 flex-1 text-[12px] leading-relaxed [overflow-wrap:anywhere]', isLight ? 'text-gray-600' : 'text-gray-400')}>{n.note}</span>
-                    <button
-                      aria-label="Forget this note"
-                      title="Forget this note"
-                      className="text-gray-500 hover:text-red-500 opacity-0 group-hover:opacity-100 focus:opacity-100 shrink-0 leading-none"
-                      onClick={() => remove.mutate(n.id)}
-                    >×</button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
+        <div className="mt-4 space-y-6">
+          <p className="text-[11px] text-gray-500">The coach reads these in every conversation. What's agreed for one plan is on that plan's page.</p>
+          <div className="grid gap-x-8 gap-y-6 sm:grid-cols-2">
+            {groups.map(g => (
+              <div key={g.label}>
+                <h3 className={clsx('text-[12px] font-semibold mb-2', isLight ? 'text-gray-900' : 'text-gray-100')}>{g.label}</h3>
+                <NoteList notes={g.notes} />
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </section>

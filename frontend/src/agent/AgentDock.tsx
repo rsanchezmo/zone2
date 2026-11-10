@@ -6,6 +6,7 @@ import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   refreshAfterAgentTurn, refreshPages, streamAgentTurn, useAgentConversation, useAgentStatus, useMarkCoachSeen,
+  useOpenCoach,
   type AgentPendingWrite, type AgentStreamEvent, type AgentTranscriptItem, type AgentTurn,
 } from '../api/hooks'
 import { useTheme } from '../hooks/useTheme'
@@ -13,7 +14,7 @@ import { COACH } from '../components/coach/colors'
 import { useEscapeKey } from '../hooks/useEscapeKey'
 import { RobotIcon } from '../components/icons'
 import { pageContext } from './pageContext'
-import { Speaker } from './speaker'
+import { Listener } from './listener'
 
 // The app's one conversation with the coach (backend/agent/conversations.py MAIN)
 const CONVERSATION = 'coach'
@@ -160,12 +161,27 @@ function describe(write: AgentPendingWrite): string {
   return parts.map(String).join(' · ')
 }
 
-function Waveform() {
+// The waveform's bars: where each sits, how tall it is at rest, and how much it follows the voice
+const BARS = [{ x: 4, rest: 3, gain: 0.55 }, { x: 8, rest: 9, gain: 0.8 }, { x: 12, rest: 15, gain: 1 }, { x: 16, rest: 9, gain: 0.8 }, { x: 20, rest: 3, gain: 0.55 }]
+
+/** The mic's icon; while it listens, the bars follow how loud you are (the `--level` CSS variable). */
+function Waveform({ live }: { live: boolean }) {
   return (
     <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-      <path d="M4 10.5v3M8 7.5v9M12 4.5v15M16 7.5v9M20 10.5v3" />
+      {BARS.map(({ x, rest, gain }) => (
+        <line
+          key={x}
+          x1={x} x2={x} y1={live ? 4.5 : 12 - rest / 2} y2={live ? 19.5 : 12 + rest / 2}
+          style={live ? { transformBox: 'fill-box', transformOrigin: 'center', transition: 'transform 60ms linear', transform: `scaleY(calc(0.12 + ${gain * 0.88} * var(--level, 0)))` } : undefined}
+        />
+      ))}
     </svg>
   )
+}
+
+/** Dictated words after what was already typed. */
+function joined(typed: string, said: string): string {
+  return [typed, said].filter(Boolean).join(' ')
 }
 
 /** The agent on every page: a button bottom-right, and the conversation above it. */
@@ -188,6 +204,11 @@ export default function AgentDock() {
     markSeen()
     qc.invalidateQueries({ queryKey: ['agent-conversation', CONVERSATION] })
   }, [open, unread, markSeen, qc])
+  const { mutate: prepare } = useOpenCoach()
+  // Stale data syncs while the athlete types, so their first message doesn't wait for it
+  useEffect(() => {
+    if (open) prepare()
+  }, [open, prepare])
   const [items, setItems] = useState<LiveItem[] | null>(null)
   const [pending, setPending] = useState<AgentPendingWrite[] | null>(null)
   const [busy, setBusy] = useState(false)
@@ -197,14 +218,15 @@ export default function AgentDock() {
   const [error, setError] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const [listening, setListening] = useState(false)
-  const [transcribing, setTranscribing] = useState(false)
-  const [speaking, setSpeaking] = useState(false)
-  const recorder = useRef<MediaRecorder | null>(null)
+  // Let go, until the words are settled
+  const [settling, setSettling] = useState(false)
+  const listener = useRef<Listener | null>(null)
+  const typed = useRef('')
   const pressedAt = useRef(0)
-  const speaker = useRef<Speaker | null>(null)
+  const mic = useRef<HTMLButtonElement>(null)
   const scroller = useRef<HTMLDivElement>(null)
   const input = useRef<HTMLTextAreaElement>(null)
-  useEscapeKey(open, () => setOpen(false))
+  useEscapeKey(open, close)
 
   const transcript: LiveItem[] = items ?? history?.messages ?? []
 
@@ -224,6 +246,19 @@ export default function AgentDock() {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight })
   }, [growth, waiting.length, busy, open, expanded])
 
+  // The box grows with what's in it, typed or dictated
+  useEffect(() => {
+    const box = input.current
+    if (!box) return
+    box.style.height = ''
+    if (draft) box.style.height = `${box.scrollHeight}px`
+  }, [draft, open])
+
+  function close() {
+    cancelListening()
+    setOpen(false)
+  }
+
   function toggleExpanded() {
     setExpanded(e => {
       store(EXPANDED_KEY, e ? null : '1')
@@ -241,7 +276,6 @@ export default function AgentDock() {
     }
     setThinking(false)
     // Outside the state update, which React may run twice
-    if (event.type === 'text') speaker.current?.feed(event.delta)
     if (event.type === 'tool_done' && event.tool === 'sync') refreshPages(qc)
     const at = Date.now()
     setItems(prev => {
@@ -260,8 +294,6 @@ export default function AgentDock() {
   }
 
   async function run(path: 'chat' | 'approve', body: Parameters<typeof streamAgentTurn>[1], before: LiveItem[]) {
-    speaker.current?.stop()
-    speaker.current = body.voice ? new Speaker(setSpeaking) : null
     setItems(before)
     setPending([])
     setError(null)
@@ -272,11 +304,9 @@ export default function AgentDock() {
     setThinking(true)
     try {
       const turn: AgentTurn = await streamAgentTurn(path, body, apply)
-      speaker.current?.flush()
       setPending(turn.pending)
       refreshAfterAgentTurn(qc, turn)
     } catch (e) {
-      speaker.current?.stop()
       setError(e instanceof Error ? e.message : String(e))
       // What ran before a failure is saved on the server: ask it what still waits, rather than
       // offering the same yes again
@@ -292,61 +322,60 @@ export default function AgentDock() {
 
   function send() {
     const message = draft.trim()
-    if (!message || busy) return
+    if (!message || busy || listening || settling) return
     setDraft('')
-    if (input.current) input.current.style.height = ''
     run('chat', { message, conversation_id: CONVERSATION, page }, [...transcript, { role: 'user', text: message }])
   }
 
   function answer(approvals: Record<string, boolean>) {
     if (busy) return
-    run('approve', { conversation_id: CONVERSATION, approvals, page, voice: speaker.current != null }, transcript)
+    run('approve', { conversation_id: CONVERSATION, approvals, page }, transcript)
   }
 
-  /** Hold the mic to talk; a quick tap starts it, and the next tap sends. */
-  async function startListening() {
-    if (busy || listening || transcribing) return
+  /** Hold the mic to talk, or tap to start and tap again to stop. The words appear in the box
+   *  as you say them and stay there, to fix and send. */
+  function startListening() {
+    if (listening || settling) return
     setError(null)
-    speaker.current?.stop()
-    let stream: MediaStream
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-    } catch {
-      setError('The coach needs your microphone: allow it in the browser to talk.')
-      return
-    }
-    const chunks: Blob[] = []
-    const rec = new MediaRecorder(stream)
-    rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
-    rec.onstop = async () => {
-      stream.getTracks().forEach(t => t.stop())
-      const audio = new Blob(chunks, { type: rec.mimeType || 'audio/webm' })
-      if (audio.size < 1500) return
-      setTranscribing(true)
-      try {
-        const form = new FormData()
-        form.append('audio', audio, `speech.${audio.type.includes('mp4') ? 'mp4' : 'webm'}`)
-        const res = await fetch('/api/agent/transcribe', { method: 'POST', body: form })
-        const data = await res.json()
-        if (!res.ok) throw new Error(typeof data?.detail === 'string' ? data.detail : "Couldn't hear that")
-        const message = String(data.text ?? '').trim()
-        // Read aloud only when that's on (Profile); otherwise a spoken question gets a normal reply
-        if (message) run('chat', { message, conversation_id: CONVERSATION, page, voice: status?.speak_replies ?? true }, [...transcript, { role: 'user', text: message }])
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
-      } finally {
-        setTranscribing(false)
-      }
-    }
-    rec.start()
-    recorder.current = rec
+    typed.current = draft.trim()
+    const heard = new Listener({
+      level: value => mic.current?.style.setProperty('--level', value.toFixed(2)),
+      caption: text => setDraft(joined(typed.current, text)),
+      final: text => {
+        listener.current = null
+        setDraft(joined(typed.current, text))
+        setListening(false)
+        setSettling(false)
+        // Ready to send with Enter; on a touch screen the keyboard would cover the panel
+        if (window.matchMedia('(pointer: fine)').matches) requestAnimationFrame(() => {
+          const box = input.current
+          box?.focus()
+          box?.setSelectionRange(box.value.length, box.value.length)
+        })
+      },
+      error: message => {
+        listener.current = null
+        setError(message)
+        setListening(false)
+        setSettling(false)
+      },
+    })
+    listener.current = heard
     setListening(true)
+    void heard.start()
   }
 
   function stopListening() {
-    recorder.current?.stop()
-    recorder.current = null
+    listener.current?.stop()
     setListening(false)
+    setSettling(true)
+  }
+
+  function cancelListening() {
+    listener.current?.cancel()
+    listener.current = null
+    setListening(false)
+    setSettling(false)
   }
 
   const surface = clsx('bg-surface-800/95 border-surface-600', isLight ? 'text-gray-900' : 'text-gray-100')
@@ -389,10 +418,7 @@ export default function AgentDock() {
                   : <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />}
               </svg>
             </button>
-            {speaking && (
-              <button className="text-[11px] text-red-400 hover:text-red-300" onClick={() => speaker.current?.stop()}>Stop talking</button>
-            )}
-            <button className="text-gray-500 hover:text-gray-300 text-lg leading-none" aria-label="Close" onClick={() => setOpen(false)}>×</button>
+            <button className="text-gray-500 hover:text-gray-300 text-lg leading-none" aria-label="Close" onClick={close}>×</button>
           </div>
 
           <div ref={scroller} className={clsx('flex-1 overflow-y-auto px-4 py-3 space-y-3 leading-relaxed', expanded ? 'text-[14px]' : 'text-[13px]')}>
@@ -520,51 +546,52 @@ export default function AgentDock() {
             <textarea
               ref={input}
               value={draft}
-              onChange={e => {
-                setDraft(e.target.value)
-                e.target.style.height = ''
-                e.target.style.height = `${e.target.scrollHeight}px`
-              }}
+              onChange={e => setDraft(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
               rows={1}
-              placeholder={offline ? 'Not connected' : listening ? 'Listening… release to send' : transcribing ? 'Writing down what you said…' : 'Message or hold the mic to talk'}
+              placeholder={offline ? 'Not connected' : listening ? 'Listening…' : settling ? 'Writing down what you said…' : 'Message or hold the mic to talk'}
+              readOnly={listening || settling}
               disabled={offline}
               className={clsx(
                 'flex-1 resize-none rounded-lg px-3 py-2 text-[13px] outline-none max-h-40 disabled:opacity-50',
                 'bg-surface-700 placeholder:text-gray-500',
               )}
             />
-            {draft.trim() ? (
-              <button type="submit" disabled={busy || offline} className="text-[12px] font-medium text-[var(--coach)] disabled:text-gray-500 px-1 py-2">Send</button>
-            ) : (
-              <button
-                type="button"
-                disabled={busy || offline || transcribing}
-                aria-label={listening ? 'Stop and send' : 'Hold to talk'}
-                title={listening ? 'Release, or tap, to send' : 'Hold to talk, or tap to start'}
-                aria-pressed={listening}
-                onPointerDown={e => {
-                  e.preventDefault()
-                  if (listening) return stopListening()
-                  pressedAt.current = Date.now()
-                  startListening()
-                }}
-                onPointerUp={() => { if (listening && Date.now() - pressedAt.current > 350) stopListening() }}
-                className={clsx(
-                  'w-9 h-9 shrink-0 rounded-full flex items-center justify-center transition-colors disabled:opacity-40 touch-none select-none',
-                  listening ? 'bg-red-500 text-white animate-pulse' : isLight ? 'text-gray-600 hover:bg-surface-700' : 'text-gray-300 hover:bg-surface-700',
-                )}
-              >
-                <Waveform />
-              </button>
+            {draft.trim() && !listening && (
+              <button type="submit" disabled={busy || offline || settling} className="text-[12px] font-medium text-[var(--coach)] disabled:text-gray-500 px-1 py-2">Send</button>
             )}
+            {/* Last in the row, so Send coming and going never moves it from under a held press */}
+            <button
+              ref={mic}
+              type="button"
+              disabled={offline || settling}
+              aria-label={listening ? 'Stop listening' : 'Hold to talk'}
+              title={listening ? 'Release, or tap, to stop' : 'Hold to talk, or tap to start'}
+              aria-pressed={listening}
+              onPointerDown={e => {
+                e.preventDefault()
+                if (listening) return stopListening()
+                // The release counts even if the pointer slides off the button
+                e.currentTarget.setPointerCapture(e.pointerId)
+                pressedAt.current = Date.now()
+                startListening()
+              }}
+              onPointerUp={() => { if (listening && Date.now() - pressedAt.current > 350) stopListening() }}
+              className={clsx(
+                'w-9 h-9 shrink-0 rounded-full flex items-center justify-center transition-colors disabled:opacity-40 touch-none select-none',
+                listening ? 'bg-red-500 text-white' : isLight ? 'text-gray-600 hover:bg-surface-700' : 'text-gray-300 hover:bg-surface-700',
+                settling && 'animate-pulse',
+              )}
+            >
+              <Waveform live={listening} />
+            </button>
           </form>
         </div>
       )}
 
       <button
         type="button"
-        onClick={() => setOpen(o => !o)}
+        onClick={() => (open ? close() : setOpen(true))}
         aria-label={offline ? 'Coach, not connected' : open ? 'Close the coach' : unread > 0 ? `Talk to the coach, ${unread} new` : 'Talk to the coach'}
         title={offline ? `Not connected: no key for ${status?.model}` : 'Coach'}
         aria-expanded={open}
@@ -573,8 +600,7 @@ export default function AgentDock() {
           offline
             ? 'bg-red-500/15 border-red-500/50 text-red-500'
             : isLight ? 'bg-teal-50/95 border-teal-300 text-teal-700 hover:border-teal-500' : 'bg-teal-400/10 border-teal-400/40 text-teal-300 hover:border-teal-300/70',
-          (busy || speaking) && !open && 'animate-pulse',
-          speaking && 'ring-2 ring-teal-400/40',
+          busy && !open && 'animate-pulse',
         )}
       >
         <RobotIcon size={24} aria-hidden="true" />

@@ -6,6 +6,7 @@ import calendar
 import datetime
 import json
 import math
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -15,7 +16,10 @@ import aiosqlite
 import pandas as pd
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
+from pydantic.json_schema import JsonSchemaValue
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
+from pydantic_ai.tools import GenerateToolJsonSchema
+from pydantic_core import core_schema
 
 from backend.db import delete_row, insert_row, row_dict, update_row
 from backend.agent import notes
@@ -45,8 +49,6 @@ class AgentDeps:
     schedule: Schedule
     page: str | None = None
     """What the user is looking at, e.g. "activity 1234" or "calendar, week of 2026-11-09"."""
-    voice: bool = False
-    """The user is talking, and hears the reply."""
     earlier: str | None = None
     """The end of the previous session, when this turn is in a later one."""
     first_name: str | None = None
@@ -78,6 +80,14 @@ def _hms(seconds: Any) -> str | None:
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
+def _hm(seconds: Any) -> str | None:
+    """A long span such as a night's sleep as h:mm."""
+    if seconds is None or (isinstance(seconds, float) and math.isnan(seconds)):
+        return None
+    h, m = divmod(int(seconds) // 60, 60)
+    return f"{h}:{m:02d}"
+
+
 def _pace(speed: Any, sport_type: str | None) -> str | None:
     return format_pace_or_speed(speed, sport_type) if _num(speed, 3) else None
 
@@ -101,13 +111,18 @@ def _clock_pace(decimal_min: Any) -> Any:
 
 
 def _readable(row: dict[str, Any]) -> dict[str, Any]:
-    """A session, workout or race with its paces as m:ss/km and empty fields dropped."""
+    """A session, workout or race with its paces as m:ss/km, and empty or default fields dropped."""
     out = {k: (_clock_pace(v) if k in PACE_FIELDS else v) for k, v in row.items()
-           if v is not None and k != "created_at"}
+           if v is not None and k not in ("created_at", "plan_name") and not (k == "completed" and not v)}
     if isinstance(out.get("segments"), list):
-        out["segments"] = [{k: (_clock_pace(v) if k in PACE_FIELDS else v) for k, v in seg.items() if v is not None}
+        out["segments"] = [{k: (_clock_pace(v) if k in PACE_FIELDS else v) for k, v in seg.items()
+                            if v is not None and not (k == "repetitions" and v == 1)}
                            for seg in out["segments"]]
     return out
+
+
+def _compact(row: dict[str, Any], *drop: str) -> dict[str, Any]:
+    return {k: v for k, v in row.items() if v is not None and k not in drop}
 
 
 def _json(value: Any) -> Any:
@@ -121,7 +136,8 @@ def _json(value: Any) -> Any:
 
 def _activity(row: pd.Series, race_ids: frozenset[int]) -> dict[str, Any]:
     sport_type = row.get("sport_type")
-    return {
+    race = int(row["id"]) in race_ids or row.get("workout_type") in STRAVA_RACE_TYPES
+    return _compact({
         "id": int(row["id"]),
         "date": pd.Timestamp(row["start_date_local"]).strftime("%Y-%m-%d %H:%M"),
         "name": row.get("name"),
@@ -132,8 +148,8 @@ def _activity(row: pd.Series, race_ids: frozenset[int]) -> dict[str, Any]:
         "avg_hr": _num(row.get("average_heartrate")),
         "max_hr": _num(row.get("max_heartrate")),
         "elevation_m": _num(row.get("total_elevation_gain")),
-        "race": int(row["id"]) in race_ids or row.get("workout_type") in STRAVA_RACE_TYPES,
-    }
+        "race": True if race else None,
+    })
 
 
 # How long a tool reading Garmin waits for the sync this message started
@@ -146,26 +162,43 @@ async def _garmin_synced(ctx: RunContext[AgentDeps]) -> None:
         await asyncio.wait([sync], timeout=GARMIN_WAIT_S)
 
 
-read_tools = FunctionToolset[AgentDeps]()
+class _OptionalSchema(GenerateToolJsonSchema):
+    """An argument that defaults to None is just optional: leaving it out means None, so the
+    schema skips the null branch and the default, which every request pays for."""
+
+    def default_schema(self, schema: core_schema.WithDefaultSchema) -> JsonSchemaValue:
+        if schema["schema"]["type"] == "nullable" and self.get_default_value(schema) is None:
+            return self.generate_inner(schema["schema"]["schema"])
+        return super().default_schema(schema)
+
+
+def _toolset(*, requires_approval: bool = False) -> FunctionToolset[AgentDeps]:
+    return FunctionToolset[AgentDeps](schema_generator=_OptionalSchema, requires_approval=requires_approval)
+
+
+read_tools = _toolset()
 
 
 @read_tools.tool
 async def today(ctx: RunContext[AgentDeps]) -> dict[str, Any]:
-    """Today at a glance: planned sessions, what's already done, last night's recovery
-    (Garmin readiness, sleep, HRV, body battery, resting HR), current fitness and form,
-    races in the next few days, and z2's own suggestion weighing them."""
+    """Today at a glance: planned sessions, what's done, last night's recovery (readiness, sleep,
+    HRV, body battery, resting HR), fitness and form, races in the next days, and z2's suggestion."""
     await _garmin_synced(ctx)
     z2 = ctx.deps.z2
     view = z2.strava_activities_cache.get_prepared_view()
     done = view[view["start_date_local"].dt.date == date.today()] if not view.empty else view
     race_ids = z2.strava_analytics.race_activity_ids
-    return await today_briefing(z2, ctx.deps.db, [_activity(r, race_ids) for _, r in done.iterrows()])
+    briefing = await today_briefing(z2, ctx.deps.db, [_activity(r, race_ids) for _, r in done.iterrows()])
+    briefing["sessions"] = [_readable(s) for s in briefing["sessions"]]
+    if (sleep := (briefing.get("recovery") or {}).get("sleep")) and sleep.get("seconds") is not None:
+        sleep["time"] = _hm(sleep.pop("seconds"))
+    return _compact(briefing)
 
 
 @read_tools.tool
 async def athlete(ctx: RunContext[AgentDeps]) -> dict[str, Any]:
-    """The athlete's heart-rate zones (bpm, zone 1 to 5), max HR, lactate-threshold HR when
-    Garmin provides it, and resting HR, with where each comes from."""
+    """HR zones 1 to 5 (bpm), max HR, threshold HR when Garmin has it, and resting HR, with
+    where each comes from."""
     zones = await resolve_hr_zones(ctx.deps.z2, ctx.deps.db)
     rhr = await resolve_resting_hr(ctx.deps.z2, ctx.deps.db)
     return {
@@ -192,19 +225,13 @@ async def find_activities(
     descending: bool = True,
     limit: Annotated[int, Field(ge=1, le=MAX_LIST)] = 10,
 ) -> dict[str, Any]:
-    """Search the full activity history (every recorded activity, back to the first one).
+    """Search every activity back to the first. Dates and distances are inclusive.
 
     Args:
-        sport: Only this sport category.
-        date_from: First local day included.
-        date_to: Last local day included.
-        name_contains: Case-insensitive text in the activity name.
-        min_km: Shortest distance included.
-        max_km: Longest distance included.
-        races_only: Only activities that were races (from the race calendar).
-        sort_by: "pace" sorts by average speed, so descending puts the fastest first.
-        descending: Largest (or latest) first.
-        limit: How many to return; `total` still counts every match.
+        name_contains: Case-insensitive text in the name.
+        races_only: Races (the race calendar's, or flagged on Strava).
+        sort_by: "pace" with descending puts the fastest first.
+        limit: How many to return; `total` counts every match.
     """
     z2 = ctx.deps.z2
     view = z2.strava_activities_cache.get_prepared_view()
@@ -232,11 +259,28 @@ async def find_activities(
     return {"total": len(matches), "activities": [_activity(r, race_ids) for _, r in matches.head(limit).iterrows()]}
 
 
+def _lap_name(lap: dict[str, Any]) -> dict[str, str]:
+    """A lap's own name; Strava's "Lap 3" only repeats its place in the list."""
+    name = lap.get("name") or ""
+    return {} if re.fullmatch(r"Lap \d+", name) else {"name": name}
+
+
+def _hr_recovery(result: dict[str, Any]) -> dict[str, Any]:
+    if result.get("status") != "measured":
+        return result
+    reps = [_compact({"start_km": _num(r["start_km"], 2), "end_km": _num(r["end_km"], 2), "time": _hms(r["duration_s"]),
+                      "pace": _pace(r["speed_ms"], "Run"), "peak_hr": r["peak_hr"], "drop_30": r["drop_30"],
+                      "drop_60": r["drop_60"], "recovery": _hms(r["recovery_s"]), "jogged": r["jogged"]})
+            for r in result["reps"]]
+    return _compact({"status": "measured", "reps": reps, "drop_30_mean": result["drop_30_mean"],
+                     "drop_60_mean": result["drop_60_mean"]})
+
+
 @read_tools.tool
 async def activity_detail(ctx: RunContext[AgentDeps], activity_id: int) -> dict[str, Any]:
-    """One activity in depth: its description, per-km splits, laps (intervals show up here),
-    best efforts, for runs the heart-rate drift (decoupling) and the HR drop after each rep,
-    and what it cost by Garmin: body battery used, recovery time, and the night after it."""
+    """One activity in depth: description, per-km splits, laps (the reps of intervals), best
+    efforts, for runs HR drift (decoupling), the HR drop after each rep and stops, and its Garmin
+    cost: body battery used, recovery time, the night after."""
     cache = ctx.deps.z2.strava_activities_cache
     row = await asyncio.to_thread(cache.get_activity_by_id, activity_id, include_detail=True)
     if row is None:
@@ -256,7 +300,7 @@ async def activity_detail(ctx: RunContext[AgentDeps], activity_id: int) -> dict[
     if all(abs((lap.get("distance") or 0) - 1000) < 20 for lap in laps[:-1]):
         laps = []
     detail["laps"] = [
-        {"name": lap.get("name"), "distance_km": _num(lap.get("distance", 0) / 1000, 2),
+        {**_lap_name(lap), "distance_km": _num(lap.get("distance", 0) / 1000, 2),
          "time": _hms(lap.get("moving_time")), **_paused(lap), "pace": _pace(lap.get("average_speed"), sport_type),
          "avg_hr": _num(lap.get("average_heartrate")), "max_hr": _num(lap.get("max_heartrate"))}
         for lap in laps
@@ -268,7 +312,7 @@ async def activity_detail(ctx: RunContext[AgentDeps], activity_id: int) -> dict[
         streams = await asyncio.to_thread(cache.get_streams, activity_id)
         if streams:
             detail["hr_drift"] = heart_rate_drift(streams)
-            detail["hr_recovery"] = heart_rate_recovery(streams)
+            detail["hr_recovery"] = _hr_recovery(heart_rate_recovery(streams))
             detail["stops"] = [
                 {"at_km": _num(st["start_km"], 2), "at": _hms(st["start_s"]), "seconds": _num(st["duration_s"])}
                 for st in detect_stops(streams)
@@ -276,16 +320,18 @@ async def activity_detail(ctx: RunContext[AgentDeps], activity_id: int) -> dict[
     await _garmin_synced(ctx)
     cost = await asyncio.to_thread(activity_cost, ctx.deps.z2, activity_id)
     if cost and any(cost.values()):
-        detail["garmin"] = {k: v for k, v in cost.items() if v is not None}
-    return detail
+        detail["garmin"] = _compact(cost)
+        if (night := detail["garmin"].get("night")) and night.get("sleep_seconds") is not None:
+            night["sleep"] = _hm(night.pop("sleep_seconds"))
+    return _compact(detail)
 
 
 @read_tools.tool
 async def similar_activities(ctx: RunContext[AgentDeps], activity_id: int,
                              limit: Annotated[int, Field(ge=1, le=20)] = 6) -> list[dict[str, Any]]:
-    """The latest activities like this one: same sport, within 10% of its distance and 20% of
-    its climb. The like-for-like comparison for a run that wasn't a saved workout, e.g. pace at
-    the same heart rate on the usual easy loop."""
+    """The latest activities like this one (same sport, distance within 10%, climb within 20%):
+    the like-for-like comparison for a run that wasn't a saved workout, e.g. pace at the same HR
+    on the usual easy loop."""
     df = await asyncio.to_thread(activity_service.similar, ctx.deps.z2, activity_id, limit)
     if df is None:
         raise ModelRetry(f"There is no activity {activity_id}; find it with find_activities first.")
@@ -295,7 +341,7 @@ async def similar_activities(ctx: RunContext[AgentDeps], activity_id: int,
 
 @read_tools.tool
 async def personal_records(ctx: RunContext[AgentDeps], sport: SportCategory = "running") -> list[dict[str, Any]]:
-    """All-time fastest best effort at each standard distance, with the activity it came from."""
+    """All-time best effort at each standard distance, with its activity."""
     records = await asyncio.to_thread(ctx.deps.z2.strava_analytics.get_personal_records)
     return [
         {"distance": r["label"], "time": _hms(r["time_s"]), "date": str(r["date"])[:10],
@@ -324,24 +370,23 @@ async def race_predictions(
     sport: SportCategory = "running",
     history_weeks: Annotated[int, Field(ge=0, le=104)] = 0,
 ) -> dict[str, Any]:
-    """Predicted race times now, with a likely range, the current best at each distance,
-    Garmin's own prediction, training paces derived from them, and the fade: the exponent of
-    how much the athlete slows as the distance grows, with its standard error and verdict
-    against the typical 1.06 ("fades", "typical" or "holds_pace"; typical means the data can't
-    tell speed from endurance).
+    """Predicted race times with a likely range, the current best and Garmin's prediction per
+    distance, training paces, and the fade: how much the athlete slows as distance grows, an
+    exponent with its standard error and a verdict against the typical 1.06 (fades, typical or
+    holds_pace; typical means the data can't tell speed from endurance).
 
     Args:
-        sport: Sport category.
-        history_weeks: Also return how the predictions moved, one point a week, over this many weeks.
+        history_weeks: Also how the predictions moved, a point a week over this many weeks.
     """
     analytics = ctx.deps.z2.strava_analytics
     result = await asyncio.to_thread(analytics.get_race_predictions, sport)
     out: dict[str, Any] = {
         "predictions": [
-            {"distance": p["label"], "predicted": _hms(p.get("predicted_time_s")),
-             "range": [_hms(p.get("predicted_time_low_s")), _hms(p.get("predicted_time_high_s"))],
-             "current_best": _hms(p.get("pr_time_s")), "current_best_date": str(p.get("pr_date") or "")[:10] or None,
-             "garmin": _hms(p.get("garmin_time_s"))}
+            _compact({"distance": p["label"], "predicted": _hms(p.get("predicted_time_s")),
+                      "range": [_hms(p.get("predicted_time_low_s")), _hms(p.get("predicted_time_high_s"))],
+                      "current_best": _hms(p.get("pr_time_s")),
+                      "current_best_date": str(p.get("pr_date") or "")[:10] or None,
+                      "garmin": _hms(p.get("garmin_time_s"))})
             for p in result.get("predictions", [])
         ],
         "training_paces": _training_paces(result.get("training_paces")),
@@ -351,15 +396,19 @@ async def race_predictions(
     }
     if history_weeks:
         points = await asyncio.to_thread(analytics.get_race_predictions_history, sport, weeks=history_weeks, step_days=7)
-        out["history"] = points
+        out["history"] = [
+            _compact({"date": p.get("end_date"), "vdot": p.get("athlete_vdot"), "fade": p.get("fitted_exponent"),
+                      "predicted": {q["label"]: _hms(q.get("predicted_time_s")) for q in p.get("predictions", [])}})
+            for p in points
+        ]
     return out
 
 
 @read_tools.tool
 async def fitness(ctx: RunContext[AgentDeps], days: Annotated[int, Field(ge=30, le=730)] = 90) -> dict[str, Any]:
-    """Fitness (42-day load), fatigue (7-day load) and form (fitness minus fatigue, as a
-    share of fitness) over the last `days`: weekly points, every day of the last week, and
-    weekly points ahead projected from the planned sessions."""
+    """Fitness (42-day load), fatigue (7-day load) and form (fitness minus fatigue, as a share
+    of fitness) over the last `days`: a point a week, every day of the last week, and weekly
+    points ahead projected from the planned sessions."""
     result = await training.fitness_form(ctx.deps.z2, ctx.deps.db, days)
     series = result.get("series", [])
     recent_from = (date.today() - timedelta(days=7)).isoformat()
@@ -367,8 +416,10 @@ async def fitness(ctx: RunContext[AgentDeps], days: Annotated[int, Field(ge=30, 
         d for i, d in enumerate(series)
         if (d["date"] >= recent_from and not d["projected"]) or i % 7 == 0 or d is series[-1]
     ]
-    fields = ("date", "fitness", "fatigue", "form_pct", "projected")
-    return {"series": [{k: d.get(k) for k in fields} for d in keep], "races": result.get("races", [])}
+    fields = ("date", "fitness", "fatigue", "form_pct")
+    return {"series": [{**{k: d.get(k) for k in fields}, **({"projected": True} if d.get("projected") else {})}
+                       for d in keep],
+            "races": result.get("races", [])}
 
 
 @read_tools.tool
@@ -377,10 +428,9 @@ async def weekly_volume(
     weeks: Annotated[int, Field(ge=1, le=52)] = 12,
     sport_type: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Distance and number of activities per week (Monday to Sunday), this week included.
+    """Km and activities per week, this week included.
 
     Args:
-        weeks: How many weeks back.
         sport_type: A Strava sport type such as "Run" or "Ride"; all sports when omitted.
     """
     result = await asyncio.to_thread(training.weekly_totals, ctx.deps.z2, weeks, sport_type)
@@ -390,9 +440,8 @@ async def weekly_volume(
 
 @read_tools.tool
 async def planned_sessions_between(ctx: RunContext[AgentDeps], date_from: date, date_to: date) -> list[dict[str, Any]]:
-    """The training calendar: planned sessions between two days, inclusive, with their ids,
-    targets, steps and plan, and for those already done their execution score (0-100) and the
-    activity that fulfilled them."""
+    """The training calendar between two days, inclusive: sessions with their ids, targets,
+    steps and plan, and for those done their execution score (0-100) and activity."""
     db = ctx.deps.db
     sessions = await planned_sessions.between(db, date_from.isoformat(), date_to.isoformat())
     today_iso = date.today().isoformat()
@@ -413,9 +462,8 @@ async def workout_history(
     workout_template_id: int | None = None,
     limit: Annotated[int, Field(ge=1, le=20)] = 6,
 ) -> list[dict[str, Any]]:
-    """Past sessions planned from the same saved workout, latest first, each with what was
-    actually run that day: the like-for-like comparison for a session. Give the session or
-    its saved workout. Open a run with activity_detail to compare reps."""
+    """Past sessions planned from the same saved workout (give the session or the workout),
+    latest first, with what was run that day: the like-for-like comparison for a session."""
     db = ctx.deps.db
     if workout_template_id is None:
         if session_id is None:
@@ -445,7 +493,7 @@ async def workout_history(
 
 @read_tools.tool
 async def races(ctx: RunContext[AgentDeps], include_past: bool = False) -> list[dict[str, Any]]:
-    """Races in the race calendar: date, name, sport, distance and target pace."""
+    """The race calendar: date, name, sport, distance and target pace."""
     query = "SELECT * FROM race_events" + ("" if include_past else " WHERE date >= ?") + " ORDER BY date"
     params = () if include_past else (date.today().isoformat(),)
     rows = await (await ctx.deps.db.execute(query, params)).fetchall()
@@ -474,7 +522,7 @@ def _wellness_day(metric: str, summary: dict[str, Any]) -> dict[str, Any]:
         if value is None:
             continue
         if key.endswith("_seconds") and metric == "sleep":
-            out[key.replace("_seconds", "")] = _hms(value)[:-3] if value >= 3600 else f"0:{int(value) // 60:02d}"
+            out[key.replace("_seconds", "")] = _hm(value)
         elif key.startswith("time_") and key.endswith("_s"):
             out[key[5:-2]] = _hms(value)
         else:
@@ -495,14 +543,12 @@ async def wellness(
     date_to: date,
     metrics: list[WellnessMetric] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Garmin's daily wellness: sleep, HRV, training readiness, body battery, stress, resting HR
-    (`heart_rates`), training status (acute and chronic load), Garmin's own race predictions
-    (`race_predictions`) and VO2 max (`max_metrics`). At most 62 days.
+    """Garmin's daily wellness, at most 62 days: sleep, HRV, training readiness, body battery,
+    stress, resting HR (`heart_rates`), training status (acute and chronic load), Garmin's race
+    predictions and VO2 max (`max_metrics`).
 
     Args:
-        date_from: First day.
-        date_to: Last day.
-        metrics: Which metrics; all of them when omitted.
+        metrics: All of them when omitted.
     """
     if (date_to - date_from).days >= MAX_WELLNESS_DAYS:
         raise ModelRetry(f"Ask for at most {MAX_WELLNESS_DAYS} days at a time.")
@@ -518,7 +564,7 @@ async def wellness(
 
 @read_tools.tool
 async def saved_workouts(ctx: RunContext[AgentDeps]) -> list[dict[str, Any]]:
-    """The workout library: saved workouts with their steps, which sessions can reuse."""
+    """The workout library: saved workouts and their steps."""
     rows = await (await ctx.deps.db.execute(
         "SELECT id, name, sport_type, description, segments FROM workout_templates ORDER BY name",
     )).fetchall()
@@ -527,8 +573,8 @@ async def saved_workouts(ctx: RunContext[AgentDeps]) -> list[dict[str, Any]]:
 
 @read_tools.tool
 async def plans_overview(ctx: RunContext[AgentDeps], include_done: bool = False) -> list[dict[str, Any]]:
-    """The coach's training plans: each block toward a race with its goal, dates, sessions done
-    of those due, and average execution score."""
+    """The training plans: each block toward a race with its goal, dates, sessions done of
+    those due, and average execution score."""
     out = []
     for plan in await plans.list_plans(ctx.deps.db, include_done):
         progress = await plans.progress(ctx.deps.z2, ctx.deps.db, plan, detail=False)
@@ -541,9 +587,9 @@ async def plans_overview(ctx: RunContext[AgentDeps], include_done: bool = False)
 
 @read_tools.tool
 async def plan_detail(ctx: RunContext[AgentDeps], plan_id: int) -> dict[str, Any]:
-    """One plan in full: phases, weekly km (target, planned, run), the race prediction against the
-    goal, its sessions with whether each was done and its execution score, its checkpoints,
-    and the latest entries of the coach's log."""
+    """One plan in full: phases, weekly km (target, planned, run), the prediction against the
+    goal, its sessions (done, execution score), checkpoints, the agreements kept for it, and the
+    latest coach's log entries with their ids."""
     db = ctx.deps.db
     plan = await plans.get_plan(db, plan_id)
     if plan is None:
@@ -565,26 +611,29 @@ async def plan_detail(ctx: RunContext[AgentDeps], plan_id: int) -> dict[str, Any
         }
     if progress.get("result"):
         progress["result"] = {**progress["result"], "time": _hms(progress["result"].pop("time_s"))}
+    if "weeks" in progress:
+        progress["weeks"] = [_compact(w) for w in progress["weeks"]]
     keep = ("id", "date", "title", "sport_type", "planned_distance_km", "planned_intensity", "garmin_sync_state")
     goal_s = plan.get("goal_time_s")
-    return {
-        **{k: v for k, v in plan.items() if k not in ("created_at", "goal_time_s")},
+    race = await plans.race_of(db, plan)
+    return _compact({
+        **_compact(plan, "created_at", "goal_time_s"),
         "goal_time": _hms(goal_s) if goal_s is not None else None,
-        "race": await plans.race_of(db, plan),
-        "progress": progress,
-        "sessions": [{**{k: s.get(k) for k in keep if s.get(k) is not None}, **status[s["id"]]}
+        "race": _readable(race) if race else None,
+        "progress": _compact(progress, "today"),
+        "sessions": [_compact({**{k: s.get(k) for k in keep}, **status[s["id"]]})
                      for s in await plans.plan_sessions(db, plan_id)],
-        "checkpoints": await plans.checkpoints(db, plan_id),
-        "log": [{**{k: v for k, v in e.items() if v is not None and k not in ("created_at", "body")},
-                 "body": (e.get("body") or "")[:240]}
+        "checkpoints": [_compact(c, "plan_id", "created_at") for c in await plans.checkpoints(db, plan_id)],
+        "agreements": [{"id": n["id"], "note": n["note"]} for n in await notes.plan_notes(db, plan_id)],
+        "log": [{**_compact(e, "plan_id", "created_at", "body"), "body": (e.get("body") or "")[:240]}
                 for e in await coach_log.entries(db, plan_id, limit=8)],
-    }
+    })
 
 
 @read_tools.tool
 async def goals(ctx: RunContext[AgentDeps], year: int | None = None) -> list[dict[str, Any]]:
-    """The athlete's goals for a year (this year when omitted): each a target per week, month
-    or year for a sport (or all sports), with the value so far in the current period."""
+    """Goals for a year (this year when omitted): a target per week, month or year for a sport
+    or all sports, with the value so far this period."""
     ref = date.today() if year is None or year == date.today().year else date(year, 12, 31)
     rows = await goal_service.progress(ctx.deps.z2, ctx.deps.db, ref)
     keep = ("id", "year", "sport_type", "metric", "period", "target_value", "current_value", "percentage",
@@ -592,27 +641,36 @@ async def goals(ctx: RunContext[AgentDeps], year: int | None = None) -> list[dic
     return [{k: g[k] for k in keep if k in g} for g in rows]
 
 
-# ── Athlete notes: the agent's memory of this athlete ───────────────────
+# ── Notes: the agent's memory of this athlete and of each plan's agreements ──
 
-memory_tools = FunctionToolset[AgentDeps]()
+memory_tools = _toolset()
 
 
 @memory_tools.tool
 async def remember(ctx: RunContext[AgentDeps], note: str,
-                   topic: Literal["kit", "body", "plan", "rules", "preferences"]) -> str:
-    """Keep a durable fact about the athlete for every later conversation: a preference, a
-    constraint, a baseline, an equipment change, or a lesson from a session ("HR sensor changed
-    to a chest strap on 3 March: don't compare HR across that date"). One fact per note,
-    dated when the date matters. Not for anything z2's data already holds. `topic`: kit (sensors,
-    GPS, devices), body (HR limits, baselines, injuries), plan (goal, agreed thresholds), rules
-    (how the week is built) or preferences (how they like to be coached, habits)."""
-    note_id = await notes.add(ctx.deps.db, note, notes.Topic(topic))
-    return f"Noted ({note_id})."
+                   topic: Literal["kit", "body", "rules", "preferences"] | None = None,
+                   plan_id: int | None = None) -> str:
+    """Keep a durable fact z2's data doesn't hold: one fact per note, dated when the date
+    matters ("HR sensor changed to a chest strap on 3 March: don't compare HR across that
+    date"). Not zones, max or threshold HR: they're set in Profile and `athlete` reads them.
+    A fact about the athlete takes a `topic` and reaches every conversation: kit
+    (sensors, GPS, devices), body (baselines, injuries), rules (how their week is
+    built) or preferences (how they like to be coached, habits). An agreement for one plan (the
+    block's structure, the race-day plan, a guardrail for this block) takes its `plan_id`
+    instead and stays with the plan, in plan_detail. A checkpoint's thresholds go in
+    add_checkpoint."""
+    if plan_id is not None:
+        if await plans.get_plan(ctx.deps.db, plan_id) is None:
+            raise ModelRetry(f"There is no plan {plan_id}; see plans_overview.")
+        return f"Noted for plan {plan_id} ({await notes.add(ctx.deps.db, note, plan_id=plan_id)})."
+    if topic is None:
+        raise ModelRetry("Give the note a topic, or the plan_id of the plan it was agreed for.")
+    return f"Noted ({await notes.add(ctx.deps.db, note, notes.Topic(topic))})."
 
 
 @memory_tools.tool
 async def forget(ctx: RunContext[AgentDeps], note_id: int) -> str:
-    """Drop a note that is wrong or no longer true. Its id is shown in the notes."""
+    """Drop a note that is wrong or no longer true."""
     if not await notes.delete(ctx.deps.db, note_id):
         raise ModelRetry(f"There is no note {note_id}.")
     return f"Forgot note {note_id}."
@@ -629,19 +687,14 @@ async def log_entry(
     session_id: int | None = None,
     activity_id: int | None = None,
 ) -> str:
-    """Write to the coach's log, which the Coach page shows: a session `review` against its
-    target and guardrail, a checkpoint `decision`, a `summary` of a week, or a `suggestion`
-    for a change you recommend. A suggestion changes nothing: the plan changes only when the
-    athlete asks for it.
+    """Write to the coach's log on the Coach page: a session `review` against its target and
+    guardrail, a checkpoint `decision`, a week's `summary`, or a `suggestion` for a change you
+    recommend. A suggestion changes nothing: the plan changes only when the athlete asks.
 
     Args:
-        kind: What the entry is.
         title: One line, e.g. "2×4 km: guardrail broken at 1.5 km".
-        body: The detail, in a few lines; tables are fine.
+        body: The detail in a few lines; tables are fine.
         day: The day it is about; today when omitted.
-        plan_id: The plan it belongs to.
-        session_id: The planned session it is about.
-        activity_id: The activity it is about.
     """
     entry = await coach_log.add(ctx.deps.db, kind=coach_log.Kind(kind), title=title, body=body,
                                 day=day.isoformat() if day else None, plan_id=plan_id,
@@ -651,7 +704,8 @@ async def log_entry(
 
 # ── Writes ──────────────────────────────────────────────────────────────
 
-Pace = Annotated[float, Field(gt=2, lt=15, description="Decimal minutes per km: 4.5 means 4:30/km")]
+Pace = Annotated[float, Field(gt=2, lt=15)]
+PACE_UNIT = "decimal minutes per km: 4.5 means 4:30/km"
 
 
 class Step(BaseModel):
@@ -663,8 +717,8 @@ class Step(BaseModel):
     repetitions: int = 1
     recovery_distance_km: float | None = None
     recovery_duration_mins: float | None = None
-    target_pace_min: Pace | None = Field(None, description="Fastest end of the pace target")
-    target_pace_max: Pace | None = Field(None, description="Slowest end of the pace target")
+    target_pace_min: Pace | None = Field(None, description=f"Fast end of the pace range, {PACE_UNIT}")
+    target_pace_max: Pace | None = Field(None, description="Slow end")
     target_hr_zone: Annotated[int, Field(ge=1, le=5)] | None = None
     label: str | None = None
 
@@ -676,9 +730,9 @@ class SessionFields(BaseModel):
     planned_distance_km: float | None = None
     planned_duration_mins: float | None = None
     planned_intensity: Literal["easy", "moderate", "hard", "race"] | None = None
-    target_avg_pace: Pace | None = None
-    target_pace_min: Pace | None = None
-    target_pace_max: Pace | None = None
+    target_avg_pace: Pace | None = Field(None, description=PACE_UNIT.capitalize())
+    target_pace_min: Pace | None = Field(None, description="Fast end of the pace range")
+    target_pace_max: Pace | None = Field(None, description="Slow end")
     target_hr_zone: Annotated[int, Field(ge=1, le=5)] | None = None
     segments: list[Step] | None = Field(None, description="Steps, for a structured session such as intervals")
     workout_template_id: int | None = Field(None, description="A saved workout to reuse")
@@ -721,22 +775,22 @@ async def _log_change(ctx: RunContext[AgentDeps], session: dict[str, Any], title
 
 @memory_tools.tool
 async def close_suggestion(ctx: RunContext[AgentDeps], entry_id: int, status: Literal["done", "dismissed"]) -> str:
-    """Close one of your open suggestions in the coach's log: `done` once the change it proposed
-    is made, `dismissed` when the athlete turned it down. plan_detail lists them with their ids."""
+    """Close your open suggestion in the coach's log (plan_detail lists them): `done` once its
+    change is made, `dismissed` when the athlete turned it down."""
     if not await coach_log.set_status(ctx.deps.db, entry_id, coach_log.SuggestionStatus(status)):
         raise ModelRetry(f"Log entry {entry_id} isn't a suggestion; plan_detail lists the log with its ids.")
     return f"Suggestion {entry_id} is {status}."
 
 
-app_tools = FunctionToolset[AgentDeps]()
+app_tools = _toolset()
 """Acting in the app without asking: syncing, and taking the athlete to a page."""
 
 
 @app_tools.tool
 async def sync_now(ctx: RunContext[AgentDeps], activity_id: int | None = None) -> str:
-    """Sync Strava now, when the athlete just finished something that still isn't in z2 (each
-    message already syncs when the data is over 15 minutes old). With `activity_id`, fetch that
-    activity again with its streams: its HR or GPS looks wrong, or it was edited on Strava."""
+    """Sync Strava, once, before saying a session they mention isn't in z2 (each message
+    already syncs data over 15 minutes old). With `activity_id`, fetch that activity again with
+    its streams: its HR or GPS looks wrong, or it was edited on Strava."""
     if ctx.deps.sync is None:
         return "Syncing isn't available here."
     cache = ctx.deps.z2.strava_activities_cache
@@ -756,8 +810,8 @@ PAGE_WITH_ID = {"activity": "/activities/{}", "plan": "/coach/{}", "gear": "/gea
 
 @app_tools.tool
 async def open_page(ctx: RunContext[AgentDeps], page: Page, id: str | None = None) -> str:
-    """Take the athlete to a page of the app when they ask to see something ("show me that run").
-    `id` is the activity id for `activity`, the plan id for `plan` and the gear id for `gear`."""
+    """Take the athlete to a page when they ask to see something ("show me that run"). `id` is
+    the activity's, plan's or gear's id for those pages."""
     if page in PAGE_WITH_ID:
         if not id:
             raise ModelRetry(f"Give the {page}'s id to open it.")
@@ -765,7 +819,7 @@ async def open_page(ctx: RunContext[AgentDeps], page: Page, id: str | None = Non
     return f"/{page}"
 
 
-gear_tools = FunctionToolset[AgentDeps]()
+gear_tools = _toolset()
 """Shoes and bikes, loaded with the gear capability."""
 GEAR_FIELDS = ("id", "label", "kind", "primary", "retired", "distance_km", "strava_distance_km", "activities",
                "first_activity", "last_activity")
@@ -810,7 +864,7 @@ async def gear_detail(ctx: RunContext[AgentDeps], gear_id: str) -> dict[str, Any
     }
 
 
-history_tools = FunctionToolset[AgentDeps]()
+history_tools = _toolset()
 """Years, all-time totals and streaks, loaded with the history capability."""
 
 
@@ -831,7 +885,7 @@ async def year_stats(ctx: RunContext[AgentDeps], year: int | None = None, sport_
                      compare_to: int | None = None) -> dict[str, Any]:
     """A year in sport: totals for `sport_type` (km, time, climb, activities, per month, the
     longest and fastest, its activity ids) and for all sports (count per sport). The year in
-    progress counts up to today, and so does `compare_to`, so "this year vs two years ago" is like for like.
+    progress counts up to today, and so does `compare_to`, so "this year vs last year" is like for like.
 
     Args:
         year: This year when omitted.
@@ -870,11 +924,9 @@ async def streaks(ctx: RunContext[AgentDeps]) -> dict[str, Any]:
     return await asyncio.to_thread(training.streaks, ctx.deps.z2)
 
 
-sleep_tools = FunctionToolset[AgentDeps]()
-"""One night in detail, loaded with the sleep capability."""
-
-
-@sleep_tools.tool
+# Always on, unlike the other detail tools: "how did I sleep?" is an everyday question, and loading
+# a capability first costs a model request (about 2 s on the Pi)
+@read_tools.tool
 async def night(ctx: RunContext[AgentDeps], day: date | None = None) -> dict[str, Any] | str:
     """One night in detail: when they fell asleep and woke, Garmin's score with each stage
     against its ideal share, awake spells, restlessness, breathing and SpO2, then hour by hour
@@ -884,20 +936,21 @@ async def night(ctx: RunContext[AgentDeps], day: date | None = None) -> dict[str
     result = await asyncio.to_thread(day_timeline.night, ctx.deps.z2, day or date.today())
     if result is None:
         return "Garmin has no sleep for that night."
-    for key in ("asleep", "awake"):
-        result[key] = _hms(result.pop(f"{key}_seconds"))
+    result["asleep"] = _hm(result.pop("asleep_seconds"))
+    awake = result.pop("awake_seconds")
+    result["awake_min"] = None if awake is None else round(awake / 60)
     for stage in ("deep", "light", "rem"):
-        result[stage]["time"] = _hms(result[stage].pop("seconds"))
+        result[stage]["time"] = _hm(result[stage].pop("seconds"))
     return result
 
 
-write_tools = FunctionToolset[AgentDeps](requires_approval=True)
+write_tools = _toolset(requires_approval=True)
 
 
 @write_tools.tool
 async def add_session(ctx: RunContext[AgentDeps], session: NewSession, reason: str) -> dict[str, Any]:
-    """Add a session to the training calendar, only when the athlete asked for it. A run with
-    steps also goes to the watch. `reason` is what the athlete asked, for the coach's log."""
+    """Add a session to the calendar, only when the athlete asked for it. A run with steps also
+    goes to the watch."""
     created = await planned_sessions.create(ctx.deps.z2, ctx.deps.db, _values(session), ctx.deps.schedule)
     await _log_change(ctx, created, f"Added {created['title']} on {created['date']}", reason)
     return _readable(created)
@@ -906,9 +959,8 @@ async def add_session(ctx: RunContext[AgentDeps], session: NewSession, reason: s
 @write_tools.tool
 async def change_session(ctx: RunContext[AgentDeps], session_id: int, changes: SessionChanges,
                          reason: str) -> dict[str, Any]:
-    """Change a planned session, only when the athlete asked for it: move it to another day, or
-    change its title, targets or steps. Only the fields given change. `reason` is what the
-    athlete asked, for the coach's log."""
+    """Change a planned session, only when the athlete asked for it: its day, title, targets or
+    steps. Only the fields given change."""
     values = _values(changes, exclude_unset=True)
     row = await (await ctx.deps.db.execute("SELECT * FROM training_sessions WHERE id = ?", (session_id,))).fetchone()
     if row is None:
@@ -925,8 +977,7 @@ async def change_session(ctx: RunContext[AgentDeps], session_id: int, changes: S
 
 @write_tools.tool
 async def remove_session(ctx: RunContext[AgentDeps], session_id: int, reason: str) -> str:
-    """Remove a planned session from the calendar (and its entry on the watch), only when the
-    athlete asked for it. `reason` is what the athlete asked, for the coach's log."""
+    """Remove a planned session (and its entry on the watch), only when the athlete asked for it."""
     row = await (await ctx.deps.db.execute("SELECT * FROM training_sessions WHERE id = ?", (session_id,))).fetchone()
     if row is None:
         raise ModelRetry(f"There is no session {session_id}; look it up with planned_sessions_between.")
@@ -938,8 +989,7 @@ async def remove_session(ctx: RunContext[AgentDeps], session_id: int, reason: st
 
 @write_tools.tool
 async def resync_watch(ctx: RunContext[AgentDeps]) -> str:
-    """Send the upcoming planned sessions to the watch again, when a session's
-    `garmin_sync_state` reads failed."""
+    """Send the upcoming sessions to the watch again, when a `garmin_sync_state` reads failed."""
     z2 = ctx.deps.z2
     if not await garmin_workouts.is_enabled(z2, ctx.deps.db):
         return "Sending workouts to the watch is off in z2 (Profile, Garmin watch)."
@@ -958,7 +1008,7 @@ class PlanPhase(BaseModel):
 class PlanFields(BaseModel):
     name: str | None = None
     race_event_id: int | None = Field(None, description="The goal race, from races")
-    goal: str | None = Field(None, description='The goal in words, e.g. "sub-50 10K"')
+    goal: str | None = Field(None, description='The goal in words, e.g. "sub-1:45 half marathon"')
     goal_time_s: float | None = Field(None, description="The goal as a race time in seconds, when it is one")
     start_date: datetime.date | None = None
     end_date: datetime.date | None = None
@@ -978,9 +1028,8 @@ class PlanChanges(PlanFields):
 
 @write_tools.tool
 async def create_plan(ctx: RunContext[AgentDeps], plan: NewPlan, session_ids: list[int] | None = None) -> dict[str, Any]:
-    """Create a training plan toward a race, once the athlete agreed to it, and put the given
-    planned sessions in it. Add its sessions with add_session (plan_id) and its tests with
-    add_checkpoint."""
+    """Create a training plan toward a race once the athlete agreed to it, with the given
+    sessions in it. Add more with add_session (plan_id), and its tests with add_checkpoint."""
     created = await plans.create_plan(ctx.deps.db, plan.model_dump(mode="json"))
     linked = await plans.link_sessions(ctx.deps.db, created["id"], session_ids or [])
     return {**created, "sessions_linked": linked}
@@ -988,8 +1037,7 @@ async def create_plan(ctx: RunContext[AgentDeps], plan: NewPlan, session_ids: li
 
 @write_tools.tool
 async def change_plan(ctx: RunContext[AgentDeps], plan_id: int, changes: PlanChanges, reason: str) -> dict[str, Any]:
-    """Change a plan's goal, dates, phases, summary or status, only when the athlete asked for
-    it. `reason` is what the athlete asked, for the coach's log."""
+    """Change a plan's goal, dates, phases, summary or status, only when the athlete asked for it."""
     values = changes.model_dump(mode="json", exclude_unset=True)
     before = await plans.get_plan(ctx.deps.db, plan_id)
     if before is None:
@@ -1005,7 +1053,7 @@ async def change_plan(ctx: RunContext[AgentDeps], plan_id: int, changes: PlanCha
 
 @write_tools.tool
 async def link_sessions(ctx: RunContext[AgentDeps], plan_id: int, session_ids: list[int]) -> str:
-    """Put existing planned sessions in a plan, so they count toward it."""
+    """Put planned sessions in a plan, so they count toward it."""
     if await plans.get_plan(ctx.deps.db, plan_id) is None:
         raise ModelRetry(f"There is no plan {plan_id}; see plans_overview.")
     return f"{await plans.link_sessions(ctx.deps.db, plan_id, session_ids)} sessions now in plan {plan_id}."
@@ -1015,9 +1063,9 @@ async def link_sessions(ctx: RunContext[AgentDeps], plan_id: int, session_ids: l
 async def add_checkpoint(
     ctx: RunContext[AgentDeps], plan_id: int, day: datetime.date, title: str, rule: str, session_id: int | None = None,
 ) -> dict[str, Any]:
-    """Add a checkpoint to a plan: a test or key session whose result decides how the plan goes on.
-    `rule` holds the thresholds agreed with the athlete, written before it happens, e.g.
-    "22:00 or faster keeps the goal; about 22:30 moves the target to the slower goal"."""
+    """Add a checkpoint: a test or key session whose result decides how the plan goes on. `rule`
+    holds the thresholds agreed beforehand, e.g. "22:00 or faster keeps the goal; about 22:30
+    moves it a minute slower"."""
     if await plans.get_plan(ctx.deps.db, plan_id) is None:
         raise ModelRetry(f"There is no plan {plan_id}; see plans_overview.")
     return await plans.add_checkpoint(ctx.deps.db, {"plan_id": plan_id, "date": day.isoformat(), "title": title,
@@ -1026,8 +1074,8 @@ async def add_checkpoint(
 
 @write_tools.tool
 async def record_checkpoint(ctx: RunContext[AgentDeps], checkpoint_id: int, result: str, decision: str) -> dict[str, Any]:
-    """Record a checkpoint's result and the decision its rule gives. This doesn't change the
-    sessions: propose those changes, and make them once the athlete agrees."""
+    """Record a checkpoint's result and the decision its rule gives. Sessions don't change:
+    propose those changes, and make them once the athlete agrees."""
     try:
         checkpoint = await plans.update_checkpoint(ctx.deps.db, checkpoint_id, {"result": result, "decision": decision})
     except HTTPException as e:
@@ -1043,7 +1091,7 @@ class RaceFields(BaseModel):
     date: datetime.date | None = None
     sport_type: str | None = Field(None, description='A Strava sport type: "Run", "Ride", "Swim"…')
     distance_km: float | None = None
-    target_pace: Pace | None = Field(None, description="Goal pace, decimal minutes per km")
+    target_pace: Pace | None = Field(None, description=f"Goal pace, {PACE_UNIT}")
     location: str | None = None
     url: str | None = Field(None, description="The race's public page. Never a registration link with a personal "
                                                "token: race links go out in the calendar feed.")
@@ -1058,8 +1106,8 @@ class NewRace(RaceFields):
 
 @write_tools.tool
 async def add_race(ctx: RunContext[AgentDeps], race: NewRace, reason: str) -> dict[str, Any]:
-    """Add a race to the race calendar, when the athlete asks for it. Races decide which runs
-    count as races in the predictions, and a plan can aim at one. `reason` goes in the coach's log."""
+    """Add a race to the race calendar, when the athlete asks. Races decide which runs count as
+    races in the predictions, and a plan can aim at one."""
     row = row_dict(await insert_row(ctx.deps.db, "race_events", race.model_dump(mode="json")))
     await races_changed(ctx.deps.z2)
     await coach_log.add(ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Added the race {row['name']} on {row['date']}",
@@ -1069,8 +1117,8 @@ async def add_race(ctx: RunContext[AgentDeps], race: NewRace, reason: str) -> di
 
 @write_tools.tool
 async def change_race(ctx: RunContext[AgentDeps], race_id: int, changes: RaceFields, reason: str) -> dict[str, Any]:
-    """Change a race in the race calendar (its date, distance, goal pace…), when the athlete asks.
-    Only the fields given change. `reason` goes in the coach's log."""
+    """Change a race (date, distance, goal pace…), when the athlete asks. Only the fields given
+    change."""
     values = changes.model_dump(mode="json", exclude_unset=True)
     try:
         row = row_dict(await update_row(ctx.deps.db, "race_events", race_id, values, "Race not found"))
@@ -1105,7 +1153,7 @@ class NewGoal(GoalFields):
 @write_tools.tool
 async def set_goal(ctx: RunContext[AgentDeps], goal: NewGoal, reason: str) -> dict[str, Any]:
     """Add a goal, when the athlete asks: e.g. 2000 km of running in 2027 (yearly), or 3 strength
-    sessions a week (activities, weekly). `reason` goes in the coach's log."""
+    sessions a week (activities, weekly)."""
     row = row_dict(await insert_row(ctx.deps.db, "goals", goal.model_dump()))
     await coach_log.add(ctx.deps.db, kind=coach_log.Kind.CHANGE, body=reason,
                         title=f"Set a goal: {row['target_value']:g} {row['metric']} {row['period']} ({row['sport_type']}, {row['year']})")
@@ -1114,7 +1162,7 @@ async def set_goal(ctx: RunContext[AgentDeps], goal: NewGoal, reason: str) -> di
 
 @write_tools.tool
 async def change_goal(ctx: RunContext[AgentDeps], goal_id: int, changes: GoalFields, reason: str) -> dict[str, Any]:
-    """Change a goal's target, period, sport or metric, when the athlete asks. `reason` goes in the coach's log."""
+    """Change a goal's target, period, sport or metric, when the athlete asks."""
     values = changes.model_dump(exclude_unset=True)
     try:
         row = row_dict(await update_row(ctx.deps.db, "goals", goal_id, values, "Goal not found"))
@@ -1127,7 +1175,7 @@ async def change_goal(ctx: RunContext[AgentDeps], goal_id: int, changes: GoalFie
 
 @write_tools.tool
 async def remove_goal(ctx: RunContext[AgentDeps], goal_id: int, reason: str) -> str:
-    """Remove a goal, when the athlete asks. `reason` goes in the coach's log."""
+    """Remove a goal, when the athlete asks."""
     try:
         await delete_row(ctx.deps.db, "goals", goal_id, "Goal not found")
     except HTTPException as e:
@@ -1136,7 +1184,7 @@ async def remove_goal(ctx: RunContext[AgentDeps], goal_id: int, reason: str) -> 
     return f"Goal {goal_id} removed."
 
 
-workout_tools = FunctionToolset[AgentDeps](requires_approval=True)
+workout_tools = _toolset(requires_approval=True)
 """The workout library's writes, loaded with the workouts capability; each needs approval."""
 WORKOUT_FIELDS = ("id", "name", "sport_type", "description", "segments")
 
@@ -1168,7 +1216,7 @@ def _workout_view(row: dict[str, Any]) -> dict[str, Any]:
 @workout_tools.tool
 async def save_workout(ctx: RunContext[AgentDeps], workout: NewWorkout, reason: str) -> dict[str, Any]:
     """Save a workout to the library, when the athlete asks, so sessions can reuse it; a run goes
-    to the Garmin library too. `reason` goes in the coach's log."""
+    to the Garmin library too."""
     try:
         row = await workout_library.create(ctx.deps.z2, ctx.deps.db, _values(workout), ctx.deps.schedule)
     except HTTPException as e:
@@ -1180,9 +1228,8 @@ async def save_workout(ctx: RunContext[AgentDeps], workout: NewWorkout, reason: 
 @workout_tools.tool
 async def change_workout(ctx: RunContext[AgentDeps], workout_id: int, changes: WorkoutFields,
                          reason: str) -> dict[str, Any]:
-    """Change a saved workout, when the athlete asks: its name, description or steps. Upcoming
-    sessions planned from it take the new steps; past ones keep theirs. `reason` goes in the
-    coach's log."""
+    """Change a saved workout's name, description or steps, when the athlete asks. Upcoming
+    sessions planned from it take the new steps; past ones keep theirs."""
     before = await _saved_workout(ctx.deps.db, workout_id)
     values = _values(changes, exclude_unset=True)
     try:
@@ -1197,7 +1244,7 @@ async def change_workout(ctx: RunContext[AgentDeps], workout_id: int, changes: W
 @workout_tools.tool
 async def remove_workout(ctx: RunContext[AgentDeps], workout_id: int, reason: str) -> str:
     """Delete a saved workout and its Garmin copy, when the athlete asks. Sessions planned from it
-    stay in the calendar with their steps. `reason` goes in the coach's log."""
+    keep their steps."""
     workout = await _saved_workout(ctx.deps.db, workout_id)
     await workout_library.delete(ctx.deps.z2, ctx.deps.db, workout_id, ctx.deps.schedule)
     await coach_log.add(ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Deleted the workout {workout['name']}",

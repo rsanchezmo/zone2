@@ -21,7 +21,7 @@ async def record(db: aiosqlite.Connection, *, conversation_id: str, surface: str
     await db.commit()
 
 
-# Speech in and out has rows of its own (surface "voice"): it counts in the cost, not as turns
+# Transcription has rows of its own (surface "voice"): it counts in the cost, not as turns
 _TOTALS = """
     COALESCE(SUM(surface != 'voice'), 0) AS runs,
     COUNT(DISTINCT CASE WHEN surface != 'voice' THEN conversation_id END) AS conversations,

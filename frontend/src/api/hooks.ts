@@ -2389,12 +2389,15 @@ export interface CoachPlan extends Omit<CoachPlanSummary, 'sessions' | 'completi
   };
   sessions: CoachPlanSession[];
   checkpoints: PlanCheckpoint[];
+  /** What the coach keeps for this plan only, read with the plan rather than in every turn. */
+  agreements: CoachNote[];
   log: CoachLogEntry[];
 }
 
-export type CoachNoteTopic = 'kit' | 'body' | 'plan' | 'rules' | 'preferences';
+export type CoachNoteTopic = 'kit' | 'body' | 'rules' | 'preferences';
 
-export interface CoachNote { id: number; note: string; topic: CoachNoteTopic | null; added: string }
+/** A note about the athlete (`plan_id` null, with a topic), or an agreement of one plan. */
+export interface CoachNote { id: number; note: string; topic: CoachNoteTopic | null; plan_id: number | null; added: string }
 
 export function useCoachPlans() {
   return useQuery<CoachPlanSummary[]>({
@@ -2425,7 +2428,10 @@ export function useDeleteCoachNote() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (noteId: number) => api.delete(`/coach/notes/${noteId}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['coach-notes'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['coach-notes'] });
+      qc.invalidateQueries({ queryKey: ['coach-plan'] });
+    },
   });
 }
 
@@ -2443,15 +2449,13 @@ export function useUpdateSuggestion() {
 export interface AgentStatus {
   available: boolean;
   model: string;
-  /** A spoken question gets its reply read aloud. */
-  speak_replies: boolean;
   /** The coach's reviews of new activities since the chat was last opened. */
   unread: number;
 }
 
 export interface AgentModelOption { id: string; name: string; input_usd: number | null; output_usd: number | null }
 
-export interface AgentSettings { model: string; speak_replies: boolean; models: AgentModelOption[] }
+export interface AgentSettings { model: string; models: AgentModelOption[] }
 
 export function useAgentSettings() {
   return useQuery<AgentSettings>({
@@ -2464,7 +2468,7 @@ export function useAgentSettings() {
 export function useSetAgentSettings() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (update: { model?: string; speak_replies?: boolean; credit_usd?: number }) =>
+    mutationFn: (update: { model?: string; credit_usd?: number }) =>
       api.put<AgentSettings>('/agent/settings', update).then(r => r.data),
     onSuccess: data => {
       qc.setQueryData(['agent-settings'], data);
@@ -2514,6 +2518,13 @@ export function useMarkCoachSeen() {
   });
 }
 
+/** The chat opened: stale data starts syncing and the coach loads while the athlete types. */
+export function useOpenCoach() {
+  return useMutation({
+    mutationFn: () => api.post('/agent/open').then(r => r.data),
+  });
+}
+
 export function useAgentConversation(conversationId: string | null) {
   return useQuery<{ messages: AgentTranscriptItem[]; pending: AgentPendingWrite[] }>({
     queryKey: ['agent-conversation', conversationId],
@@ -2547,7 +2558,7 @@ export function refreshAfterAgentTurn(qc: QueryClient, turn: AgentTurn) {
  *  written), and the promise resolves with the whole turn. A message, or answers to pending writes. */
 export async function streamAgentTurn(
   path: 'chat' | 'approve',
-  body: { conversation_id: string; page: string; message?: string; approvals?: Record<string, boolean>; voice?: boolean },
+  body: { conversation_id: string; page: string; message?: string; approvals?: Record<string, boolean> },
   onEvent: (event: AgentStreamEvent) => void,
 ): Promise<AgentTurn> {
   const res = await fetch(`/api/agent/${path}`, {

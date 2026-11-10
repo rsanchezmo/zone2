@@ -5,9 +5,9 @@ import { useTheme } from '../hooks/useTheme'
 import PageHeader from '../components/shared/PageHeader'
 import PlanOverview from '../components/coach/PlanOverview'
 import { Checkpoints, PlanWeeks } from '../components/coach/PlanWeeks'
-import { CoachLog } from '../components/coach/CoachLog'
+import { CoachLog, PlanAgreements } from '../components/coach/CoachLog'
 
-/** One plan: its hero, the weekly trends, checkpoints, sessions and the coach's log. */
+/** One plan: its hero, the weekly trends, checkpoints and agreements, sessions and the coach's log. */
 export default function CoachPlanPage() {
   const { theme } = useTheme()
   const isLight = theme === 'light'
@@ -43,6 +43,7 @@ export default function CoachPlanPage() {
         <>
           <PlanOverview plan={plan} />
           <Checkpoints plan={plan} />
+          <PlanAgreements notes={plan.agreements} />
           <PlanWeeks plan={plan} />
           <CoachLog entries={plan.log} />
         </>

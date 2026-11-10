@@ -81,9 +81,16 @@ def _run_garmin_sync(z2: Zone2, full: bool, days: int = 14) -> None:
         _release(err, summary)
 
 
+# The catch-up running now, which a later caller waits for instead of starting another
+_catching_up: asyncio.Future[None] | None = None
+
+
 def catch_up(z2: Zone2, max_age: timedelta) -> asyncio.Future[None] | None:
     """Today's and yesterday's wellness when Garmin's last sync is older than `max_age`, the
-    client is logged in and no other Garmin sync is running."""
+    client is logged in and no other Garmin sync is running, or the catch-up already running."""
+    global _catching_up
+    if _catching_up is not None and not _catching_up.done():
+        return _catching_up
     if not z2.garmin_client.enabled:
         return None
     last = z2.garmin_cache.status()["last_sync_at"]
@@ -95,6 +102,7 @@ def catch_up(z2: Zone2, max_age: timedelta) -> asyncio.Future[None] | None:
     started = loop.time()
     synced = loop.run_in_executor(None, _run_garmin_sync, z2, False, 2)
     synced.add_done_callback(lambda _: logger.info("Garmin catch-up took %.1fs", loop.time() - started))
+    _catching_up = synced
     return synced
 
 
