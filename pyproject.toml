@@ -32,6 +32,9 @@ pyarrow = "^24.0.0"
 garminconnect = "^0.3.3"
 curl-cffi = "^0.15.0"
 h3 = "^4.1"
+pydantic-ai-slim = {extras = ["openai"], version = "^2.66.0"}
+pydantic-ai-harness = {extras = ["skills"], version = "^0.66.0"}
+python-multipart = "^0.0.33"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

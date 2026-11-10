@@ -1,0 +1,501 @@
+import { useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
+import clsx from 'clsx'
+import Markdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import {
+  refreshAfterAgentTurn, streamAgentTurn, useAgentConversation, useAgentStatus,
+  type AgentPendingWrite, type AgentStreamEvent, type AgentTranscriptItem, type AgentTurn,
+} from '../api/hooks'
+import { useTheme } from '../hooks/useTheme'
+import { useEscapeKey } from '../hooks/useEscapeKey'
+import { WhistleIcon } from '../components/icons'
+import { pageContext } from './pageContext'
+import { Speaker } from './speaker'
+
+// The app's one conversation with the coach (backend/agent/conversations.py MAIN)
+const CONVERSATION = 'coach'
+const EXPANDED_KEY = 'z2-agent-expanded'
+// The coach's own colour, the teal of its menu item; teal-600 keeps contrast on light surfaces
+const COACH = { dark: '#2dd4bf', light: '#0d9488' }
+
+/** Questions to start from, on an empty chat. */
+const STARTERS = [
+  'How is my plan going?',
+  'Review my last run',
+  'How recovered am I today?',
+  'What should I run this week?',
+]
+
+const WRITE_LABEL: Record<string, string> = {
+  add_session: 'Add a session',
+  change_session: 'Change a session',
+  remove_session: 'Remove a session',
+  create_plan: 'Create a plan',
+  change_plan: 'Change the plan',
+  link_sessions: 'Put sessions in the plan',
+  add_checkpoint: 'Add a checkpoint',
+  record_checkpoint: 'Record a checkpoint',
+  resync_watch: 'Send sessions to the watch again',
+  add_race: 'Add a race',
+  change_race: 'Change a race',
+  set_goal: 'Set a goal',
+  change_goal: 'Change a goal',
+  remove_goal: 'Remove a goal',
+}
+
+/** What each tool is doing, in words, while it runs. */
+const STEP_LABEL: Record<string, string> = {
+  today: 'Checking today',
+  athlete: 'Reading your zones',
+  find_activities: 'Searching your activities',
+  activity_detail: 'Opening the activity',
+  personal_records: 'Checking your records',
+  race_predictions: 'Checking race predictions',
+  fitness: 'Checking fitness and form',
+  weekly_volume: 'Adding up weekly km',
+  planned_sessions_between: 'Reading the calendar',
+  races: 'Reading the race calendar',
+  wellness: 'Reading Garmin wellness',
+  saved_workouts: 'Reading saved workouts',
+  workout_history: 'Finding past sessions like it',
+  plans_overview: 'Reading your plans',
+  plan_detail: 'Reading the plan',
+  goals: 'Reading your goals',
+  remember: 'Noting that',
+  forget: 'Forgetting a note',
+  log_entry: "Writing to the coach's log",
+}
+
+function stepLabel(tool: string, args?: Record<string, unknown>): string {
+  if (tool === 'load_capability') return `Reading the ${String(args?.id ?? '')} guide`.replace('  ', ' ')
+  return STEP_LABEL[tool] ?? WRITE_LABEL[tool] ?? tool
+}
+
+/** A transcript line while a turn runs: tool steps know whether they've finished. */
+type LiveItem = AgentTranscriptItem | { role: 'step'; tool: string; args?: Record<string, unknown>; running: boolean }
+type Step = Extract<LiveItem, { role: 'step' | 'tool' }>
+
+const SESSION_AT = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+
+type Group = { kind: 'user'; text: string } | { kind: 'agent'; text: string } | { kind: 'session'; at: string } | { kind: 'steps'; steps: Step[] }
+
+/** Consecutive tool steps grouped, so a finished turn's tools fold into one line. */
+function groups(items: LiveItem[]): Group[] {
+  const out: Group[] = []
+  for (const item of items) {
+    const last = out[out.length - 1]
+    if (item.role === 'session') out.push({ kind: 'session', at: item.at })
+    else if (item.role === 'user') out.push({ kind: 'user', text: item.text })
+    else if (item.role === 'agent') out.push({ kind: 'agent', text: item.text })
+    else if (last?.kind === 'steps') last.steps.push(item)
+    else out.push({ kind: 'steps', steps: [item] })
+  }
+  return out
+}
+
+function stored(key: string): string | null {
+  try { return localStorage.getItem(key) } catch { return null }
+}
+
+function store(key: string, value: string | null) {
+  try {
+    if (value) localStorage.setItem(key, value)
+    else localStorage.removeItem(key)
+  } catch { /* private mode: lasts this page load */ }
+}
+
+/** A one-line reading of a write, from its arguments. */
+function describe(write: AgentPendingWrite): string {
+  const a = write.args as Record<string, Record<string, unknown> | unknown>
+  const session = (a.session ?? a.changes) as Record<string, unknown> | undefined
+  const parts = [
+    session?.title, session?.date, a.session_id != null && `session ${a.session_id}`,
+    (a.plan as Record<string, unknown> | undefined)?.name, (a.race as Record<string, unknown> | undefined)?.name,
+    (a.race as Record<string, unknown> | undefined)?.date, a.title, a.day,
+  ].filter(Boolean)
+  if (a.changes && typeof a.changes === 'object') parts.push(Object.keys(a.changes).join(', '))
+  return parts.map(String).join(' · ')
+}
+
+function Waveform() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+      <path d="M4 10.5v3M8 7.5v9M12 4.5v15M16 7.5v9M20 10.5v3" />
+    </svg>
+  )
+}
+
+/** The agent on every page: a button bottom-right, and the conversation above it. */
+export default function AgentDock() {
+  const { theme } = useTheme()
+  const isLight = theme === 'light'
+  const qc = useQueryClient()
+  const location = useLocation()
+  const page = pageContext(location.pathname, location.search)
+  const { data: status } = useAgentStatus()
+  const [open, setOpen] = useState(false)
+  const [expanded, setExpanded] = useState(() => stored(EXPANDED_KEY) === '1')
+  const { data: history } = useAgentConversation(open ? CONVERSATION : null)
+  const [items, setItems] = useState<LiveItem[] | null>(null)
+  const [pending, setPending] = useState<AgentPendingWrite[] | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [thinking, setThinking] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [draft, setDraft] = useState('')
+  const [listening, setListening] = useState(false)
+  const [transcribing, setTranscribing] = useState(false)
+  const [speaking, setSpeaking] = useState(false)
+  const recorder = useRef<MediaRecorder | null>(null)
+  const pressedAt = useRef(0)
+  const speaker = useRef<Speaker | null>(null)
+  const scroller = useRef<HTMLDivElement>(null)
+  const input = useRef<HTMLTextAreaElement>(null)
+  useEscapeKey(open, () => setOpen(false))
+
+  const transcript: LiveItem[] = items ?? history?.messages ?? []
+  const waiting = pending ?? history?.pending ?? []
+  const offline = status != null && !status.available
+
+  // Follow the conversation as it grows, including a reply still being written
+  const last = transcript[transcript.length - 1]
+  const growth = `${transcript.length}:${last && 'text' in last ? last.text.length : 0}`
+  useEffect(() => {
+    scroller.current?.scrollTo({ top: scroller.current.scrollHeight })
+  }, [growth, waiting.length, busy, open, expanded])
+
+  function toggleExpanded() {
+    setExpanded(e => {
+      store(EXPANDED_KEY, e ? null : '1')
+      return !e
+    })
+  }
+
+  /** Fold one streamed event into the live transcript. */
+  function apply(event: AgentStreamEvent) {
+    if (event.type === 'thinking') return setThinking(true)
+    setThinking(false)
+    // Outside the state update, which React may run twice
+    if (event.type === 'text') speaker.current?.feed(event.delta)
+    setItems(prev => {
+      const next = [...(prev ?? [])]
+      const last = next[next.length - 1]
+      if (event.type === 'tool') next.push({ role: 'step', tool: event.tool, args: event.args, running: true })
+      else if (event.type === 'tool_done') {
+        const i = next.findIndex(it => it.role === 'step' && it.tool === event.tool && it.running)
+        if (i >= 0) next[i] = { ...(next[i] as Extract<LiveItem, { role: 'step' }>), running: false }
+      } else if (event.type === 'text') {
+        if (last?.role === 'agent') next[next.length - 1] = { role: 'agent', text: last.text + event.delta }
+        else next.push({ role: 'agent', text: event.delta })
+      }
+      return next
+    })
+  }
+
+  async function run(path: 'chat' | 'approve', body: Parameters<typeof streamAgentTurn>[1], before: LiveItem[]) {
+    speaker.current?.stop()
+    speaker.current = body.voice ? new Speaker(setSpeaking) : null
+    setItems(before)
+    setPending([])
+    setError(null)
+    setBusy(true)
+    setThinking(true)
+    try {
+      const turn: AgentTurn = await streamAgentTurn(path, body, apply)
+      speaker.current?.flush()
+      setPending(turn.pending)
+      refreshAfterAgentTurn(qc, turn)
+    } catch (e) {
+      speaker.current?.stop()
+      setError(e instanceof Error ? e.message : String(e))
+      // What ran before a failure is saved on the server: ask it what still waits, rather than
+      // offering the same yes again
+      if (path === 'approve') {
+        setPending(null)
+        qc.invalidateQueries({ queryKey: ['agent-conversation', CONVERSATION] })
+      }
+    } finally {
+      setBusy(false)
+      setThinking(false)
+    }
+  }
+
+  function send() {
+    const message = draft.trim()
+    if (!message || busy) return
+    setDraft('')
+    if (input.current) input.current.style.height = ''
+    run('chat', { message, conversation_id: CONVERSATION, page }, [...transcript, { role: 'user', text: message }])
+  }
+
+  function answer(approvals: Record<string, boolean>) {
+    if (busy) return
+    run('approve', { conversation_id: CONVERSATION, approvals, page, voice: speaker.current != null }, transcript)
+  }
+
+  /** Hold the mic to talk; a quick tap starts it, and the next tap sends. */
+  async function startListening() {
+    if (busy || listening || transcribing) return
+    setError(null)
+    speaker.current?.stop()
+    let stream: MediaStream
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    } catch {
+      setError('The coach needs your microphone: allow it in the browser to talk.')
+      return
+    }
+    const chunks: Blob[] = []
+    const rec = new MediaRecorder(stream)
+    rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
+    rec.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop())
+      const audio = new Blob(chunks, { type: rec.mimeType || 'audio/webm' })
+      if (audio.size < 1500) return
+      setTranscribing(true)
+      try {
+        const form = new FormData()
+        form.append('audio', audio, `speech.${audio.type.includes('mp4') ? 'mp4' : 'webm'}`)
+        const res = await fetch('/api/agent/transcribe', { method: 'POST', body: form })
+        const data = await res.json()
+        if (!res.ok) throw new Error(typeof data?.detail === 'string' ? data.detail : "Couldn't hear that")
+        const message = String(data.text ?? '').trim()
+        // Read aloud only when that's on (Profile); otherwise a spoken question gets a normal reply
+        if (message) run('chat', { message, conversation_id: CONVERSATION, page, voice: status?.speak_replies ?? true }, [...transcript, { role: 'user', text: message }])
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+      } finally {
+        setTranscribing(false)
+      }
+    }
+    rec.start()
+    recorder.current = rec
+    setListening(true)
+  }
+
+  function stopListening() {
+    recorder.current?.stop()
+    recorder.current = null
+    setListening(false)
+  }
+
+  const surface = isLight ? 'bg-white/95 border-gray-200 text-gray-900' : 'bg-surface-800/95 border-surface-600 text-gray-100'
+  const coach = isLight ? COACH.light : COACH.dark
+  const running = transcript.some(it => it.role === 'step' && it.running)
+  const writing = busy && transcript[transcript.length - 1]?.role === 'agent'
+
+  return (
+    <>
+      {open && (
+        <div
+          role="dialog"
+          aria-label="Coach"
+          className={clsx(
+            'fixed z-[90] rounded-2xl border backdrop-blur flex flex-col overflow-hidden shadow-2xl',
+            expanded
+              ? 'inset-x-2 top-2 bottom-20 sm:inset-x-auto sm:right-6 sm:top-6 sm:bottom-24 sm:w-[min(760px,calc(100vw-8rem))]'
+              : 'right-4 bottom-24 sm:right-6 w-[calc(100vw-2rem)] sm:w-[380px] h-[min(70vh,620px)]',
+            surface,
+          )}
+          style={{ ['--coach' as string]: coach, borderTopColor: coach, borderTopWidth: 2 }}
+        >
+          <div className={clsx('flex items-center gap-3 px-4 py-3 border-b', isLight ? 'border-gray-200' : 'border-surface-600')}>
+            <span className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: `${coach}22`, color: coach }} aria-hidden="true">
+              <WhistleIcon size={17} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="eyebrow" style={{ color: coach }}>Coach</div>
+              <div className="text-[11px] text-gray-500 truncate">on {page}</div>
+            </div>
+            <button
+              className="text-gray-500 hover:text-gray-300"
+              onClick={toggleExpanded}
+              aria-label={expanded ? 'Make the coach smaller' : 'Make the coach bigger'}
+              title={expanded ? 'Smaller' : 'Bigger'}
+            >
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                {expanded
+                  ? <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" />
+                  : <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />}
+              </svg>
+            </button>
+            {speaking && (
+              <button className="text-[11px] text-red-400 hover:text-red-300" onClick={() => speaker.current?.stop()}>Stop talking</button>
+            )}
+            <button className="text-gray-500 hover:text-gray-300 text-lg leading-none" aria-label="Close" onClick={() => setOpen(false)}>×</button>
+          </div>
+
+          <div ref={scroller} className={clsx('flex-1 overflow-y-auto px-4 py-3 space-y-3 leading-relaxed', expanded ? 'text-[14px]' : 'text-[13px]')}>
+            {transcript.length === 0 && !busy && (
+              offline ? (
+                <p className="text-[12px] text-gray-500">The coach isn't connected: there's no key for {status?.model}.</p>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-[12px] text-gray-500">Ask about your training, or tell it what to change: "I can't run Friday, move it".</p>
+                  <div className="flex flex-wrap gap-2">
+                    {STARTERS.map(q => (
+                      <button
+                        key={q}
+                        type="button"
+                        onClick={() => run('chat', { message: q, conversation_id: CONVERSATION, page }, [{ role: 'user', text: q }])}
+                        className="rounded-full border px-3 py-1 text-[12px] transition-colors hover:bg-[color-mix(in_srgb,var(--coach)_12%,transparent)]"
+                        style={{ borderColor: `${coach}55`, color: coach }}
+                      >{q}</button>
+                    ))}
+                  </div>
+                </div>
+              )
+            )}
+            {groups(transcript).map((group, g) => {
+              if (group.kind === 'user') return (
+                <div key={g} className="flex justify-end">
+                  <div
+                    className={clsx('max-w-[85%] rounded-2xl rounded-br-md px-3 py-2 whitespace-pre-wrap', isLight ? 'text-gray-900' : 'text-gray-50')}
+                    style={{ backgroundColor: `${coach}${isLight ? '1f' : '29'}` }}
+                  >{group.text}</div>
+                </div>
+              )
+              if (group.kind === 'session') return (
+                <div key={g} className="flex items-center gap-3 text-[10px] text-gray-500 pt-2" title="After a pause the coach starts fresh, from your notes and its log">
+                  <span className="flex-1 h-px bg-current opacity-20" aria-hidden="true" />
+                  New session · {SESSION_AT.format(new Date(group.at))}
+                  <span className="flex-1 h-px bg-current opacity-20" aria-hidden="true" />
+                </div>
+              )
+              if (group.kind === 'agent') return (
+                <div key={g} className="flex gap-2.5">
+                  <span className="w-6 h-6 mt-0.5 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: `${coach}22`, color: coach }} aria-hidden="true">
+                    <WhistleIcon size={13} />
+                  </span>
+                  <div className="agent-markdown min-w-0 flex-1">
+                    <Markdown remarkPlugins={[remarkGfm]}>{group.text}</Markdown>
+                  </div>
+                </div>
+              )
+              const live = busy && g === groups(transcript).length - 1
+              const lines = group.steps.map((step, i) => {
+                const running = step.role === 'step' && step.running
+                return (
+                  <div key={i} className={clsx('flex items-center gap-2 text-[11px]', running ? (isLight ? 'text-gray-700' : 'text-gray-300') : 'text-gray-500')}>
+                    <span className={clsx('w-1.5 h-1.5 rounded-full shrink-0', running ? 'bg-[var(--coach)] animate-pulse' : isLight ? 'bg-gray-300' : 'bg-surface-500')} aria-hidden="true" />
+                    {stepLabel(step.tool, step.role === 'step' ? step.args : undefined)}
+                  </div>
+                )
+              })
+              // Steps show one by one while they run, then fold into a line you can open
+              return live ? <div key={g} className="space-y-1">{lines}</div> : (
+                <details key={g} className="group text-[11px] text-gray-500">
+                  <summary className="cursor-pointer list-none flex items-center gap-2 hover:text-gray-300">
+                    <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-surface-500" aria-hidden="true" />
+                    {group.steps.length === 1 ? stepLabel(group.steps[0].tool, group.steps[0].role === 'step' ? group.steps[0].args : undefined) : `Looked at ${group.steps.length} things`}
+                    {group.steps.length > 1 && <span className="opacity-60 group-open:rotate-90 transition-transform">›</span>}
+                  </summary>
+                  {group.steps.length > 1 && <div className="mt-1 ml-3.5 space-y-1">{lines}</div>}
+                </details>
+              )
+            })}
+            {busy && !running && !writing && (
+              <div className="flex items-center gap-2 text-[11px] text-gray-500" aria-live="polite">
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--coach)] animate-pulse" aria-hidden="true" />
+                {thinking ? 'Thinking' : 'Working'}
+              </div>
+            )}
+            {waiting.length > 0 && !busy && (
+              <div className={clsx('rounded-xl border p-3 space-y-2', isLight ? 'border-amber-500/50' : 'border-amber-500/40')}>
+                <div className="eyebrow text-amber-500">Needs your yes</div>
+                {waiting.map(w => (
+                  <div key={w.id} className="space-y-1">
+                    <div className="text-[12px]">
+                      <span className="font-medium">{WRITE_LABEL[w.tool] ?? w.tool}</span>
+                      {describe(w) && <span className="text-gray-500"> · {describe(w)}</span>}
+                    </div>
+                    {typeof w.args.reason === 'string' && <div className="text-[11px] text-gray-500">{w.args.reason}</div>}
+                    {waiting.length > 1 && (
+                      <button
+                        className="text-[11px] text-gray-500 hover:text-[var(--coach)]"
+                        onClick={() => answer(Object.fromEntries(waiting.map(o => [o.id, o.id === w.id])))}
+                      >Yes to only this one</button>
+                    )}
+                  </div>
+                ))}
+                <div className="flex gap-4 pt-1 text-[12px]">
+                  <button className="font-medium text-[var(--coach)] hover:opacity-80" onClick={() => answer(Object.fromEntries(waiting.map(w => [w.id, true])))}>
+                    {waiting.length > 1 ? `Yes to all ${waiting.length}` : 'Yes'}
+                  </button>
+                  <button className="text-gray-500 hover:text-gray-300" onClick={() => answer(Object.fromEntries(waiting.map(w => [w.id, false])))}>No</button>
+                </div>
+              </div>
+            )}
+            {error && <div className="text-[12px] text-red-500">{error}</div>}
+          </div>
+
+          <form
+            className={clsx('border-t p-3 flex items-end gap-2', isLight ? 'border-gray-200' : 'border-surface-600')}
+            onSubmit={e => { e.preventDefault(); send() }}
+          >
+            <textarea
+              ref={input}
+              value={draft}
+              onChange={e => {
+                setDraft(e.target.value)
+                e.target.style.height = ''
+                e.target.style.height = `${e.target.scrollHeight}px`
+              }}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
+              rows={1}
+              placeholder={offline ? 'Not connected' : listening ? 'Listening… release to send' : transcribing ? 'Writing down what you said…' : 'Message or hold the mic to talk'}
+              disabled={offline}
+              className={clsx(
+                'flex-1 resize-none rounded-lg px-3 py-2 text-[13px] outline-none max-h-40 disabled:opacity-50',
+                'bg-surface-700 placeholder:text-gray-500',
+              )}
+            />
+            {draft.trim() ? (
+              <button type="submit" disabled={busy || offline} className="text-[12px] font-medium text-[var(--coach)] disabled:text-gray-500 px-1 py-2">Send</button>
+            ) : (
+              <button
+                type="button"
+                disabled={busy || offline || transcribing}
+                aria-label={listening ? 'Stop and send' : 'Hold to talk'}
+                title={listening ? 'Release, or tap, to send' : 'Hold to talk, or tap to start'}
+                aria-pressed={listening}
+                onPointerDown={e => {
+                  e.preventDefault()
+                  if (listening) return stopListening()
+                  pressedAt.current = Date.now()
+                  startListening()
+                }}
+                onPointerUp={() => { if (listening && Date.now() - pressedAt.current > 350) stopListening() }}
+                className={clsx(
+                  'w-9 h-9 shrink-0 rounded-full flex items-center justify-center transition-colors disabled:opacity-40 touch-none select-none',
+                  listening ? 'bg-red-500 text-white animate-pulse' : isLight ? 'text-gray-600 hover:bg-surface-700' : 'text-gray-300 hover:bg-surface-700',
+                )}
+              >
+                <Waveform />
+              </button>
+            )}
+          </form>
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-label={offline ? 'Coach, not connected' : open ? 'Close the coach' : 'Talk to the coach'}
+        title={offline ? `Not connected: no key for ${status?.model}` : 'Coach'}
+        aria-expanded={open}
+        className={clsx(
+          'fixed z-[90] right-4 bottom-4 sm:right-6 sm:bottom-6 w-14 h-14 rounded-full border backdrop-blur flex items-center justify-center transition-colors',
+          offline
+            ? 'bg-red-500/15 border-red-500/50 text-red-500'
+            : isLight ? 'bg-teal-50/95 border-teal-300 text-teal-700 hover:border-teal-500' : 'bg-teal-400/10 border-teal-400/40 text-teal-300 hover:border-teal-300/70',
+          (busy || speaking) && !open && 'animate-pulse',
+          speaking && 'ring-2 ring-teal-400/40',
+        )}
+      >
+        <WhistleIcon size={24} aria-hidden="true" />
+      </button>
+    </>
+  )
+}

@@ -2,10 +2,17 @@
 recovered you are (from Garmin, when connected), and a suggestion weighing them."""
 from __future__ import annotations
 
-from datetime import date
+import asyncio
+from datetime import date, timedelta
 from enum import StrEnum
 from typing import Any
 
+import aiosqlite
+
+from backend.services.resting_hr import resolve_resting_hr
+from backend.services.sessions import session_dict
+from backend.services.zones import resolve_hr_zones
+from zone2.core import Zone2
 from zone2.garmin_cache import GarminDailyStatsCache
 
 # A session aimed at zone 4 or above, or with pace targets or intervals, is hard
@@ -226,3 +233,32 @@ def suggest(sessions: list[dict], trained_today: bool, recovery: dict | None, fo
     if state is Recovery.OK:
         return {"tone": "info", "text": "Nothing planned: an easy run or a rest day both work."}
     return {"tone": "info", "text": "Nothing planned today."}
+
+
+async def today_briefing(z2: Zone2, db: aiosqlite.Connection, done: list[dict]) -> dict[str, Any]:
+    """Today at a glance: the planned sessions, what's already `done` (in the
+    caller's own activity shape), last night's recovery, current form, the
+    races close ahead, and a suggestion weighing them."""
+    today = date.today()
+    cur = await db.execute("SELECT * FROM training_sessions WHERE date = ? ORDER BY id", (today.isoformat(),))
+    sessions = [session_dict(r) for r in await cur.fetchall()]
+    recovery = await asyncio.to_thread(recovery_today, z2.garmin_cache, today)
+    zones = await resolve_hr_zones(z2, db)
+    rhr = await resolve_resting_hr(z2, db)
+    fitness = await asyncio.to_thread(z2.strava_analytics.get_fitness_form, rhr["value"], zones["zones"], [], 1)
+    # Today's row stands in for the plan until something is logged; form is yesterday's until then
+    now = next((d for d in reversed(fitness["series"]) if not d["projected"]), None)
+    form = {k: now[k] for k in ("date", "fitness", "fatigue", "form_pct")} if now else None
+    cur = await db.execute(
+        "SELECT date, name FROM race_events WHERE date BETWEEN ? AND ? ORDER BY date",
+        (today.isoformat(), (today + timedelta(days=RACE_SOON_DAYS)).isoformat()),
+    )
+    races = [{"date": r["date"], "name": r["name"]} for r in await cur.fetchall()]
+    return {
+        "date": today.isoformat(),
+        "sessions": sessions,
+        "done": done,
+        "recovery": recovery,
+        "form": form,
+        "suggestion": suggest(sessions, bool(done), recovery, form["form_pct"] if form else None, races, today),
+    }

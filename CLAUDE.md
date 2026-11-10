@@ -77,6 +77,7 @@ Zone2
 - `dependencies.py` — DI providing `Zone2` singleton
 - `config.py` — Pydantic settings (`workdir`, `cors_origins`, `sync_max_age_hours`)
 - `db.py` — SQLite via aiosqlite at `.strava/calendar.db` (tables: `training_sessions`, `goals`, `workout_templates`)
+- `agent/` — the z2 agent (Pydantic AI): one agent for every page that answers from your data and, with your approval, writes to it. `backend/agent/README.md` has the design, layout, build order and how to run it. Its tools call `backend/services/`, never routers; `python -m backend.agent call TOOL '{json}'` runs a tool without a model. The app imports nothing from Pydantic AI at startup (it costs ~60 MB on the Pi)
 
 **Frontend** (`frontend/`): React 19 + TypeScript + Vite SPA:
 - **Stack**: TailwindCSS 4, React Router 7, TanStack React Query, Recharts, Leaflet

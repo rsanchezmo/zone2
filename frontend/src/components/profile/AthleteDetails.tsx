@@ -27,7 +27,7 @@ export default function AthleteDetails({ profile, totalActivities }: { profile: 
 // InfoTile — a clean detail tile for the athlete info strip
 // ────────────────────────────────────────────────────────
 
-function InfoTile({ label, value, unit, compact }: { label: string; value: string | number; unit?: string; compact?: boolean }) {
+export function InfoTile({ label, value, unit, compact }: { label: string; value: string | number; unit?: string; compact?: boolean }) {
   const { theme } = useTheme()
   const isLight = theme === 'light'
   return (

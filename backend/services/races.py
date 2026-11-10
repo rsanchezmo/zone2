@@ -1,9 +1,11 @@
+import asyncio
 import sqlite3
 from contextlib import closing
 
 import pandas as pd
 
 from backend.db import DB_PATH
+from backend.services.stats_cache import clear_stats_cache
 from zone2.core import Zone2
 from zone2.utils import get_sport_category
 
@@ -31,6 +33,13 @@ def race_activity_ids(activities: pd.DataFrame, events: list[tuple[str, str, flo
         if not candidates.empty:
             ids.add(int(candidates.loc[off.idxmin(), 'id']))
     return frozenset(ids)
+
+
+async def races_changed(z2: Zone2) -> None:
+    """After a race calendar change: re-point the analytics at the races, and drop the stats
+    built on the old set."""
+    if await asyncio.to_thread(refresh_race_activities, z2):
+        clear_stats_cache()
 
 
 def refresh_race_activities(z2: Zone2) -> bool:

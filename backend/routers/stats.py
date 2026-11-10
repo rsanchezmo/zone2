@@ -5,9 +5,10 @@ from fastapi import APIRouter, Depends, Query, Response
 from starlette.concurrency import run_in_threadpool
 import aiosqlite
 
-from backend._ttl_cache import TTLCache
 from backend.db import get_db
 from backend.dependencies import get_z2
+from backend.services import training
+from backend.services.stats_cache import stats_cache as _stats_cache
 from backend.services.zones import resolve_hr_zones
 from backend.services.resting_hr import resolve_resting_hr
 from zone2.core import Zone2
@@ -15,10 +16,6 @@ from zone2.utils import df_rows, get_sport_category, previous_week
 
 router = APIRouter()
 
-# Single TTL cache for all stats endpoints. Keys are tuples
-# (endpoint, *params, cache_version) so entries self-invalidate when the
-# underlying activities dataset changes.
-_stats_cache = TTLCache(maxsize=256, ttl_seconds=900)
 
 
 def _cached_json(endpoint):
@@ -38,12 +35,6 @@ async def _cached_json_in_threadpool(key: tuple, build) -> Response:
     """_stats_cache.json_response for async endpoints: the build is blocking
     pandas work, so it runs off the event loop."""
     return await run_in_threadpool(_stats_cache.json_response, key + (date.today(),), build)
-
-
-def clear_stats_cache():
-    """Call after sync to drop cached reports immediately (TTL + cache_version
-    also handle this lazily — this just reclaims memory sooner)."""
-    _stats_cache.clear()
 
 
 def _serialize_enum_dict(d: dict) -> dict:
@@ -370,39 +361,7 @@ def weekly_totals(
     z2: Zone2 = Depends(get_z2),
 ):
     """Total distance (km) and activity count per week for the last N weeks."""
-    activities = z2.strava_activities_cache.get_prepared_view()
-    if activities.empty:
-        return {"data": [], "weeks": weeks, "sport_type": sport_type}
-
-    if sport_type:
-        activities = activities[activities["sport_type"] == sport_type]
-        if activities.empty:
-            return {"data": [], "weeks": weeks, "sport_type": sport_type}
-
-    today = date.today()
-    # Find Monday of the current week
-    current_monday = today - timedelta(days=today.weekday())
-    # Go back N-1 weeks (current week counts as week 1)
-    start_monday = current_monday - timedelta(weeks=weeks - 1)
-
-    result = []
-    monday = start_monday
-    for _ in range(weeks):
-        sunday = monday + timedelta(days=6)
-        mask = (activities["start_date_local"].dt.date >= monday) & (
-            activities["start_date_local"].dt.date <= sunday
-        )
-        week_acts = activities[mask]
-        result.append({
-            "week_start": monday.isoformat(),
-            "week_end": sunday.isoformat(),
-            "week_label": monday.strftime("%b %d"),
-            "total_distance_km": round(float(week_acts["distance"].sum() / 1000.0), 2),
-            "total_activities": int(len(week_acts)),
-        })
-        monday += timedelta(weeks=1)
-
-    return {"data": result, "weeks": weeks, "sport_type": sport_type}
+    return training.weekly_totals(z2, weeks, sport_type)
 
 
 @router.get("/race-predictions")
@@ -477,33 +436,5 @@ async def fitness_form(
     z2: Zone2 = Depends(get_z2),
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    """Fitness, fatigue and form over the last `days`, projected over the planned
-    sessions ahead, with the races in that span and Garmin's own acute and
-    chronic load alongside."""
-    resolved_zones = await resolve_hr_zones(z2, db)
-    resolved_rhr = await resolve_resting_hr(z2, db)
-    today = date.today().isoformat()
-    cur = await db.execute(
-        "SELECT date, sport_type, planned_distance_km, planned_duration_mins FROM training_sessions WHERE date >= ?",
-        (today,),
-    )
-    planned = [dict(r) for r in await cur.fetchall()]
-    result = await run_in_threadpool(
-        z2.strava_analytics.get_fitness_form,
-        resolved_rhr["value"], resolved_zones["zones"], planned, days,
-    )
-    series = result["series"]
-    if not series:
-        return {**result, "races": [], "garmin": []}
-    start, end = series[0]["date"], series[-1]["date"]
-    cur = await db.execute(
-        "SELECT date, name FROM race_events WHERE date BETWEEN ? AND ? ORDER BY date", (start, end),
-    )
-    races = [{"date": r["date"], "name": r["name"]} for r in await cur.fetchall()]
-    garmin_rows = await run_in_threadpool(z2.garmin_cache.get_summary_range, "training_status", start, today)
-    garmin = [
-        {"date": r["date"], "acute": r["summary"].get("daily_load_acute"), "chronic": r["summary"].get("daily_load_chronic")}
-        for r in garmin_rows
-        if r["summary"].get("daily_load_chronic") is not None
-    ]
-    return {**result, "races": races, "garmin": garmin}
+    """Fitness, fatigue and form over the last `days` (see `training.fitness_form`)."""
+    return await training.fitness_form(z2, db, days)

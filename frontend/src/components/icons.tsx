@@ -111,6 +111,18 @@ export function CheckIcon(p: IconProps) {
   )
 }
 
+/** The coach: a whistle, kept apart from the waveform that means talking. */
+export function WhistleIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="6" cy="9.5" r="3.5" />
+      <path d="M6 6h8.5v3H9.4" />
+      <circle cx="6" cy="9.5" r="0.75" fill="currentColor" stroke="none" />
+      <path d="M3.6 6.9L2 5.3" />
+    </Svg>
+  )
+}
+
 // ── Metric icons (session / goal / score) ───────────
 
 export function DistanceIcon(p: IconProps) {

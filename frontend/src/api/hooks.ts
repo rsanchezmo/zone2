@@ -2255,3 +2255,301 @@ export function useUncoveredEdges(slug?: string, bbox?: string) {
     placeholderData: keepPreviousData,
   });
 }
+
+// Agent
+
+export interface AgentUsageTotals {
+  runs: number;
+  conversations: number;
+  requests: number;
+  tool_calls: number;
+  /** Cached tokens included. */
+  input_tokens: number;
+  cache_read_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  /** Runs on a model without a known price: their cost is missing from `cost_usd`. */
+  unpriced_runs: number;
+}
+
+export interface AgentUsage {
+  model: string;
+  /** Counting down from the last top-up entered on the Profile page; null until one is. */
+  credit: { added_usd: number; since: string; spent_usd: number; left_usd: number } | null;
+  all_time: AgentUsageTotals;
+  this_month: AgentUsageTotals;
+  /** Only days the agent ran, oldest first. */
+  days: { date: string; runs: number; input_tokens: number; output_tokens: number; cost_usd: number }[];
+  models: { model: string; runs: number; input_tokens: number; output_tokens: number; cost_usd: number }[];
+}
+
+export function useAgentUsage(days: number) {
+  return useQuery<AgentUsage>({
+    queryKey: ['agent-usage', days],
+    queryFn: () => api.get('/agent/usage', { params: { days } }).then(r => r.data),
+    staleTime: 1000 * 60 * 5,
+  });
+}
+
+// Coach
+
+export interface PlanPhase { name: string; start: string; end: string; target_km: number | null }
+
+export interface CoachPlanSummary {
+  id: number;
+  name: string;
+  status: 'active' | 'done' | 'abandoned';
+  goal: string | null;
+  goal_time_s: number | null;
+  start_date: string;
+  end_date: string;
+  race: RaceEvent | null;
+  sessions: { total: number; due: number; done: number; completion_pct: number | null };
+  completion_pct: number | null;
+  average_score: number | null;
+  days_to_race: number;
+  phase: string | null;
+  /** z2's prediction now for the race distance. */
+  prediction_s: number | null;
+  /** The race time, once run. */
+  result_s: number | null;
+}
+
+export interface CoachPlanSession {
+  id: number;
+  date: string;
+  title: string;
+  sport_type: string;
+  description: string | null;
+  planned_distance_km: number | null;
+  planned_intensity: string | null;
+  garmin_sync_state: string | null;
+  done: boolean;
+  /** Execution score against the session's targets; null when it has none or nothing matched. */
+  score: number | null;
+  activity_id: number | null;
+}
+
+export interface PlanCheckpoint {
+  id: number;
+  date: string;
+  title: string;
+  /** The decision thresholds, agreed before the checkpoint. */
+  rule: string;
+  session_id: number | null;
+  result: string | null;
+  decision: string | null;
+}
+
+export type CoachLogKind = 'review' | 'change' | 'decision' | 'suggestion' | 'summary';
+
+export interface CoachLogEntry {
+  id: number;
+  plan_id: number | null;
+  date: string;
+  kind: CoachLogKind;
+  title: string;
+  body: string | null;
+  session_id: number | null;
+  activity_id: number | null;
+  /** Suggestions only. */
+  status: 'open' | 'done' | 'dismissed' | null;
+  created_at: string;
+}
+
+export interface CoachPlan extends Omit<CoachPlanSummary, 'sessions' | 'completion_pct' | 'average_score' | 'days_to_race' | 'phase' | 'prediction_s' | 'result_s'> {
+  summary: string | null;
+  phases: PlanPhase[] | null;
+  progress: {
+    today: string;
+    days_to_race: number;
+    phase: string | null;
+    sessions: { total: number; due: number; done: number; completion_pct: number | null };
+    score: { average: number | null; scored: number };
+    weeks: { week_start: string; phase: string | null; target_km: number | null; planned_km: number; done_km: number | null }[];
+    prediction: {
+      distance: string;
+      goal_s: number | null;
+      now_s: number | null;
+      range_s: [number | null, number | null];
+      z2: { date: string; time_s: number }[];
+      garmin: { date: string; time_s: number }[];
+    } | null;
+    form: { date: string; fitness: number; fatigue: number; form_pct: number } | null;
+    /** The race itself, once run. */
+    result: { activity_id: number | null; time_s: number | null; distance_km: number | null } | null;
+  };
+  sessions: CoachPlanSession[];
+  checkpoints: PlanCheckpoint[];
+  log: CoachLogEntry[];
+}
+
+export type CoachNoteTopic = 'kit' | 'body' | 'plan' | 'rules' | 'preferences';
+
+export interface CoachNote { id: number; note: string; topic: CoachNoteTopic | null; added: string }
+
+export function useCoachPlans() {
+  return useQuery<CoachPlanSummary[]>({
+    queryKey: ['coach-plans'],
+    queryFn: () => api.get('/coach/plans').then(r => r.data),
+    staleTime: 1000 * 60 * 5,
+  });
+}
+
+export function useCoachPlan(planId: number | undefined) {
+  return useQuery<CoachPlan>({
+    queryKey: ['coach-plan', planId],
+    queryFn: () => api.get(`/coach/plans/${planId}`).then(r => r.data),
+    enabled: planId != null,
+    staleTime: 1000 * 60 * 5,
+  });
+}
+
+export function useCoachNotes() {
+  return useQuery<CoachNote[]>({
+    queryKey: ['coach-notes'],
+    queryFn: () => api.get('/coach/notes').then(r => r.data),
+    staleTime: 1000 * 60 * 5,
+  });
+}
+
+export function useDeleteCoachNote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (noteId: number) => api.delete(`/coach/notes/${noteId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['coach-notes'] }),
+  });
+}
+
+export function useUpdateSuggestion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, status }: { id: number; status: 'done' | 'dismissed' | 'open' }) =>
+      api.put(`/coach/log/${id}`, { status }).then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['coach-plan'] }),
+  });
+}
+
+// Agent chat
+
+export interface AgentStatus {
+  available: boolean;
+  model: string;
+  /** A spoken question gets its reply read aloud. */
+  speak_replies: boolean;
+}
+
+export interface AgentModelOption { id: string; name: string; input_usd: number | null; output_usd: number | null }
+
+export interface AgentSettings { model: string; speak_replies: boolean; models: AgentModelOption[] }
+
+export function useAgentSettings() {
+  return useQuery<AgentSettings>({
+    queryKey: ['agent-settings'],
+    queryFn: () => api.get('/agent/settings').then(r => r.data),
+    staleTime: 1000 * 60 * 60,
+  });
+}
+
+export function useSetAgentSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (update: { model?: string; speak_replies?: boolean; credit_usd?: number }) =>
+      api.put<AgentSettings>('/agent/settings', update).then(r => r.data),
+    onSuccess: data => {
+      qc.setQueryData(['agent-settings'], data);
+      qc.invalidateQueries({ queryKey: ['agent-status'] });
+      qc.invalidateQueries({ queryKey: ['agent-usage'] });
+    },
+  });
+}
+
+export interface AgentPendingWrite { id: string; tool: string; args: Record<string, unknown> }
+
+export type AgentTranscriptItem =
+  | { role: 'user'; text: string }
+  | { role: 'agent'; text: string }
+  | { role: 'tool'; tool: string }
+  /** A new session began here, after a pause: the coach started fresh from your notes and log. */
+  | { role: 'session'; at: string };
+
+export interface AgentTurn {
+  conversation_id: string;
+  reply: string | null;
+  tools: { tool: string; args: Record<string, unknown> }[];
+  /** Writes waiting for a yes or no. */
+  pending: AgentPendingWrite[];
+  /** A write or a note ran, so pages showing that data refresh. */
+  changed: boolean;
+  usage: { input_tokens: number; output_tokens: number; cost_usd: number | null };
+}
+
+export function useAgentStatus() {
+  return useQuery<AgentStatus>({
+    queryKey: ['agent-status'],
+    queryFn: () => api.get('/agent/status').then(r => r.data),
+    staleTime: 1000 * 60 * 5,
+  });
+}
+
+export function useAgentConversation(conversationId: string | null) {
+  return useQuery<{ messages: AgentTranscriptItem[]; pending: AgentPendingWrite[] }>({
+    queryKey: ['agent-conversation', conversationId],
+    queryFn: () => api.get(`/agent/conversations/${conversationId}`).then(r => r.data),
+    enabled: conversationId != null,
+    staleTime: Infinity,
+  });
+}
+
+export type AgentStreamEvent =
+  | { type: 'thinking' }
+  | { type: 'tool'; tool: string; args: Record<string, unknown> }
+  | { type: 'tool_done'; tool: string }
+  | { type: 'text'; delta: string }
+  | { type: 'done'; turn: AgentTurn }
+  | { type: 'error'; detail: string };
+
+/** After a turn: refresh the cost, and whatever a write or a note may have changed on screen. */
+export function refreshAfterAgentTurn(qc: QueryClient, turn: AgentTurn) {
+  qc.invalidateQueries({ queryKey: ['agent-usage'] });
+  if (turn.changed) qc.invalidateQueries({ predicate: q => !String(q.queryKey[0]).startsWith('agent-') });
+}
+
+/** One agent turn, streamed as it runs: `onEvent` sees each step (tools, the reply as it is
+ *  written), and the promise resolves with the whole turn. A message, or answers to pending writes. */
+export async function streamAgentTurn(
+  path: 'chat' | 'approve',
+  body: { conversation_id: string; page: string; message?: string; approvals?: Record<string, boolean>; voice?: boolean },
+  onEvent: (event: AgentStreamEvent) => void,
+): Promise<AgentTurn> {
+  const res = await fetch(`/api/agent/${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok || !res.body) {
+    const detail = await res.json().then(d => d?.detail).catch(() => null);
+    throw new Error(typeof detail === 'string' ? detail : `The coach didn't answer (${res.status})`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let turn: AgentTurn | null = null;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let cut;
+    while ((cut = buffer.indexOf('\n\n')) >= 0) {
+      const data = buffer.slice(0, cut).split('\n').filter(l => l.startsWith('data: ')).map(l => l.slice(6)).join('\n');
+      buffer = buffer.slice(cut + 2);
+      if (!data) continue;
+      const event = JSON.parse(data) as AgentStreamEvent;
+      if (event.type === 'error') throw new Error(event.detail);
+      if (event.type === 'done') turn = event.turn;
+      onEvent(event);
+    }
+  }
+  if (!turn) throw new Error('The coach stopped before it finished.');
+  return turn;
+}

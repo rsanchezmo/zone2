@@ -23,6 +23,14 @@ class Settings(BaseSettings):
     # frontend falls back to keyless OSM tiles when this is unset.
     # Free key (no account needed): https://carto.com/basemaps/apikey
     carto_api_key: str | None = None
+    # The agent's model, as a Pydantic AI model string. OpenAI reads
+    # OPENAI_API_KEY; a local model runs through Ollama ("ollama:<model>",
+    # with OLLAMA_BASE_URL).
+    agent_model: str = "openai:gpt-6-luna"
+    # Voice around the agent: speech to text, and text to speech
+    agent_transcribe_model: str = "gpt-4o-mini-transcribe"
+    agent_speech_model: str = "gpt-4o-mini-tts"
+    agent_voice: str = "ash"
 
     model_config = {"env_prefix": "STRAVA_WEB_", "env_file": ".env", "extra": "ignore"}
 

@@ -6,23 +6,20 @@ from starlette.concurrency import run_in_threadpool
 import aiosqlite
 import pandas as pd
 
-from backend._serialize import sanitize as _sanitize
-from backend.db import delete_row, get_db, insert_row, row_dict, update_row
+from backend.db import get_db
 from backend.dependencies import get_z2
-from backend.scoring import match_activity, compute_execution_score, has_targets
+from backend.scoring import compute_execution_score, has_targets
 from backend.routers.activities import activities_on_dates
-from backend.services import garmin_workouts, workout_library
-from backend.services.briefing import RACE_SOON_DAYS, recovery_today, suggest
-from backend.services.resting_hr import resolve_resting_hr
+from backend.services import garmin_workouts, sessions as planned_sessions
+from backend.services.briefing import today_briefing
+from backend.services.session_scores import accomplished, activities_by_day, score_sessions, session_matches
+from backend.services.sessions import session_dict
 from backend.services.zones import resolve_hr_zones, set_setting
 from zone2.core import Zone2
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-_JSON_COLS = ("segments",)
-
 
 class SessionCreate(BaseModel):
     date: str  # YYYY-MM-DD
@@ -59,39 +56,11 @@ class SessionUpdate(BaseModel):
     completed: bool | None = None
 
 
-def _row_to_dict(row: aiosqlite.Row) -> dict:
-    return row_dict(row, json_cols=_JSON_COLS, bool_cols=("completed",))
-
-
 @router.get("/briefing")
 async def briefing(z2: Zone2 = Depends(get_z2), db: aiosqlite.Connection = Depends(get_db)):
-    """Today at a glance for the top of the calendar: the planned sessions,
-    what's already done, last night's recovery (Garmin), current form and a
-    suggestion weighing them."""
-    today = date.today()
-    cur = await db.execute("SELECT * FROM training_sessions WHERE date = ? ORDER BY id", (today.isoformat(),))
-    sessions = [_row_to_dict(r) for r in await cur.fetchall()]
-    done = (await run_in_threadpool(activities_on_dates, today.isoformat(), z2))["items"]
-    recovery = await run_in_threadpool(recovery_today, z2.garmin_cache, today)
-    zones = await resolve_hr_zones(z2, db)
-    rhr = await resolve_resting_hr(z2, db)
-    fitness = await run_in_threadpool(z2.strava_analytics.get_fitness_form, rhr["value"], zones["zones"], [], 1)
-    # Today's row stands in for the plan until something is logged; form is yesterday's until then
-    now = next((d for d in reversed(fitness["series"]) if not d["projected"]), None)
-    form = {k: now[k] for k in ("date", "fitness", "fatigue", "form_pct")} if now else None
-    cur = await db.execute(
-        "SELECT date, name FROM race_events WHERE date BETWEEN ? AND ? ORDER BY date",
-        (today.isoformat(), (today + timedelta(days=RACE_SOON_DAYS)).isoformat()),
-    )
-    races = [{"date": r["date"], "name": r["name"]} for r in await cur.fetchall()]
-    return {
-        "date": today.isoformat(),
-        "sessions": sessions,
-        "done": done,
-        "recovery": recovery,
-        "form": form,
-        "suggestion": suggest(sessions, bool(done), recovery, form["form_pct"] if form else None, races, today),
-    }
+    """Today at a glance for the top of the calendar (see `today_briefing`)."""
+    done = (await run_in_threadpool(activities_on_dates, date.today().isoformat(), z2))["items"]
+    return await today_briefing(z2, db, done)
 
 
 @router.get("/sessions")
@@ -106,64 +75,7 @@ async def list_sessions(
     else:
         cursor = await db.execute("SELECT * FROM training_sessions ORDER BY date")
     rows = await cursor.fetchall()
-    return [_row_to_dict(row) for row in rows]
-
-
-_SCORING_COLUMNS = ("id", "sport_type", "distance", "moving_time", "average_speed",
-                    "start_date_local", "average_heartrate")
-
-
-def _activity_row_to_dict(row: pd.Series | dict) -> dict:
-    """Minimal activity dict for scoring. Streams are fetched separately
-    via the cache's StreamsStore — not attached to this dict."""
-    d = {}
-    for col in _SCORING_COLUMNS:
-        if col in row:
-            d[col] = _sanitize(row[col])
-    if d.get("distance") is not None:
-        d["distance_km"] = round(d["distance"] / 1000, 3)
-    return d
-
-
-def _activities_by_day(z2: Zone2, date_from: str, date_to: str) -> dict[str, list[dict]]:
-    """Bucket cached activities within [date_from, date_to] (inclusive) by local day."""
-    cache = z2.strava_activities_cache
-    activities_df = cache.get_prepared_view()
-    if activities_df.empty:
-        return {}
-    activities_df = activities_df[cache.days_mask(date_from, date_to)]
-
-    activity_map: dict[str, list[dict]] = {}
-    records = activities_df[[c for c in _SCORING_COLUMNS if c in activities_df.columns]].to_dict("records")
-    for date_str, record in zip(activities_df["start_date_local"].dt.strftime("%Y-%m-%d"), records):
-        activity_map.setdefault(date_str, []).append(_activity_row_to_dict(record))
-    return activity_map
-
-
-def _session_matches(sessions: list[dict], activity_map: dict[str, list[dict]]) -> list[tuple[dict, dict]]:
-    """(session, activity) for each session an activity on its day matches."""
-    pairs = []
-    for session in sessions:
-        matched = match_activity(session, activity_map.get(session["date"], []))
-        if matched is not None:
-            pairs.append((session, matched))
-    return pairs
-
-
-def _score_sessions(z2: Zone2, sessions: list[dict], date_from: str, date_to: str,
-                    hr_zones: list | None) -> dict[int, dict | None]:
-    """Execution score per session, None when no activity matches it."""
-    pairs = _session_matches(sessions, _activities_by_day(z2, date_from, date_to))
-
-    # Bulk-load only the matched activities' streams.
-    matched_ids = [m["id"] for _, m in pairs if m.get("id") is not None]
-    streams_map = z2.strava_activities_cache.get_streams_bulk(matched_ids) if matched_ids else {}
-
-    result: dict[int, dict | None] = {s["id"]: None for s in sessions}
-    for session, matched in pairs:
-        streams = streams_map.get(int(matched["id"])) if matched.get("id") is not None else None
-        result[session["id"]] = compute_execution_score(session, matched, hr_zones, streams)
-    return result
+    return [session_dict(row) for row in rows]
 
 
 def _activity_day(z2: Zone2, activity_id: int) -> str | None:
@@ -178,7 +90,7 @@ def _activity_day(z2: Zone2, activity_id: int) -> str | None:
 def _score_activity(z2: Zone2, activity_id: int, date_str: str, sessions: list[dict],
                     hr_zones: list | None) -> dict | None:
     """Score of the session the calendar matches this activity to, if any."""
-    for session, matched in _session_matches(sessions, _activities_by_day(z2, date_str, date_str)):
+    for session, matched in session_matches(sessions, activities_by_day(z2, date_str, date_str)):
         if matched.get("id") is not None and int(matched["id"]) == activity_id:
             streams = z2.strava_activities_cache.get_streams(activity_id)
             return {"session": session, "score": compute_execution_score(session, matched, hr_zones, streams)}
@@ -198,7 +110,7 @@ async def get_session_scores(
         (date_from, date_to),
     )
     rows = await cursor.fetchall()
-    sessions = [_row_to_dict(row) for row in rows]
+    sessions = [session_dict(row) for row in rows]
 
     sessions_with_targets = [s for s in sessions if has_targets(s)]
     if not sessions_with_targets:
@@ -210,7 +122,7 @@ async def get_session_scores(
     except Exception as e:
         logger.debug("Could not load HR zones for scoring: %s", e)
 
-    return await run_in_threadpool(_score_sessions, z2, sessions_with_targets, date_from, date_to, hr_zones)
+    return await run_in_threadpool(score_sessions, z2, sessions_with_targets, date_from, date_to, hr_zones)
 
 
 @router.get("/sessions/accomplishment")
@@ -233,7 +145,7 @@ async def get_plan_accomplishment(
         "SELECT * FROM training_sessions WHERE date <= ? ORDER BY date", (today,),
     )
     rows = await cursor.fetchall()
-    sessions = [_row_to_dict(row) for row in rows]
+    sessions = [session_dict(row) for row in rows]
     if not sessions:
         return {
             "total_planned": 0, "total_completed": 0, "rate": None,
@@ -241,23 +153,19 @@ async def get_plan_accomplishment(
             "window_days": window_days,
         }
 
-    activity_map = await run_in_threadpool(_activities_by_day, z2, sessions[0]["date"], today)
+    activity_map = await run_in_threadpool(activities_by_day, z2, sessions[0]["date"], today)
     recent_from = (now - timedelta(days=window_days)).strftime("%Y-%m-%d")
 
     total = completed = recent_total = recent_completed = 0
     for session in sessions:
-        day_activities = activity_map.get(session["date"], [])
-        if session["sport_type"].lower() == "rest":
-            accomplished = len(day_activities) == 0
-        else:
-            accomplished = session["completed"] or match_activity(session, day_activities) is not None
-        if session["date"] == today and not accomplished:
+        done = accomplished(session, activity_map.get(session["date"], []))
+        if session["date"] == today and not done:
             continue
         total += 1
         recent = session["date"] >= recent_from
         if recent:
             recent_total += 1
-        if accomplished:
+        if done:
             completed += 1
             if recent:
                 recent_completed += 1
@@ -288,7 +196,7 @@ async def get_score_by_activity(
         "SELECT * FROM training_sessions WHERE date = ? ORDER BY id", (date_str,),
     )
     rows = await cursor.fetchall()
-    sessions_with_targets = [s for s in (_row_to_dict(r) for r in rows) if has_targets(s)]
+    sessions_with_targets = [s for s in (session_dict(r) for r in rows) if has_targets(s)]
     if not sessions_with_targets:
         return None
 
@@ -301,23 +209,6 @@ async def get_score_by_activity(
     return await run_in_threadpool(_score_activity, z2, activity_id, date_str, sessions_with_targets, hr_zones)
 
 
-async def _link_saved_workout(tasks: BackgroundTasks, z2: Zone2, db: aiosqlite.Connection, session: dict) -> dict:
-    """Link the session to its saved workout, saving a new one to the library (and Garmin) when needed."""
-    session, created = await workout_library.link_session(db, session)
-    if created:
-        tasks.add_task(garmin_workouts.sync_library, z2)
-    return session
-
-
-async def _queue_watch_sync(tasks: BackgroundTasks, z2: Zone2, db: aiosqlite.Connection, session: dict,
-                            previous_date: str | None = None) -> dict:
-    """Queue the change the session's Garmin calendar entry needs, if any, and return the session as it now stands."""
-    if await garmin_workouts.mark_pending(z2, db, session, previous_date):
-        tasks.add_task(garmin_workouts.sync_session, z2, session["id"])
-        return {**session, "garmin_sync_state": garmin_workouts.SyncState.PENDING}
-    return session
-
-
 @router.post("/sessions", status_code=201)
 async def create_session(
     session: SessionCreate,
@@ -325,11 +216,7 @@ async def create_session(
     db: aiosqlite.Connection = Depends(get_db),
     z2: Zone2 = Depends(get_z2),
 ):
-    values = session.model_dump()
-    values["segments"] = values["segments"] or None
-    row = _row_to_dict(await insert_row(db, "training_sessions", values, json_cols=_JSON_COLS))
-    row = await _link_saved_workout(tasks, z2, db, row)
-    return await _queue_watch_sync(tasks, z2, db, row)
+    return await planned_sessions.create(z2, db, session.model_dump(), tasks.add_task)
 
 
 @router.put("/sessions/{session_id}")
@@ -340,14 +227,7 @@ async def update_session(
     db: aiosqlite.Connection = Depends(get_db),
     z2: Zone2 = Depends(get_z2),
 ):
-    before = await (await db.execute("SELECT date FROM training_sessions WHERE id = ?", (session_id,))).fetchone()
-    values = update.model_dump(exclude_unset=True)
-    row = _row_to_dict(await update_row(db, "training_sessions", session_id, values, "Session not found",
-                                        json_cols=_JSON_COLS))
-    # Only a change of steps relinks, so marking a session done can't resave a deleted workout
-    if "segments" in values or "sport_type" in values:
-        row = await _link_saved_workout(tasks, z2, db, row)
-    return await _queue_watch_sync(tasks, z2, db, row, before["date"] if before else None)
+    return await planned_sessions.update(z2, db, session_id, update.model_dump(exclude_unset=True), tasks.add_task)
 
 
 @router.delete("/sessions/{session_id}", status_code=204)
@@ -357,8 +237,7 @@ async def delete_session(
     db: aiosqlite.Connection = Depends(get_db),
     z2: Zone2 = Depends(get_z2),
 ):
-    await delete_row(db, "training_sessions", session_id, "Session not found")
-    tasks.add_task(garmin_workouts.forget_session, z2, session_id)
+    await planned_sessions.delete(z2, db, session_id, tasks.add_task)
 
 
 class WatchWorkoutsUpdate(BaseModel):

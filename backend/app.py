@@ -36,7 +36,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.config import settings
 from backend.dependencies import set_zone2
-from backend.routers import activities, stats, exports, calendar, calendar_feed, sync, athlete, gear, goals, workouts, races, health, garmin, coverage, plans, config as config_router
+from backend.routers import agent, coach, activities, stats, exports, calendar, calendar_feed, sync, athlete, gear, goals, workouts, races, health, garmin, coverage, plans, config as config_router
 from backend.routers.coverage import unload_idle_cities
 from backend.routers.sync import _try_claim_sync, _run_sync
 from backend.services.races import refresh_race_activities
@@ -270,6 +270,8 @@ app.include_router(races.router, prefix="/api/races", tags=["races"])
 app.include_router(garmin.router, prefix="/api/garmin", tags=["garmin"])
 app.include_router(plans.router, prefix="/api/coverage", tags=["plans"])
 app.include_router(coverage.router, prefix="/api/coverage", tags=["coverage"])
+app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
+app.include_router(coach.router, prefix="/api/coach", tags=["coach"])
 
 # Serve frontend build if it exists
 class _SPAStaticFiles(StaticFiles):

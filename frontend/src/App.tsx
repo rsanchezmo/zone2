@@ -11,6 +11,8 @@ import CalendarPage from './pages/CalendarPage'
 // add a Suspense flash on cold load. Everything else is lazy so its page
 // chunk (and any page-unique deps) are downloaded on navigation.
 const DashboardPage = lazy(() => import('./pages/DashboardPage'))
+const CoachPage = lazy(() => import('./pages/CoachPage'))
+const CoachPlanPage = lazy(() => import('./pages/CoachPlanPage'))
 const ActivitiesPage = lazy(() => import('./pages/ActivitiesPage'))
 const ActivityDetailPage = lazy(() => import('./pages/ActivityDetailPage'))
 const AggregationsPage = lazy(() => import('./pages/AggregationsPage'))
@@ -47,6 +49,8 @@ export default function App() {
                   <Route path="/aggregations" element={<AggregationsPage />} />
                   <Route path="/coverage" element={<CoveragePage />} />
                   <Route path="/calendar" element={<CalendarPage />} />
+                  <Route path="/coach" element={<CoachPage />} />
+                  <Route path="/coach/:planId" element={<CoachPlanPage />} />
                   <Route path="/records" element={<PersonalRecordsPage />} />
                   <Route path="/workouts" element={<WorkoutsPage />} />
                   <Route path="/races" element={<RacesPage />} />

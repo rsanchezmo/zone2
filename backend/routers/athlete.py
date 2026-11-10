@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from backend.db import connect_db, get_db
 from backend.dependencies import get_z2
 from backend.routers.exports import clear_export_cache
-from backend.routers.stats import clear_stats_cache
+from backend.services.stats_cache import clear_stats_cache
 from backend.services.zones import (
     DEFAULT_SOURCE,
     Source,

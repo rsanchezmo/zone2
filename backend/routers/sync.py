@@ -7,7 +7,7 @@ from backend.dependencies import get_z2
 from backend.routers.coverage import sync_all_cities
 from backend.routers.exports import clear_export_cache
 from backend.routers.gear import clear_gear_cache
-from backend.routers.stats import clear_stats_cache
+from backend.services.stats_cache import clear_stats_cache
 from backend.services.races import refresh_race_activities
 from zone2.core import Zone2
 

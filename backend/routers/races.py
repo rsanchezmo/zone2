@@ -2,13 +2,11 @@ from datetime import date
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from starlette.concurrency import run_in_threadpool
 import aiosqlite
 
 from backend.db import delete_row, get_db, insert_row, row_dict, update_row
 from backend.dependencies import get_z2
-from backend.routers.stats import clear_stats_cache
-from backend.services.races import refresh_race_activities
+from backend.services.races import races_changed
 from zone2.core import Zone2
 
 router = APIRouter()
@@ -34,12 +32,6 @@ class RaceEventUpdate(BaseModel):
     description: str | None = None
     location: str | None = None
     url: str | None = None
-
-
-async def _races_changed(z2: Zone2) -> None:
-    """Race events decide which activities count as races for the predictions."""
-    if await run_in_threadpool(refresh_race_activities, z2):
-        clear_stats_cache()
 
 
 @router.get("/")
@@ -74,7 +66,7 @@ async def upcoming_race_events(db: aiosqlite.Connection = Depends(get_db)):
 async def create_race_event(race: RaceEventCreate, db: aiosqlite.Connection = Depends(get_db),
                             z2: Zone2 = Depends(get_z2)):
     row = await insert_row(db, "race_events", race.model_dump())
-    await _races_changed(z2)
+    await races_changed(z2)
     return row_dict(row)
 
 
@@ -86,7 +78,7 @@ async def update_race_event(
     z2: Zone2 = Depends(get_z2),
 ):
     row = await update_row(db, "race_events", race_id, update.model_dump(exclude_unset=True), "Race event not found")
-    await _races_changed(z2)
+    await races_changed(z2)
     return row_dict(row)
 
 
@@ -94,4 +86,4 @@ async def update_race_event(
 async def delete_race_event(race_id: int, db: aiosqlite.Connection = Depends(get_db),
                             z2: Zone2 = Depends(get_z2)):
     await delete_row(db, "race_events", race_id, "Race event not found")
-    await _races_changed(z2)
+    await races_changed(z2)

@@ -117,6 +117,85 @@ CREATE TABLE IF NOT EXISTS garmin_daily_summary (
     PRIMARY KEY (date, metric)
 );
 CREATE INDEX IF NOT EXISTS idx_garmin_summary_metric_date ON garmin_daily_summary(metric, date);
+
+-- Training plans the coach runs: a block of sessions toward a race (see
+-- backend/services/plans.py). Sessions join one through training_sessions.plan_id.
+CREATE TABLE IF NOT EXISTS training_plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    race_event_id INTEGER,            -- the goal race
+    goal TEXT,                        -- in words, e.g. "sub-50 10K"
+    goal_time_s REAL,                 -- the goal as a race time, when it is one
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',  -- active, done, abandoned
+    summary TEXT,                     -- the plan's logic in a few lines
+    phases TEXT,                      -- JSON [{name, start, end, target_km}]
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- A test or key session whose result decides how the plan goes on; the rule is
+-- written before it happens.
+CREATE TABLE IF NOT EXISTS plan_checkpoints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    title TEXT NOT NULL,
+    rule TEXT NOT NULL,
+    session_id INTEGER,
+    result TEXT,
+    decision TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_plan_checkpoints_plan ON plan_checkpoints(plan_id);
+
+-- What the coach wrote: session reviews, the changes the athlete asked for,
+-- checkpoint decisions, suggestions and weekly summaries.
+CREATE TABLE IF NOT EXISTS coach_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id INTEGER,
+    date TEXT NOT NULL,               -- the day it is about
+    kind TEXT NOT NULL,               -- review, change, decision, suggestion, summary
+    title TEXT NOT NULL,
+    body TEXT,
+    session_id INTEGER,
+    activity_id INTEGER,
+    status TEXT,                      -- suggestions only: open, done, dismissed
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_coach_log_plan_date ON coach_log(plan_id, date);
+
+-- The agent's conversations (see backend/agent/): the message history as
+-- Pydantic AI's JSON, so a conversation resumes where it stopped.
+CREATE TABLE IF NOT EXISTS agent_conversations (
+    id TEXT PRIMARY KEY,
+    messages TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+
+-- What the agent keeps about the athlete across conversations (see backend/agent/notes.py).
+CREATE TABLE IF NOT EXISTS agent_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    note TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- One row per agent run: what it cost, for the Profile page.
+CREATE TABLE IF NOT EXISTS agent_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT DEFAULT (datetime('now')),
+    conversation_id TEXT NOT NULL,
+    surface TEXT NOT NULL,            -- cli, chat, voice
+    model TEXT NOT NULL,
+    requests INTEGER NOT NULL,
+    tool_calls INTEGER NOT NULL,
+    input_tokens INTEGER NOT NULL,    -- cached ones included
+    cache_read_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    cost_usd REAL                     -- NULL when the model has no known price
+);
+CREATE INDEX IF NOT EXISTS idx_agent_usage_created ON agent_usage(created_at);
 """
 
 
@@ -148,6 +227,11 @@ async def init_db():
             # Its entry on the Garmin calendar (backend/services/garmin_workouts.py)
             ("garmin_sync_state", "TEXT"),
             ("garmin_sync_error", "TEXT"),
+            # The coach's plan it belongs to (training_plans)
+            ("plan_id", "INTEGER"),
+        ])
+        await _add_missing_columns(db, "agent_notes", [
+            ("topic", "TEXT"),  # backend/agent/notes.py Topic
         ])
         await _add_missing_columns(db, "workout_templates", [
             # Its copy in the Garmin library, and a fingerprint of the version there
