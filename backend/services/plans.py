@@ -21,6 +21,8 @@ from zone2.utils import get_sport_category
 PLAN_JSON = ("phases",)
 # Garmin's daily race predictions, by the distance they predict
 GARMIN_PREDICTIONS = {5000: "time_5k_s", 10000: "time_10k_s", 21097.5: "time_half_s", 42195: "time_marathon_s"}
+# Garmin's prediction is the plan's when it is this recent; older, the plan falls back to z2's
+GARMIN_FRESH_DAYS = 7
 
 
 def plan_dict(row: aiosqlite.Row) -> dict:
@@ -95,7 +97,9 @@ def _phase_on(phases: list[dict] | None, day: str) -> dict | None:
 
 async def _prediction(z2: Zone2, db: aiosqlite.Connection, plan: dict, race: dict | None,
                       sport: str, trend: bool) -> dict[str, Any] | None:
-    """The race distance's prediction now and its weekly trend over the plan, z2's and Garmin's."""
+    """The race distance's prediction now and its weekly trend over the plan, z2's and Garmin's.
+    `now_s` is Garmin's when it predicts the distance and predicted it lately (its `source`),
+    else z2's; `z2_now_s` and `range_s` are z2's either way."""
     if not race or not race.get("distance_km") or sport not in ("running", "cycling", "swimming"):
         return None
     metres = race["distance_km"] * 1000
@@ -105,8 +109,21 @@ async def _prediction(z2: Zone2, db: aiosqlite.Connection, plan: dict, race: dic
     if not candidates:
         return None
     target = min(candidates, key=lambda p: abs(p["distance_m"] - metres))
-    now_only = {"distance": target["label"], "goal_s": plan.get("goal_time_s"), "now_s": target.get("predicted_time_s"),
-                "range_s": [target.get("predicted_time_low_s"), target.get("predicted_time_high_s")], "z2": [], "garmin": []}
+    z2_now = target.get("predicted_time_s")
+    now_only = {"distance": target["label"], "goal_s": plan.get("goal_time_s"), "now_s": z2_now, "source": "z2",
+                "z2_now_s": z2_now, "range_s": [target.get("predicted_time_low_s"), target.get("predicted_time_high_s")],
+                "z2": [], "garmin": []}
+    # Garmin predicts four distances; it counts only when it predicts the same one as z2
+    garmin_distance = min(GARMIN_PREDICTIONS, key=lambda m: abs(m - target["distance_m"]))
+    garmin_key = (GARMIN_PREDICTIONS[garmin_distance]
+                  if sport == "running" and abs(garmin_distance - target["distance_m"]) < 0.01 * garmin_distance else None)
+    if garmin_key:
+        recent = await asyncio.to_thread(z2.garmin_cache.get_summary_range, "race_predictions",
+                                         (date.today() - timedelta(days=GARMIN_FRESH_DAYS)).isoformat(),
+                                         date.today().isoformat())
+        latest = next((r["summary"][garmin_key] for r in reversed(recent) if r["summary"].get(garmin_key)), None)
+        if latest:
+            now_only.update(now_s=latest, source="garmin")
     if not trend:
         return now_only
     # A finished plan's trend stops at its end
@@ -120,13 +137,10 @@ async def _prediction(z2: Zone2, db: aiosqlite.Connection, plan: dict, race: dic
         if p["distance_m"] == target["distance_m"] and plan["start_date"] <= point["end_date"] <= upto
     ]
     garmin: list[dict] = []
-    # Garmin predicts four distances; plot it only when it predicts the same one as z2
-    garmin_distance = min(GARMIN_PREDICTIONS, key=lambda m: abs(m - target["distance_m"]))
-    if sport == "running" and abs(garmin_distance - target["distance_m"]) < 0.01 * garmin_distance:
-        key = GARMIN_PREDICTIONS[garmin_distance]
+    if garmin_key:
         rows = await asyncio.to_thread(z2.garmin_cache.get_summary_range, "race_predictions",
                                        plan["start_date"], upto)
-        garmin = [{"date": r["date"], "time_s": r["summary"].get(key)} for r in rows if r["summary"].get(key)]
+        garmin = [{"date": r["date"], "time_s": r["summary"][garmin_key]} for r in rows if r["summary"].get(garmin_key)]
     return {**now_only, "z2": z2_trend, "garmin": garmin}
 
 

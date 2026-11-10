@@ -33,6 +33,7 @@ async def list_plans(db: aiosqlite.Connection = Depends(get_db), z2: Zone2 = Dep
             "days_to_race": progress["days_to_race"],
             "phase": progress["phase"],
             "prediction_s": (progress["prediction"] or {}).get("now_s"),
+            "prediction_source": (progress["prediction"] or {}).get("source"),
             "result_s": (progress["result"] or {}).get("time_s"),
         })
     return out

@@ -40,7 +40,7 @@ Nothing else combines the whole loop: plan by conversation, write to the calenda
   - The agent's tools still reach all of your data, not just the page.
   - After a write, the agent tells the frontend which data changed and the page refreshes. It can also open a page ("show me that run").
 - **One conversation, typed or spoken.**
-  - A message sent when Strava or Garmin last synced over 15 minutes ago first runs a quick sync, shown as a step, so the coach sees the run you just finished. The reply waits up to 20 seconds for it; a slower sync finishes in the background.
+  - A message sent when Strava or Garmin last synced over 15 minutes ago syncs them first. The reply waits for Strava (a step, up to 20 seconds), so the coach sees the run you just finished. Garmin's sync is slower (10–20 s on the Pi), so it runs alongside and only the tools that read Garmin wait for it. Each turn logs its timings: the sync, each tool and the model requests.
   - The app keeps a single conversation. The model sees only its current session: a message after a 30-minute pause starts fresh, with the last few exchanges carried over, plus the notes and the coach's log.
   - Voice is a mode, not a second agent: hold the mic and your words are transcribed into the same chat. The reply is read aloud sentence by sentence as it streams, and voice replies are kept short.
   - A realtime speech model is only worth it for live coaching on the run, and it would use the same tools.

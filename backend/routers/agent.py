@@ -1,8 +1,6 @@
 import asyncio
 import functools
-from collections.abc import AsyncIterator
 from datetime import timedelta
-from typing import Any
 
 import aiosqlite
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile
@@ -20,9 +18,9 @@ router = APIRouter()
 
 # The agent itself (Pydantic AI, ~60 MB) is imported on the first chat, not at startup.
 
-# Data older than this is brought up to date before the coach answers a message
+# Data older than this is brought up to date when a message arrives
 FRESH_FOR = timedelta(minutes=15)
-# How long the reply waits for that sync; a slower one finishes in the background
+# How long the reply waits for Strava's sync; a slower one finishes in the background
 SYNC_WAIT_S = 20
 
 
@@ -156,26 +154,22 @@ async def speak(speech: Speech):
     return StreamingResponse(body(), media_type="audio/mpeg", headers={"Cache-Control": "no-cache"})
 
 
-async def _catch_up(z2: Zone2) -> AsyncIterator[dict[str, Any]]:
-    """A `sync` step, when Strava or Garmin last synced longer ago than FRESH_FOR, so the
-    coach answers from your latest run and night."""
-    syncs = [s for s in (strava_sync.catch_up(z2, FRESH_FOR), garmin_sync.catch_up(z2, FRESH_FOR)) if s]
-    if not syncs:
-        return
-    yield {"type": "tool", "tool": "sync", "args": {}}
-    await asyncio.wait(syncs, timeout=SYNC_WAIT_S)
-    yield {"type": "tool_done", "tool": "sync"}
-
-
 def _streamed(chat, z2: Zone2, tasks: BackgroundTasks, *, catch_up: bool = False, **turn) -> StreamingResponse:
+    """The turn as server-sent events. With `catch_up`, data older than FRESH_FOR syncs first:
+    the reply waits for Strava, a `sync` step, so it answers from your latest run; Garmin's
+    slower sync runs alongside, and only the tools that read Garmin wait for it."""
     async def body():
+        garmin = None
         if catch_up:
-            async for event in _catch_up(z2):
-                yield chat.sse(event)
+            strava, garmin = strava_sync.catch_up(z2, FRESH_FOR), garmin_sync.catch_up(z2, FRESH_FOR)
+            if strava:
+                yield chat.sse({"type": "tool", "tool": "sync", "args": {}})
+                await asyncio.wait([strava], timeout=SYNC_WAIT_S)
+                yield chat.sse({"type": "tool_done", "tool": "sync"})
         # Its own connection: the stream outlives the request's dependencies
         async with connect_db() as db:
             async for event in chat.stream(z2, db, tasks.add_task, sync=functools.partial(strava_sync.sync_now, z2),
-                                           **turn):
+                                           garmin_sync=garmin, **turn):
                 yield event
     # The Garmin pushes a write queues run once the stream ends
     return StreamingResponse(body(), media_type="text/event-stream", background=tasks,

@@ -37,6 +37,7 @@ Read `today` and this week's `planned_sessions_between` first. The athlete may h
 
 - **Soft recovery** (HRV under its band 3+ nights, or readiness MODERATE or lower): trim volume and drop fast finishes first. Protect the checkpoint session. One bad night is noise.
 - **Checkpoints move the target.** Apply the block's written thresholds, which are in the notes or on the plan. Don't improvise a new goal mid-week.
+- **Read the metric a rule names.** A rule can turn on a z2 metric rather than the session itself, e.g. "the fade exponent picks week 4" is the `fade` verdict in race_predictions, not whether the time trial held its pace. Look the metric up before deciding, and quote it with its verdict.
 - **When the athlete moves a session**, re-check the spacing:
   - 48 h between runs.
   - No racquet or team sport, and no heavy leg work, the day before quality.

@@ -1,6 +1,7 @@
 """Voice around the text agent: what you say is transcribed into the same conversation, and
 the reply is read aloud. One coach, whether typed or spoken."""
 
+import re
 from collections.abc import AsyncIterator
 from decimal import Decimal
 
@@ -28,7 +29,17 @@ def _openai() -> AsyncOpenAI:
     return _client
 
 
+_VOCABULARY_WORDS = set(re.findall(r"\w+", VOCABULARY.lower()))
+
+
+def _echoes_prompt(text: str) -> bool:
+    """A recording without speech can come back as the vocabulary prompt itself."""
+    words = re.findall(r"\w+", text.lower())
+    return len(words) >= 4 and sum(w in _VOCABULARY_WORDS for w in words) / len(words) > 0.8
+
+
 async def transcribe(db: aiosqlite.Connection, audio: bytes, filename: str, content_type: str) -> str:
+    """What was said, or "" when nothing was."""
     result = await _openai().audio.transcriptions.create(
         model=settings.agent_transcribe_model, file=(filename, audio, content_type), prompt=VOCABULARY,
     )
@@ -38,7 +49,8 @@ async def transcribe(db: aiosqlite.Connection, audio: bytes, filename: str, cont
     cost = Decimal(tokens) * Decimal("0.000003") if tokens else None
     await usage.record(db, conversation_id="voice", surface="voice", model=settings.agent_transcribe_model,
                        usage=RunUsage(requests=1, input_tokens=tokens, cost=cost))
-    return result.text.strip()
+    text = result.text.strip()
+    return "" if _echoes_prompt(text) else text
 
 
 async def speak(db: aiosqlite.Connection, text: str) -> AsyncIterator[bytes]:

@@ -134,7 +134,7 @@ export default function PlanCard({ plan }: { plan: CoachPlanSummary }) {
             <Stat
               icon={icon(<><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="4" /></>)}
               value={formatClockDuration(plan.goal_time_s)}
-              unit={vsGoal != null ? `goal · ${vsGoal > 0 ? '+' : '−'}${formatClockDuration(Math.abs(vsGoal))} ${plan.status === 'active' ? 'predicted' : 'raced'}` : 'goal'}
+              unit={vsGoal != null ? `goal · ${vsGoal > 0 ? '+' : '−'}${formatClockDuration(Math.abs(vsGoal))} ${plan.status !== 'active' ? 'raced' : plan.prediction_source === 'garmin' ? 'by Garmin' : 'predicted'}` : 'goal'}
             />
           )}
           {plan.goal_time_s == null && plan.result_s != null && (

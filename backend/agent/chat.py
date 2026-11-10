@@ -3,6 +3,8 @@ renders (the reply, the tools it used, the writes waiting for a yes)."""
 
 import asyncio
 import json
+import logging
+import time
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from typing import Any
 
@@ -18,6 +20,8 @@ from backend.agent.agent import Output, build_agent, run_turn
 from backend.agent.tools import AgentDeps, memory_tools, workout_tools, write_tools
 from backend.services.sessions import Schedule
 from zone2.core import Zone2
+
+logger = logging.getLogger(__name__)
 
 # The tools that wait for the user's yes
 WRITE_TOOLS = set(write_tools.tools) | set(workout_tools.tools)
@@ -72,17 +76,24 @@ def sse(event: dict[str, Any]) -> str:
 async def stream(z2: Zone2, db: aiosqlite.Connection, schedule: Schedule, *, conversation_id: str,
                  page: str | None, message: str | None = None,
                  approvals: dict[str, bool] | None = None, voice: bool = False,
-                 sync: Callable[[int | None], Awaitable[str | None]] | None = None) -> AsyncIterator[str]:
+                 sync: Callable[[int | None], Awaitable[str | None]] | None = None,
+                 garmin_sync: asyncio.Future[None] | None = None) -> AsyncIterator[str]:
     """One turn as server-sent events, so the panel shows the run as it happens:
     `thinking`, each `tool` call and its `tool_done`, the reply's `text` as it is written,
     then `done` with the whole turn (or `error`)."""
     events: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+    started = time.monotonic()
+    tool_started: dict[str, float] = {}
+    tool_times: list[str] = []
 
     async def relay(ctx: RunContext[AgentDeps], stream_events: AsyncIterable[AgentStreamEvent]) -> None:
         async for event in stream_events:
             if isinstance(event, FunctionToolCallEvent):
+                tool_started[event.part.tool_call_id] = time.monotonic()
                 await events.put({"type": "tool", "tool": event.part.tool_name, "args": event.part.args_as_dict()})
             elif isinstance(event, FunctionToolResultEvent):
+                took = time.monotonic() - tool_started.pop(event.part.tool_call_id, time.monotonic())
+                tool_times.append(f"{event.part.tool_name} {took:.1f}s")
                 await events.put({"type": "tool_done", "tool": event.part.tool_name})
                 if event.part.tool_name == "open_page" and isinstance(event.part, ToolReturnPart):
                     await events.put({"type": "open", "path": event.part.content})
@@ -96,13 +107,15 @@ async def stream(z2: Zone2, db: aiosqlite.Connection, schedule: Schedule, *, con
     model = await preferences.model(db)
 
     async def run() -> None:
-        deps = AgentDeps(z2=z2, db=db, schedule=schedule, page=page, voice=voice, sync=sync)
+        deps = AgentDeps(z2=z2, db=db, schedule=schedule, page=page, voice=voice, sync=sync, garmin_sync=garmin_sync)
         results = DeferredToolResults(approvals={
             call_id: True if yes else ToolDenied("The user said no.") for call_id, yes in approvals.items()
         }) if approvals is not None else None
         try:
             result = await run_turn(_the_agent(), deps, conversation_id, prompt=message, approvals=results,
                                     model=model, surface="chat", on_events=relay)
+            logger.info("Coach turn took %.1fs on %s: %d model requests; tools: %s", time.monotonic() - started,
+                        model, result.usage.requests, ", ".join(tool_times) or "none")
             await events.put({"type": "done", "turn": _turn(result, conversation_id)})
         except ModelAPIError as e:
             await events.put({"type": "error", "detail": model_error(e, model)})

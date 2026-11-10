@@ -6,7 +6,6 @@ from threading import Lock
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, Query
 
 from backend.dependencies import get_z2
-from backend.routers import garmin as garmin_sync
 from backend.routers.coverage import sync_all_cities
 from backend.routers.exports import clear_export_cache
 from backend.services.gear import clear_gear_cache
@@ -104,10 +103,12 @@ def catch_up(z2: Zone2, max_age: timedelta) -> asyncio.Future[str | None] | None
     if not _try_claim_sync():
         return None
     loop = asyncio.get_running_loop()
+    started = loop.time()
     # Executor futures keep running when the caller stops waiting, unlike a dropped task
     synced = loop.run_in_executor(None, _sync_activities, z2, False, True)
 
     def then_coverage(done: asyncio.Future[str | None]) -> None:
+        logger.info("Strava catch-up took %.1fs", loop.time() - started)
         if not done.cancelled() and done.result() is None:
             loop.run_in_executor(None, _sync_coverage, z2)
 
@@ -185,18 +186,17 @@ def resync_activity(
 
 
 async def sync_now(z2: Zone2, activity_id: int | None = None) -> str | None:
-    """Sync Strava and Garmin's last two days now, or fetch one activity again with its streams,
-    and wait for it. Returns what went wrong, if anything."""
+    """Sync Strava now, or fetch one activity again with its streams, and wait for it.
+    Returns what went wrong, if anything."""
     if activity_id is not None:
         if not _try_claim_sync():
             return "A sync is already running; try again in a minute."
         found, err = await asyncio.to_thread(_resync_activity, z2, activity_id, True)
         return err or (None if found else f"Strava has no activity {activity_id}.")
     strava = catch_up(z2, timedelta(0))
-    garmin = garmin_sync.catch_up(z2, timedelta(0))
     if strava is None:
         return "A sync is already running; try again in a minute."
-    return (await asyncio.gather(strava, *([garmin] if garmin else [])))[0]
+    return await strava
 
 
 @router.get("/cache-completeness")

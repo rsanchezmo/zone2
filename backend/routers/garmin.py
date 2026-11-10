@@ -91,7 +91,11 @@ def catch_up(z2: Zone2, max_age: timedelta) -> asyncio.Future[None] | None:
         return None
     if not _try_claim():
         return None
-    return asyncio.get_running_loop().run_in_executor(None, _run_garmin_sync, z2, False, 2)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    synced = loop.run_in_executor(None, _run_garmin_sync, z2, False, 2)
+    synced.add_done_callback(lambda _: logger.info("Garmin catch-up took %.1fs", loop.time() - started))
+    return synced
 
 
 # ---------------------------------------------------------------------- /status

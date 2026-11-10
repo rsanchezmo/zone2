@@ -99,8 +99,9 @@ function stepLabel(tool: string, args?: Record<string, unknown>): string {
   return STEP_LABEL[tool] ?? WRITE_LABEL[tool] ?? tool
 }
 
-/** A transcript line while a turn runs: tool steps know whether they've finished. */
-type LiveItem = AgentTranscriptItem | { role: 'step'; tool: string; args?: Record<string, unknown>; running: boolean }
+/** A transcript line while a turn runs: tool steps know whether they've finished, and when they ran. */
+type LiveItem = AgentTranscriptItem
+  | { role: 'step'; tool: string; args?: Record<string, unknown>; running: boolean; startedAt: number; endedAt?: number }
 type Step = Extract<LiveItem, { role: 'step' | 'tool' }>
 
 const SESSION_AT = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
@@ -119,6 +120,18 @@ function groups(items: LiveItem[]): Group[] {
     else out.push({ kind: 'steps', steps: [item] })
   }
   return out
+}
+
+/** How long something took, as "Ys" or "Xm Ys". */
+function took(ms: number): string {
+  const s = Math.floor(Math.max(0, ms) / 1000)
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`
+}
+
+/** A step's time: live while it runs, final once done; past turns loaded from the server have none. */
+function stepTime(step: Step, now: number): string | null {
+  if (step.role !== 'step') return null
+  return took((step.endedAt ?? now) - step.startedAt)
 }
 
 function stored(key: string): string | null {
@@ -168,6 +181,8 @@ export default function AgentDock() {
   const [items, setItems] = useState<LiveItem[] | null>(null)
   const [pending, setPending] = useState<AgentPendingWrite[] | null>(null)
   const [busy, setBusy] = useState(false)
+  const [turnStartedAt, setTurnStartedAt] = useState(0)
+  const [now, setNow] = useState(0)
   const [thinking, setThinking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
@@ -182,6 +197,13 @@ export default function AgentDock() {
   useEscapeKey(open, () => setOpen(false))
 
   const transcript: LiveItem[] = items ?? history?.messages ?? []
+
+  // The live times tick only while a turn runs
+  useEffect(() => {
+    if (!busy) return
+    const id = setInterval(() => setNow(Date.now()), 250)
+    return () => clearInterval(id)
+  }, [busy])
   const waiting = pending ?? history?.pending ?? []
   const offline = status != null && !status.available
 
@@ -211,13 +233,14 @@ export default function AgentDock() {
     // Outside the state update, which React may run twice
     if (event.type === 'text') speaker.current?.feed(event.delta)
     if (event.type === 'tool_done' && event.tool === 'sync') refreshPages(qc)
+    const at = Date.now()
     setItems(prev => {
       const next = [...(prev ?? [])]
       const last = next[next.length - 1]
-      if (event.type === 'tool') next.push({ role: 'step', tool: event.tool, args: event.args, running: true })
+      if (event.type === 'tool') next.push({ role: 'step', tool: event.tool, args: event.args, running: true, startedAt: at })
       else if (event.type === 'tool_done') {
         const i = next.findIndex(it => it.role === 'step' && it.tool === event.tool && it.running)
-        if (i >= 0) next[i] = { ...(next[i] as Extract<LiveItem, { role: 'step' }>), running: false }
+        if (i >= 0) next[i] = { ...(next[i] as Extract<LiveItem, { role: 'step' }>), running: false, endedAt: at }
       } else if (event.type === 'text') {
         if (last?.role === 'agent') next[next.length - 1] = { role: 'agent', text: last.text + event.delta }
         else next.push({ role: 'agent', text: event.delta })
@@ -232,6 +255,9 @@ export default function AgentDock() {
     setItems(before)
     setPending([])
     setError(null)
+    const startedAt = Date.now()
+    setTurnStartedAt(startedAt)
+    setNow(startedAt)
     setBusy(true)
     setThinking(true)
     try {
@@ -409,19 +435,25 @@ export default function AgentDock() {
               const live = busy && g === groups(transcript).length - 1
               const lines = group.steps.map((step, i) => {
                 const running = step.role === 'step' && step.running
+                const time = stepTime(step, now)
                 return (
                   <div key={i} className={clsx('flex items-center gap-2 text-[11px]', running ? (isLight ? 'text-gray-700' : 'text-gray-300') : 'text-gray-500')}>
                     <span className={clsx('w-1.5 h-1.5 rounded-full shrink-0', running ? 'bg-[var(--coach)] animate-pulse' : 'bg-surface-500')} aria-hidden="true" />
                     {stepLabel(step.tool, step.role === 'step' ? step.args : undefined)}
+                    {time && <span className="font-mono tabular-nums opacity-60">{time}</span>}
                   </div>
                 )
               })
+              const first = group.steps[0], lastStep = group.steps[group.steps.length - 1]
+              const groupTime = first.role === 'step' && lastStep.role === 'step' && lastStep.endedAt
+                ? took(lastStep.endedAt - first.startedAt) : null
               // Steps show one by one while they run, then fold into a line you can open
               return live ? <div key={g} className="space-y-1">{lines}</div> : (
                 <details key={g} className="group text-[11px] text-gray-500">
                   <summary className="cursor-pointer list-none flex items-center gap-2 hover:text-gray-300">
                     <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-surface-500" aria-hidden="true" />
                     {group.steps.length === 1 ? stepLabel(group.steps[0].tool, group.steps[0].role === 'step' ? group.steps[0].args : undefined) : `Looked at ${group.steps.length} things`}
+                    {groupTime && <span className="font-mono tabular-nums opacity-60">{groupTime}</span>}
                     {group.steps.length > 1 && <span className="opacity-60 group-open:rotate-90 transition-transform">›</span>}
                   </summary>
                   {group.steps.length > 1 && <div className="mt-1 ml-3.5 space-y-1">{lines}</div>}
@@ -432,6 +464,7 @@ export default function AgentDock() {
               <div className="flex items-center gap-2 text-[11px] text-gray-500" aria-live="polite">
                 <span className="w-1.5 h-1.5 rounded-full bg-[var(--coach)] animate-pulse" aria-hidden="true" />
                 {thinking ? 'Thinking' : 'Working'}
+                <span className="font-mono tabular-nums opacity-60">{took(now - turnStartedAt)}</span>
               </div>
             )}
             {waiting.length > 0 && !busy && (

@@ -95,7 +95,7 @@ export default function PlanHero({ plan }: { plan: CoachPlan }) {
             footnote={
               goalS == null ? plan.goal ?? undefined
               : finished ? `goal ${formatClockDuration(goalS)}`
-              : `predicted ${compared != null ? formatClockDuration(compared) : '—'} for ${formatClockDuration(goalS)}${shortM ? `, ${shortM} m short` : ''}`
+              : `${pred?.source === 'garmin' ? 'Garmin predicts' : 'predicted'} ${compared != null ? formatClockDuration(compared) : '—'} for ${formatClockDuration(goalS)}${shortM ? `, ${shortM} m short` : ''}`
             }
           />
           {finished ? (

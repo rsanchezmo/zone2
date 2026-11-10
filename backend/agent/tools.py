@@ -52,7 +52,9 @@ class AgentDeps:
     first_name: str | None = None
     """The athlete's first name on Strava, read once per turn."""
     sync: Callable[[int | None], Awaitable[str | None]] | None = None
-    """Syncs Strava and Garmin now, or one activity again by its id, and returns what went wrong."""
+    """Syncs Strava now, or one activity again by its id, and returns what went wrong."""
+    garmin_sync: asyncio.Future[None] | None = None
+    """Garmin's sync, when this message started one; the tools that read Garmin wait for it."""
 
 
 SportCategory = Literal["running", "cycling", "swimming"]
@@ -134,6 +136,16 @@ def _activity(row: pd.Series, race_ids: frozenset[int]) -> dict[str, Any]:
     }
 
 
+# How long a tool reading Garmin waits for the sync this message started
+GARMIN_WAIT_S = 25
+
+
+async def _garmin_synced(ctx: RunContext[AgentDeps]) -> None:
+    """Let a Garmin sync this message started finish before reading Garmin's data."""
+    if (sync := ctx.deps.garmin_sync) is not None and not sync.done():
+        await asyncio.wait([sync], timeout=GARMIN_WAIT_S)
+
+
 read_tools = FunctionToolset[AgentDeps]()
 
 
@@ -142,6 +154,7 @@ async def today(ctx: RunContext[AgentDeps]) -> dict[str, Any]:
     """Today at a glance: planned sessions, what's already done, last night's recovery
     (Garmin readiness, sleep, HRV, body battery, resting HR), current fitness and form,
     races in the next few days, and z2's own suggestion weighing them."""
+    await _garmin_synced(ctx)
     z2 = ctx.deps.z2
     view = z2.strava_activities_cache.get_prepared_view()
     done = view[view["start_date_local"].dt.date == date.today()] if not view.empty else view
@@ -260,6 +273,7 @@ async def activity_detail(ctx: RunContext[AgentDeps], activity_id: int) -> dict[
                 {"at_km": _num(st["start_km"], 2), "at": _hms(st["start_s"]), "seconds": _num(st["duration_s"])}
                 for st in detect_stops(streams)
             ]
+    await _garmin_synced(ctx)
     cost = await asyncio.to_thread(activity_cost, ctx.deps.z2, activity_id)
     if cost and any(cost.values()):
         detail["garmin"] = {k: v for k, v in cost.items() if v is not None}
@@ -311,7 +325,10 @@ async def race_predictions(
     history_weeks: Annotated[int, Field(ge=0, le=104)] = 0,
 ) -> dict[str, Any]:
     """Predicted race times now, with a likely range, the current best at each distance,
-    Garmin's own prediction, and training paces derived from them.
+    Garmin's own prediction, training paces derived from them, and the fade: the exponent of
+    how much the athlete slows as the distance grows, with its standard error and verdict
+    against the typical 1.06 ("fades", "typical" or "holds_pace"; typical means the data can't
+    tell speed from endurance).
 
     Args:
         sport: Sport category.
@@ -329,6 +346,8 @@ async def race_predictions(
         ],
         "training_paces": _training_paces(result.get("training_paces")),
         "confidence": result.get("confidence"),
+        # How much the athlete slows as the distance grows, against the typical exponent
+        "fade": {k: (result.get("fade") or {}).get(k) for k in ("exponent", "stderr", "typical", "verdict")},
     }
     if history_weeks:
         points = await asyncio.to_thread(analytics.get_race_predictions_history, sport, weeks=history_weeks, step_days=7)
@@ -487,6 +506,7 @@ async def wellness(
     """
     if (date_to - date_from).days >= MAX_WELLNESS_DAYS:
         raise ModelRetry(f"Ask for at most {MAX_WELLNESS_DAYS} days at a time.")
+    await _garmin_synced(ctx)
     cache = ctx.deps.z2.garmin_cache
     wanted = metrics or list(WellnessMetric.__args__)
     out: dict[str, list[dict[str, Any]]] = {}
@@ -537,7 +557,9 @@ async def plan_detail(ctx: RunContext[AgentDeps], plan_id: int) -> dict[str, Any
         progress["prediction"] = {
             "distance": pred["distance"],
             "predicted_now": _hms(pred["now_s"]),
-            "range": [_hms(t) for t in pred["range_s"]],
+            "predicted_by": pred["source"],
+            "z2_predicted_now": _hms(pred["z2_now_s"]),
+            "z2_range": [_hms(t) for t in pred["range_s"]],
             "z2_weekly": [{"date": d["date"], "predicted": _hms(d["time_s"])} for d in pred["z2"]],
             "garmin_daily": [{"date": d["date"], "predicted": _hms(d["time_s"])} for d in garmin],
         }
@@ -712,10 +734,9 @@ app_tools = FunctionToolset[AgentDeps]()
 
 @app_tools.tool
 async def sync_now(ctx: RunContext[AgentDeps], activity_id: int | None = None) -> str:
-    """Sync Strava and Garmin now, when the athlete just finished something that isn't in z2
-    yet (a message already syncs when the data is over 15 minutes old). With `activity_id`,
-    fetch that activity again with its streams: its HR or GPS looks wrong, or it was edited on
-    Strava."""
+    """Sync Strava now, when the athlete just finished something that still isn't in z2 (each
+    message already syncs when the data is over 15 minutes old). With `activity_id`, fetch that
+    activity again with its streams: its HR or GPS looks wrong, or it was edited on Strava."""
     if ctx.deps.sync is None:
         return "Syncing isn't available here."
     cache = ctx.deps.z2.strava_activities_cache
@@ -859,6 +880,7 @@ async def night(ctx: RunContext[AgentDeps], day: date | None = None) -> dict[str
     against its ideal share, awake spells, restlessness, breathing and SpO2, then hour by hour
     the minutes deep, light, REM and awake with the average heart rate, HRV, stress and body
     battery. `day` is the morning the night ended; today when omitted."""
+    await _garmin_synced(ctx)
     result = await asyncio.to_thread(day_timeline.night, ctx.deps.z2, day or date.today())
     if result is None:
         return "Garmin has no sleep for that night."

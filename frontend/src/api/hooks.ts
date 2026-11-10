@@ -2314,6 +2314,8 @@ export interface CoachPlanSummary {
   phase: string | null;
   /** z2's prediction now for the race distance. */
   prediction_s: number | null;
+  /** Whose prediction `prediction_s` is: Garmin's when it predicts the race distance, else z2's. */
+  prediction_source: 'garmin' | 'z2' | null;
   /** The race time, once run. */
   result_s: number | null;
 }
@@ -2360,7 +2362,7 @@ export interface CoachLogEntry {
   created_at: string;
 }
 
-export interface CoachPlan extends Omit<CoachPlanSummary, 'sessions' | 'completion_pct' | 'average_score' | 'days_to_race' | 'phase' | 'prediction_s' | 'result_s'> {
+export interface CoachPlan extends Omit<CoachPlanSummary, 'sessions' | 'completion_pct' | 'average_score' | 'days_to_race' | 'phase' | 'prediction_s' | 'prediction_source' | 'result_s'> {
   summary: string | null;
   phases: PlanPhase[] | null;
   progress: {
@@ -2373,7 +2375,10 @@ export interface CoachPlan extends Omit<CoachPlanSummary, 'sessions' | 'completi
     prediction: {
       distance: string;
       goal_s: number | null;
+      /** Garmin's when it predicts the race distance and did lately, else z2's. */
       now_s: number | null;
+      source: 'garmin' | 'z2';
+      z2_now_s: number | null;
       range_s: [number | null, number | null];
       z2: { date: string; time_s: number }[];
       garmin: { date: string; time_s: number }[];
