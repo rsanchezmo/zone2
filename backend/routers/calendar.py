@@ -69,13 +69,7 @@ async def list_sessions(
     date_to: str | None = None,
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    if date_from and date_to:
-        query = "SELECT * FROM training_sessions WHERE date >= ? AND date <= ? ORDER BY date"
-        cursor = await db.execute(query, (date_from, date_to))
-    else:
-        cursor = await db.execute("SELECT * FROM training_sessions ORDER BY date")
-    rows = await cursor.fetchall()
-    return [session_dict(row) for row in rows]
+    return await planned_sessions.between(db, date_from, date_to)
 
 
 def _activity_day(z2: Zone2, activity_id: int) -> str | None:

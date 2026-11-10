@@ -7,3 +7,5 @@ export const RUN = SPORT_COLORS_HEX.Run
 export const GARMIN_DARK = ACCENT
 export const GARMIN_LIGHT = '#0891b2' // cyan-600: Garmin's cyan, dark enough for 3:1 on the light surface
 export const GOAL = '#eab308'
+// The coach's teal: its chat, and the sessions that belong to its plans
+export const COACH = { dark: '#2dd4bf', light: '#0d9488' }

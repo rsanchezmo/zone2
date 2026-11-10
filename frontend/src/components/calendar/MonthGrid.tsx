@@ -10,6 +10,7 @@ import { FlagIcon, CheckIcon } from '../icons'
 import { dayAvgScore, dayPlanStatus, type CalendarGridProps, type WeekRow } from './calendar'
 import WeekTotals from './WeekTotals'
 import WatchStatus from './WatchStatus'
+import PlanTag from '../coach/PlanTag'
 
 /** Dots that fit across a day cell on the compact mobile grid before overflowing to a "+n". */
 const MOBILE_DOT_LIMIT = 4
@@ -185,8 +186,9 @@ export default function MonthGrid({
                                 }}
                                 onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = `0 0 8px ${sColor}30` }}
                                 onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = 'none' }}
-                                title={s.description as string || s.sport_type as string}
+                                title={[s.plan_name && `${s.plan_name} plan`, s.description || s.sport_type].filter(Boolean).join(' · ')}
                               >
+                                {s.plan_name && <PlanTag name={s.plan_name} short />}
                                 <span className="truncate">{s.description ? `${s.sport_type}: ${s.description}` : s.sport_type}</span>
                                 <WatchStatus session={s} size={9} />
                               </div>

@@ -372,14 +372,10 @@ async def weekly_volume(
 @read_tools.tool
 async def planned_sessions_between(ctx: RunContext[AgentDeps], date_from: date, date_to: date) -> list[dict[str, Any]]:
     """The training calendar: planned sessions between two days, inclusive, with their ids,
-    targets and steps, and for those already done their execution score (0-100) and the
+    targets, steps and plan, and for those already done their execution score (0-100) and the
     activity that fulfilled them."""
     db = ctx.deps.db
-    cur = await db.execute(
-        "SELECT * FROM training_sessions WHERE date BETWEEN ? AND ? ORDER BY date, id",
-        (date_from.isoformat(), date_to.isoformat()),
-    )
-    sessions = [session_dict(r) for r in await cur.fetchall()]
+    sessions = await planned_sessions.between(db, date_from.isoformat(), date_to.isoformat())
     today_iso = date.today().isoformat()
     past = [s for s in sessions if s["date"] <= today_iso]
     scores = await session_scores.scores(ctx.deps.z2, db, past, date_from.isoformat(), date_to.isoformat()) if past else {}

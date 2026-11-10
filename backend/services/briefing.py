@@ -10,7 +10,7 @@ from typing import Any
 import aiosqlite
 
 from backend.services.resting_hr import resolve_resting_hr
-from backend.services.sessions import session_dict
+from backend.services import sessions as planned_sessions
 from backend.services.zones import resolve_hr_zones
 from zone2.core import Zone2
 from zone2.garmin_cache import GarminDailyStatsCache
@@ -240,8 +240,7 @@ async def today_briefing(z2: Zone2, db: aiosqlite.Connection, done: list[dict]) 
     caller's own activity shape), last night's recovery, current form, the
     races close ahead, and a suggestion weighing them."""
     today = date.today()
-    cur = await db.execute("SELECT * FROM training_sessions WHERE date = ? ORDER BY id", (today.isoformat(),))
-    sessions = [session_dict(r) for r in await cur.fetchall()]
+    sessions = await planned_sessions.between(db, today.isoformat(), today.isoformat())
     recovery = await asyncio.to_thread(recovery_today, z2.garmin_cache, today)
     zones = await resolve_hr_zones(z2, db)
     rhr = await resolve_resting_hr(z2, db)

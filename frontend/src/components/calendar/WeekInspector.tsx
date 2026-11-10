@@ -14,6 +14,7 @@ import GoalProgressBar from '../shared/GoalProgressBar'
 import { SegmentSummary, type Segment } from '../shared/SegmentListBuilder'
 import { formatWeekRange, sessionGoalChips } from './calendar'
 import GoalChips from './GoalChips'
+import PlanTag from '../coach/PlanTag'
 
 /* ── Planned sessions for the inspected week (expandable) ── */
 interface PlannedSessionsProps {
@@ -48,6 +49,7 @@ function PlannedSessions({ sessions, todayStr, weekStart, onPickDay }: PlannedSe
                 <div className="flex items-center gap-3 px-3 py-2">
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
                   <span className="text-sm font-medium shrink-0" style={{ color }}>{String(s.sport_type)}</span>
+                  {s.plan_name && <PlanTag name={s.plan_name} short />}
                   {!isExpanded && !!s.description && (
                     <span className="text-sm text-gray-400 truncate flex-1">{String(s.description)}</span>
                   )}

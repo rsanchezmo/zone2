@@ -1130,6 +1130,9 @@ export interface TrainingSession {
   target_zone_pct: number | null;
   segments: Segment[] | null;
   workout_template_id: number | null;
+  /** The coach's plan it belongs to, and that plan's name. */
+  plan_id: number | null;
+  plan_name?: string | null;
   completed: boolean;
   created_at: string;
   /** Its entry on the Garmin calendar; null when it has none. */

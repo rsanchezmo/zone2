@@ -9,6 +9,7 @@ import {
   type AgentPendingWrite, type AgentStreamEvent, type AgentTranscriptItem, type AgentTurn,
 } from '../api/hooks'
 import { useTheme } from '../hooks/useTheme'
+import { COACH } from '../components/coach/colors'
 import { useEscapeKey } from '../hooks/useEscapeKey'
 import { RobotIcon } from '../components/icons'
 import { pageContext } from './pageContext'
@@ -19,7 +20,6 @@ const CONVERSATION = 'coach'
 const EXPANDED_KEY = 'z2-agent-expanded'
 // z-[1100]: above Leaflet's panes and controls (up to 1000) on the map pages, below dialogs (~10000)
 // The coach's own colour, the teal of its menu item; teal-600 keeps contrast on light surfaces
-const COACH = { dark: '#2dd4bf', light: '#0d9488' }
 
 /** Questions to start from, on an empty chat. */
 const STARTERS = [

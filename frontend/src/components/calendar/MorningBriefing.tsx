@@ -12,6 +12,7 @@ import { formZone, formatFormPct } from '../analytics/form'
 import { sessionGoalChips } from './calendar'
 import GoalChips from './GoalChips'
 import WatchStatus from './WatchStatus'
+import PlanTag from '../coach/PlanTag'
 
 const SUGGESTION: Record<NonNullable<Briefing['suggestion']>['tone'], { color: string; label: string }> = {
   caution: { color: '#f59e0b', label: 'Heads-up' },
@@ -106,6 +107,7 @@ export default function MorningBriefing() {
                   <div key={s.id} className="space-y-1.5">
                     <div className="flex items-baseline gap-2 min-w-0">
                       <span className="text-sm font-semibold shrink-0" style={{ color }}>{s.sport_type}</span>
+                      {s.plan_name && <PlanTag name={s.plan_name} className="self-center" />}
                       {!!s.description && <span className="text-sm text-gray-400 truncate">{s.description}</span>}
                       <WatchStatus session={s} size={12} className="self-center" />
                     </div>

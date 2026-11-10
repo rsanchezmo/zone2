@@ -1,4 +1,4 @@
-"""Planned training sessions: the calendar's writes, shared by the calendar router and the agent."""
+"""Planned training sessions: the calendar's reads and writes, shared by the calendar router and the agent."""
 
 from collections.abc import Callable
 from typing import Any
@@ -18,6 +18,17 @@ Schedule = Callable[..., Any]
 
 def session_dict(row: aiosqlite.Row) -> dict:
     return row_dict(row, json_cols=JSON_COLS, bool_cols=("completed",))
+
+
+async def between(db: aiosqlite.Connection, date_from: str | None = None, date_to: str | None = None) -> list[dict]:
+    """The planned sessions between two days, inclusive (all of them without a range), each with
+    `plan_name`, the coach's plan it belongs to."""
+    where, params = ("WHERE s.date BETWEEN ? AND ?", (date_from, date_to)) if date_from and date_to else ("", ())
+    cur = await db.execute(
+        f"SELECT s.*, p.name AS plan_name FROM training_sessions s LEFT JOIN training_plans p ON p.id = s.plan_id "
+        f"{where} ORDER BY s.date, s.id", params,
+    )
+    return [session_dict(r) for r in await cur.fetchall()]
 
 
 async def _link_saved_workout(schedule: Schedule, z2: Zone2, db: aiosqlite.Connection, session: dict) -> dict:

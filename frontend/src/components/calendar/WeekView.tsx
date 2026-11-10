@@ -13,6 +13,7 @@ import {
 import GoalChips from './GoalChips'
 import WeekTotals from './WeekTotals'
 import WatchStatus from './WatchStatus'
+import PlanTag from '../coach/PlanTag'
 
 interface WeekViewProps extends CalendarGridProps {
   days: Date[]
@@ -157,6 +158,7 @@ export default function WeekView({
                     <div className="flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
                       <span className="text-xs font-medium shrink-0" style={{ color }}>{s.sport_type}</span>
+                      {s.plan_name && <PlanTag name={s.plan_name} short />}
                       {!!s.description && (
                         <span className="text-xs text-gray-400 truncate">{s.description}</span>
                       )}

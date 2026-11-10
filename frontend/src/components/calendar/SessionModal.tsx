@@ -27,6 +27,7 @@ import Modal from '../shared/Modal'
 import { errorDetail } from '../../api/client'
 import { useToast } from '../../hooks/useToast'
 import WatchStatus from './WatchStatus'
+import PlanTag from '../coach/PlanTag'
 
 const RACE_ACCENT = '#f59e0b'
 
@@ -343,6 +344,7 @@ export default function SessionModal({
                       <div className={clsx('flex items-center gap-2 min-w-0', !isEditing && 'cursor-pointer')} onClick={() => { if (!isEditing) startEdit(s) }}>
                         <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: sColor }} />
                         <span className="text-sm" style={{ color: sColor }}>{String(s.sport_type)}</span>
+                        {s.plan_name && <PlanTag name={s.plan_name} />}
                         {!!s.description && (
                           <span className="text-xs text-gray-400 truncate">{String(s.description)}</span>
                         )}
