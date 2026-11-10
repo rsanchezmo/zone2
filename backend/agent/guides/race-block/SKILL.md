@@ -29,7 +29,7 @@ description: Build a training block toward a race (5K to marathon), from the ath
 - **Other sports belong in the design.**
   - No racquet or team sport the day before a quality run.
   - No heavy leg strength work within 48 h before quality.
-  - Drop sports with sharp lateral moves (racquet sports, futsal) in the last 3 weeks, since a sprained ankle ends the block.
+  - Drop sports with sharp lateral moves (racquet and team sports) in the last 3 weeks, since a sprained ankle ends the block.
 
 ## Paces: anchored to the goal, guarded by HR
 

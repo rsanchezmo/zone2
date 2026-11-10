@@ -29,7 +29,7 @@ WORKDIR = Path(os.getenv("STRAVA_WORKDIR", "./zone2_workdir"))
 WEEKLY_DIR = WORKDIR / "weekly_reports"
 YEAR_DIR = WORKDIR / "year_in_sport"
 
-TZ = ZoneInfo("UTC")
+TZ = ZoneInfo(os.getenv("TZ", "UTC"))
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 

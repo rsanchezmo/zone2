@@ -939,9 +939,9 @@ class StravaAnalytics:
     # ── Race-prediction tuning knobs ──────────────────────────────────
     # Backtested against race-flagged activities (predict as-of the day
     # before each race, compare to the actual result) via
-    # scripts/backtest_race_predictions.py — 18 races, 5K–HM. Defaults are
-    # the *moderate* values supported by the grid marginals (the single best
-    # combo sat at grid extremes — not trusted with n=18):
+    # scripts/backtest_race_predictions.py, 5K–HM. Defaults are the *moderate*
+    # values supported by the grid marginals (the single best combo sat at
+    # grid extremes, not trusted with a small sample):
     #   half-life 180→90 and decay 1.5→1.0 each shaved ~0.1–0.2pp of MAE;
     #   VDOT weight was the strongest lever (0.5→3.96%, 0.7→3.70% MAE),
     #   capped at 0.7 so the Riegel family still anchors the band and the

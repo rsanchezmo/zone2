@@ -89,7 +89,7 @@ export default function MoveIqPanel() {
   const { data: eventsData } = useGarminEvents(eventRange)
 
   // Recorded activities over the same window, to tell truly-uncaptured movement
-  // apart from Move IQ noise fired during a recorded workout (padel reads as
+  // apart from Move IQ noise fired during a recorded workout (a racquet sport reads as
   // "swimming", a recorded swim also emits a swim event, …).
   const eventRangeDates = useMemo(() => {
     const iso = (d: Date) =>
@@ -120,7 +120,7 @@ export default function MoveIqPanel() {
 
   // One lane per day (newest first): recorded activities as primary segments,
   // plus the Move IQ events no recording covers. A detected event with half
-  // its span inside a recording is redundant noise (padel reads as "swimming")
+  // its span inside a recording is redundant noise (a racquet sport reads as "swimming")
   // and is dropped; brushing a workout's edge by a minute doesn't count.
   const { eventDays, legendSports, recordedTotalMins, detectedTotalMins } = useMemo(() => {
     const isCovered = (e: GarminAutoEvent): boolean => {
