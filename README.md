@@ -3,11 +3,9 @@
 ![Python](https://img.shields.io/badge/python-3.12+-blue.svg)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
 
-z2 is the training app I built for myself. It syncs my activities from Strava, and optionally my sleep, HRV and other watch data from Garmin Connect, and keeps it all on my own machine. It shows me what I want to know about my training: most of what Strava Premium shows, and a fair bit it doesn't.
+z2 is a training app I built around my own needs. What turned out to be most useful is having everything in one place: planning the week, digging through my data, and seeing on a map where I've run.
 
-I run it on my laptop while I work on it and on a Raspberry Pi at home the rest of the time, reachable from my phone through a Cloudflare Tunnel.
-
-It's built for running first. Rides, swims and everything else sync and show up too.
+It syncs your activities from Strava, and optionally sleep, HRV and other watch data from Garmin Connect, and keeps it all on your own machine. It's built for running first, but rides, swims and everything else sync and show up too.
 
 ## What's in it
 
@@ -84,7 +82,7 @@ docker compose up -d --build        # the app on :8000, plus the Cloudflare Tunn
 docker compose up -d --build app    # just the app
 ```
 
-A container can't do the interactive Strava login, so authorise once on your laptop and copy `.strava/` and `cache/` onto the server (the image build needs `cache/`). [DEPLOY.md](DEPLOY.md) walks through that, setting up Cloudflare Tunnel and Access, and the timer that redeploys my Pi when I push.
+A container can't do the interactive Strava login, so authorise once on your laptop and copy `.strava/` and `cache/` onto the server (the image build needs `cache/`). [DEPLOY.md](DEPLOY.md) walks through that, setting up Cloudflare Tunnel and Access, and an optional timer that redeploys when you push.
 
 ## Finding your way around
 
