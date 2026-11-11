@@ -1,7 +1,8 @@
-"""Coverage cities, shared by the coverage and planner routers and the Strava sync: the street
-networks loaded in memory (a few at most, released when idle), the map-layer responses cached
-per city, the coverage sync that matches new activities in each city, the loops planned and not
-saved yet, and the Garmin courses starting in a city."""
+"""Coverage cities, shared by the coverage and planner routers, the coach's tools and the Strava
+sync: the cities and their download, the street networks loaded in memory (a few at most,
+released when idle), the map-layer responses cached per city, the coverage sync that matches
+new activities in each city, the loops planned and not saved yet, and the Garmin courses
+starting in a city."""
 
 import ctypes
 import gc
@@ -11,21 +12,25 @@ import logging
 import time
 from collections import OrderedDict
 from collections.abc import Callable
+from enum import StrEnum
 from pathlib import Path
 from threading import Lock
+from typing import Any, NotRequired, TypedDict
 
 from fastapi import Response
+import geopandas as gpd
+import h3
 import numpy as np
 import pandas as pd
 import shapely
 
 from backend._serialize import PackedJSON, PackedJSONResponse
 from backend.config import settings
-from backend.errors import NotFound
+from backend.errors import Conflict, NotFound
 from backend.services.garmin_courses import course_line, course_list
-from zone2.city_coverage import CityCoverage, atomic_write, edge_feature
+from zone2.city_coverage import CityCoverage, LatLon, NewWay, atomic_write, edge_feature
 from zone2.core import Zone2
-from zone2.map_matching import StravaMapMatcher
+from zone2.map_matching import LoopFeature, PolygonCoverage, StravaMapMatcher, city_slug
 from zone2.utils import get_activities_as_gdf_from_streams
 
 logger = logging.getLogger(__name__)
@@ -52,9 +57,20 @@ _responses_lock = Lock()
 _sync_status: dict[str, dict] = {}
 _sync_lock = Lock()
 
+
+class HeldPlan(TypedDict):
+    """A loop planned and not saved yet (services/planned_routes.plan)."""
+    slug: str
+    feature: LoopFeature
+    new_ways: list[NewWay]
+    network: str
+    # The PlanRequest as JSON, with the start it was planned from
+    request: dict[str, Any]
+
+
 # Loops planned but not saved yet, by plan_id, so saving one stores exactly the loop on screen
 _MAX_HELD_PLANS = 32
-_held_plans: "OrderedDict[str, dict]" = OrderedDict()
+_held_plans: "OrderedDict[str, HeldPlan]" = OrderedDict()
 _held_plans_lock = Lock()
 
 # Part of the map layers' cache version: bump when their content changes for
@@ -92,17 +108,59 @@ def known_cities() -> dict[str, str]:
     return cities
 
 
-def get_matcher(slug: str) -> StravaMapMatcher:
-    cities = known_cities()
-    if slug not in cities:
+def require_city(slug: str) -> str:
+    """The city's name; NotFound when there is no coverage map for `slug`."""
+    name = known_cities().get(slug)
+    if name is None:
         raise NotFound(f"No coverage map for '{slug}'")
+    return name
+
+
+class CitySummary(TypedDict):
+    slug: str
+    city_name: str
+    num_matched_activities: int
+    bbox: list[float] | None
+    total_network_km: float
+    traversed_km: float
+    coverage_pct: float
+    num_unique_streets: int
+
+
+def city_list(streets_only: bool = False) -> list[CitySummary]:
+    """Every city with its coverage, from its stats file, so listing never loads a city; one
+    added before stats were cached is loaded once to write them. A city still downloading is
+    left out."""
+    variant = "streets" if streets_only else "all"
+    download = add_status()
+    downloading = download["slug"] if download["running"] else None
+    out: list[CitySummary] = []
+    for slug, city_name in known_cities().items():
+        if slug == downloading:
+            continue
+        cached = city_coverage(slug).read_stats()
+        if cached and variant in cached:
+            out.append({"slug": slug, "city_name": cached.get("city_name", city_name),
+                        "num_matched_activities": cached.get("num_matched_activities", 0),
+                        "bbox": cached.get("bbox"), **cached[variant]})
+            continue
+        matcher = get_matcher(slug)
+        stats = matcher.coverage_stats_from_state(streets_only=streets_only)
+        matcher.write_stats_cache()
+        out.append({"slug": slug, "city_name": city_name, "num_matched_activities": len(matcher.coverage.matched_ids()),
+                    "bbox": matcher.city_bbox(), **stats})
+    return out
+
+
+def get_matcher(slug: str) -> StravaMapMatcher:
+    city_name = require_city(slug)
     # Built under the lock so concurrent requests never load the same city twice
     with _matchers_lock:
         if slug in _matchers:
             _matchers.move_to_end(slug)
             _matcher_used[slug] = time.monotonic()
             return _matchers[slug]
-        matcher = StravaMapMatcher(city_name=cities[slug], workdir=Path(settings.workdir))
+        matcher = StravaMapMatcher(city_name=city_name, workdir=Path(settings.workdir))
         _remember_matcher_locked(slug, matcher)
         return matcher
 
@@ -137,6 +195,168 @@ def unload_idle_cities() -> list[str]:
     return idle
 
 
+class CityDownload(TypedDict):
+    running: bool
+    city_name: str | None
+    slug: str | None
+    error: str | None
+    progress: str | None
+    # time.time() when it started
+    started_at: float | None
+
+
+# A new city's download, one at a time: it holds the city's network while it builds
+_download: CityDownload = {"running": False, "city_name": None, "slug": None, "error": None, "progress": None,
+                           "started_at": None}
+_download_lock = Lock()
+
+
+def add_status() -> CityDownload:
+    with _download_lock:
+        return CityDownload(**_download)
+
+
+def claim_city_download(city_name: str) -> str:
+    """Take the download slot for `city_name` and return its slug; Conflict when the city is
+    added already or another download runs. The caller then runs download_city."""
+    slug = city_slug(city_name)
+    if slug in known_cities():
+        raise Conflict(f"'{city_name}' is already added")
+    with _download_lock:
+        if _download["running"]:
+            raise Conflict(f"A city download is already running ({_download['city_name']})")
+        _download.update(running=True, city_name=city_name, slug=slug, error=None, progress="starting",
+                         started_at=time.time())
+    return slug
+
+
+def download_city(city_name: str) -> None:
+    """Download and store the runnable street network of the city claimed, in the slot taken."""
+    def report(stage: str) -> None:
+        with _download_lock:
+            _download["progress"] = stage
+
+    err, slug = None, None
+    try:
+        matcher = StravaMapMatcher(city_name=city_name, workdir=Path(settings.workdir), on_progress=report)
+        slug = matcher.slug
+        remember_matcher(slug, matcher)
+        # So listing the cities and the first map pans needn't load it
+        matcher.write_stats_cache()
+        matcher.write_viewport_index()
+        logger.info("City map for %s ready (%s)", city_name, slug)
+    except Exception as e:
+        logger.exception("Adding city %s failed", city_name)
+        err = f"{type(e).__name__}: {e}"
+    finally:
+        with _download_lock:
+            _download.update(running=False, slug=slug, error=err, progress=None)
+
+
+class GeocodeSuggestion(TypedDict):
+    query: str
+    display_name: str
+    area_km2: float
+
+
+class GeocodeBox(TypedDict):
+    south: float
+    west: float
+    north: float
+    east: float
+
+
+class GeocodeResult(TypedDict):
+    query: str
+    display_name: str
+    lat: float
+    lon: float
+    bbox: GeocodeBox
+    area_km2: NotRequired[float]
+    # Only a point in OSM, with no boundary to cover; `suggestion` is the area around it, if any
+    point_only: NotRequired[bool]
+    suggestion: NotRequired[GeocodeSuggestion | None]
+
+
+def _geocode_to_gdf(query: str) -> gpd.GeoDataFrame:
+    import osmnx as ox
+
+    return ox.geocode_to_gdf(query)
+
+
+def _nominatim(endpoint: str, **params: Any) -> Any:
+    import osmnx as ox
+    import requests
+
+    return requests.get(f"{ox.settings.nominatim_url.rstrip('/')}/{endpoint}", params={"format": "json", **params},
+                        headers={"User-Agent": ox.settings.http_user_agent}, timeout=30).json()
+
+
+def _area_km2(gdf: gpd.GeoDataFrame) -> float:
+    return round(float(gdf.to_crs(gdf.estimate_utm_crs()).area.iloc[0]) / 1e6, 1)
+
+
+def _containing_area(point: dict[str, Any]) -> GeocodeSuggestion | None:
+    """For a place Nominatim has only as a point (e.g. a village), the
+    smallest boundary around it that can be added instead: town, then city,
+    then county level. Only a name that geocodes back to that same boundary
+    is suggested, since cities are added (and later re-geocoded) by name."""
+    seen: set[int] = set()
+    for zoom in (12, 10, 8):  # Nominatim reverse zoom levels for town, city, county
+        time.sleep(1)  # Nominatim usage policy: at most one request per second
+        area = _nominatim("reverse", lat=point["lat"], lon=point["lon"], zoom=zoom, addressdetails=1)
+        if area.get("osm_type") != "relation" or area.get("osm_id") in seen:
+            continue
+        seen.add(area["osm_id"])
+        address = area.get("address", {})
+        name = ", ".join(p for p in (area.get("name"), address.get("state"), address.get("country")) if p)
+        try:
+            gdf = _geocode_to_gdf(name)
+        except Exception:
+            continue
+        if int(gdf.iloc[0].get("osm_id", -1)) != int(area["osm_id"]):
+            continue
+        return {"query": name, "display_name": str(gdf.iloc[0].get("display_name", name)), "area_km2": _area_km2(gdf)}
+    return None
+
+
+def geocode_city(query: str) -> GeocodeResult:
+    """What a city name resolves to on OSM, to confirm before downloading it.
+    Guards against Nominatim surprises (bare 'Amsterdam' → New York City,
+    whose historical name is New Amsterdam). A place mapped only as a point
+    has no boundary to cover, so it then carries `point_only` and suggests the
+    area around it (`suggestion`, None when there is none)."""
+    try:
+        gdf = _geocode_to_gdf(query)
+    except TypeError:
+        # osmnx raises TypeError when the place's geometry isn't a (Multi)Polygon
+        hits = _nominatim("search", q=query, limit=1)
+        if not hits:
+            raise NotFound(f"'{query}' not found")
+        south, north, west, east = (float(v) for v in hits[0]["boundingbox"])
+        return {
+            "query": query,
+            "display_name": hits[0]["display_name"],
+            "lat": float(hits[0]["lat"]),
+            "lon": float(hits[0]["lon"]),
+            "bbox": {"south": south, "west": west, "north": north, "east": east},
+            "point_only": True,
+            "suggestion": _containing_area(hits[0]),
+        }
+    except Exception as e:
+        raise NotFound(f"{type(e).__name__}: {e}") from e
+    west, south, east, north = (float(v) for v in gdf.total_bounds)
+    centroid = gdf.iloc[0].geometry.centroid
+    return {
+        "query": query,
+        "display_name": str(gdf.iloc[0].get("display_name", query)),
+        "lat": float(centroid.y),
+        "lon": float(centroid.x),
+        "bbox": {"south": south, "west": west, "north": north, "east": east},
+        "area_km2": _area_km2(gdf),
+    }
+
+
 def _responses_dir() -> Path:
     return osm_dir() / "responses"
 
@@ -161,11 +381,16 @@ def _persist_response(fp: Path, body: bytes) -> None:
 def cached_json(key: tuple, version: tuple, build: Callable[[], dict | list]) -> Response:
     """The JSON response for `key` (`(layer, slug, *params)`) at `version`, built only when
     neither memory nor disk holds it."""
+    return PackedJSONResponse(cached_layer(key, version, build))
+
+
+def cached_layer(key: tuple, version: tuple, build: Callable[[], dict | list]) -> PackedJSON:
+    """cached_json's serialized body."""
     with _responses_lock:
         hit = _responses.get(key)
         if hit is not None and hit[0] == version:
             _responses.move_to_end(key)
-            return PackedJSONResponse(hit[1])
+            return hit[1]
     fp = _response_file(key, version)
     if fp.exists():
         packed = PackedJSON.from_gzipped(fp.read_bytes())
@@ -177,7 +402,7 @@ def cached_json(key: tuple, version: tuple, build: Callable[[], dict | list]) ->
         _responses.move_to_end(key)
         while len(_responses) > _MAX_CACHED_RESPONSES:
             _responses.popitem(last=False)
-    return PackedJSONResponse(packed)
+    return packed
 
 
 def state_version(slug: str, *extra: Path) -> tuple:
@@ -185,9 +410,8 @@ def state_version(slug: str, *extra: Path) -> tuple:
         fp.stat().st_mtime_ns if fp.exists() else 0 for fp in extra)
 
 
-def hold_plan(plan_id: str, plan: dict) -> None:
-    """Keep a planned loop ({slug, feature, new_ways, network, request}) until it is saved, the
-    most recent ones only."""
+def hold_plan(plan_id: str, plan: HeldPlan) -> None:
+    """Keep a planned loop until it is saved, the most recent ones only."""
     with _held_plans_lock:
         _held_plans[plan_id] = plan
         _held_plans.move_to_end(plan_id)
@@ -195,7 +419,7 @@ def hold_plan(plan_id: str, plan: dict) -> None:
             _held_plans.popitem(last=False)
 
 
-def held_plan(slug: str, plan_id: str) -> dict | None:
+def held_plan(slug: str, plan_id: str) -> HeldPlan | None:
     """The city's loop planned under `plan_id`, if still held."""
     with _held_plans_lock:
         plan = _held_plans.get(plan_id)
@@ -256,18 +480,87 @@ def walked_edges(slug: str, streets_only: bool, counts: bool) -> Response:
                        state_version(slug) + (LAYERS_FORMAT,), build)
 
 
-def districts(slug: str, admin_level: int, geometry: bool, streets_only: bool) -> Response:
+def districts(slug: str, admin_level: int, geometry: bool, streets_only: bool) -> PackedJSON:
     """Coverage per district of the city at `admin_level`."""
     def build():
         return get_matcher(slug).coverage_by_district(
             admin_level=admin_level, include_geometry=geometry, streets_only=streets_only
         )
     districts_fp = city_coverage(slug).districts_path(admin_level)
-    return cached_json(("districts", slug, admin_level, geometry, streets_only),
-                       state_version(slug, districts_fp) + (LAYERS_FORMAT,), build)
+    return cached_layer(("districts", slug, admin_level, geometry, streets_only),
+                        state_version(slug, districts_fp) + (LAYERS_FORMAT,), build)
 
 
-def city_garmin_courses(slug: str, z2: Zone2) -> Response:
+def hexes(slug: str, resolution: int, geometry: bool, streets_only: bool) -> PackedJSON:
+    """Coverage per H3 cell of the city at `resolution`."""
+    def build():
+        return get_matcher(slug).coverage_by_hex(
+            resolution=resolution, include_geometry=geometry, streets_only=streets_only
+        )
+    return cached_layer(("hexes", slug, resolution, geometry, streets_only),
+                        state_version(slug) + (LAYERS_FORMAT,), build)
+
+
+class AreaKind(StrEnum):
+    DISTRICT = "district"
+    NEIGHBOURHOOD = "neighbourhood"
+    HEX = "hex"
+
+
+_ADMIN_LEVEL = {AreaKind.DISTRICT: 9, AreaKind.NEIGHBOURHOOD: 10}
+
+
+class AreaCoverage(TypedDict):
+    # The district's name, or the H3 cell's id
+    name: str
+    total_km: float
+    covered_km: float
+    coverage_pct: float
+    # An H3 cell's centre, and the district it lies in when the city's districts are downloaded
+    centre: NotRequired[LatLon]
+    district: NotRequired[str]
+
+
+def area_coverage(slug: str, kind: AreaKind) -> list[AreaCoverage]:
+    """Coverage per district, neighbourhood or H3 cell of the city, best covered first, without
+    shapes: the layer the Coverage page draws, read from its cache, and built and kept the way
+    the page builds it when not stored yet."""
+    require_city(slug)
+    # The page's own variant (with shapes), so either one finds the layer the other built
+    if kind is AreaKind.HEX:
+        packed = hexes(slug, StravaMapMatcher.HEX_RESOLUTION, geometry=True, streets_only=False)
+    else:
+        packed = districts(slug, _ADMIN_LEVEL[kind], geometry=True, streets_only=False)
+    rows: list[PolygonCoverage] = json.loads(packed.raw)
+    areas: list[AreaCoverage] = [{"name": r["name"], "total_km": r["total_km"], "covered_km": r["covered_km"],
+                                  "coverage_pct": r["coverage_pct"]} for r in rows]
+    if kind is not AreaKind.HEX or not areas:
+        return areas
+    centres: list[LatLon] = [h3.cell_to_latlng(a["name"]) for a in areas]
+    for area, centre, district in zip(areas, centres, district_of(slug, centres)):
+        area["centre"] = centre
+        if district is not None:
+            area["district"] = district
+    return areas
+
+
+def district_of(slug: str, points: list[LatLon]) -> list[str | None]:
+    """The district (admin level 9) each (lat, lon) lies in, or the nearest one for a point
+    outside them all (an H3 cell's centre beyond the city's edge), from the city's downloaded
+    districts; None for each when the city has none downloaded or isn't divided."""
+    fp = city_coverage(slug).districts_path(9)
+    if not fp.exists():
+        return [None] * len(points)
+    polys = gpd.read_parquet(fp, columns=["name", "geometry"])
+    if len(polys) < 2:
+        return [None] * len(points)
+    pts = gpd.GeoDataFrame(geometry=gpd.points_from_xy([lon for _, lon in points], [lat for lat, _ in points]),
+                           crs="EPSG:4326").to_crs(polys.crs)
+    nearest = gpd.sjoin_nearest(pts, polys, how="left")
+    return [str(n) for n in nearest[~nearest.index.duplicated()]["name"]]
+
+
+def city_garmin_courses(slug: str, z2: Zone2) -> PackedJSON:
     """The Garmin courses starting in the city, each with `city_km`, the km of
     streets of its part in the city, and `new_km`, those not run yet (both
     null when it doesn't match here). Kept until the coverage or the courses
@@ -293,7 +586,24 @@ def city_garmin_courses(slug: str, z2: Zone2) -> Response:
         return out
     version = state_version(slug) + (LAYERS_FORMAT, _COURSES_FORMAT,
                                      tuple((c["course_id"], c["name"], c["distance_km"]) for c in courses))
-    return cached_json(("garmin-courses", slug), version, build)
+    return cached_layer(("garmin-courses", slug), version, build)
+
+
+class CityCourse(TypedDict):
+    course_id: int
+    name: str
+    distance_km: float
+    # [lat, lon]
+    start: list[float | None]
+    sport: str | None
+    created_at: str | None
+    new_km: float | None
+    city_km: float | None
+
+
+def garmin_courses_in(slug: str, z2: Zone2) -> list[CityCourse]:
+    """city_garmin_courses, read."""
+    return json.loads(city_garmin_courses(slug, z2).raw)
 
 
 def sync_status(slug: str) -> dict:

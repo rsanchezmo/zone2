@@ -86,7 +86,7 @@ def _show_usage(result: AgentRunResult[Output]) -> None:
 
 
 def _show_pending(requests: DeferredToolRequests) -> None:
-    print(f"{BOLD}Asks to change the calendar:{RESET}")
+    print(f"{BOLD}Asks your approval:{RESET}")
     for call in requests.approvals:
         print(f"  [{call.tool_call_id}] {call.tool_name} {call.args_as_json_str()}")
 

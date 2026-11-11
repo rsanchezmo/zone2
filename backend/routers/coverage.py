@@ -1,181 +1,41 @@
-import logging
-import time
-from pathlib import Path
 from threading import Lock
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 import pandas as pd
 
-from backend.config import settings
+from backend._serialize import PackedJSONResponse
 from backend.dependencies import get_z2
 from backend.services import coverage
 from zone2.core import Zone2
-from zone2.map_matching import StravaMapMatcher, city_slug
+from zone2.map_matching import StravaMapMatcher
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
 
 
 @router.get("/cities")
-def list_cities(streets_only: bool = Query(False)):
-    """City list with coverage stats. Reads the per-city stats JSON so it never
-    has to build a matcher (each instance holds ~300 MB); falls back to building
-    one — and backfilling the cache — for cities added before stats caching."""
-    variant = "streets" if streets_only else "all"
-    out = []
-    for slug, city_name in coverage.known_cities().items():
-        cached = coverage.city_coverage(slug).read_stats()
-        if cached and variant in cached:
-            out.append({
-                "slug": slug,
-                "city_name": cached.get("city_name", city_name),
-                "num_matched_activities": cached.get("num_matched_activities", 0),
-                "bbox": cached.get("bbox"),
-                **cached[variant],
-            })
-            continue
-        matcher = coverage.get_matcher(slug)
-        stats = matcher.coverage_stats_from_state(streets_only=streets_only)
-        matcher.write_stats_cache()
-        out.append({
-            "slug": slug,
-            "city_name": city_name,
-            "num_matched_activities": len(matcher.coverage.matched_ids()),
-            "bbox": matcher.city_bbox(),
-            **stats,
-        })
-    return out
-
-
-# City download runs in a BackgroundTasks thread; single global slot.
-_add_status: dict = {
-    "running": False, "city_name": None, "slug": None, "error": None,
-    "progress": None, "started_at": None,
-}
-_add_lock = Lock()
-
-
-def _run_add_city(city_name: str):
-    def report(stage: str):
-        with _add_lock:
-            _add_status["progress"] = stage
-
-    err, slug = None, None
-    try:
-        matcher = StravaMapMatcher(
-            city_name=city_name, workdir=Path(settings.workdir), on_progress=report
-        )
-        slug = matcher.slug
-        coverage.remember_matcher(slug, matcher)
-        # Seed the stats cache and viewport index so the first /cities call
-        # and map pans needn't build a matcher.
-        matcher.write_stats_cache()
-        matcher.write_viewport_index()
-        logger.info("City map for %s ready (%s)", city_name, slug)
-    except Exception as e:
-        logger.exception("Adding city %s failed", city_name)
-        err = f"{type(e).__name__}: {e}"
-    finally:
-        with _add_lock:
-            _add_status.update({"running": False, "slug": slug, "error": err, "progress": None})
+def list_cities(streets_only: bool = Query(False)) -> list[coverage.CitySummary]:
+    """City list with coverage stats, read from each city's stats file (see coverage.city_list)."""
+    return coverage.city_list(streets_only)
 
 
 @router.post("/add")
 def add_city(background_tasks: BackgroundTasks, city_name: str = Query(min_length=3)):
-    """Download and store the runnable street network for a new city."""
-    slug = city_slug(city_name)
-    if slug in coverage.known_cities():
-        raise HTTPException(status_code=409, detail=f"'{city_name}' is already added")
-    with _add_lock:
-        if _add_status["running"]:
-            raise HTTPException(status_code=409, detail="A city download is already running")
-        _add_status.update({
-            "running": True, "city_name": city_name, "slug": None, "error": None,
-            "progress": "starting", "started_at": time.time(),
-        })
-    background_tasks.add_task(_run_add_city, city_name)
+    """Download and store the runnable street network for a new city, one at a time."""
+    coverage.claim_city_download(city_name)
+    background_tasks.add_task(coverage.download_city, city_name)
     return {"status": "started"}
 
 
 @router.get("/add/status")
-def add_city_status():
-    with _add_lock:
-        return dict(_add_status)
-
-
-def _nominatim(endpoint: str, **params) -> list | dict:
-    import requests
-    import osmnx as ox
-
-    return requests.get(f"{ox.settings.nominatim_url.rstrip('/')}/{endpoint}", params={"format": "json", **params},
-                        headers={"User-Agent": ox.settings.http_user_agent}, timeout=30).json()
-
-
-def _containing_area(point: dict) -> dict | None:
-    """For a place Nominatim has only as a point (e.g. a village), the
-    smallest boundary around it that can be added instead: town, then city,
-    then county level. Only a name that geocodes back to that same boundary
-    is suggested, since cities are added (and later re-geocoded) by name."""
-    import osmnx as ox
-
-    seen: set[int] = set()
-    for zoom in (12, 10, 8):  # Nominatim reverse zoom levels for town, city, county
-        time.sleep(1)  # Nominatim usage policy: at most one request per second
-        area = _nominatim("reverse", lat=point["lat"], lon=point["lon"], zoom=zoom, addressdetails=1)
-        if area.get("osm_type") != "relation" or area.get("osm_id") in seen:
-            continue
-        seen.add(area["osm_id"])
-        address = area.get("address", {})
-        name = ", ".join(p for p in (area.get("name"), address.get("state"), address.get("country")) if p)
-        try:
-            gdf = ox.geocode_to_gdf(name)
-        except Exception:
-            continue
-        if int(gdf.iloc[0].get("osm_id", -1)) != int(area["osm_id"]):
-            continue
-        km2 = float(gdf.to_crs(gdf.estimate_utm_crs()).area.iloc[0]) / 1e6
-        return {"query": name, "display_name": str(gdf.iloc[0].get("display_name", name)), "area_km2": round(km2, 1)}
-    return None
+def add_city_status() -> coverage.CityDownload:
+    return coverage.add_status()
 
 
 @router.get("/geocode")
-def geocode_city(q: str = Query(min_length=3)):
-    """Preview what a city query resolves to before downloading it.
-    Guards against Nominatim surprises (bare 'Amsterdam' → New York City,
-    whose historical name is New Amsterdam). A place mapped only as a point
-    has no boundary to cover, so the preview then carries `point_only` and
-    suggests the area around it (`suggestion`, None when there is none)."""
-    import osmnx as ox
-
-    try:
-        gdf = ox.geocode_to_gdf(q)
-    except TypeError:
-        # osmnx raises TypeError when the place's geometry isn't a (Multi)Polygon
-        hits = _nominatim("search", q=q, limit=1)
-        if not hits:
-            raise HTTPException(status_code=404, detail=f"'{q}' not found")
-        south, north, west, east = (float(v) for v in hits[0]["boundingbox"])
-        return {
-            "query": q,
-            "display_name": hits[0]["display_name"],
-            "lat": float(hits[0]["lat"]),
-            "lon": float(hits[0]["lon"]),
-            "bbox": {"south": south, "west": west, "north": north, "east": east},
-            "point_only": True,
-            "suggestion": _containing_area(hits[0]),
-        }
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=f"{type(e).__name__}: {e}")
-    west, south, east, north = (float(v) for v in gdf.total_bounds)
-    centroid = gdf.iloc[0].geometry.centroid
-    return {
-        "query": q,
-        "display_name": str(gdf.iloc[0].get("display_name", q)),
-        "lat": float(centroid.y),
-        "lon": float(centroid.x),
-        "bbox": {"south": south, "west": west, "north": north, "east": east},
-    }
+def geocode_city(q: str = Query(min_length=3)) -> coverage.GeocodeResult:
+    """Preview what a city query resolves to before downloading it (see coverage.geocode_city)."""
+    return coverage.geocode_city(q)
 
 
 @router.delete("/{slug}")
@@ -312,8 +172,8 @@ def coverage_districts(
     admin_level: int = Query(9, ge=4, le=11),
     geometry: bool = Query(False),
     streets_only: bool = Query(False),
-):
-    return coverage.districts(slug, admin_level, geometry, streets_only)
+) -> Response:
+    return PackedJSONResponse(coverage.districts(slug, admin_level, geometry, streets_only))
 
 
 @router.get("/{slug}/hexes")
@@ -322,13 +182,8 @@ def coverage_hexes(
     resolution: int = Query(StravaMapMatcher.HEX_RESOLUTION, ge=7, le=9),
     geometry: bool = Query(False),
     streets_only: bool = Query(False),
-):
-    def build():
-        return coverage.get_matcher(slug).coverage_by_hex(
-            resolution=resolution, include_geometry=geometry, streets_only=streets_only
-        )
-    return coverage.cached_json(("hexes", slug, resolution, geometry, streets_only),
-                                coverage.state_version(slug) + (coverage.LAYERS_FORMAT,), build)
+) -> Response:
+    return PackedJSONResponse(coverage.hexes(slug, resolution, geometry, streets_only))
 
 
 class AreaRequest(BaseModel):

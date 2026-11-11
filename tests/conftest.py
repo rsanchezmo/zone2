@@ -174,3 +174,36 @@ def offline_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, activity_store:
         clear()
     yield OfflineApp(client=TestClient(app), z2=z2, data_dir=data_dir, today=TODAY)
     clear_stats_cache()
+
+
+# Runs matched in the synthetic city (tests.synthetic.write_grid_city): along its bottom row and
+# up its west column, both from its south-west corner
+GRID_RUNS = {9001: [(0, 0), (11, 0)], 9002: [(0, 0), (0, 11)]}
+
+
+@pytest.fixture
+def coverage_city(offline_app: OfflineApp, monkeypatch: pytest.MonkeyPatch) -> str:
+    """The synthetic street grid as a coverage city of the offline app, with GRID_RUNS matched
+    and its stats written, and the coverage service holding nothing from another test. Returns
+    its slug."""
+    from collections import OrderedDict
+
+    import geopandas as gpd
+
+    from backend.config import settings
+    from backend.services import coverage
+    from tests.synthetic import GRID_CITY, grid_track, write_grid_city
+    from zone2.map_matching import StravaMapMatcher
+
+    for name in ("_matchers", "_responses", "_held_plans"):
+        monkeypatch.setattr(coverage, name, OrderedDict())
+    monkeypatch.setattr(coverage, "_matcher_used", {})
+    monkeypatch.setattr(coverage, "_download", coverage.CityDownload(
+        running=False, city_name=None, slug=None, error=None, progress=None, started_at=None))
+    slug = write_grid_city(Path(settings.workdir) / "osm_maps")
+    matcher = StravaMapMatcher(GRID_CITY, workdir=Path(settings.workdir))
+    runs = gpd.GeoDataFrame({"id": list(GRID_RUNS)}, geometry=[grid_track(c) for c in GRID_RUNS.values()],
+                            crs="EPSG:4326")
+    matcher.save_match_state(matcher.match(runs))
+    matcher.write_stats_cache()
+    return slug

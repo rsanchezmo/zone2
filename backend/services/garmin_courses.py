@@ -21,7 +21,7 @@ def clear_courses_cache() -> None:
     _courses_cache.clear()
 
 
-def _live[T](fn: Callable[..., T], *args: Any) -> T:
+def garmin_call[T](fn: Callable[..., T], *args: Any) -> T:
     try:
         return fn(*args)
     except GarminUnavailable as e:
@@ -41,7 +41,7 @@ def course_list(z2: Zone2) -> list[dict[str, Any]]:
              "start": [c.get("startLatitude"), c.get("startLongitude")],
              "sport": (c.get("activityType") or {}).get("typeKey"),
              "created_at": c.get("createdDateFormatted")}
-            for c in sorted(_live(z2.garmin_client.list_courses), key=lambda c: c.get("createdDate") or 0, reverse=True)
+            for c in sorted(garmin_call(z2.garmin_client.list_courses), key=lambda c: c.get("createdDate") or 0, reverse=True)
         ]
         _courses_cache.set("courses", cached)
     return cached
@@ -51,7 +51,7 @@ def course_line(z2: Zone2, course_id: int) -> dict[str, Any]:
     """The course's line as [lon, lat] coordinates."""
     cached = _course_points_cache.get(course_id)
     if cached is None:
-        points = _live(z2.garmin_client.course_points, course_id)
+        points = garmin_call(z2.garmin_client.course_points, course_id)
         cached = {"coordinates": [[round(lon, 6), round(lat, 6)] for lat, lon in points]}
         _course_points_cache.set(course_id, cached)
     return cached
@@ -61,6 +61,6 @@ def course_devices(z2: Zone2) -> list[dict[str, Any]]:
     """Watches that take courses, the primary training device first."""
     cached = _courses_cache.get("devices")
     if cached is None:
-        cached = sorted(_live(z2.garmin_client.course_devices), key=lambda d: not d["primary"])
+        cached = sorted(garmin_call(z2.garmin_client.course_devices), key=lambda d: not d["primary"])
         _courses_cache.set("devices", cached)
     return cached

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation, useSearchParams } from 'react-router-dom'
 import { MapContainer, TileLayer, GeoJSON, Rectangle, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -7,6 +8,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import {
   useCoverageCities, useCoverageEdges, useCoverageDistricts, useCoverageArea, useCoverageSyncStatus,
   useTriggerCoverageSync, useUncoveredEdges, useAddCity, useAddCityStatus, useGeocodeCity, useDeleteCity,
+  useHeldPlan, useSavedRoutes,
   type GeocodeSuggestion, type AreaCoverage, type CoverageSummary, type DistrictCoverage, type DistrictLevel,
 } from '../api/coverage'
 import { useAppConfig } from '../api/athlete'
@@ -22,10 +24,11 @@ import { MapStyleToggle, SATELLITE_ACCENT, SATELLITE_ATTR, SATELLITE_TILES, type
 import NewStreetsPanel from '../components/shared/NewStreetsPanel'
 import { LoopPlanLayer, LoopPlanPanel, RouteViewPanel } from '../components/shared/LoopPlanner'
 import RoutesPanel from '../components/shared/RoutesPanel'
-import { selectionKey, useLoopPlanner, type RouteSelection } from '../hooks/useLoopPlanner'
+import { errorDetail, selectionKey, useLoopPlanner, type RouteSelection } from '../hooks/useLoopPlanner'
 import PageHeader from '../components/shared/PageHeader'
 
 const COVERED_ACCENT = '#fb2c36'
+const EXPIRED_LOOP = 'That loop isn’t kept any more (z2 restarted, or many loops were planned since): plan it again.'
 // Districts with less street than this don't set the overlay's shading scale
 const MIN_SHADE_SCALE_KM = 1
 
@@ -301,10 +304,15 @@ export default function CoveragePage() {
   const isLight = theme === 'light'
   const qc = useQueryClient()
 
+  // The URL holds the city (?city=slug) and a route to show: a loop held by its plan id
+  // (?plan=), or a saved route (?route=), as the coach opens them
+  const [params, setParams] = useSearchParams()
+  const location = useLocation()
   const { data: cities, isLoading: citiesLoading } = useCoverageCities()
-  const [slug, setSlug] = useState<string | undefined>(undefined)
-  const activeSlug = slug ?? cities?.[0]?.slug
+  const activeSlug = params.get('city') ?? cities?.[0]?.slug
   const city = cities?.find(c => c.slug === activeSlug)
+  const urlPlan = params.get('plan')
+  const urlRoute = Number(params.get('route')) || null
 
   // Leaflet layers read their GeoJSON once at mount, so the street layers are
   // keyed by the identity of their payload: a new one remounts them, a
@@ -327,6 +335,67 @@ export default function CoveragePage() {
   const areaMutation = useCoverageArea(activeSlug)
   const [planMode, setPlanMode] = useState(false)
   const planner = useLoopPlanner(activeSlug, planMode)
+
+  const heldPlan = useHeldPlan(activeSlug, urlPlan)
+  const { data: savedRoutes } = useSavedRoutes(activeSlug)
+  const [notice, setNotice] = useState<string | null>(null)
+  // Each visit to a URL with a route shows it once (a reload or back/forward is a visit), and
+  // the athlete takes it from there
+  const target = urlPlan || urlRoute !== null ? location.key : null
+  const [shownTarget, setShownTarget] = useState<string | null>(null)
+  if (target !== shownTarget) {
+    if (target === null) {
+      setShownTarget(null)
+    } else if (planMode && urlPlan && urlPlan === planner.loop?.properties.plan_id) {
+      // The URL followed the loop on screen
+      setShownTarget(target)
+    } else if (urlPlan && (heldPlan.data !== undefined || heldPlan.isError)) {
+      setShownTarget(target)
+      setSelectMode(false)
+      if (heldPlan.data) {
+        setNotice(null)
+        setPlanMode(true)
+        planner.adopt(heldPlan.data.request)
+      } else {
+        setNotice(heldPlan.isError ? errorDetail(heldPlan.error, 'That loop could not be loaded') : EXPIRED_LOOP)
+      }
+    } else if (urlRoute !== null && savedRoutes) {
+      setShownTarget(target)
+      setSelectMode(false)
+      const route = savedRoutes.find(r => r.id === urlRoute)
+      if (route) {
+        setNotice(null)
+        setPlanMode(true)
+        planner.show({ kind: 'saved', route })
+      } else {
+        setNotice('That saved route isn’t in this city’s routes any more')
+      }
+    }
+  }
+
+  // Planning on from the coach's loop, the URL follows the loop on screen, so a reload shows
+  // it and the coach sees which one it is
+  const loopId = planMode && !planner.view ? planner.loop?.properties.plan_id : undefined
+  useEffect(() => {
+    if (!urlPlan || !loopId || loopId === urlPlan || target !== shownTarget) return
+    setParams(p => {
+      const next = new URLSearchParams(p)
+      next.set('plan', loopId)
+      return next
+    }, { replace: true })
+  }, [urlPlan, loopId, target, shownTarget, setParams])
+
+  const closePlanner = () => {
+    planner.show(null)
+    setPlanMode(false)
+    if (!urlPlan && urlRoute === null) return
+    setParams(p => {
+      const next = new URLSearchParams(p)
+      next.delete('plan')
+      next.delete('route')
+      return next
+    }, { replace: true })
+  }
 
   const [showMissing, setShowMissing] = useState(false)
   const [viewportBbox, setViewportBbox] = useState<string | undefined>(undefined)
@@ -455,7 +524,7 @@ export default function CoveragePage() {
 
   // Per-city UI state (delete confirmation, area selection, planned loop) resets on switch.
   const switchCity = (next: string | undefined) => {
-    setSlug(next)
+    setParams(next ? { city: next } : {})
     setConfirmingDelete(false)
     clearArea()
     planner.reset()
@@ -690,7 +759,7 @@ export default function CoveragePage() {
           </TipButton>
           <TipButton
             tip={selectMode ? 'Cancel area selection' : 'Measure an area — drag a rectangle to get its coverage'}
-            onClick={() => { setSelectMode(m => !m); setPlanMode(false); planner.show(null); if (areaRect) clearArea() }}
+            onClick={() => { setSelectMode(m => !m); closePlanner(); if (areaRect) clearArea() }}
             className={clsx(buttonClass, selectMode && '!text-cyan-400 !border-cyan-500/50')}
             isLight={isLight}
           >
@@ -701,7 +770,7 @@ export default function CoveragePage() {
           </TipButton>
           <TipButton
             tip={planMode ? 'Close the run planner' : 'Plan a run — a loop through streets you haven’t run yet'}
-            onClick={() => { if (planMode) planner.show(null); setPlanMode(!planMode); setSelectMode(false) }}
+            onClick={() => { if (planMode) closePlanner(); else setPlanMode(true); setSelectMode(false) }}
             className={clsx(buttonClass, planMode && '!text-cyan-400 !border-cyan-500/50')}
             isLight={isLight}
           >
@@ -740,7 +809,15 @@ export default function CoveragePage() {
           )}
           {planMode && !planner.view && (
             <LoopPlanPanel planner={planner} slug={activeSlug} className={overlayClass} isLight={isLight}
-                           onClose={() => { planner.show(null); setPlanMode(false) }} />
+                           onClose={closePlanner} />
+          )}
+          {notice && (
+            <div className={clsx('px-3 py-2 flex items-center gap-3 max-w-80', overlayClass)} role="status">
+              <span className="text-[11px] text-fg">{notice}</span>
+              <button onClick={() => setNotice(null)} className={clsx('text-[11px]', isLight ? 'text-gray-400 hover:text-gray-700' : 'text-gray-500 hover:text-gray-200')} aria-label="Dismiss">
+                ✕
+              </button>
+            </div>
           )}
           {heatmapMode && edges && (
             <div className={clsx('px-3 py-2 flex items-center gap-2', overlayClass)}>

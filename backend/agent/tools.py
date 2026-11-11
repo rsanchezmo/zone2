@@ -11,6 +11,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Annotated, Any, Literal
+from urllib.parse import urlencode
 
 import aiosqlite
 import pandas as pd
@@ -23,7 +24,8 @@ from pydantic_core import core_schema
 from backend.agent import notes
 from backend.errors import NotFound, ServiceError
 from backend.services import activities as activity_service, coach_log, garmin_workouts, plans, session_scores
-from backend.services import day_timeline, workout_library
+from backend.services import day_timeline, planned_routes, workout_library
+from backend.services import coverage as coverage_service
 from backend.services import gear as gear_service
 from backend.services import goals as goal_service
 from backend.services import races as race_service
@@ -175,11 +177,11 @@ class _OptionalSchema(GenerateToolJsonSchema):
         return super().default_schema(schema)
 
 
-def _toolset(*, requires_approval: bool = False) -> FunctionToolset[AgentDeps]:
+def toolset(*, requires_approval: bool = False) -> FunctionToolset[AgentDeps]:
     return FunctionToolset[AgentDeps](schema_generator=_OptionalSchema, requires_approval=requires_approval)
 
 
-read_tools = _toolset()
+read_tools = toolset()
 
 
 @read_tools.tool
@@ -647,7 +649,7 @@ async def goals(ctx: RunContext[AgentDeps], year: int | None = None) -> list[dic
 
 # ── Notes: the agent's memory of this athlete and of each plan's agreements ──
 
-memory_tools = _toolset()
+memory_tools = toolset()
 
 
 @memory_tools.tool
@@ -737,7 +739,7 @@ async def close_suggestion(ctx: RunContext[AgentDeps], entry_id: int, status: Li
     return f"Suggestion {entry_id} is {status}."
 
 
-app_tools = _toolset()
+app_tools = toolset()
 """Acting in the app without asking: syncing, and taking the athlete to a page."""
 
 
@@ -763,10 +765,34 @@ Page = Literal["activity", "plan", "gear", "calendar", "activities", "coach", "r
 PAGE_WITH_ID = {"activity": "/activities/{}", "plan": "/coach/{}", "gear": "/gear/{}"}
 
 
+async def _coverage_page(ctx: RunContext[AgentDeps], city: str | None, plan_id: str | None,
+                         route_id: int | None) -> str:
+    if city is None:
+        if plan_id or route_id is not None:
+            raise ModelRetry("Give the city's slug as `id` with its route.")
+        return "/coverage"
+    try:
+        coverage_service.require_city(city)
+        if plan_id:
+            planned_routes.held(city, plan_id)
+        elif route_id is not None:
+            await planned_routes.saved_route(ctx.deps.db, city, route_id)
+    except ServiceError as e:
+        raise ModelRetry(e.message) from e
+    shown = {"plan": plan_id} if plan_id else {"route": route_id} if route_id is not None else {}
+    return f"/coverage?{urlencode({'city': city, **shown})}"
+
+
 @app_tools.tool
-async def open_page(ctx: RunContext[AgentDeps], page: Page, id: str | None = None) -> str:
+async def open_page(ctx: RunContext[AgentDeps], page: Page, id: str | None = None, plan_id: str | None = None,
+                    route_id: int | None = None) -> str:
     """Take the athlete to a page when they ask to see something ("show me that run"). `id` is
-    the activity's, plan's or gear's id for those pages."""
+    the activity's, plan's or gear's id for those pages, or a city's slug for coverage, where
+    `plan_id` (a loop from plan_route) or `route_id` (a saved route) puts that route on the map."""
+    if page == "coverage":
+        return await _coverage_page(ctx, id, plan_id, route_id)
+    if plan_id or route_id is not None:
+        raise ModelRetry("plan_id and route_id are for the coverage page.")
     if page in PAGE_WITH_ID:
         if not id:
             raise ModelRetry(f"Give the {page}'s id to open it.")
@@ -774,7 +800,7 @@ async def open_page(ctx: RunContext[AgentDeps], page: Page, id: str | None = Non
     return f"/{page}"
 
 
-gear_tools = _toolset()
+gear_tools = toolset()
 """Shoes and bikes, loaded with the gear capability."""
 GEAR_FIELDS = ("id", "label", "kind", "primary", "retired", "distance_km", "strava_distance_km", "activities",
                "first_activity", "last_activity")
@@ -819,7 +845,7 @@ async def gear_detail(ctx: RunContext[AgentDeps], gear_id: str) -> dict[str, Any
     }
 
 
-history_tools = _toolset()
+history_tools = toolset()
 """Years, all-time totals and streaks, loaded with the history capability."""
 
 
@@ -899,7 +925,7 @@ async def night(ctx: RunContext[AgentDeps], day: date | None = None) -> dict[str
     return result
 
 
-write_tools = _toolset(requires_approval=True)
+write_tools = toolset(requires_approval=True)
 
 
 @write_tools.tool
@@ -1108,7 +1134,7 @@ async def remove_goal(ctx: RunContext[AgentDeps], goal_id: int, reason: str) -> 
     return f"Goal {goal_id} removed."
 
 
-workout_tools = _toolset(requires_approval=True)
+workout_tools = toolset(requires_approval=True)
 """The workout library's writes, loaded with the workouts capability; each needs approval."""
 WORKOUT_FIELDS = ("id", "name", "sport_type", "description", "segments")
 

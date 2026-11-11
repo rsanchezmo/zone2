@@ -49,6 +49,9 @@ const WRITE_LABEL: Record<string, string> = {
   save_workout: 'Save a workout',
   change_workout: 'Change a saved workout',
   remove_workout: 'Delete a saved workout',
+  save_route: 'Save a route',
+  send_route: 'Send a route to the watch',
+  add_city: 'Add a coverage city',
 }
 
 /** What each tool is doing, in words, while it runs. */
@@ -83,6 +86,11 @@ const STEP_LABEL: Record<string, string> = {
   totals: 'Adding up all time',
   streaks: 'Counting streaks',
   night: 'Reading the night',
+  cities: 'Reading your coverage cities',
+  coverage: 'Reading street coverage',
+  routes: 'Reading your routes',
+  plan_route: 'Planning a loop',
+  find_city: 'Looking the city up',
 }
 
 /** The capabilities the coach loads with their tools; any other id is a guide. */
@@ -90,6 +98,7 @@ const CAPABILITY_LABEL: Record<string, string> = {
   gear: 'Looking at your gear',
   history: 'Looking back at your years',
   workouts: 'Opening the workout library',
+  coverage: 'Opening street coverage',
 }
 
 function stepLabel(tool: string, args?: Record<string, unknown>): string {
@@ -179,7 +188,8 @@ function describe(write: AgentPendingWrite): string {
   const parts = [
     session?.title, session?.date, a.session_id != null && `session ${a.session_id}`,
     (a.plan as Record<string, unknown> | undefined)?.name, (a.race as Record<string, unknown> | undefined)?.name,
-    (a.race as Record<string, unknown> | undefined)?.date, a.title, a.day,
+    (a.race as Record<string, unknown> | undefined)?.date, a.title, a.day, a.name, a.city,
+    a.route_id != null && `route ${a.route_id}`, a.to_watch === true && 'and to the watch',
   ].filter(Boolean)
   if (a.changes && typeof a.changes === 'object') parts.push(Object.keys(a.changes).join(', '))
   return parts.map(String).join(' · ')

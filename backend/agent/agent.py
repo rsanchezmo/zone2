@@ -19,6 +19,7 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import Skills
 
 from backend.agent import conversations, notes, usage
+from backend.agent.coverage import coverage_tools
 from backend.agent.tools import (
     AgentDeps, app_tools, gear_tools, history_tools, memory_tools, read_tools, workout_tools, write_tools,
 )
@@ -82,6 +83,9 @@ ON_DEMAND: dict[str, tuple[FunctionToolset[AgentDeps], str]] = {
                                "sport, the longest and current streaks."),
     "workouts": (workout_tools, "The workout library: save a new workout, change or delete a saved one (each "
                                 "needs the athlete's approval)."),
+    "coverage": (coverage_tools, "Street coverage and routes: km run per city, district or H3 hex; saved loops and "
+                                 "Garmin courses; plan a loop over new streets, save it or send it to the watch; "
+                                 "add a city."),
 }
 """Capabilities whose tools the model loads when a question needs them."""
 

@@ -147,6 +147,30 @@ export function usePlannedLoop(slug: string | undefined, request: LoopPlanReques
   });
 }
 
+/** A loop planned and not saved yet, with the request it was planned from. */
+export interface HeldPlan {
+  feature: PlannedLoop;
+  request: LoopPlanRequest;
+}
+
+/** The loop held under `planId` (the coach plans these); null once it isn't held any more. */
+export function useHeldPlan(slug: string | undefined, planId: string | null) {
+  const qc = useQueryClient();
+  return useQuery<HeldPlan | null>({
+    queryKey: ['coverage-held-plan', slug, planId],
+    queryFn: async () => {
+      const held: HeldPlan | null = (await api.get(`/coverage/${slug}/plan/${planId}`)).data;
+      // The planner finds it under its request, so showing it doesn't plan it again
+      if (held) qc.setQueryData(['coverage-plan', slug, held.request], held.feature);
+      return held;
+    },
+    enabled: !!slug && !!planId,
+    staleTime: Infinity,
+    retry: false,
+    meta: { inlineError: true },
+  });
+}
+
 /** A loop saved from the planner. */
 export interface SavedRoute {
   id: number;

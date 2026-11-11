@@ -72,7 +72,8 @@ Nothing else combines the whole loop: plan by conversation, write to the calenda
     - reading z2's metrics and their caveats.
   - The coaching method comes from coaching a real 10K block, written down as general rules.
   - Each guide is a folder with a `SKILL.md`. The instructions list the guides, and the agent reads one in full when the conversation calls for it.
-- **Rarely needed tools load on demand too.** Gear, history (a year's totals, all-time totals, streaks) and the workout library's writes are capabilities with their own tools, listed next to the guides (`ON_DEMAND` in `agent.py`). Their tools cost no tokens until a turn loads them; everyday tools stay always on, since loading costs an extra request.
+- **Rarely needed tools load on demand too.** Gear, history (a year's totals, all-time totals, streaks), the workout library's writes and street coverage are capabilities with their own tools, listed next to the guides (`ON_DEMAND` in `agent.py`). Their tools cost no tokens until a turn loads them; everyday tools stay always on, since loading costs an extra request.
+- **Coverage and routes** (`coverage.py`, the coverage capability) answer from the services the Coverage page uses (`services/coverage.py`, `services/planned_routes.py`) and never return a shape: `cities` (each city's km run and usual start, and a city being added), `coverage` (districts, neighbourhoods or H3 hexes, most or least covered), `routes` (saved loops and Garmin courses with their km still new), `plan_route` (a loop as its id and numbers, held like the page's), and, each with the athlete's yes, `save_route`, `send_route` (to the watch as a course) and `add_city` after `find_city` (OSM's name lookup, the page's add-city preview). Tools take coordinates only: "from home" is a note the coach keeps with `remember`. `open_page` shows a loop or a saved route on the Coverage page (`/coverage?city=…&plan=…`). Reading never loads a city when its stats and map layers are stored; planning loads it, as the page does. Place names for starts could later be resolved with the same Nominatim lookup `find_city` uses.
 - **MCP comes later, as a thin adapter.** The agent calls its tools in-process. An MCP server over the same functions is only needed to use z2 from other AI apps, such as Claude or ChatGPT.
 
 ## Layout
@@ -82,6 +83,7 @@ backend/agent/
   agent.py          the agent: instructions, tools, guides; run_turn stores and accounts each turn
   instructions.md   the coaching prompt
   tools.py          read tools over z2's services, and the writes (each needs approval)
+  coverage.py       street coverage and routes: cities, areas, routes, loops, and their writes (the coverage capability)
   guides/           coaching playbooks, one SKILL.md folder each, loaded on demand (pydantic-ai-harness Skills)
   chat.py           the chat panel's turns: the reply, the tools used and the writes waiting for a yes, as JSON
   reviews.py        the coach's reviews of new activities that fulfil a planned session: a queue in agent_reviews and a worker
@@ -107,10 +109,10 @@ The agent button sits bottom-right on every page. It's a flat dark disc with a w
 1. **Tools and the agent, with a terminal chat** (done): reads over all of z2, and calendar writes that need approval.
 2. **The Coach page** (done): plans, checkpoints and the coach's log, which the agent writes through its tools.
 3. **The text panel with page context**, starting on the Coach page.
-4. **More writes**: saved workouts, races and courses, with confirm cards in the panel.
+4. **More writes** (done): saved workouts, races and courses, with confirm cards in the panel.
 5. **Voice** (done: push-to-talk with live captions, sent by hand).
 6. **Live coaching**, using the live session and sim from `z2-agent`.
-7. **Play**: conquer an area, then GPS art (z2 has no shape-to-streets planner yet).
+7. **Play**: conquer an area (done: coverage per district or hex, loops over new streets, sent to the watch), then GPS art (z2 has no shape-to-streets planner yet).
 
 ## Open questions
 

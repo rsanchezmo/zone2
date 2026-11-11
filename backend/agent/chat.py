@@ -17,8 +17,8 @@ from pydantic_ai import (
 )
 
 from backend.agent import conversations, message_store, preferences
-from backend.agent.agent import Output, build_agent, run_turn
-from backend.agent.tools import AgentDeps, memory_tools, workout_tools, write_tools
+from backend.agent.agent import ON_DEMAND, Output, build_agent, run_turn
+from backend.agent.tools import AgentDeps, memory_tools, write_tools
 from backend.db import connect_db
 from zone2.core import Zone2
 from zone2.utils import SportCategory, get_sport_category
@@ -26,7 +26,8 @@ from zone2.utils import SportCategory, get_sport_category
 logger = logging.getLogger(__name__)
 
 # The tools that wait for the user's yes
-WRITE_TOOLS = set(write_tools.tools) | set(workout_tools.tools)
+WRITE_TOOLS = {name for toolset in (write_tools, *(t for t, _ in ON_DEMAND.values()))
+               for name, tool in toolset.tools.items() if tool.requires_approval}
 # Tools whose results change what pages show, so the panel refreshes them
 CHANGING_TOOLS = WRITE_TOOLS | set(memory_tools.tools) | {"sync_now"}
 _agent = None

@@ -55,11 +55,13 @@ export interface LoopPlanner {
   clearVia: () => void
   another: () => void
   markSaved: (route: SavedRoute) => void
+  /** Plan from `request`, whose loop is already in the query cache (a loop held by its plan id) */
+  adopt: (request: LoopPlanRequest) => void
   show: (selection: RouteSelection | null) => void
   reset: () => void
 }
 
-function errorDetail(error: unknown, fallback: string): string {
+export function errorDetail(error: unknown, fallback: string): string {
   const detail = isAxiosError(error) ? error.response?.data?.detail : undefined
   return typeof detail === 'string' ? detail : fallback
 }
@@ -112,6 +114,7 @@ export function useLoopPlanner(slug: string | undefined, active: boolean): LoopP
     clearVia: () => update(() => ({ via: [] })),
     another: () => update(r => ({ seed: r.seed + 1 })),
     markSaved: route => { if (loop) setSaved({ planId: loop.properties.plan_id, route }) },
+    adopt: next => { setRequest(next); setSelection(null); setSaved(null) },
     show: setSelection,
     reset: () => { setRequest(INITIAL); setSelection(null); setSaved(null) },
   }

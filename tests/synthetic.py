@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -116,6 +117,71 @@ def street_grid(n: int, spacing: float = 100.0, x0: float = 0.0, y0: float = 0.0
         v.append(node(i + di, j + dj))
         geoms.append(LineString([a, ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2), b]))
     return np.asarray(u, dtype=np.int64), np.asarray(v, dtype=np.int64), np.asarray(geoms, dtype=object)
+
+
+# ── A coverage city ──────────────────────────────────────────────────────
+
+GRID_CITY = "Gridville, Nowhere"
+# UTM zone 31N, just north of the equator: open ocean
+GRID_CRS = "EPSG:32631"
+GRID_ORIGIN = (500_000.0, 1_000.0)
+GRID_SPACING = 100.0
+GRID_SIZE = 12
+
+
+def write_grid_city(osm_dir: Path, n: int = GRID_SIZE) -> str:
+    """A made-up city as a download leaves it in `osm_dir`: n×n straight residential streets
+    GRID_SPACING apart (street_grid), its boundary, two districts (its West and East halves)
+    and its name. Returns its slug."""
+    import json
+
+    import geopandas as gpd
+    import shapely
+    from shapely.geometry import box
+
+    from zone2.map_matching import city_slug
+
+    x0, y0 = GRID_ORIGIN
+    u, v, geoms = street_grid(n, GRID_SPACING, x0, y0, first_id=1)
+    edges = gpd.GeoDataFrame({"u": u, "v": v, "key": 0, "highway": "residential",
+                              "name": [f"Street {k}" for k in range(len(u))], "length": shapely.length(geoms)},
+                             geometry=list(geoms), crs=GRID_CRS)
+    slug = city_slug(GRID_CITY)
+    osm_dir.mkdir(parents=True, exist_ok=True)
+    edges.to_parquet(osm_dir / f"{slug}_edges.parquet")
+    side, pad = GRID_SPACING * (n - 1), GRID_SPACING / 2
+    west, south, east, north = x0 - pad, y0 - pad, x0 + side + pad, y0 + side + pad
+    gpd.GeoDataFrame(geometry=[box(west, south, east, north)], crs=GRID_CRS).to_parquet(osm_dir / f"{slug}_boundary.parquet")
+    mid = x0 + side / 2 + GRID_SPACING / 4
+    gpd.GeoDataFrame({"name": ["West", "East"]}, geometry=[box(west, south, mid, north), box(mid, south, east, north)],
+                     crs=GRID_CRS).to_parquet(osm_dir / f"{slug}_districts_9.parquet")
+    (osm_dir / f"{slug}_meta.json").write_text(json.dumps({"city_name": GRID_CITY}))
+    return slug
+
+
+def grid_latlon(i: float, j: float) -> tuple[float, float]:
+    """(lat, lon) of the grid's crossing (i, j), fractions in between."""
+    from pyproj import Transformer
+
+    lon, lat = Transformer.from_crs(GRID_CRS, "EPSG:4326", always_xy=True).transform(
+        GRID_ORIGIN[0] + GRID_SPACING * i, GRID_ORIGIN[1] + GRID_SPACING * j)
+    return lat, lon
+
+
+def grid_track(crossings: list[tuple[int, int]], every_m: float = 5.0):
+    """A GPS track (an EPSG:4326 LineString) along the grid's streets through these crossings,
+    a fix every `every_m` metres, 2 m off the street."""
+    from pyproj import Transformer
+    from shapely.geometry import LineString
+
+    to_latlon = Transformer.from_crs(GRID_CRS, "EPSG:4326", always_xy=True)
+    xy = [(GRID_ORIGIN[0] + GRID_SPACING * i, GRID_ORIGIN[1] + GRID_SPACING * j) for i, j in crossings]
+    coords: list[tuple[float, float]] = []
+    for (ax, ay), (bx, by) in zip(xy, xy[1:]):
+        steps = max(int(np.hypot(bx - ax, by - ay) / every_m), 1)
+        coords += [(ax + (bx - ax) * k / steps, ay + (by - ay) * k / steps + 2.0) for k in range(steps)]
+    coords.append((xy[-1][0], xy[-1][1] + 2.0))
+    return LineString([to_latlon.transform(x, y) for x, y in coords])
 
 
 # ── The activity store the API tests stand the app on ────────────────────

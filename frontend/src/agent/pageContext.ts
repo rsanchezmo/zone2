@@ -11,7 +11,11 @@ export function pageContext(pathname: string, search: string): string {
     case 'analytics': return 'Analytics: fitness, form and race predictions'
     case 'records': return 'personal records'
     case 'garmin': return params.get('day') ? `Garmin wellness, the day ${params.get('day')}` : 'Garmin wellness'
-    case 'coverage': return 'street coverage'
+    case 'coverage': {
+      const city = params.get('city'), plan = params.get('plan'), route = params.get('route')
+      return ['street coverage', city && `city ${city}`, plan && `showing the loop planned as ${plan}`,
+        route && `showing saved route ${route}`].filter(Boolean).join(', ')
+    }
     case 'profile': return 'the profile'
     case 'gear': return id ? `gear ${id}` : 'gear'
     default: return pathname
