@@ -7,6 +7,7 @@ import type { RaceEvent } from '../../api/races'
 import { SESSION_GOALS, type SessionGoalKey } from '../../constants/sessionGoals'
 import { formatDist, formatDurationHM, formatPace, getPaceUnit, isSpeedSport } from '../../utils/formatSpeed'
 import type { IconProps } from '../icons'
+import { distanceFollowsSteps } from '../shared/segmentUtils'
 
 /** Label a Monday-anchored week, dropping the repeated month when it doesn't change. */
 export function formatWeekRange(weekStart: string): string {
@@ -76,13 +77,14 @@ export interface WeekRow {
  *  in the session modal. */
 export function sessionGoalChips(s: TrainingSession): GoalChip[] {
   const chips: GoalChip[] = []
-  const hasSegments = Array.isArray(s.segments) && s.segments.length > 0
-  // Distance auto-derived from segments would just restate the workout below it.
   const add = (goal: SessionGoalKey, label: string) => {
     const { color, Icon } = SESSION_GOALS[goal]
     chips.push({ Icon, color, label })
   }
-  if (s.planned_distance_km != null && !hasSegments) add('distance', formatDist(s.planned_distance_km, s.sport_type))
+  // A distance taken from the steps would just restate the workout below it
+  if (s.planned_distance_km != null && !distanceFollowsSteps(s.planned_distance_km, s.segments ?? [])) {
+    add('distance', formatDist(s.planned_distance_km, s.sport_type))
+  }
   if (s.planned_duration_mins != null) add('duration', `${s.planned_duration_mins} min`)
   const useSpeed = isSpeedSport(s.sport_type)
   const paceUnit = getPaceUnit(s.sport_type)

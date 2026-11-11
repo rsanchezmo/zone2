@@ -9,7 +9,7 @@ import clsx from 'clsx'
 import { useActivitiesByDateRange, useActivities, type Activity } from '../api/activities'
 import {
   useCalendarSessionsByRange, useCreateSession, useUpdateSession, useDeleteSession, useSessionScores,
-  usePlanAccomplishment, type SessionFields, type TrainingSession,
+  usePlanAccomplishment, type SessionFields, type SessionUpdateInput, type TrainingSession,
 } from '../api/calendar'
 import { useWeeklyReport, useStreaks } from '../api/stats'
 import { useAthleteZones } from '../api/athlete'
@@ -323,8 +323,9 @@ export default function CalendarPage() {
     showToast(`Session copied to ${format(parseISO(targetDate), 'EEE, MMM d')}`)
   }, [createSession, showToast])
 
-  function handleUpdateSession(id: number, fields: SessionFields) {
-    updateSession.mutate({ id, title: fields.sport_type, ...fields })
+  function handleUpdateSession(id: number, changes: SessionUpdateInput) {
+    // The form has no title of its own: only a change of sport renames the session after it
+    updateSession.mutate(changes.sport_type === undefined ? { id, ...changes } : { id, title: changes.sport_type, ...changes })
   }
 
   const openDay = useCallback((dateStr: string) => {

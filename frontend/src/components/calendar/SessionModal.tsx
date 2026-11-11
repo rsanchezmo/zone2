@@ -5,7 +5,7 @@ import {
 } from 'date-fns'
 import { useWorkoutTemplates, useCreateWorkoutTemplate, type WorkoutTemplate } from '../../api/workouts'
 import type { RaceEvent, RaceEventInput } from '../../api/races'
-import type { SessionFields, SessionScoresResponse, TrainingSession } from '../../api/calendar'
+import type { SessionFields, SessionScoresResponse, SessionUpdateInput, TrainingSession } from '../../api/calendar'
 import { getSportColor } from '../../constants/sportColors'
 import {
   getPaceUnit, getDistUnit, formatPace, isSpeedSport, parsePaceInput, toInputDist, fromInputDist,
@@ -18,7 +18,7 @@ import { FlagIcon } from '../icons'
 import clsx from 'clsx'
 import { useTheme } from '../../hooks/useTheme'
 import SegmentListBuilder, { SegmentSummary, type Segment } from '../shared/SegmentListBuilder'
-import { segmentsTotalKm } from '../shared/segmentUtils'
+import { distanceFollowsSteps, stepsDistanceKm } from '../shared/segmentUtils'
 import RaceEventForm from '../shared/RaceEventForm'
 import { SESSION_GOALS, SESSION_GOAL_KEYS, type SessionGoalKey } from '../../constants/sessionGoals'
 import RowActions from '../shared/RowActions'
@@ -37,6 +37,8 @@ interface SessionDraft {
   description: string
   goals: Set<SessionGoalKey>
   plannedDistanceKm: string
+  /** Without a distance goal, whether the distance is the steps' total or none. */
+  distanceFromSteps: boolean
   plannedDurationMins: string
   targetAvgPace: string
   targetPaceMin: string
@@ -53,6 +55,7 @@ function emptyDraft(sportType: string): SessionDraft {
     description: '',
     goals: new Set(),
     plannedDistanceKm: '',
+    distanceFromSteps: true,
     plannedDurationMins: '',
     targetAvgPace: '',
     targetPaceMin: '',
@@ -66,7 +69,7 @@ function emptyDraft(sportType: string): SessionDraft {
 
 /** A goal's fields once it is removed. */
 const GOAL_CLEARED: Record<SessionGoalKey, Partial<SessionDraft>> = {
-  distance: { plannedDistanceKm: '' },
+  distance: { plannedDistanceKm: '', distanceFromSteps: true },
   duration: { plannedDurationMins: '' },
   avg_pace: { targetAvgPace: '' },
   pace_range: { targetPaceMin: '', targetPaceMax: '' },
@@ -95,9 +98,10 @@ function draftFromSession(s: TrainingSession): SessionDraft {
   const hasSegments = segments.length > 0
   // Paces are stored as decimals: shown as M:SS for pace sports, X.X for speed sports
   const useSpeed = isSpeedSport(s.sport_type)
+  const distanceFromSteps = distanceFollowsSteps(s.planned_distance_km, segments)
+  const ownDistance = distanceFromSteps ? null : s.planned_distance_km
   const goals = new Set<SessionGoalKey>()
-  // A distance computed from the segments is not a goal of its own
-  if (s.planned_distance_km != null && !hasSegments) goals.add('distance')
+  if (ownDistance != null) goals.add('distance')
   if (s.planned_duration_mins != null) goals.add('duration')
   if (s.target_avg_pace != null) goals.add('avg_pace')
   if (s.target_pace_min != null || s.target_pace_max != null) goals.add('pace_range')
@@ -107,7 +111,8 @@ function draftFromSession(s: TrainingSession): SessionDraft {
     sportType: s.sport_type,
     description: s.description || '',
     goals,
-    plannedDistanceKm: s.planned_distance_km != null && !hasSegments ? toInputDist(s.planned_distance_km, s.sport_type) : '',
+    plannedDistanceKm: ownDistance != null ? toInputDist(ownDistance, s.sport_type) : '',
+    distanceFromSteps,
     plannedDurationMins: s.planned_duration_mins != null ? String(s.planned_duration_mins) : '',
     targetAvgPace: s.target_avg_pace != null ? formatPace(s.target_avg_pace, useSpeed) : '',
     targetPaceMin: s.target_pace_min != null ? formatPace(s.target_pace_min, useSpeed) : '',
@@ -125,13 +130,13 @@ function sessionFields(d: SessionDraft): SessionFields {
   const withRange = d.goals.has('pace_range')
   const withZone = d.goals.has('hr_zone') && d.targetHrZone !== ''
   const withSegments = d.goals.has('segments') && d.segments.length > 0
-  const distance = d.goals.has('distance') ? fromInputDist(d.plannedDistanceKm, d.sportType) : null
-  // Without a distance goal the segments' total stands in, so the activity can be matched
-  const segmentsKm = withSegments ? segmentsTotalKm(d.segments) : 0
+  const ownDistance = d.goals.has('distance') ? fromInputDist(d.plannedDistanceKm, d.sportType) : null
+  // Without a distance goal the steps' total stands in, so the activity can be matched
+  const stepsDistance = d.distanceFromSteps && withSegments ? stepsDistanceKm(d.segments) : null
   return {
     sport_type: d.sportType,
     description: d.description || null,
-    planned_distance_km: segmentsKm > 0 && !distance ? Math.round(segmentsKm * 10) / 10 : distance,
+    planned_distance_km: ownDistance || stepsDistance,
     planned_duration_mins: d.goals.has('duration') && d.plannedDurationMins ? parseFloat(d.plannedDurationMins) : null,
     target_avg_pace: d.goals.has('avg_pace') && d.targetAvgPace ? parsePaceInput(d.targetAvgPace, useSpeed) : null,
     target_pace_min: withRange && d.targetPaceMin ? parsePaceInput(d.targetPaceMin, useSpeed) : null,
@@ -141,6 +146,17 @@ function sessionFields(d: SessionDraft): SessionFields {
     segments: withSegments ? d.segments : null,
     workout_template_id: withSegments ? d.workoutTemplateId : null,
   }
+}
+
+/** The fields an edit changed from the session as the form loaded it; the rest stay as stored. */
+function changedFields(fields: SessionFields, loaded: SessionFields): SessionUpdateInput {
+  const changes: SessionUpdateInput = {}
+  const compare = <K extends keyof SessionFields>(key: K) => {
+    if (JSON.stringify(fields[key]) !== JSON.stringify(loaded[key])) changes[key] = fields[key]
+  }
+  let key: keyof SessionFields
+  for (key in fields) compare(key)
+  return changes
 }
 
 /** A day's planned sessions and race events, and the form to add or edit them. */
@@ -154,7 +170,7 @@ export default function SessionModal({
   races: RaceEvent[]
   onAdd: (fields: SessionFields) => void
   onCopy: (session: TrainingSession, targetDate: string) => void
-  onUpdate: (id: number, fields: SessionFields) => void
+  onUpdate: (id: number, changes: SessionUpdateInput) => void
   onDelete: (id: number) => void
   onAddRace: (race: RaceEventInput) => void
   onUpdateRace: (id: number, race: RaceEventInput) => void
@@ -163,7 +179,9 @@ export default function SessionModal({
 }) {
   const { theme } = useTheme()
   const isLight = theme === 'light'
-  const [editingId, setEditingId] = useState<number | null>(null)
+  // The session being edited, with its fields as the form loaded them for a save to compare against
+  const [editing, setEditing] = useState<{ id: number; loaded: SessionFields } | null>(null)
+  const editingId = editing?.id ?? null
   const [draft, setDraft] = useState<SessionDraft>(() => emptyDraft('Run'))
   const [showGoalPicker, setShowGoalPicker] = useState(false)
   const [showTemplatePicker, setShowTemplatePicker] = useState(false)
@@ -189,7 +207,7 @@ export default function SessionModal({
 
   /** Fills the form, or empties it, and closes its pickers. */
   function loadForm(id: number | null, next: SessionDraft) {
-    setEditingId(id)
+    setEditing(id === null ? null : { id, loaded: sessionFields(next) })
     setDraft(next)
     setShowGoalPicker(false)
     setShowTemplatePicker(false)
@@ -216,8 +234,9 @@ export default function SessionModal({
 
   function save() {
     const fields = sessionFields(draft)
-    if (editingId) {
-      onUpdate(editingId, fields)
+    if (editing) {
+      const changes = changedFields(fields, editing.loaded)
+      if (Object.keys(changes).length > 0) onUpdate(editing.id, changes)
       cancelEdit()
       return
     }

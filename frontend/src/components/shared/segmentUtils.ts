@@ -34,6 +34,24 @@ export function segmentsTotalKm(segments: Segment[]): number {
   }, 0)
 }
 
+// A distance taken from the steps is stored to one decimal, so it is within this of their total
+const STEPS_KM_ROUNDING = 0.05 + 1e-9
+
+/** The planned distance a session without a distance goal takes from its steps: their total to one
+ *  decimal; null when no step has a distance. */
+export function stepsDistanceKm(segments: Segment[]): number | null {
+  const total = segmentsTotalKm(segments)
+  return total > 0 ? Math.round(total * 10) / 10 : null
+}
+
+/** Whether a session's planned distance is taken from its steps rather than a goal of its own, as the
+ *  backend tells them apart when the steps change: none without step distances, else their total. */
+export function distanceFollowsSteps(distanceKm: number | null, segments: Segment[]): boolean {
+  const fromSteps = stepsDistanceKm(segments)
+  if (distanceKm == null || fromSteps == null) return distanceKm == null && fromSteps == null
+  return Math.abs(distanceKm - segmentsTotalKm(segments)) <= STEPS_KM_ROUNDING
+}
+
 /** One step of a workout as the watch runs it, with reps unrolled. */
 export interface WorkoutBlock {
   segment: Segment
