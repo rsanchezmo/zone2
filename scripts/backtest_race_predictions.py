@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.services.races import refresh_race_activities  # noqa: E402
 from zone2.core import Zone2  # noqa: E402
+from zone2.race_predictions import RACE_CALIBRATION_CLAMP, RACE_CALIBRATION_MIN_RACES  # noqa: E402
 
 
 def main(sport_category: str) -> None:
@@ -24,7 +25,7 @@ def main(sport_category: str) -> None:
     if not residuals:
         print(f"No {sport_category} races to backtest")
         return
-    clamp, min_races = analytics.RACE_CALIBRATION_CLAMP, analytics.RACE_CALIBRATION_MIN_RACES
+    clamp, min_races = RACE_CALIBRATION_CLAMP, RACE_CALIBRATION_MIN_RACES
     calibrated = []
     for i, r in enumerate(residuals):
         prior = residuals[:i]

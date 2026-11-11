@@ -1,19 +1,26 @@
-"""The sliding-window best efforts behind personal records and race predictions."""
+"""The sliding-window best efforts behind personal records and race predictions,
+and the per-activity table and window queries over them."""
 import math
+from datetime import datetime
 
+import numpy as np
+import pandas as pd
 import pytest
 
-from zone2.analytics import StravaAnalytics
+from zone2.best_efforts import (
+    BESTS_COLUMNS, MAX_SPEED_MS, best_effort_times, per_activity_bests, personal_records, rank_bests,
+    recent_best_efforts, sport_distances, stream_best_efforts, summary_name,
+)
 from zone2.utils import SportCategory
-from tests.synthetic import stream_from_speeds
+from tests.synthetic import activities_frame, stream_from_speeds
 
-RUN_MAX_SPEED = StravaAnalytics.MAX_SPEED_MS[SportCategory.RUNNING]
-RIDE_MAX_SPEED = StravaAnalytics.MAX_SPEED_MS[SportCategory.CYCLING]
-SWIM_MAX_SPEED = StravaAnalytics.MAX_SPEED_MS[SportCategory.SWIMMING]
+RUN_MAX_SPEED = MAX_SPEED_MS[SportCategory.RUNNING]
+RIDE_MAX_SPEED = MAX_SPEED_MS[SportCategory.CYCLING]
+SWIM_MAX_SPEED = MAX_SPEED_MS[SportCategory.SWIMMING]
 
 
 def best_efforts(streams: dict, targets: list[int], max_speed: float = RUN_MAX_SPEED) -> dict[int, float]:
-    return StravaAnalytics._best_effort_times(streams["distance"], streams["time"], targets, max_speed)
+    return best_effort_times(streams["distance"], streams["time"], targets, max_speed)
 
 
 def test_steady_run():
@@ -114,3 +121,90 @@ def test_longer_targets_never_take_less_time():
     efforts = best_efforts(run, [400, 1000, 5000, 10000])
     times = [efforts[t] for t in sorted(efforts)]
     assert times == sorted(times)
+
+
+# ── Persisted summaries ──────────────────────────────────────────────────
+
+def test_summary_names_stay_put_while_the_values_mean_the_same():
+    # Renaming would recompute every activity's persisted best efforts
+    assert summary_name(SportCategory.RUNNING) == "best_efforts:v2:running:7.2:[400, 1000, 5000, 10000, 15000, 20000, 21097, 42195]"
+    assert summary_name(SportCategory.CYCLING) == "best_efforts:v2:cycling:21.0:[10000, 20000, 40000, 100000, 160000]"
+    assert summary_name(SportCategory.SWIMMING) == "best_efforts:v2:swimming:2.0:[100, 200, 400, 800, 1500, 1900, 3000, 3800]"
+
+
+def test_stream_best_efforts_at_the_sports_own_distances():
+    swim = stream_from_speeds([1.0] * 450)
+    assert stream_best_efforts(swim, SportCategory.SWIMMING) == {100: 100.0, 200: 200.0, 400: 400.0}
+    # 1 m/s is a walk on foot, but nothing at a run's 400 m is above its cap either
+    assert stream_best_efforts(swim, SportCategory.RUNNING) == {400: 400.0}
+    assert stream_best_efforts({"time": list(range(450))}, SportCategory.SWIMMING) == {}
+    assert sport_distances(SportCategory.WALKING) == ()
+
+
+# ── The per-activity table and its queries ───────────────────────────────
+
+def best(activity_id: int, day: str, distance_m: int, time_s: float, is_race: bool = False,
+         avg_hr: float | None = None) -> dict:
+    return {"activity_id": activity_id, "activity_name": f"Run {activity_id}", "date": pd.Timestamp(day, tz="UTC"),
+            "distance_m": distance_m, "time_s": time_s, "is_race": is_race, "avg_hr": avg_hr}
+
+
+def bests_frame(*rows: dict) -> pd.DataFrame:
+    return pd.DataFrame(list(rows), columns=BESTS_COLUMNS)
+
+
+def test_per_activity_bests_mark_a_race_at_its_own_distance_only():
+    activities = activities_frame([
+        {"id": 1, "name": "Race", "start_date_local": "2026-06-07T09:00:00Z", "average_heartrate": 172.0},
+        {"id": 2, "name": "Easy", "start_date_local": "2026-06-08T09:00:00Z", "average_heartrate": np.nan},
+        {"id": 3, "name": "No streams", "start_date_local": "2026-06-09T09:00:00Z", "average_heartrate": 140.0},
+    ])
+    efforts = {1: {400: 80.0, 1000: 210.0, 5000: 1100.0}, 2: {400: 95.0}}
+    bests = per_activity_bests(activities, efforts, race_ids={1})
+    assert list(bests.columns) == BESTS_COLUMNS
+    assert list(zip(bests["activity_id"], bests["distance_m"], bests["is_race"])) == [
+        (1, 400, False), (1, 1000, False), (1, 5000, True), (2, 400, False),
+    ]
+    assert bests["avg_hr"].iloc[0] == 172.0 and pd.isna(bests["avg_hr"].iloc[3])
+    assert bests["date"].iloc[0] == pd.Timestamp("2026-06-07T09:00:00Z")
+
+
+def test_personal_records_take_the_fastest_and_the_earliest_on_a_tie():
+    bests = bests_frame(best(1, "2026-05-01", 1000, 210.0), best(2, "2026-05-02", 1000, 200.0),
+                        best(3, "2026-05-03", 1000, 200.0), best(3, "2026-05-03", 5000, 1100.0))
+    records = personal_records(bests, sport_distances(SportCategory.RUNNING))
+    assert [(r["label"], r["time_s"], r["activity_id"]) for r in records] == [("1K", 200.0, 2), ("5K", 1100.0, 3)]
+    assert records[0]["date"] == "2026-05-02 00:00:00+00:00"
+
+
+def test_ranked_bests_order_by_distance_then_time_then_activity_order():
+    ranked = rank_bests(bests_frame(best(1, "2026-05-01", 5000, 1100.0), best(2, "2026-05-02", 1000, 205.0),
+                                    best(3, "2026-05-03", 1000, 200.0), best(4, "2026-05-04", 1000, 205.0)))
+    assert ranked.distance_m.tolist() == [1000, 1000, 1000, 5000]
+    assert ranked.activity_id.tolist() == [3, 2, 4, 1]
+    assert ranked.date_ns[0] == pd.Timestamp("2026-05-03", tz="UTC").value
+
+
+def test_recent_bests_keep_the_top_k_close_enough_to_the_fastest():
+    ranked = rank_bests(bests_frame(
+        best(1, "2026-10-01", 1000, 200.0),
+        best(2, "2026-09-01", 1000, 230.0),
+        best(3, "2026-08-01", 1000, 250.0),    # over 120% of 200 s
+        best(4, "2025-01-01", 1000, 180.0),    # out of the window
+        best(5, "2026-10-15", 5000, 1100.0, is_race=True, avg_hr=171.0),
+        best(6, "2026-10-20", 5000, 1400.0),   # over 120% of 1100 s
+    ))
+    recent = recent_best_efforts(ranked, datetime(2026, 11, 1), within_days=365)
+    assert [(b["distance_m"], b["time_s"], b["activity_id"], b["is_top1"]) for b in recent] == [
+        (1000, 200.0, 1, True), (1000, 230.0, 2, False), (5000, 1100.0, 5, True),
+    ]
+    assert (recent[2]["is_race"], recent[2]["avg_hr"], recent[0]["avg_hr"]) == (True, 171.0, None)
+    assert [b["activity_id"] for b in recent_best_efforts(ranked, datetime(2026, 11, 1), 365, top_k=1)] == [1, 5]
+
+
+def test_recent_bests_window_holds_both_ends():
+    ranked = rank_bests(bests_frame(best(1, "2025-11-01", 1000, 200.0), best(2, "2026-11-01", 5000, 1100.0)))
+    assert [b["activity_id"] for b in recent_best_efforts(ranked, pd.Timestamp("2026-11-01", tz="UTC"), 365)] == [1, 2]
+    assert [b["activity_id"] for b in recent_best_efforts(ranked, datetime(2026, 10, 31), 364)] == [1]
+    assert [b["activity_id"] for b in recent_best_efforts(ranked, datetime(2026, 10, 31), 363)] == []
+    assert recent_best_efforts(rank_bests(bests_frame()), datetime(2026, 11, 1), 365) == []

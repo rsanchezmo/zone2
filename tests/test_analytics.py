@@ -1,13 +1,12 @@
 """StravaAnalytics over an in-memory activities cache: records, race predictions,
 weekly reports, training load, and the caches keyed by the activities' version."""
-from datetime import datetime, timezone
+from datetime import datetime
 
 import numpy as np
-import pandas as pd
 import pytest
 
-from zone2.analytics import StravaAnalytics, WeeklyReportFeatures as W, _weighted_quantile
-from zone2.utils import FadeVerdict, SportCategory
+from zone2.analytics import WeeklyReportFeatures as W
+from zone2.utils import SportCategory
 from tests.synthetic import ZONES, make_analytics, steady_stream
 
 
@@ -133,119 +132,31 @@ def test_default_zone_bounds_are_exact_percentages():
 
 # ── Race predictions ─────────────────────────────────────────────────────
 
-def effort(distance_m: int, exponent: float, **extra) -> dict:
-    """An effort on a Riegel curve through a 20:00 5K."""
-    return {"distance_m": distance_m, "time_s": 1200 * (distance_m / 5000) ** exponent, "date": "2026-10-01",
-            "activity_id": distance_m, "activity_name": "Run", "is_race": False, **extra}
+def predictions_world() -> tuple[list[dict], dict[int, dict]]:
+    """A 5K, a 10K and a half marathon race in the last weeks, one at a steady 4 m/s."""
+    rows = [activity(41, "Run", "2026-10-04T09:00:00Z", 5100, 1275, workout_type=1),
+            activity(42, "Run", "2026-10-11T09:00:00Z", 10100, 2525, workout_type=1),
+            activity(43, "Run", "2026-10-18T09:00:00Z", 21200, 5300, workout_type=1)]
+    streams = {41: steady_stream(1276, 4.0), 42: steady_stream(2526, 4.0), 43: steady_stream(5301, 4.0)}
+    return rows, streams
 
 
-@pytest.mark.parametrize("exponent, verdict", [
-    (1.02, FadeVerdict.HOLDS_PACE), (1.06, FadeVerdict.TYPICAL), (1.10, FadeVerdict.FADES),
-])
-def test_fade_verdict(exponent, verdict):
-    analytics, _ = make_analytics()
-    fade = analytics._fit_fade([effort(d, exponent) for d in (5000, 10000, 21097)], [1.0] * 3)
-    assert (fade["exponent"], fade["stderr"], fade["verdict"]) == (exponent, 0.0, verdict)
+def test_race_predictions_are_cached_per_day_and_rebuilt_on_new_races():
+    analytics, _ = make_analytics(*predictions_world())
+    result = analytics.get_race_predictions(SportCategory.RUNNING)
+    assert result is analytics.get_race_predictions(SportCategory.RUNNING)
+    assert result["data_quality"]["total_activities"] == 3
+    assert result["race_day_calibration"]["n_races"] == 2   # the first race has nothing before it
+    assert analytics.set_race_activity_ids(frozenset({41}))
+    assert analytics.get_race_predictions(SportCategory.RUNNING) is not result
 
 
-def test_fade_ignores_efforts_under_three_minutes():
-    analytics, _ = make_analytics()
-    efforts = [effort(d, 1.06) for d in (5000, 10000, 21097)] + [{**effort(400, 1.06), "time_s": 60.0}]
-    assert analytics._fit_fade(efforts, [1.0] * 4)["exponent"] == 1.06
-
-
-def test_fade_needs_three_weighted_distances_spanning_double():
-    analytics, _ = make_analytics()
-    assert analytics._fit_fade([effort(d, 1.06) for d in (5000, 10000)], [1.0] * 2) is None
-    assert analytics._fit_fade([effort(d, 1.06) for d in (5000, 6000, 8000)], [1.0] * 3) is None
-    assert analytics._fit_fade([effort(d, 1.06) for d in (5000, 10000, 21097)], [0.0] * 3) is None
-
-
-def test_each_distance_weighs_once_however_many_efforts_it_has():
-    analytics, _ = make_analytics()
-    efforts = [effort(5000, 1.06, activity_id=i) for i in range(4)] + [effort(d, 1.06) for d in (10000, 21097)]
-    shares: dict[int, float] = {}
-    for anchor in analytics._fit_fade(efforts, [1.0] * 6)["anchors"]:
-        shares[anchor["distance_m"]] = shares.get(anchor["distance_m"], 0.0) + anchor["weight_share"]
-    assert shares == pytest.approx({5000: 1 / 3, 10000: 1 / 3, 21097: 1 / 3}, abs=0.002)
-
-
-DANIELS_VDOT_50 = {5000: 19 * 60 + 57, 10000: 41 * 60 + 21, 21097: 3600 + 31 * 60 + 35, 42195: 3 * 3600 + 10 * 60 + 49}
-
-
-def test_predictions_for_a_runner_on_daniels_vdot_50_table():
-    analytics, _ = make_analytics([activity(1, "Run", "2026-01-01T08:00:00Z")])
-    recent = [{"distance_m": d, "time_s": float(DANIELS_VDOT_50[d]), "date": "2026-10-25T09:00:00+00:00",
-               "activity_id": d, "activity_name": "Race", "is_race": True, "is_top1": True, "avg_hr": None}
-              for d in (5000, 10000, 21097)]
-    core = analytics._compute_predictions(recent, SportCategory.RUNNING,
-                                          reference_date=datetime(2026, 11, 1, tzinfo=timezone.utc))
-    assert core["athlete_vdot"] == pytest.approx(50, abs=0.2)
-    predicted = {p["distance_m"]: p for p in core["predictions"]}
-    for distance_m, time_s in DANIELS_VDOT_50.items():
-        assert predicted[distance_m]["predicted_time_s"] == pytest.approx(time_s, rel=0.02)
-    times = [p["predicted_time_s"] for p in core["predictions"]]
-    assert times == sorted(times)
-    # The raw band can miss the central by a little; calibration, even without
-    # races to learn from, widens it to hold it
-    StravaAnalytics._apply_calibration(core["predictions"], {"factor": 1.0, "band_low_mult": None,
-                                                             "band_high_mult": None})
-    for p in core["predictions"]:
-        assert p["predicted_time_low_s"] <= p["predicted_time_s"] <= p["predicted_time_high_s"]
-
-
-def test_no_recent_efforts_predict_nothing():
-    analytics, _ = make_analytics([activity(1, "Run", "2026-01-01T08:00:00Z")])
-    core = analytics._compute_predictions([], SportCategory.RUNNING)
-    assert {p["predicted_time_s"] for p in core["predictions"]} == {None}
-    assert core["athlete_vdot"] is None and core["fade"] is None
-
-
-def calibration(residuals: list[tuple[str, float]], reference: str = "2026-11-01") -> dict:
-    analytics, _ = make_analytics()
-    analytics._compute_race_residuals = lambda sport_category: [
-        (pd.Timestamp(day, tz="UTC"), ratio) for day, ratio in residuals
-    ]
-    return analytics._race_calibration(SportCategory.RUNNING, pd.Timestamp(reference, tz="UTC"))
-
-
-def test_calibration_needs_three_races():
-    assert calibration([("2026-05-01", 0.97), ("2026-06-01", 0.98)]) == {
-        "factor": 1.0, "band_low_mult": None, "band_high_mult": None, "n_races": 2,
-    }
-
-
-def test_calibration_is_the_median_race_residual_clamped():
-    cal = calibration([("2026-05-01", 0.97), ("2026-06-01", 0.98), ("2026-07-01", 0.99)])
-    assert (cal["factor"], cal["band_low_mult"], cal["band_high_mult"]) == pytest.approx((0.98, 0.975, 0.985))
-    cal = calibration([("2026-05-01", 0.90), ("2026-06-01", 0.91), ("2026-07-01", 0.92)])
-    # The band still holds the clamped factor
-    assert (cal["factor"], cal["band_low_mult"], cal["band_high_mult"]) == pytest.approx((0.95, 0.905, 0.95))
-
-
-def test_calibration_learns_only_from_earlier_races():
-    cal = calibration([("2026-05-01", 0.97), ("2026-06-01", 0.98), ("2026-11-01", 0.90), ("2026-11-20", 0.90)])
-    assert (cal["n_races"], cal["factor"]) == (2, 1.0)
-
-
-def test_apply_calibration():
-    unbanded = [{"predicted_time_s": 1000.0, "predicted_time_low_s": 980.0, "predicted_time_high_s": 1030.0},
-                {"predicted_time_s": None}]
-    StravaAnalytics._apply_calibration(unbanded, {"factor": 0.98, "band_low_mult": None, "band_high_mult": None})
-    assert unbanded == [{"predicted_time_s": 980.0, "predicted_time_low_s": 960.4, "predicted_time_high_s": 1009.4},
-                        {"predicted_time_s": None}]
-    banded = [{"predicted_time_s": 1000.0, "predicted_time_low_s": 990.0, "predicted_time_high_s": 1010.0}]
-    StravaAnalytics._apply_calibration(banded, {"factor": 0.98, "band_low_mult": 0.97, "band_high_mult": 1.01})
-    assert banded == [{"predicted_time_s": 980.0, "predicted_time_low_s": 970.0, "predicted_time_high_s": 1010.0}]
-
-
-def test_weighted_quantile():
-    values = [3.0, 1.0, 4.0, 1.5, 9.0, 2.6]
-    for q in (0.25, 0.5, 0.75):
-        expected = np.percentile(values, q * 100, method="hazen")
-        assert _weighted_quantile(values, [1.0] * len(values), q) == pytest.approx(expected)
-    assert _weighted_quantile([1.0, 2.0, 3.0], [1, 1, 4], 0.5) > _weighted_quantile([1.0, 2.0, 3.0], [1, 1, 1], 0.5)
-    assert _weighted_quantile([], [], 0.5) == 0.0
+def test_each_race_is_calibrated_against_its_prediction_from_the_day_before():
+    analytics, _ = make_analytics(*predictions_world())
+    residuals = analytics._compute_race_residuals(SportCategory.RUNNING)
+    # The first race has no efforts before it
+    assert [str(day.date()) for day, _ in residuals] == ["2026-10-11", "2026-10-18"]
+    assert analytics._compute_race_residuals(SportCategory.RUNNING) is residuals
 
 
 # ── Weekly report and training load ──────────────────────────────────────

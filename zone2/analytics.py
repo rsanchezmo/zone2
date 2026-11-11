@@ -1,22 +1,33 @@
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
-from enum import StrEnum
+from datetime import date, datetime, timezone
+from functools import partial
 import logging
-import math
-from statistics import median
 from threading import RLock
+from typing import Any
 import pandas as pd
 import numpy as np
 from zone2.activities_cache import StravaActivitiesCache
+from zone2.best_efforts import (
+    BESTS_COLUMNS, RECORD_SPORTS, BestEffort, PersonalRecord, RankedBests, per_activity_bests,
+    personal_records, rank_bests, recent_best_efforts, sport_distances, stream_best_efforts, summary_name,
+)
 from zone2.drift import DRIFT_VERSION, HeartRateDrift, heart_rate_drift
 from zone2.hr_recovery import HR_RECOVERY_VERSION, HeartRateRecovery, heart_rate_recovery
-from zone2.user_cache import StravaUserCache
-from zone2.utils import (
-    SportCategory, get_sport_category, vdot_from_time_distance,
-    predicted_time_from_vdot, riegel_predict, fit_riegel_exponent,
-    compute_trimp_banister, compute_trimp_zone_weighted, hr_zone_counts, df_rows,
-    training_paces_from_vdot, FadeVerdict, RIEGEL_TYPICAL_EXPONENT,
+from zone2.race_predictions import (
+    GarminRacePredictions, PredictionHistoryPoint, PredictionTuning, RacePredictions, RaceResidual,
+    predict_races, prediction_history, race_residuals, race_results,
 )
+from zone2.reports import (
+    AllYearInSportFeatures, WeeklyReportFeatures, YearInSportFeatures, activities_between, all_year_in_sport,
+    week_bounds, weekly_report, year_in_sport,
+)
+from zone2.training_load import (
+    HEARTRATE_COUNTS_VERSION, RE_SPORTS, DailyLoad, FitnessForm, HeartRateCounts, HrZone, PlannedSession,
+    TrainingLoadKey, WeeklyRelativeEffort, daily_training_load, fitness_form, heartrate_counts,
+    training_load_key, trimp_activities, weekly_relative_effort,
+)
+from zone2.user_cache import StravaUserCache
+from zone2.utils import SportCategory, get_sport_category
 
 logger = logging.getLogger(__name__)
 
@@ -28,23 +39,8 @@ def _utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _weighted_quantile(values: list[float], weights: list[float], q: float) -> float:
-    """Linear-interpolated weighted quantile. Equivalent to numpy.percentile
-    when weights are uniform. Used by the race-prediction band so the IQR
-    respects the same closer-anchor weighting as the central estimate.
-    """
-    if not values:
-        return 0.0
-    pairs = sorted(zip(values, weights), key=lambda p: p[0])
-    vals = np.array([v for v, _ in pairs], dtype=np.float64)
-    wts = np.array([w for _, w in pairs], dtype=np.float64)
-    total = wts.sum()
-    if total <= 0:
-        return float(np.percentile(vals, q * 100))
-    # Centered staircase: each sample contributes weight at the midpoint of
-    # its cumulative weight interval.
-    cum = (np.cumsum(wts) - 0.5 * wts) / total
-    return float(np.interp(q, cum, vals))
+def _in_category(activities: pd.DataFrame, sport_category: SportCategory) -> pd.Series:
+    return activities["sport_type"].apply(lambda st: get_sport_category(st) == sport_category)
 
 
 # Activities' cache version and the race activity ids
@@ -57,17 +53,25 @@ class _Caches:
     stores into the instance it started from, so a result computed while they
     change lands in a discarded instance instead of the current one."""
     key: CachesKey
-    hr_zones: list[dict] | None = None
-    race_predictions: dict[tuple[SportCategory, date], dict] = field(default_factory=dict)
-    race_residuals: dict[SportCategory, list[tuple[pd.Timestamp, float]]] = field(default_factory=dict)
-    training_load: dict[tuple, list[dict]] = field(default_factory=dict)
+    hr_zones: list[HrZone] | None = None
+    race_predictions: dict[tuple[SportCategory, date], RacePredictions] = field(default_factory=dict)
+    race_residuals: dict[SportCategory, list[RaceResidual]] = field(default_factory=dict)
+    training_load: dict[TrainingLoadKey, list[DailyLoad]] = field(default_factory=dict)
     # Per-activity best efforts per sport, reused across windowed queries
     # instead of re-reading the summaries on every history step.
     per_activity_bests: dict[SportCategory, pd.DataFrame] = field(default_factory=dict)
-    ranked_bests: dict[SportCategory, dict[str, np.ndarray]] = field(default_factory=dict)
+    ranked_bests: dict[SportCategory, RankedBests] = field(default_factory=dict)
 
 
 class StravaAnalytics:
+    """The analytics over the activities and user caches: gathers each
+    computation's inputs from them, keeps the results that are costly to
+    rebuild, and leaves the maths to best_efforts, race_predictions,
+    training_load and reports."""
+
+    RECORD_SPORTS = RECORD_SPORTS
+    RE_SPORTS = RE_SPORTS
+
     def __init__(self, strava_activities_cache: StravaActivitiesCache, strava_user_cache: StravaUserCache,
                  garmin_cache=None):
         self.strava_activities_cache = strava_activities_cache # inmutable data (historical activities)
@@ -75,6 +79,7 @@ class StravaAnalytics:
         self.garmin_cache = garmin_cache # optional GarminDailyStatsCache for measured RHR/VO2max
         # Races the user keeps outside Strava's race flag (see set_race_activity_ids)
         self.race_activity_ids: frozenset[int] = frozenset()
+        self.prediction_tuning = PredictionTuning()
         self._cache = _Caches(self._caches_key())
         # Request threads share the best-effort tables: one build at a time, the rest reuse it.
         self._lock = RLock()
@@ -126,19 +131,14 @@ class StravaAnalytics:
             self.activity_heart_rate_drift(run_ids)
             self.activity_heart_rate_recovery(run_ids)
 
-    def _get_hr_zones_cached(self):
+    def _get_hr_zones_cached(self) -> list[HrZone]:
         """Cache HR zones to avoid repeated user cache reads."""
         caches = self._caches()
         if caches.hr_zones is None:
             caches.hr_zones = self.get_hr_zones()
         return caches.hr_zones
 
-
-    """
-    ===============
-    USER ANALYTICS
-    ===============
-    """
+    # ── Athlete ───────────────────────────────────────────────────────
 
     def _garmin_resting_hr(self) -> float | None:
         """Most recent Garmin resting HR, or None when unavailable.
@@ -162,15 +162,15 @@ class StravaAnalytics:
         if rhr is None or not (25 <= rhr <= 100):
             return None
         return float(rhr)
-    
-    def get_max_heart_rate(self):
+
+    def get_max_heart_rate(self) -> int:
         """Get the athlete's max heart rate. Prefers activity data to avoid API call."""
         hr_max = self._estimate_hr_max_from_activities()
         if hr_max and hr_max > 100:
             return hr_max
         zones = self.strava_user_cache.get_athlete_zones()
         return zones['heart_rate']['zones'][4]['min']
-    
+
     def _estimate_hr_max_from_activities(self) -> int | None:
         """Estimate max HR from activity data using the 99th percentile.
         Uses percentile instead of absolute max to filter out sensor glitches."""
@@ -183,10 +183,11 @@ class StravaAnalytics:
         # Use 99th percentile to ignore sensor spikes
         return int(np.percentile(hr_values, 99))
 
-    def _build_default_zones(self, hr_max: int) -> list[dict]:
+    @staticmethod
+    def _build_default_zones(hr_max: int) -> list[HrZone]:
         """Build standard 5-zone HR zones from a max HR value."""
         boundaries = [0.60, 0.70, 0.80, 0.90]
-        zones = []
+        zones: list[HrZone] = []
         low = 0
         for pct in boundaries:
             high = round(hr_max * pct)
@@ -195,7 +196,7 @@ class StravaAnalytics:
         zones.append({'min': low, 'max': hr_max})
         return zones
 
-    def get_hr_zones(self):
+    def get_hr_zones(self) -> list[HrZone]:
         """Get the athlete's heart rate zones.
 
         Uses Strava custom zones if available (requires API call).
@@ -219,12 +220,9 @@ class StravaAnalytics:
         hr_max = zones.get('heart_rate', {}).get('zones', [{}] * 5)[4].get('min', 190)
         return self._build_default_zones(hr_max)
 
-    def _garmin_race_predictions(self) -> dict | None:
-        """Latest cached Garmin race-predictor times (running only), or None.
-
-        Returns {date, time5K, time10K, timeHalfMarathon, timeMarathon} with
-        times in seconds, straight from the cached `race_predictions` daily
-        payload — no network.
+    def _garmin_race_predictions(self) -> GarminRacePredictions | None:
+        """Latest cached Garmin race-predictor times (running only), or None,
+        straight from the cached `race_predictions` daily payload — no network.
         """
         if self.garmin_cache is None:
             return None
@@ -236,471 +234,62 @@ class StravaAnalytics:
         if not latest:
             return None
         payload = latest.get("payload") or {}
-        out = {"date": latest.get("date")}
-        for key in ("time5K", "time10K", "timeHalfMarathon", "timeMarathon"):
-            out[key] = payload.get(key)
+        out: GarminRacePredictions = {
+            "date": latest.get("date"),
+            "time5K": payload.get("time5K"),
+            "time10K": payload.get("time10K"),
+            "timeHalfMarathon": payload.get("timeHalfMarathon"),
+            "timeMarathon": payload.get("timeMarathon"),
+        }
         return out if any(out[k] for k in out if k != "date") else None
-    
 
-    """
-    ==================
-    ACTIVITY ANALYTICS
-    ==================
-    """
+    # ── Year in sport and weekly report ───────────────────────────────
 
-    def get_year_in_sport(self, year: int, main_sport: str, cutoff_month_day: tuple[int, int] | None = None) -> dict:
-        """Get year in sport for the specified year.
-
-        Args:
-            cutoff_month_day: Optional (month, day) tuple to filter activities up to that date.
-                              Used for fair year-over-year comparison (e.g. only up to Feb 20).
-        """
-
+    def get_year_in_sport(self, year: int, main_sport: str,
+                          cutoff_month_day: tuple[int, int] | None = None) -> dict[YearInSportFeatures, Any]:
+        """Year in sport for `main_sport` (a Strava sport type), up to the
+        (month, day) `cutoff_month_day` when given, for a fair year-over-year
+        comparison."""
         activities = self.strava_activities_cache.get_prepared_view()
+        return year_in_sport(activities, year, main_sport, cutoff_month_day, _utc_now_naive())
 
-        # get activities for the specified year
-        mask = (activities['start_date_local'].dt.year == year) & (activities['sport_type'] == main_sport)
-        if cutoff_month_day:
-            cutoff = pd.Timestamp(year, cutoff_month_day[0], cutoff_month_day[1], 23, 59, 59)
-            # Match timezone if dates are tz-aware
-            if activities['start_date_local'].dt.tz is not None:
-                cutoff = cutoff.tz_localize(activities['start_date_local'].dt.tz)
-            mask = mask & (activities['start_date_local'] <= cutoff)
-        activities_year = activities[mask].copy()
-
-        total_activities = len(activities_year)
-        total_distance_km = activities_year['distance'].sum() / 1000.0
-        total_elevation_m = activities_year['total_elevation_gain'].sum()
-        total_time_hours = activities_year['moving_time'].sum() / 3600.0  # Convert seconds to hours
-        active_days = activities_year['start_date_local'].dt.date.nunique()
-
-        # get activities per month
-        activities_per_month = activities_year.groupby(activities_year['start_date_local'].dt.month).size()
-        if not activities_per_month.empty:
-            month_most_activities = activities_per_month.idxmax()
-        else:
-            month_most_activities = None
-        activities_per_month = activities_per_month.to_dict()
-
-        # day of the week with most activities
-        activities_per_weekday = activities_year.groupby(activities_year['start_date_local'].dt.weekday).size()
-        if not activities_per_weekday.empty:
-            most_active_weekday = activities_per_weekday.idxmax()
-        else:
-            most_active_weekday = None
-
-        # month with most kms
-        distance_per_month = activities_year.groupby(activities_year['start_date_local'].dt.month)['distance'].sum()
-        if not distance_per_month.empty:
-            month_most_km = distance_per_month.idxmax()
-        else:
-            month_most_km = None
-
-        # month with least kms
-        if not distance_per_month.empty:
-            month_least_km = distance_per_month.idxmin()
-        else:
-            month_least_km = None
-
-
-        # longest activity in kms
-        if not activities_year.empty:
-            longest_activity_km = activities_year['distance'].max() / 1000.0
-            longest_activity_km_id = activities_year.loc[activities_year['distance'].idxmax()]['id']
-        else:
-            longest_activity_km = 0.0
-            longest_activity_km_id = None
-
-
-        # longest activity in mins
-        if not activities_year.empty:
-            longest_activity_mins = activities_year['moving_time'].max() / 60.0
-            longest_activity_mins_id = activities_year.loc[activities_year['moving_time'].idxmax()]['id']
-        else:
-            longest_activity_mins = 0.0
-            longest_activity_mins_id = None
-
-        # average distance per activity
-        average_distance_km = (total_distance_km / total_activities) if total_activities > 0 else 0.0
-
-        # average speed (m/s) from total time and distance
-        if total_time_hours > 0:
-            average_speed = (total_distance_km * 1000) / (total_time_hours * 3600)  # m/s
-        else:
-            average_speed = 0.0
-
-        # activities per week (based on weeks elapsed in the year)
-        if not activities_year.empty:
-            year_start = datetime(year, 1, 1)
-            if cutoff_month_day:
-                year_end_or_today = datetime(year, cutoff_month_day[0], cutoff_month_day[1])
-            else:
-                year_end_or_today = min(_utc_now_naive(), datetime(year, 12, 31))
-            weeks_in_year = max(1, (year_end_or_today - year_start).days / 7)
-            activities_per_week = total_activities / weeks_in_year
-        else:
-            activities_per_week = 0.0
-
-        # activity with fastest speed (m/s) - highest average_speed
-        if not activities_year.empty:
-            fastest_activity_speed = activities_year['average_speed'].max()
-            fastest_activity_speed_id = activities_year.loc[activities_year['average_speed'].idxmax()]['id']
-        else:
-            fastest_activity_speed = 0.0
-            fastest_activity_speed_id = None
-
-
-        year_in_sport_dict = {
-            YearInSportFeatures.TOTAL_ACTIVITIES: total_activities,
-            YearInSportFeatures.TOTAL_DISTANCE_KM: float(round(total_distance_km, 2)),
-            YearInSportFeatures.TOTAL_ELEVATION_M: float(round(total_elevation_m)),
-            YearInSportFeatures.TOTAL_TIME_HOURS: float(round(total_time_hours, 1)),
-            YearInSportFeatures.AVERAGE_DISTANCE_KM: float(round(average_distance_km, 2)),
-            YearInSportFeatures.ACTIVE_DAYS: active_days,
-            YearInSportFeatures.ACTIVITIES_PER_MONTH: {month: int(count) for month, count in activities_per_month.items()},
-            YearInSportFeatures.DISTANCE_PER_MONTH_KM: {month: float(round(dist / 1000.0, 2)) for month, dist in distance_per_month.items()},
-            YearInSportFeatures.MOST_ACTIVE_WEEKDAY: int(most_active_weekday) if most_active_weekday is not None else None,
-            YearInSportFeatures.MONTH_MOST_ACTIVITIES: int(month_most_activities) if month_most_activities is not None else None,
-            YearInSportFeatures.MONTH_MOST_KM: int(month_most_km) if month_most_km is not None else None,
-            YearInSportFeatures.MONTH_LEAST_KM: int(month_least_km) if month_least_km is not None else None,
-            YearInSportFeatures.LONGEST_ACTIVITY_KM: float(round(longest_activity_km, 2)),
-            YearInSportFeatures.LONGEST_ACTIVITY_MINS: float(round(longest_activity_mins, 2)),
-            YearInSportFeatures.LONGEST_ACTIVITY_KM_ID: str(longest_activity_km_id) if longest_activity_km_id is not None else None,
-            YearInSportFeatures.LONGEST_ACTIVITY_MINS_ID: str(longest_activity_mins_id) if longest_activity_mins_id is not None else None,
-            YearInSportFeatures.FASTEST_ACTIVITY_SPEED: float(fastest_activity_speed),  # m/s - format on display
-            YearInSportFeatures.FASTEST_ACTIVITY_SPEED_ID: str(fastest_activity_speed_id) if fastest_activity_speed_id is not None else None,
-            YearInSportFeatures.AVERAGE_SPEED: float(average_speed),  # m/s - format on display
-            YearInSportFeatures.ACTIVITIES_PER_WEEK: float(round(activities_per_week, 1)),
-        }
-
-        return year_in_sport_dict
-
-
-    def get_all_year_in_sport(self, year: int, cutoff_month_day: tuple[int, int] | None = None) -> dict:
-        """Get overall year in sport stats across all sports for the specified year.
-
-        Args:
-            cutoff_month_day: Optional (month, day) tuple to filter activities up to that date.
-        """
-
+    def get_all_year_in_sport(self, year: int,
+                              cutoff_month_day: tuple[int, int] | None = None) -> dict[AllYearInSportFeatures, Any]:
+        """Year in sport across all sports, up to `cutoff_month_day` when given."""
         activities = self.strava_activities_cache.get_prepared_view()
+        return all_year_in_sport(activities, year, cutoff_month_day, _utc_now_naive())
 
-        # get activities for the specified year (all sports)
-        mask = activities['start_date_local'].dt.year == year
-        if cutoff_month_day:
-            cutoff = pd.Timestamp(year, cutoff_month_day[0], cutoff_month_day[1], 23, 59, 59)
-            if activities['start_date_local'].dt.tz is not None:
-                cutoff = cutoff.tz_localize(activities['start_date_local'].dt.tz)
-            mask = mask & (activities['start_date_local'] <= cutoff)
-        activities_year = activities[mask].copy()
-
-        # total activities and distance
-        total_activities = len(activities_year)
-        total_distance_km = activities_year['distance'].sum() / 1000.0
-        total_time_hours = activities_year['moving_time'].sum() / 3600.0  # Convert seconds to hours
-        active_days = activities_year['start_date_local'].dt.date.nunique()
-
-        # activities per week (based on weeks elapsed in the year)
-        if not activities_year.empty:
-            year_start = datetime(year, 1, 1)
-            if cutoff_month_day:
-                year_end_or_today = datetime(year, cutoff_month_day[0], cutoff_month_day[1])
-            else:
-                year_end_or_today = min(_utc_now_naive(), datetime(year, 12, 31))
-            weeks_in_year = max(1, (year_end_or_today - year_start).days / 7)
-            activities_per_week = total_activities / weeks_in_year
-        else:
-            activities_per_week = 0.0
-
-        # activities per sport
-        activities_per_sport = activities_year.groupby('sport_type').size().to_dict()
-
-        # day of the week with most activities
-        activities_per_weekday = activities_year.groupby(activities_year['start_date_local'].dt.weekday).size()
-        if not activities_per_weekday.empty:
-            most_active_weekday = activities_per_weekday.idxmax()
-        else:
-            most_active_weekday = None
-
-        # month with most activities
-        activities_per_month = activities_year.groupby(activities_year['start_date_local'].dt.month).size()
-        if not activities_per_month.empty:
-            most_active_month = activities_per_month.idxmax()
-        else:
-            most_active_month = None
-
-        # sport most done
-        if activities_per_sport:
-            sport_most_done = max(activities_per_sport, key=activities_per_sport.get)
-        else:
-            sport_most_done = None
-
-        return {
-            AllYearInSportFeatures.TOTAL_ACTIVITIES: total_activities,
-            AllYearInSportFeatures.TOTAL_DISTANCE_KM: float(round(total_distance_km, 2)),
-            AllYearInSportFeatures.TOTAL_TIME_HOURS: float(round(total_time_hours, 1)),
-            AllYearInSportFeatures.ACTIVE_DAYS: active_days,
-            AllYearInSportFeatures.ACTIVITIES_PER_WEEK: float(round(activities_per_week, 1)),
-            AllYearInSportFeatures.ACTIVITIES_PER_SPORT: {sport: int(count) for sport, count in activities_per_sport.items()},
-            AllYearInSportFeatures.MOST_ACTIVE_WEEKDAY: int(most_active_weekday) if most_active_weekday is not None else None,
-            AllYearInSportFeatures.MOST_ACTIVE_MONTH: int(most_active_month) if most_active_month is not None else None,
-            AllYearInSportFeatures.SPORT_MOST_DONE: sport_most_done,
-        }
-
-
-    def get_weekly_report(self, week_start_date: str | None = None, cutoff_date: str | None = None, hr_zones: list | None = None) -> dict:
-        """
-        Get weekly report for a given week.
-
-        Args:
-            week_start_date: Start of the week in format 'YYYY-MM-DD'. If None, uses the current week.
-                             The date will be adjusted to the Monday of that week.
-            cutoff_date: Optional 'YYYY-MM-DD' to truncate the week (e.g. only count Mon-Thu).
-                         Used for fair comparison with an incomplete current week.
-
-        Returns:
-            Dictionary with weekly statistics.
-        """
+    def get_weekly_report(self, week_start_date: str | None = None, cutoff_date: str | None = None,
+                          hr_zones: list[HrZone] | None = None) -> dict[WeeklyReportFeatures, Any]:
+        """Weekly report for the week (Monday to Sunday) of `week_start_date`
+        ('YYYY-MM-DD', the current week when None), truncated at `cutoff_date`
+        when given to compare with a week still running. HR zones default to
+        the athlete's."""
         activities = self.strava_activities_cache.get_prepared_view()
+        week_start, week_end = week_bounds(week_start_date, cutoff_date, datetime.now(timezone.utc))
+        activities_week = activities_between(activities, week_start, week_end)
+        zones = hr_zones if hr_zones is not None else self._get_hr_zones_cached()
+        hr_counts: list[HeartRateCounts] = []
+        if not activities_week.empty and zones:
+            counts = self._activity_heartrate_counts(activities_week['id'].astype('int64').tolist())
+            hr_counts = [c for c in counts.values() if c is not None]
+        return weekly_report(activities_week, week_start, week_end, zones, hr_counts)
 
-        # Determine the week to report on
-        if week_start_date is None:
-            # Use the current week
-            today = datetime.now(timezone.utc)
-            days_since_monday = today.weekday()
-            last_monday = today - timedelta(days=days_since_monday)
-            week_start = last_monday.replace(hour=0, minute=0, second=0, microsecond=0)
-        else:
-            week_start = pd.to_datetime(week_start_date, utc=True)
-            # Adjust to Monday of that week
-            days_since_monday = week_start.weekday()
-            week_start = week_start - timedelta(days=days_since_monday)
-            week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
-
-        if cutoff_date:
-            cutoff = pd.to_datetime(cutoff_date, utc=True).replace(hour=23, minute=59, second=59)
-            week_end = cutoff
-        else:
-            week_end = week_start + timedelta(days=6, hours=23, minutes=59, seconds=59)
-        
-        # Filter activities for the week
-        activities_week = activities[
-            (activities['start_date_local'] >= week_start) &
-            (activities['start_date_local'] <= week_end)
-        ].copy()
-        
-        # Total aggregations
-        total_activities = len(activities_week)
-        total_distance_km = activities_week['distance'].sum() / 1000.0
-        total_elevation_m = activities_week['total_elevation_gain'].sum()
-        total_time_hours = activities_week['moving_time'].sum() / 3600.0
-        active_days = activities_week['start_date_local'].dt.date.nunique()
-        
-        # Activities per day (0=Monday, 6=Sunday)
-        activities_per_day = activities_week.groupby(
-            activities_week['start_date_local'].dt.weekday
-        ).size().reindex(range(7), fill_value=0).to_dict()
-        
-        # Distance per day
-        distance_per_day = activities_week.groupby(
-            activities_week['start_date_local'].dt.weekday
-        )['distance'].sum().reindex(range(7), fill_value=0) / 1000.0
-        distance_per_day_km = distance_per_day.to_dict()
-        
-        # Per sport aggregations
-        distance_per_sport = (
-            activities_week.groupby('sport_type')['distance'].sum() / 1000.0
-        ).to_dict() if not activities_week.empty else {}
-        
-        activities_per_sport = (
-            activities_week.groupby('sport_type').size()
-        ).to_dict() if not activities_week.empty else {}
-        
-        time_per_sport = (
-            activities_week.groupby('sport_type')['moving_time'].sum() / 3600.0
-        ).to_dict() if not activities_week.empty else {}
-        
-        # Sports per day (list of sports for each weekday)
-        sports_per_day = {}
-        if not activities_week.empty:
-            for day in range(7):
-                day_activities = activities_week[activities_week['start_date_local'].dt.weekday == day]
-                sports_per_day[day] = day_activities['sport_type'].tolist()
-        else:
-            sports_per_day = {day: [] for day in range(7)}
-        
-        # Time per sport per day (minutes) - for accumulated line plot
-        time_per_sport_per_day_mins = {}
-        activities_titles_per_day_per_sport = {}
-        if not activities_week.empty:
-            for sport in activities_week['sport_type'].unique():
-                sport_activities = activities_week[activities_week['sport_type'] == sport]
-                time_per_day = sport_activities.groupby(
-                    sport_activities['start_date_local'].dt.weekday
-                )['moving_time'].sum().reindex(range(7), fill_value=0) / 60.0  # Convert to minutes
-                time_per_sport_per_day_mins[sport] = {int(k): float(round(v, 1)) for k, v in time_per_day.to_dict().items()}
-                
-                # Activity titles per day for this sport
-                titles_per_day = {}
-                for day in range(7):
-                    day_activities = sport_activities[sport_activities['start_date_local'].dt.weekday == day]
-                    titles_per_day[day] = day_activities['name'].tolist()
-                activities_titles_per_day_per_sport[sport] = titles_per_day
-        
-        # HR Zone distribution (vectorized with numpy for speed)
-        hr_athlete_zones = hr_zones if hr_zones is not None else self._get_hr_zones_cached()
-        hr_zone_distribution = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 5: 0.0}
-        hr_histogram: dict | None = None
-
-        if not activities_week.empty and hr_athlete_zones:
-            # Every HR sample of the week, as distinct values and their counts.
-            ids_in_week = activities_week['id'].astype('int64').tolist()
-            hr_counts = [c for c in self._activity_heartrate_counts(ids_in_week).values() if c is not None]
-
-            if hr_counts:
-                hr_values = np.concatenate([values for values, _ in hr_counts])
-                hr_weights = np.concatenate([counts for _, counts in hr_counts])
-                total = int(hr_weights.sum())
-                in_zone = hr_zone_counts(hr_values, hr_athlete_zones, hr_weights)
-                for zone_idx in range(5):
-                    hr_zone_distribution[zone_idx + 1] = round((float(in_zone[zone_idx]) / total) * 100, 1)
-
-                # 1 bpm-resolution histogram for the multi-zone density chart.
-                # Snap range to a small margin around min/max so the curve doesn't
-                # get clipped at the edges by the renderer.
-                lo = int(np.floor(hr_values.min())) - 2
-                hi = int(np.ceil(hr_values.max())) + 2
-                if hi > lo:
-                    counts, _ = np.histogram(hr_values, bins=np.arange(lo, hi + 1), weights=hr_weights)
-                    hr_histogram = {"min_bpm": int(lo), "counts": counts.astype(int).tolist()}
-        
-        # Most active day
-        if not activities_week.empty:
-            activities_per_day_series = activities_week.groupby(
-                activities_week['start_date_local'].dt.weekday
-            ).size()
-            most_active_day = int(activities_per_day_series.idxmax()) if not activities_per_day_series.empty else None
-        else:
-            most_active_day = None
-        
-        # Longest activity
-        if not activities_week.empty:
-            longest_idx = activities_week['distance'].idxmax()
-            longest_activity_km = activities_week.loc[longest_idx, 'distance'] / 1000.0
-            longest_activity_name = activities_week.loc[longest_idx, 'name']
-        else:
-            longest_activity_km = 0.0
-            longest_activity_name = None
-        
-        return {
-            WeeklyReportFeatures.WEEK_START: week_start.strftime('%Y-%m-%d'),
-            WeeklyReportFeatures.WEEK_END: week_end.strftime('%Y-%m-%d'),
-            WeeklyReportFeatures.TOTAL_ACTIVITIES: total_activities,
-            WeeklyReportFeatures.TOTAL_DISTANCE_KM: float(round(total_distance_km, 2)),
-            WeeklyReportFeatures.TOTAL_ELEVATION_M: float(round(total_elevation_m, 1)),
-            WeeklyReportFeatures.TOTAL_TIME_HOURS: float(round(total_time_hours, 2)),
-            WeeklyReportFeatures.ACTIVE_DAYS: active_days,
-            WeeklyReportFeatures.ACTIVITIES_PER_DAY: {int(k): int(v) for k, v in activities_per_day.items()},
-            WeeklyReportFeatures.DISTANCE_PER_DAY_KM: {int(k): float(round(v, 2)) for k, v in distance_per_day_km.items()},
-            WeeklyReportFeatures.DISTANCE_PER_SPORT_KM: {k: float(round(v, 2)) for k, v in distance_per_sport.items()},
-            WeeklyReportFeatures.ACTIVITIES_PER_SPORT: {k: int(v) for k, v in activities_per_sport.items()},
-            WeeklyReportFeatures.TIME_PER_SPORT_HOURS: {k: float(round(v, 2)) for k, v in time_per_sport.items()},
-            WeeklyReportFeatures.SPORTS_PER_DAY: sports_per_day,
-            WeeklyReportFeatures.TIME_PER_SPORT_PER_DAY_MINS: time_per_sport_per_day_mins,
-            WeeklyReportFeatures.ACTIVITIES_TITLES_PER_DAY_PER_SPORT: activities_titles_per_day_per_sport,
-            WeeklyReportFeatures.HR_ZONE_DISTRIBUTION: hr_zone_distribution,
-            WeeklyReportFeatures.HR_HISTOGRAM: hr_histogram,
-            WeeklyReportFeatures.MOST_ACTIVE_DAY: most_active_day,
-            WeeklyReportFeatures.LONGEST_ACTIVITY_KM: float(round(longest_activity_km, 2)),
-            WeeklyReportFeatures.LONGEST_ACTIVITY_NAME: longest_activity_name,
-            WeeklyReportFeatures.HR_ZONE_RANGES: {
-                i: (zone['min'], zone['max']) for i, zone in enumerate(hr_athlete_zones, start=1)
-            } if hr_athlete_zones else {}
-        }
-
-    # ── Personal Records ──────────────────────────────────────────────
-
-    # Standard distances per sport category (meters)
-    RUNNING_DISTANCES = [
-        (400, "400m"),
-        (1000, "1K"),
-        (5000, "5K"),
-        (10000, "10K"),
-        (15000, "15K"),
-        (20000, "20K"),
-        (21097, "Half Marathon"),
-        (42195, "Marathon"),
-    ]
-    CYCLING_DISTANCES = [
-        (10000, "10K"),
-        (20000, "20K"),
-        (40000, "40K"),
-        (100000, "100K"),
-        (160000, "100 mi"),
-    ]
-    SWIMMING_DISTANCES = [
-        (100, "100m"),
-        (200, "200m"),
-        (400, "400m"),
-        (800, "800m"),
-        (1500, "1500m"),
-        (1900, "1900m"),   # Half Ironman swim leg
-        (3000, "3000m"),
-        (3800, "3800m"),   # Ironman swim leg
-    ]
-
-    # Maximum plausible speed per sport (m/s) — used to filter GPS drift / bad data
-    # Running: 2:20/km = ~7.14 m/s (world record ~800m pace)
-    # Cycling: 75 km/h = 20.8 m/s (pro sprint)
-    # Swimming: 0:50/100m = 2.0 m/s (world record 100m freestyle)
-    MAX_SPEED_MS = {
-        SportCategory.RUNNING: 7.2,
-        SportCategory.CYCLING: 21.0,
-        SportCategory.SWIMMING: 2.0,
-    }
-    # The sports with standard distances: records and predictions
-    RECORD_SPORTS = (SportCategory.RUNNING, SportCategory.CYCLING, SportCategory.SWIMMING)
-
-    # Part of the persisted best-effort summaries' name: bump it whenever
-    # _best_effort_times changes so they are recomputed.
-    BEST_EFFORTS_VERSION = 2
-
-    def _sport_distances(self, sport_category: SportCategory) -> list[tuple[int, str]]:
-        return {
-            SportCategory.RUNNING: self.RUNNING_DISTANCES,
-            SportCategory.CYCLING: self.CYCLING_DISTANCES,
-            SportCategory.SWIMMING: self.SWIMMING_DISTANCES,
-        }.get(sport_category, [])
+    # ── Stream summaries ──────────────────────────────────────────────
 
     def _activity_best_efforts(self, sport_category: SportCategory, activity_ids: list[int]) -> dict[int, dict[int, float]]:
         """{activity_id: {target_m: best_time_s}} for activities with streams,
         from summaries persisted in the StreamsStore (computed once per activity)."""
-        targets = [t for t, _ in self._sport_distances(sport_category)]
-        max_speed = self.MAX_SPEED_MS[sport_category]
+        return self.strava_activities_cache.get_stream_summaries(
+            summary_name(sport_category), activity_ids, partial(stream_best_efforts, sport_category=sport_category)
+        )
 
-        def compute(streams: dict) -> dict[int, float]:
-            dist_col = streams.get("distance")
-            time_col = streams.get("time")
-            if not dist_col or not time_col or len(dist_col) < 2:
-                return {}
-            return self._best_effort_times(dist_col, time_col, targets, max_speed)
-
-        name = f"best_efforts:v{self.BEST_EFFORTS_VERSION}:{sport_category}:{max_speed}:{targets}"
-        return self.strava_activities_cache.get_stream_summaries(name, activity_ids, compute)
-
-    def _activity_heartrate_counts(self, activity_ids: list[int]) -> dict[int, tuple[np.ndarray, np.ndarray] | None]:
+    def _activity_heartrate_counts(self, activity_ids: list[int]) -> dict[int, HeartRateCounts | None]:
         """{activity_id: (distinct HR values, samples at each)}, None without HR
-        samples. Time in any zones follows from these without the streams."""
-        def compute(streams: dict) -> tuple[np.ndarray, np.ndarray] | None:
-            hr_col = streams.get("heartrate")
-            if not hr_col:
-                return None
-            values = np.asarray([v for v in hr_col if v is not None], dtype=np.float64)
-            if not len(values):
-                return None
-            return np.unique(values, return_counts=True)
-
-        return self.strava_activities_cache.get_stream_summaries("heartrate_counts:v1", activity_ids, compute)
+        samples, persisted in the StreamsStore (computed once per activity)."""
+        return self.strava_activities_cache.get_stream_summaries(
+            f"heartrate_counts:v{HEARTRATE_COUNTS_VERSION}", activity_ids, heartrate_counts
+        )
 
     def activity_heart_rate_drift(self, activity_ids: list[int]) -> dict[int, HeartRateDrift]:
         """{activity_id: heart_rate_drift summary} for runs with streams,
@@ -716,170 +305,50 @@ class StravaAnalytics:
             f"heart_rate_recovery:v{HR_RECOVERY_VERSION}", activity_ids, heart_rate_recovery
         )
 
-    @staticmethod
-    def _best_effort_times(
-        dist_col: list,
-        time_col: list,
-        targets: list[int],
-        max_speed: float,
-    ) -> dict[int, float]:
-        """Sliding-window best effort per target distance for one activity's
-        streams. Returns {target_m: best_time_s}. The kernel behind the
-        persisted per-activity best efforts (`_activity_best_efforts`).
+    # ── Personal records ──────────────────────────────────────────────
 
-        Efforts are continuous elapsed time. Excluding stops would stitch
-        separate interval reps (6×400 with standing rests) into a fake 1K,
-        and streams can't tell a rest from a traffic light.
-
-        The window end is linearly interpolated between the two samples
-        bracketing the exact target distance, instead of charging the full
-        gap to the effort — GPS samples can be many metres apart, which
-        systematically overestimated best times.
-
-        Metres gained faster than `max_speed` are dropped before the search
-        (`_plausible_distance`), so no window can credit any part of them.
-        """
-        distances = np.asarray(dist_col, dtype=np.float64)
-        times = np.asarray(time_col, dtype=np.float64)
-        n = len(distances)
-        if n < 2:
-            return {}
-        distances = StravaAnalytics._plausible_distance(distances, times, max_speed)
-
-        out: dict[int, float] = {}
-        total_d = distances[-1]
-        for target_m in targets:
-            if total_d < target_m:
-                continue
-            thresholds = distances + target_m
-            right = np.searchsorted(distances, thresholds, side="left")
-            valid = right < n
-            left_idx = np.nonzero(valid)[0]
-            if len(left_idx) == 0:
-                continue
-            right_idx = right[valid]
-            # searchsorted(side="left") guarantees right > left and
-            # distances[right-1] < threshold <= distances[right]: interpolate
-            # the crossing time inside that bracket.
-            prev_idx = right_idx - 1
-            seg = distances[right_idx] - distances[prev_idx]
-            seg_safe = np.where(seg > 0, seg, 1.0)
-            frac = np.where(seg > 0, (thresholds[left_idx] - distances[prev_idx]) / seg_safe, 1.0)
-            frac = np.clip(frac, 0.0, 1.0)
-            cross_t = times[prev_idx] + frac * (times[right_idx] - times[prev_idx])
-            elapsed = cross_t - times[left_idx]
-            ok = elapsed > 0
-            if not np.any(ok):
-                continue
-            out[int(target_m)] = float(elapsed[ok].min())
-        return out
-
-    @staticmethod
-    def _plausible_distance(distances: np.ndarray, times: np.ndarray, max_speed: float) -> np.ndarray:
-        """The cumulative distance without the metres gained faster than
-        `max_speed`: GPS jumps, a watch crediting pool lengths after a rest,
-        the drive home after a forgotten stop. The time they took stays.
-
-        Timestamps are whole seconds, so a stretch can read up to a second
-        shorter than it took: consecutive over-speed samples are only dropped
-        when they beat the cap even granted that second.
-        """
-        steps = np.diff(distances)
-        gaps = np.diff(times)
-        fast = steps > max_speed * gaps
-        if not fast.any():
-            return distances
-        stretch = np.cumsum(np.r_[True, fast[1:] != fast[:-1]]) - 1
-        stretch_m = np.bincount(stretch, weights=steps)
-        stretch_s = np.bincount(stretch, weights=gaps)
-        impossible = fast & (stretch_m[stretch] > max_speed * (stretch_s[stretch] + 1))
-        return distances - np.r_[0.0, np.cumsum(np.where(impossible, steps, 0.0))]
-
-    def get_personal_records(self) -> dict:
+    def get_personal_records(self) -> dict[SportCategory, list[PersonalRecord]]:
         """Fastest best effort at each standard distance for running, cycling
         and swimming: the per-activity sliding-window bests, minimised over
         every activity (the earliest wins a tie)."""
-        result = {}
+        result: dict[SportCategory, list[PersonalRecord]] = {}
         for category in self.RECORD_SPORTS:
-            bests = self._get_per_activity_bests_df(category)
-            records = []
-            for target_m, label in self._sport_distances(category):
-                at_distance = bests[bests["distance_m"] == target_m]
-                if at_distance.empty:
-                    continue
-                r = at_distance.loc[at_distance["time_s"].idxmin()]
-                records.append({
-                    "distance_m": target_m,
-                    "label": label,
-                    "time_s": float(r["time_s"]),
-                    "activity_id": int(r["activity_id"]),
-                    "activity_name": r["activity_name"],
-                    "date": str(r["date"]),
-                })
+            records = personal_records(self._get_per_activity_bests_df(category), sport_distances(category))
             if records:
                 result[category] = records
         return result
 
     def _get_per_activity_bests_df(self, sport_category: SportCategory) -> pd.DataFrame:
-        """Return a table of per-activity best efforts for the given sport:
-            columns = activity_id, activity_name, date (pd.Timestamp UTC),
-                      distance_m, time_s, is_race (the effort is a race at
-                      its own distance), avg_hr.
-        Built from the persisted per-activity best efforts and cached;
-        windowed queries filter by date and take a groupby-min.
-        """
+        """The sport's per-activity best efforts (best_efforts.per_activity_bests),
+        built from the persisted summaries and cached; windowed queries go
+        through _ranked_bests."""
         with self._lock:
             caches = self._caches()
             cached = caches.per_activity_bests.get(sport_category)
             if cached is not None:
                 return cached
 
-            bests_columns = ["activity_id", "activity_name", "date", "distance_m", "time_s",
-                             "is_race", "avg_hr"]
             activities = self.strava_activities_cache.get_prepared_view()
-            if not self._sport_distances(sport_category) or activities.empty:
-                empty = pd.DataFrame(columns=bests_columns)
-                caches.per_activity_bests[sport_category] = empty
-                return empty
+            if not sport_distances(sport_category) or activities.empty:
+                bests = pd.DataFrame(columns=BESTS_COLUMNS)
+            else:
+                cat_acts = activities[_in_category(activities, sport_category)]
+                cat_ids = cat_acts['id'].astype('int64').tolist() if 'id' in cat_acts.columns else []
+                efforts_by_id = self._activity_best_efforts(sport_category, cat_ids)
+                race_ids = set(cat_acts.loc[self._race_mask(cat_acts), 'id'].tolist())
+                bests = per_activity_bests(cat_acts, efforts_by_id, race_ids)
+            caches.per_activity_bests[sport_category] = bests
+            return bests
 
-            cat_mask = activities["sport_type"].apply(lambda st: get_sport_category(st) == sport_category)
-            cat_acts = activities[cat_mask]
-
-            cat_ids = cat_acts['id'].astype('int64').tolist() if 'id' in cat_acts.columns else []
-            efforts_by_id = self._activity_best_efforts(sport_category, cat_ids)
-            race_ids = set(cat_acts.loc[self._race_mask(cat_acts), 'id'].tolist())
-
-            rows: list[dict] = []
-            for row in df_rows(cat_acts, "id", "name", "start_date_local", "average_heartrate"):
-                efforts = efforts_by_id.get(int(row.get("id"))) if row.get("id") is not None else None
-                if not efforts:
-                    continue
-
-                activity_id = row.get("id")
-                activity_name = row.get("name", "")
-                act_date = row.get("start_date_local")
-                # A race is a maximal effort at its own distance only: its
-                # splits at shorter distances were paced for the whole race.
-                race_distance = max(efforts) if activity_id in race_ids else None
-                avg_hr = row.get("average_heartrate")
-                avg_hr = float(avg_hr) if avg_hr is not None and not pd.isna(avg_hr) else None
-
-                for target_m, best_time in efforts.items():
-                    rows.append({
-                        "activity_id": activity_id,
-                        "activity_name": activity_name,
-                        "date": act_date,
-                        "distance_m": target_m,
-                        "time_s": best_time,
-                        "is_race": target_m == race_distance,
-                        "avg_hr": avg_hr,
-                    })
-
-            df = pd.DataFrame(rows, columns=bests_columns)
-            if not df.empty:
-                df["date"] = pd.to_datetime(df["date"], utc=True, errors="coerce")
-            caches.per_activity_bests[sport_category] = df
-            return df
+    def _ranked_bests(self, sport_category: SportCategory) -> RankedBests:
+        with self._lock:
+            caches = self._caches()
+            cached = caches.ranked_bests.get(sport_category)
+            if cached is not None:
+                return cached
+            ranked = rank_bests(self._get_per_activity_bests_df(sport_category))
+            caches.ranked_bests[sport_category] = ranked
+            return ranked
 
     def _recent_best_efforts_list(
         self,
@@ -887,681 +356,54 @@ class StravaAnalytics:
         within_days: int = 365,
         end_date: datetime | None = None,
         top_k: int = 3,
-    ) -> list[dict]:
-        """Top-K fastest efforts per standard distance within the window.
+    ) -> list[BestEffort]:
+        """best_efforts.recent_best_efforts of the sport, up to `end_date` (now
+        when None)."""
+        end = datetime.now(timezone.utc) if end_date is None else end_date
+        return recent_best_efforts(self._ranked_bests(sport_category), end, within_days, top_k)
 
-        Using multiple anchors per distance (rather than min-per-distance)
-        prevents cliffs: when the single fastest effort ages past the
-        boundary, only 1/K of the anchor weight changes instead of the whole
-        distance's contribution flipping to the next-fastest effort.
+    # ── Race predictions ──────────────────────────────────────────────
 
-        Easy-run "bests" don't pollute the set because they're ranked out by
-        the top-K-fastest filter — fast training/race efforts win the top-K
-        slots.
-
-        Also marks `is_top1=True` on the per-distance fastest, so UI cards
-        can surface it as the displayed PR.
-        """
-        ranked = self._ranked_bests(sport_category)
-        if not len(ranked["time_s"]):
-            return []
-
-        if end_date is None:
-            end_ts = pd.Timestamp(datetime.now(timezone.utc))
-        else:
-            ts = pd.Timestamp(end_date)
-            end_ts = ts.tz_localize("UTC") if ts.tz is None else ts.tz_convert("UTC")
-        start_ts = end_ts - pd.Timedelta(days=within_days)
-
-        in_window = np.nonzero((ranked["date_ns"] >= start_ts.value) & (ranked["date_ns"] <= end_ts.value))[0]
-        if not len(in_window):
-            return []
-        # Rows are ranked fastest-first within each distance, so the top-K of
-        # a distance are its first K rows inside the window.
-        dist = ranked["distance_m"][in_window]
-        first = np.r_[True, dist[1:] != dist[:-1]]
-        pos = np.arange(len(in_window))
-        rank = pos - np.maximum.accumulate(np.where(first, pos, 0))
-
-        # Quality filter: within 120% of the per-distance top-1 time. Excludes
-        # easy-run "bests" that happen to rank top-K but aren't race-quality
-        # anchors. Keeps top-1 (trivially), plus any close-to-top-1 attempts.
-        MAX_MULT = 1.20
-        result: list[dict] = []
-        best_time = 0.0
-        for i, r in zip(in_window[rank < top_k].tolist(), rank[rank < top_k].tolist()):
-            time_s = float(ranked["time_s"][i])
-            if r == 0:
-                best_time = time_s
-            elif time_s > best_time * MAX_MULT:
-                continue
-            avg_hr = ranked["avg_hr"][i]
-            result.append({
-                "distance_m": int(ranked["distance_m"][i]),
-                "time_s": time_s,
-                "activity_id": int(ranked["activity_id"][i]),
-                "activity_name": ranked["activity_name"][i],
-                "date": ranked["date"][i],
-                "is_top1": r == 0,
-                "is_race": bool(ranked["is_race"][i]),
-                "avg_hr": float(avg_hr) if not pd.isna(avg_hr) else None,
-            })
-        return result
-
-    def _ranked_bests(self, sport_category: SportCategory) -> dict[str, np.ndarray]:
-        """The per-activity bests as arrays ordered by distance, then time, then
-        activity order (the earliest wins a tie), for fast window queries."""
-        with self._lock:
-            caches = self._caches()
-            cached = caches.ranked_bests.get(sport_category)
-            if cached is not None:
-                return cached
-            df = self._get_per_activity_bests_df(sport_category)
-            order = np.lexsort((np.arange(len(df)), df["time_s"].to_numpy(dtype=np.float64),
-                                df["distance_m"].to_numpy(dtype=np.int64)))
-            ranked_df = df.iloc[order]
-            ranked = {
-                "distance_m": ranked_df["distance_m"].to_numpy(dtype=np.int64),
-                "time_s": ranked_df["time_s"].to_numpy(dtype=np.float64),
-                "date_ns": ranked_df["date"].to_numpy(dtype="datetime64[ns]").view(np.int64),
-                "date": np.array([str(d) for d in ranked_df["date"]], dtype=object),
-                "activity_id": ranked_df["activity_id"].to_numpy(),
-                "activity_name": ranked_df["activity_name"].to_numpy(dtype=object),
-                "is_race": ranked_df["is_race"].to_numpy(),
-                "avg_hr": ranked_df["avg_hr"].to_numpy(dtype=object),
-            }
-            caches.ranked_bests[sport_category] = ranked
-            return ranked
-
-    # ── Race Predictions ──────────────────────────────────────────────
-
-    # Recent-bests lookback for race predictions. The smooth recency decay
-    # inside _compute_predictions does the real freshness weighting; this is
-    # just the hard outer cutoff.
-    PREDICTIONS_WINDOW_DAYS = 365
-
-    # ── Race-prediction tuning knobs ──────────────────────────────────
-    # Backtested against race-flagged activities (predict as-of the day
-    # before each race, compare to the actual result) via
-    # scripts/backtest_race_predictions.py, 5K–HM. Defaults are the *moderate*
-    # values supported by the grid marginals (the single best combo sat at
-    # grid extremes, not trusted with a small sample):
-    #   half-life 180→90 and decay 1.5→1.0 each shaved ~0.1–0.2pp of MAE;
-    #   VDOT weight was the strongest lever (0.5→3.96%, 0.7→3.70% MAE),
-    #   capped at 0.7 so the Riegel family still anchors the band and the
-    #   (backtest-untested) marathon prediction.
-    # Override on an instance to experiment without editing source.
-    RECENCY_HALF_LIFE_DAYS = 90.0   # anchor age decay half-life
-    DIST_DECAY_K = 1.0              # distance-proximity decay exponent
-    VDOT_FAMILY_WEIGHT = 0.7        # central-estimate share for VDOT (running)
-    RACE_BOOST = 1.5                # weight multiplier for race-flagged anchors
-    INTENSITY_FLOOR = 0.4           # min quality weight for low-avg-HR anchors
-
-    # Race-day calibration: the backtest showed predictions are systematically
-    # ~2–3% slower than actual race results at every distance and every knob
-    # setting — training best-efforts understate a tapered, competitive race.
-    # Instead of hardcoding a fudge, the correction is learned per-athlete:
-    # median(actual / predicted-as-of-race-day) over past races, clamped, and
-    # only applied once enough races exist.
-    RACE_CALIBRATION_MIN_RACES = 3
-    RACE_CALIBRATION_CLAMP = 0.05   # factor stays within [0.95, 1.05]
-    # GPS over-reads a nominal course; up to this much over, a race still counts
-    # as its standard distance (a 10-mile race's 16.3 km reads as the 15K).
-    RACE_GPS_OVERREAD_MAX = 1.10
-
-    def _compute_predictions(
-        self,
-        recent_bests: list[dict],
-        sport_category: SportCategory,
-        reference_date: datetime | None = None,
-    ) -> dict:
-        """Run the race-prediction pipeline over a list of recent best efforts
-        (each: {distance_m, time_s, date, ...}) for the given sport category.
-
-        Each input contributes to the central and band with a combined weight:
-            w = distance_proximity × recency_decay × quality
-        where:
-            distance_proximity = exp(-|log2(d_input / d_target)|)  (anchor closeness)
-            recency_decay      = exp(-ln(2) × age_days / RECENCY_HALF_LIFE_DAYS)
-            quality            = race-flagged boost (1.5×) or an intensity
-                                 factor from the activity's avg HR vs HR max —
-                                 a long-run "best" is weaker evidence of race
-                                 ability than an actual race or hard workout.
-
-        Recency decay replaces the old hard 24-week cutoff with a smooth
-        weighting so predictions don't cliff when a single fast effort ages
-        past the boundary. `reference_date` pins "now" for age calculations —
-        defaults to wall-clock time; history calls pass each step's end_date
-        so past weeks are evaluated as-of then.
-
-        - Central estimate per target: Riegel family (fixed 1.06 + personalized
-          exp if fit). For running, blended with a VDOT prediction that takes
-          VDOT_FAMILY_WEIGHT of it.
-        - Uncertainty band: weighted p25–p75 of the projection pool, using the
-          same weights as the central (so central stays inside band).
-
-        Cycling / swimming note: Riegel's canonical 1.06 is calibrated for
-        running; for other sports the fitted exponent matters more. We still
-        report it and let the caller see `fitted_exponent` to judge quality.
-
-        Returns {predictions, athlete_vdot, fitted_exponent, fade}. No caching,
-        no data_quality — caller wraps as needed.
-        """
-        if reference_date is None:
-            reference_date = datetime.now(timezone.utc)
-        ref_ts = pd.Timestamp(reference_date)
-        if ref_ts.tz is None:
-            ref_ts = ref_ts.tz_localize("UTC")
-        target_distances = self._sport_distances(sport_category)
-
-        # Precompute recency weights per best: exp(-ln(2) × age / half-life).
-        # With the default 90d half-life: today → ~1.0; 3 months → 0.5;
-        # 6 months → 0.25; 1 year → 0.06.
-        half_life = self.RECENCY_HALF_LIFE_DAYS
-
-        def _recency_w(date_str: str) -> float:
-            try:
-                pr_date = datetime.fromisoformat(date_str)
-                if pr_date.tzinfo is None:
-                    pr_date = pr_date.replace(tzinfo=timezone.utc)
-                age_days = max(0.0, (ref_ts - pr_date).total_seconds() / 86400.0)
-            except Exception:
-                return 0.1
-            return math.exp(-0.693 * age_days / half_life)
-
-        # Anchor quality: race-flagged efforts are true maximal demonstrations
-        # and get a boost; efforts recorded at clearly sub-maximal heart rate
-        # are down-weighted. Whole-activity average HR is a coarse proxy for
-        # segment intensity, so the floor stays generous and missing HR is
-        # neutral rather than penalized.
-        hr_max = self.get_max_heart_rate() or 0
-        race_boost = self.RACE_BOOST
-        intensity_floor = self.INTENSITY_FLOOR
-
-        def _quality_w(b: dict) -> float:
-            if b.get("is_race"):
-                return race_boost
-            avg_hr = b.get("avg_hr")
-            if avg_hr and hr_max > 0:
-                ratio = avg_hr / hr_max
-                # ~85%+ of max HR → full weight, linear down to the floor.
-                return float(min(1.0, max(intensity_floor, (ratio - 0.55) / 0.30)))
-            return 1.0
-
-        anchor_weights = [
-            _recency_w(b.get("date", "")) * _quality_w(b) for b in recent_bests
-        ]
-
-        # VDOT only applies to running. Each top-1 race anchor yields a VDOT;
-        # these are kept as a triple (value, anchor_distance, anchor_weight)
-        # so we can re-weight per target by distance proximity inside the loop.
-        # Global `athlete_vdot` (weighted by recency×quality only) is still
-        # returned for display/debug — the per-target VDOT is used for
-        # predictions.
-        vdot_anchors: list[tuple[float, int, float]] = []
-        athlete_vdot: float | None = None
-        if sport_category == SportCategory.RUNNING:
-            for b, rw in zip(recent_bests, anchor_weights):
-                if not b.get("is_top1"):
-                    continue
-                v = vdot_from_time_distance(b["time_s"], b["distance_m"])
-                if v is not None and rw > 0:
-                    vdot_anchors.append((v, int(b["distance_m"]), rw))
-            if vdot_anchors:
-                tot = sum(rw for _, _, rw in vdot_anchors)
-                athlete_vdot = (
-                    round(sum(v * rw for v, _, rw in vdot_anchors) / tot, 2)
-                    if tot > 0 else None
-                )
-
-        fade = self._fit_fade(recent_bests, anchor_weights)
-        fitted_exp = fade["exponent"] if fade else None
-
-        # Distance-proximity decay exponent. k=1 is the classical exp(-|log2|);
-        # k=1.5 dampens cross-distance contributions from far-away anchors
-        # (e.g. 5K projecting to 20K) without fully zeroing them out.
-        dist_decay_k = self.DIST_DECAY_K
-
-        def _dist_weight(d_in: float, d_tgt: float) -> float:
-            # exp(-k·|log2(ratio)|): 1.0 when d_in == d_tgt.
-            # k=1.5 → 2× mismatch yields weight 0.354 (was 0.5), 4× → 0.125 (was 0.25).
-            return math.exp(-dist_decay_k * abs(math.log2(d_in / d_tgt)))
-
-        predictions: list[dict] = []
-        for dist_m, label in target_distances:
-            entry: dict = {
-                "distance_m": dist_m,
-                "label": label,
-                "pr_time_s": None,
-                "pr_date": None,
-                "source": "predicted",
-                "predicted_time_s": None,
-                "predicted_time_low_s": None,
-                "predicted_time_high_s": None,
-                "models": {},
-            }
-
-            # For display: the fastest effort at this distance (top-1 among
-            # the top-K samples loaded above).
-            existing = next(
-                (b for b in recent_bests if b["distance_m"] == dist_m and b.get("is_top1")),
-                None,
-            )
-            if existing:
-                entry["pr_time_s"] = existing["time_s"]
-                entry["pr_date"] = existing.get("date")
-                entry["source"] = "personal_record"
-
-            if not recent_bests:
-                predictions.append(entry)
-                continue
-
-            # Build the sample pool: every raw model value that contributes to
-            # the central, tagged with its effective weight. Weighted mean of
-            # this pool IS the central, and the weighted p25/p75 IS the band —
-            # guarantees the central always sits inside the band regardless of
-            # model-mix or distance-weight skew.
-            samples: list[tuple[float, float]] = []  # (value, weight)
-
-            # Per-input Riegel (fixed 1.06) projections weighted by distance
-            # proximity AND recency×quality of the underlying best.
-            riegel_inputs = [
-                (riegel_predict(b["time_s"], b["distance_m"], dist_m),
-                 _dist_weight(b["distance_m"], dist_m) * rw)
-                for b, rw in zip(recent_bests, anchor_weights)
-            ]
-            riegel_sum_w = sum(w for _, w in riegel_inputs)
-
-            # Per-input personalized Riegel projections, if the exponent was fit.
-            pers_inputs: list[tuple[float, float]] = []
-            if fitted_exp is not None:
-                pers_inputs = [
-                    (riegel_predict(b["time_s"], b["distance_m"], dist_m, fitted_exp),
-                     _dist_weight(b["distance_m"], dist_m) * rw)
-                    for b, rw in zip(recent_bests, anchor_weights)
-                ]
-            pers_sum_w = sum(w for _, w in pers_inputs)
-
-            # Per-target VDOT: re-weight each anchor's VDOT by its distance
-            # proximity to the current target. A 5K anchor still informs
-            # Marathon predictions, but much less than a 20K or Half anchor.
-            vdot_pred: float | None = None
-            if vdot_anchors and sport_category == SportCategory.RUNNING:
-                vdot_pairs = [
-                    (v, rw * _dist_weight(d_anchor, dist_m))
-                    for v, d_anchor, rw in vdot_anchors
-                ]
-                tot_vw = sum(w for _, w in vdot_pairs)
-                if tot_vw > 0:
-                    target_vdot = sum(v * w for v, w in vdot_pairs) / tot_vw
-                    vdot_pred = predicted_time_from_vdot(target_vdot, dist_m)
-
-            # Family weights: VDOT gets VDOT_FAMILY_WEIGHT when present; the
-            # Riegel family splits the remainder evenly between fixed +
-            # personalized.
-            has_r = riegel_sum_w > 0
-            has_p = pers_sum_w > 0
-            has_v = vdot_pred is not None
-            vdot_w = self.VDOT_FAMILY_WEIGHT if has_v else 0.0
-            family_w = 1.0 - vdot_w
-            n_families = (1 if has_r else 0) + (1 if has_p else 0)
-            r_share = family_w / n_families if has_r and n_families else 0.0
-            p_share = family_w / n_families if has_p and n_families else 0.0
-
-            # Distribute each family's total share across its per-input samples
-            # proportionally to each input's distance weight.
-            if has_r:
-                for v, w in riegel_inputs:
-                    samples.append((v, r_share * w / riegel_sum_w))
-            if has_p:
-                for v, w in pers_inputs:
-                    samples.append((v, p_share * w / pers_sum_w))
-            if has_v:
-                samples.append((vdot_pred, vdot_w))  # type: ignore[arg-type]
-
-            # Populate model aggregates (unchanged API).
-            if has_r:
-                entry["models"]["riegel"] = round(
-                    sum(v * w for v, w in riegel_inputs) / riegel_sum_w, 1
-                )
-            if has_p:
-                entry["models"]["personalized_riegel"] = round(
-                    sum(v * w for v, w in pers_inputs) / pers_sum_w, 1
-                )
-            if has_v:
-                entry["models"]["vdot"] = vdot_pred
-
-            # Central = weighted mean of the sample pool.
-            total_w = sum(w for _, w in samples)
-            if total_w > 0:
-                central = sum(v * w for v, w in samples) / total_w
-                entry["predicted_time_s"] = round(central, 1)
-
-            # Uncertainty band = weighted p25/p75 of the same sample pool.
-            if len(samples) >= 2:
-                vals = [v for v, _ in samples]
-                wts = [w for _, w in samples]
-                entry["predicted_time_low_s"] = round(_weighted_quantile(vals, wts, 0.25), 1)
-                entry["predicted_time_high_s"] = round(_weighted_quantile(vals, wts, 0.75), 1)
-            elif len(samples) == 1 and entry["predicted_time_s"] is not None:
-                entry["predicted_time_low_s"] = entry["predicted_time_s"]
-                entry["predicted_time_high_s"] = entry["predicted_time_s"]
-
-            predictions.append(entry)
-
-        return {
-            "predictions": predictions,
-            "athlete_vdot": athlete_vdot,
-            "fitted_exponent": fitted_exp,
-            "fade": fade,
-        }
-
-    # Shortest effort the fade is fit on: Riegel's power law is calibrated for
-    # aerobic race durations, and anaerobic 400m/1K points skew the exponent
-    # that is then applied to every distance.
-    FADE_MIN_TIME_S = 180
-    # Longest over shortest fitted distance: closer distances say little about
-    # how pace holds as races get longer.
-    FADE_MIN_SPAN = 2.0
-
-    def _fit_fade(self, recent_bests: list[dict], anchor_weights: list[float]) -> dict | None:
-        """How much the athlete slows as distance grows: the Riegel exponent fit
-        over the recent best efforts, weighted by the same recency × quality as
-        the predictions, so an old short PR can't outweigh this month's long race.
-        Each distance counts once: its efforts share the weight of its strongest
-        one, so a distance with more efforts doesn't pull the fit.
-
-        The verdict compares the exponent ± its standard error to Riegel's
-        typical 1.06; while that range includes 1.06 the efforts can't tell
-        speed from endurance."""
-        by_distance: dict[int, list[tuple[dict, float]]] = {}
-        for b, w in zip(recent_bests, anchor_weights):
-            if b["time_s"] >= self.FADE_MIN_TIME_S and w > 0:
-                by_distance.setdefault(b["distance_m"], []).append((b, w))
-        if len(by_distance) < 3 or max(by_distance) / min(by_distance) < self.FADE_MIN_SPAN:
-            return None
-
-        anchors: list[tuple[dict, float]] = []
-        for efforts in by_distance.values():
-            total, strongest = sum(w for _, w in efforts), max(w for _, w in efforts)
-            anchors += [(b, strongest * w / total) for b, w in efforts]
-        fit = fit_riegel_exponent([b for b, _ in anchors], [w for _, w in anchors])
-        if fit is None:
-            return None
-
-        exponent, stderr = fit
-        verdict: FadeVerdict | None = None
-        if stderr is not None:
-            if exponent - stderr > RIEGEL_TYPICAL_EXPONENT:
-                verdict = FadeVerdict.FADES
-            elif exponent + stderr < RIEGEL_TYPICAL_EXPONENT:
-                verdict = FadeVerdict.HOLDS_PACE
-            else:
-                verdict = FadeVerdict.TYPICAL
-        total_w = sum(w for _, w in anchors)
-        return {
-            "exponent": exponent,
-            "stderr": stderr,
-            "typical": RIEGEL_TYPICAL_EXPONENT,
-            "verdict": verdict,
-            "anchors": [
-                {
-                    "distance_m": b["distance_m"],
-                    "time_s": b["time_s"],
-                    "date": b["date"],
-                    "activity_id": b["activity_id"],
-                    "activity_name": b["activity_name"],
-                    "is_race": b["is_race"],
-                    "weight_share": round(w / total_w, 3),
-                }
-                for b, w in sorted(anchors, key=lambda a: -a[1])
-            ],
-        }
-
-    def _compute_race_residuals(self, sport_category: SportCategory) -> list[tuple[pd.Timestamp, float]]:
-        """(race_date, actual/predicted) for every race-flagged effort at a
-        standard distance, with the prediction computed as-of the day before
-        the race — a race never calibrates itself, and residuals are ordered
-        by date so callers can filter to 'races before X' leak-free.
-
-        A race maps to its primary standard distance: the largest target with
-        target <= GPS distance <= target * RACE_GPS_OVERREAD_MAX. The actual time is the race's own best effort at that
-        distance. Computed once per sport and cached.
-        """
+    def _compute_race_residuals(self, sport_category: SportCategory) -> list[RaceResidual]:
+        """race_predictions.race_residuals of the sport's races (flagged on
+        Strava or in race_activity_ids), computed once per sport and cached."""
         caches = self._caches()
         cached = caches.race_residuals.get(sport_category)
         if cached is not None:
             return cached
-        targets = sorted((d for d, _ in self._sport_distances(sport_category)), reverse=True)
-        residuals: list[tuple[pd.Timestamp, float]] = []
+        residuals: list[RaceResidual] = []
         activities = self.strava_activities_cache.get_prepared_view()
-        if not targets or activities.empty:
-            caches.race_residuals[sport_category] = residuals
-            return residuals
-
-        cat_mask = activities["sport_type"].apply(lambda st: get_sport_category(st) == sport_category)
-        races = activities[cat_mask & self._race_mask(activities)]
-        bests = self._get_per_activity_bests_df(sport_category)
-        if races.empty or bests.empty:
-            caches.race_residuals[sport_category] = residuals
-            return residuals
-
-        for _, row in races.iterrows():
-            gps_dist = float(row.get("distance") or 0)
-            primary = next((t for t in targets if t <= gps_dist <= t * self.RACE_GPS_OVERREAD_MAX), None)
-            if primary is None:
-                continue
-            effort = bests[
-                (bests["activity_id"] == row["id"]) & (bests["distance_m"] == primary)
-            ]
-            if effort.empty:
-                continue
-            race_date = row["start_date_local"]
-            asof = race_date - pd.Timedelta(days=1)
-            recent = self._recent_best_efforts_list(
-                sport_category, within_days=self.PREDICTIONS_WINDOW_DAYS, end_date=asof
-            )
-            if not recent:
-                continue
-            core = self._compute_predictions(recent, sport_category, reference_date=asof)
-            entry = next(
-                (p for p in core["predictions"] if p["distance_m"] == primary), None
-            )
-            if not entry or not entry.get("predicted_time_s"):
-                continue
-            residuals.append(
-                (race_date, float(effort["time_s"].iloc[0]) / float(entry["predicted_time_s"]))
-            )
-
-        residuals.sort(key=lambda r: r[0])
+        if sport_distances(sport_category) and not activities.empty:
+            races = activities[_in_category(activities, sport_category) & self._race_mask(activities)]
+            bests = self._get_per_activity_bests_df(sport_category)
+            if not races.empty and not bests.empty:
+                residuals = race_residuals(
+                    race_results(races, bests, sport_category), self._ranked_bests(sport_category),
+                    sport_category, self.get_max_heart_rate() or 0, self.prediction_tuning,
+                )
         caches.race_residuals[sport_category] = residuals
         return residuals
 
-    def _race_calibration(self, sport_category: SportCategory, reference_date) -> dict:
-        """Race-day calibration as of `reference_date`, from races strictly
-        before that date:
-            factor          — clamped median(actual/predicted): central correction
-            band_low_mult / band_high_mult — p25/p75 of the residuals, or None
-                              below the minimum race count. An *empirical*
-                              uncertainty band: across past races, the middle
-                              50% of actual results landed in this range around
-                              the raw prediction — captures day-form, course
-                              and model error together, which the model-spread
-                              IQR (quantiles of a pool dominated by one VDOT
-                              sample) understates.
-            n_races         — residuals used
-        """
-        ref = pd.Timestamp(reference_date)
-        if ref.tz is None:
-            ref = ref.tz_localize("UTC")
-        residuals = [r for d, r in self._compute_race_residuals(sport_category) if d < ref]
-        n = len(residuals)
-        if n < self.RACE_CALIBRATION_MIN_RACES:
-            return {"factor": 1.0, "band_low_mult": None, "band_high_mult": None, "n_races": n}
-        clamp = self.RACE_CALIBRATION_CLAMP
-        factor = float(min(1.0 + clamp, max(1.0 - clamp, np.median(residuals))))
-        # Keep the band consistent with the (possibly clamped) central factor.
-        low = min(float(np.percentile(residuals, 25)), factor)
-        high = max(float(np.percentile(residuals, 75)), factor)
-        return {"factor": factor, "band_low_mult": low, "band_high_mult": high, "n_races": n}
-
-    @staticmethod
-    def _apply_calibration(predictions: list[dict], cal: dict) -> None:
-        """Apply race-day calibration in place: scale the central by `factor`;
-        replace the band with the empirical residual band when available,
-        otherwise scale the model band and clamp it to contain the central."""
-        factor = cal["factor"]
-        low_mult, high_mult = cal["band_low_mult"], cal["band_high_mult"]
-        for p in predictions:
-            raw = p.get("predicted_time_s")
-            if raw is None:
-                continue
-            central = raw * factor
-            if low_mult is not None:
-                p["predicted_time_low_s"] = round(raw * low_mult, 1)
-                p["predicted_time_high_s"] = round(raw * high_mult, 1)
-            else:
-                if p.get("predicted_time_low_s") is not None:
-                    p["predicted_time_low_s"] = round(min(p["predicted_time_low_s"] * factor, central), 1)
-                if p.get("predicted_time_high_s") is not None:
-                    p["predicted_time_high_s"] = round(max(p["predicted_time_high_s"] * factor, central), 1)
-            p["predicted_time_s"] = round(central, 1)
-
-    # The marathon prediction is usually an extrapolation, and the shortest
-    # efforts measure speed more than aerobic fitness.
-    TRAINING_PACE_DISTANCES = (5000, 10000, 21097)
-
-    def _training_paces(self, predictions: list[dict]) -> dict | None:
-        """Daniels' training paces at the VDOT the calibrated predictions
-        imply, so they follow what the athlete would race now (`athlete_vdot`
-        comes from raw training efforts, which read slow of race day)."""
-        vdots = [
-            vdot_from_time_distance(p["predicted_time_s"], p["distance_m"])
-            for p in predictions
-            if p["distance_m"] in self.TRAINING_PACE_DISTANCES and p.get("predicted_time_s")
-        ]
-        vdots = [v for v in vdots if v is not None]
-        if not vdots:
-            return None
-        vdot = sum(vdots) / len(vdots)
-        speeds = training_paces_from_vdot(vdot)
-        if speeds is None:
-            return None
-        return {
-            "vdot": round(vdot, 1),
-            "paces": [
-                {"zone": zone.value, "speed_min_mps": round(slow, 4), "speed_max_mps": round(fast, 4)}
-                for zone, (slow, fast) in speeds.items()
-            ],
-        }
-
-    def get_race_predictions(self, sport_category: SportCategory = SportCategory.RUNNING) -> dict:
-        """Generate race predictions using a recent-bests model.
-
-        All sports (running / cycling / swimming) use the same pipeline:
-          • Inputs are sliding-window best efforts from the last 52 weeks
-            (PREDICTIONS_WINDOW_DAYS) at that sport's standard distances,
-            recency-decayed inside the window — reflecting *current* fitness
-            rather than lifetime bests.
-          • Central estimate blends VDOT (running only, VDOT_FAMILY_WEIGHT) with a
-            closer-anchor-weighted Riegel family (fixed 1.06 + the personalized
-            fade exponent when it can be fit). Race-flagged anchors are
-            boosted; clearly sub-maximal anchors are down-weighted.
-          • Uncertainty band is the weighted p25–p75 (IQR) of the projection
-            pool.
-        """
-        # Recency weights count from today, so the result is per day
+    def get_race_predictions(self, sport_category: SportCategory = SportCategory.RUNNING) -> RacePredictions:
+        """race_predictions.predict_races for the sport as of now, cached per
+        day (the recency weights count from today)."""
         caches = self._caches()
-        cache_key = (sport_category, datetime.now(timezone.utc).date())
+        now = datetime.now(timezone.utc)
+        cache_key = (sport_category, now.date())
         if cache_key in caches.race_predictions:
             return caches.race_predictions[cache_key]
 
-        recent = self._recent_best_efforts_list(
-            sport_category, within_days=self.PREDICTIONS_WINDOW_DAYS
-        )
-        core = self._compute_predictions(recent, sport_category)
-        cal = self._race_calibration(sport_category, datetime.now(timezone.utc))
-        self._apply_calibration(core["predictions"], cal)
-
-        n_recent = len({b["distance_m"] for b in recent if b.get("is_top1")})
-        confidence = "high" if n_recent >= 5 else "medium" if n_recent >= 3 else "low"
-
         activities = self.strava_activities_cache.get_prepared_view()
-        cat_activities = activities[
-            activities["sport_type"].apply(lambda st: get_sport_category(st) == sport_category)
-        ]
-
-        warnings: list[str] = []
-        if n_recent == 0:
-            warnings.append(
-                f"No {sport_category} efforts in the last 52 weeks — predictions unavailable"
-            )
-        elif n_recent < 3:
-            warnings.append(
-                f"Only {n_recent} distinct recent best effort(s) in the last 52 weeks — "
-                "personalized Riegel not fit; predictions extrapolated from limited inputs"
-            )
-        if sport_category == SportCategory.CYCLING:
-            warnings.append(
-                "Cycling predictions use a time/distance Riegel model — for power-based "
-                "athletes a critical-power curve would be more accurate"
-            )
-
-        # Targets far beyond the longest recent effort are extrapolations the
-        # backtest can't vouch for (e.g. Marathon predicted from ≤HM anchors).
-        max_anchor = max((b["distance_m"] for b in recent), default=0)
-        extrapolated = [
-            label for dist_m, label in self._sport_distances(sport_category)
-            if max_anchor and dist_m > 1.6 * max_anchor
-        ]
-        if extrapolated:
-            warnings.append(
-                f"{', '.join(extrapolated)} prediction extrapolates well beyond the "
-                f"longest recent effort ({max_anchor / 1000:.1f} km) — treat with caution"
-            )
-
-        # Garmin's own race predictor (running only) for side-by-side
-        # comparison: attach the matching time to each standard distance.
-        garmin_preds = self._garmin_race_predictions() if sport_category == SportCategory.RUNNING else None
-        if garmin_preds:
-            garmin_by_distance = {
-                5000: garmin_preds.get("time5K"),
-                10000: garmin_preds.get("time10K"),
-                21097: garmin_preds.get("timeHalfMarathon"),
-                42195: garmin_preds.get("timeMarathon"),
-            }
-            for p in core["predictions"]:
-                g = garmin_by_distance.get(p["distance_m"])
-                if g:
-                    p["garmin_time_s"] = float(g)
-
-        result = {
-            "predictions": core["predictions"],
-            "athlete_vdot": core["athlete_vdot"],
-            "fitted_exponent": core["fitted_exponent"],
-            # Riegel's typical exponent is a running figure.
-            "fade": core["fade"] if sport_category == SportCategory.RUNNING else None,
-            "training_paces": (
-                self._training_paces(core["predictions"]) if sport_category == SportCategory.RUNNING else None
-            ),
-            "confidence": confidence,
-            "sport_category": sport_category,
-            "garmin_predictions": garmin_preds,
-            "race_day_calibration": {
-                "factor": round(cal["factor"], 4),
-                "n_races": cal["n_races"],
-                "band_low_mult": round(cal["band_low_mult"], 4) if cal["band_low_mult"] else None,
-                "band_high_mult": round(cal["band_high_mult"], 4) if cal["band_high_mult"] else None,
-            },
-            "data_quality": {
-                "total_activities": int(len(cat_activities)),
-                "prs_available": n_recent,
-                "recent_prs": n_recent,
-                "sufficient": n_recent >= 2,
-                "warnings": warnings,
-                "window_days": self.PREDICTIONS_WINDOW_DAYS,
-            },
-        }
+        result = predict_races(
+            self._ranked_bests(sport_category),
+            self._compute_race_residuals(sport_category),
+            sport_category,
+            now,
+            self.get_max_heart_rate() or 0,
+            self._garmin_race_predictions() if sport_category == SportCategory.RUNNING else None,
+            int(len(activities[_in_category(activities, sport_category)])),
+            self.prediction_tuning,
+        )
         caches.race_predictions[cache_key] = result
         return result
 
@@ -1571,92 +413,27 @@ class StravaAnalytics:
         weeks: int = 52,
         step_days: int = 7,
         window_days: int = 365,
-    ) -> list[dict]:
-        """Time series of race predictions. For each step (weekly by default),
-        recomputes predictions using the recent-bests window ending at that
-        step's date. Runs the full pipeline per step — cost is
-        O(steps · activities_in_window · distances).
-
-        Returns a list ordered oldest→newest:
-            [{end_date: 'YYYY-MM-DD', athlete_vdot, fitted_exponent,
-              predictions: [{distance_m, label, predicted_time_s,
-                             predicted_time_low_s, predicted_time_high_s}, ...]},
-             ...]
-        """
-        target_distances = self._sport_distances(sport_category)
-        if not target_distances:
+    ) -> list[PredictionHistoryPoint]:
+        """race_predictions.prediction_history for the sport up to now: one
+        window query and prediction per step."""
+        if not sport_distances(sport_category):
             return []
+        return prediction_history(
+            self._ranked_bests(sport_category),
+            self._compute_race_residuals(sport_category),
+            sport_category,
+            datetime.now(timezone.utc),
+            self.get_max_heart_rate() or 0,
+            weeks,
+            step_days,
+            window_days,
+            self.prediction_tuning,
+        )
 
-        # Require at least 3 distinct recent bests so the personalized Riegel
-        # can fit and the IQR band is non-degenerate. Steps below this floor
-        # are dropped — cleaner than pretending a single anchor can predict
-        # the full distance range.
-        MIN_INPUTS = 3
+    # ── Training load ─────────────────────────────────────────────────
 
-        empty_predictions = [
-            {
-                "distance_m": dist_m,
-                "label": label,
-                "predicted_time_s": None,
-                "predicted_time_low_s": None,
-                "predicted_time_high_s": None,
-            }
-            for dist_m, label in target_distances
-        ]
-
-        now = datetime.now(timezone.utc)
-        history: list[dict] = []
-        first_valid_seen = False
-        for i in range(weeks - 1, -1, -1):
-            step_end = now - timedelta(days=i * step_days)
-            recent = self._recent_best_efforts_list(
-                sport_category, within_days=window_days, end_date=step_end
-            )
-            distinct = len({b["distance_m"] for b in recent if b.get("is_top1")})
-
-            if distinct < MIN_INPUTS:
-                # Skip entirely until we've seen our first valid point; after that
-                # emit a null-predictions entry so the chart can render a gap
-                # (break the line) rather than connecting across the missing week.
-                if not first_valid_seen:
-                    continue
-                history.append({
-                    "end_date": step_end.date().isoformat(),
-                    "athlete_vdot": None,
-                    "fitted_exponent": None,
-                    "n_inputs": len(recent),
-                    "predictions": empty_predictions,
-                })
-                continue
-
-            first_valid_seen = True
-            core = self._compute_predictions(recent, sport_category, reference_date=step_end)
-            cal = self._race_calibration(sport_category, step_end)
-            self._apply_calibration(core["predictions"], cal)
-            history.append(
-                {
-                    "end_date": step_end.date().isoformat(),
-                    "athlete_vdot": core["athlete_vdot"],
-                    "fitted_exponent": core["fitted_exponent"],
-                    "n_inputs": len(recent),
-                    "predictions": [
-                        {
-                            "distance_m": p["distance_m"],
-                            "label": p["label"],
-                            "predicted_time_s": p["predicted_time_s"],
-                            "predicted_time_low_s": p["predicted_time_low_s"],
-                            "predicted_time_high_s": p["predicted_time_high_s"],
-                        }
-                        for p in core["predictions"]
-                    ],
-                }
-            )
-        return history
-
-    # ── Training Load ───────────────────────────────────────────
-
-    def get_daily_training_load(self, hr_rest: float, hr_zones: list | None = None) -> list[dict]:
-        """Compute daily TRIMP values from all activities.
+    def get_daily_training_load(self, hr_rest: float, hr_zones: list[HrZone] | None = None) -> list[DailyLoad]:
+        """Daily TRIMP from all activities (training_load.daily_training_load).
 
         hr_rest: resting HR (resolved from user settings).
         hr_zones: optional zones override (e.g. resolved from user settings).
@@ -1670,285 +447,38 @@ class StravaAnalytics:
         if hr_zones is None:
             hr_zones = self._get_hr_zones_cached()
 
-        cache_key = (
-            round(float(hr_rest), 1),
-            round(float(hr_max), 1),
-            tuple((z.get('min'), z.get('max')) for z in (hr_zones or [])),
-        )
+        cache_key = training_load_key(hr_rest, hr_max, hr_zones)
         cached = caches.training_load.get(cache_key)
         if cached is not None:
             return cached
 
-        activities = self.strava_activities_cache.get_prepared_view()
-        if activities.empty:
-            caches.training_load[cache_key] = []
-            return []
-
-        # Drop rows that can't contribute a TRIMP value up-front so we only do
-        # work on rows with valid avg_hr and positive moving_time.
-        mt = activities['moving_time'] if 'moving_time' in activities.columns else pd.Series(dtype=float)
-        hr = activities['average_heartrate'] if 'average_heartrate' in activities.columns else pd.Series(dtype=float)
-        mask = hr.notna() & (hr > 0) & mt.notna() & (mt > 0)
-        valid = activities[mask]
-        if valid.empty:
-            caches.training_load[cache_key] = []
-            return []
-
-        duration_min_arr = valid['moving_time'].to_numpy(dtype=np.float64) / 60.0
-        banister = compute_trimp_banister(duration_min_arr, valid['average_heartrate'].to_numpy(dtype=np.float64),
-                                          hr_rest, hr_max)
-
-        trimps = banister.copy()
-        methods = np.full(len(valid), 'banister', dtype=object)
-
-        # Zone-weighted override for rows with HR streams, from the persisted
-        # per-activity HR sample counts (each sample weighs an equal share of
-        # the moving time).
-        if hr_zones:
-            id_list = valid['id'].astype('int64').tolist() if 'id' in valid.columns else []
-            hr_counts = self._activity_heartrate_counts(id_list)
-            for idx, activity_id in enumerate(id_list):
-                counts = hr_counts.get(activity_id)
-                if counts is None:
-                    continue
-                hr_values, hr_weights = counts
-                n_samples = int(hr_weights.sum())
-                if n_samples <= 10:
-                    continue
-                in_zone = hr_zone_counts(hr_values, hr_zones, hr_weights)
-                time_per_pt = duration_min_arr[idx] / n_samples
-                time_in_zones = [float(in_zone[i]) * time_per_pt for i in range(5)]
-                zw = compute_trimp_zone_weighted(time_in_zones)
-                if zw > 0:
-                    trimps[idx] = zw
-                    methods[idx] = 'zone_weighted'
-
-        trimps_rounded = np.round(trimps, 1)
-        date_strs = valid['start_date_local'].dt.strftime('%Y-%m-%d').to_numpy()
-        names = valid.get('name', pd.Series([''] * len(valid), index=valid.index)).fillna('').to_numpy()
-        sports = valid.get('sport_type', pd.Series([''] * len(valid), index=valid.index)).fillna('').to_numpy()
-        km_arr = valid.get('distance', pd.Series(0.0, index=valid.index)).fillna(0.0).to_numpy(dtype=np.float64) / 1000.0
-
-        daily: dict[str, dict] = {}
-        for date_str, trimp, method, name, sport, minutes, km in zip(
-                date_strs, trimps_rounded, methods, names, sports, duration_min_arr, km_arr):
-            entry = daily.get(date_str)
-            if entry is None:
-                entry = {"date": date_str, "trimp": 0.0, "activities": [], "trimp_method": str(method)}
-                daily[date_str] = entry
-            entry["trimp"] += float(trimp)
-            entry["activities"].append({
-                "name": str(name),
-                "sport_type": str(sport),
-                "trimp": float(trimp),
-                "trimp_method": str(method),
-                "minutes": float(minutes),
-                "km": float(km),
-            })
-
-        result = sorted(daily.values(), key=lambda d: d["date"])
+        valid = trimp_activities(self.strava_activities_cache.get_prepared_view())
+        hr_counts: dict[int, HeartRateCounts | None] = {}
+        if hr_zones and not valid.empty:
+            hr_counts = self._activity_heartrate_counts(
+                valid['id'].astype('int64').tolist() if 'id' in valid.columns else []
+            )
+        result = daily_training_load(valid, hr_rest, hr_max, hr_zones, hr_counts)
         caches.training_load[cache_key] = result
         return result
-
-    # Cosmetic multiplier so weekly Relative Effort reads in a Strava-like
-    # range. The band is derived from the same scaled series, so status
-    # (below / in / above range) is invariant to this constant.
-    RE_DISPLAY_SCALE = 1.4
-    RE_SPORTS: tuple[SportCategory, ...] = (SportCategory.RUNNING, SportCategory.SWIMMING)
 
     def get_weekly_relative_effort(
         self,
         hr_rest: float,
-        hr_zones: list | None = None,
+        hr_zones: list[HrZone] | None = None,
         sports: tuple[SportCategory, ...] | None = None,
         band_span: int = 6,
         band_k: float = 0.6,
-    ) -> dict:
-        """Weekly Relative Effort with a personalized expected-range band.
-
-        Reuses per-activity TRIMP from get_daily_training_load (HR-zone-weighted
-        where streams exist, Banister avg-HR otherwise), keeps only `sports`,
-        sums per ISO week, and derives the band as EWMA ± band_k·rolling-std over
-        `band_span` weeks. Gap weeks are filled with 0 so rest weeks read as dips.
-        """
-        if sports is None:
-            sports = self.RE_SPORTS
+    ) -> WeeklyRelativeEffort:
+        """training_load.weekly_relative_effort of `sports` (running and
+        swimming when None) over the daily TRIMP."""
         daily = self.get_daily_training_load(hr_zones=hr_zones, hr_rest=hr_rest)
-        rows = [
-            (day["date"], act.get("trimp", 0.0))
-            for day in daily
-            for act in day.get("activities", [])
-            if get_sport_category(act.get("sport_type")) in sports
-        ]
-        if not rows:
-            return {"weeks": [], "scale": self.RE_DISPLAY_SCALE, "sports": list(sports)}
+        return weekly_relative_effort(daily, self.RE_SPORTS if sports is None else sports, band_span, band_k)
 
-        df = pd.DataFrame(rows, columns=["date", "trimp"])
-        df["date"] = pd.to_datetime(df["date"])
-        # Monday-anchored weeks: the start_time of a Sunday-ending period is Monday.
-        df["week"] = df["date"].dt.to_period("W-SUN").dt.start_time
-        weekly = df.groupby("week")["trimp"].sum() * self.RE_DISPLAY_SCALE
-        full_idx = pd.date_range(weekly.index.min(), weekly.index.max(), freq="W-MON")
-        weekly = weekly.reindex(full_idx, fill_value=0.0)
-
-        center = weekly.ewm(span=band_span).mean()
-        std = weekly.rolling(band_span, min_periods=2).std().fillna(0.0)
-        band_low = (center - band_k * std).clip(lower=0.0)
-        band_high = center + band_k * std
-
-        weeks = [
-            {
-                "week_start": ts.strftime("%Y-%m-%d"),
-                "relative_effort": float(round(re_val)),
-                "band_low": float(round(lo)),
-                "band_high": float(round(hi)),
-                "status": "below" if re_val < lo else ("above" if re_val > hi else "in_range"),
-            }
-            for ts, re_val, lo, hi in zip(
-                weekly.index, weekly.to_numpy(), band_low.to_numpy(), band_high.to_numpy()
-            )
-        ]
-        return {"weeks": weeks, "scale": self.RE_DISPLAY_SCALE, "sports": list(sports)}
-
-    # ── Fitness and form ──────────────────────────────────────────────
-
-    # Exponentially weighted daily load over the Banister model's classic spans
-    FITNESS_DAYS = 42
-    FATIGUE_DAYS = 7
-    # Planned sessions are costed from this much of your own recent training
-    PLAN_HISTORY_DAYS = 180
-
-    def get_fitness_form(self, hr_rest: float, hr_zones: list | None, planned: list[dict], days: int) -> dict:
-        """Fitness (42-day load average), fatigue (7-day) and form (their
-        difference) per day over the last `days`, from the daily TRIMP, then
-        continued over `planned` sessions (date, sport_type, planned_duration_mins,
-        planned_distance_km) as a projection. TRIMP isn't on the TSS scale the
-        usual absolute form zones assume, so form is also given as a share of
-        fitness, which doesn't depend on the scale."""
+    def get_fitness_form(self, hr_rest: float, hr_zones: list[HrZone] | None, planned: list[PlannedSession],
+                         days: int) -> FitnessForm:
+        """training_load.fitness_form over the last `days` and the `planned`
+        sessions ahead (date, sport_type, planned_duration_mins,
+        planned_distance_km)."""
         daily = self.get_daily_training_load(hr_rest=hr_rest, hr_zones=hr_zones)
-        if not daily:
-            return {"series": []}
-        loads = {d["date"]: d["trimp"] for d in daily}
-        today = date.today()
-        cost = self._planned_load_estimator(daily, today)
-        planned_load: dict[str, float] = {}
-        for session in planned:
-            if session["date"] >= today.isoformat():
-                planned_load[session["date"]] = planned_load.get(session["date"], 0.0) + cost(session)
-
-        end = max([today, *(date.fromisoformat(d) for d in planned_load)])
-        window_start = today - timedelta(days=days)
-        fitness = fatigue = 0.0
-        series = []
-        for day in pd.date_range(daily[0]["date"], end, freq="D").date:
-            key = day.isoformat()
-            # Today stays actual once an activity is logged; until then the plan stands in
-            projected = day > today or (day == today and key not in loads)
-            load = planned_load.get(key, 0.0) if projected else loads.get(key, 0.0)
-            fitness += (load - fitness) / self.FITNESS_DAYS
-            fatigue += (load - fatigue) / self.FATIGUE_DAYS
-            if day >= window_start:
-                form = fitness - fatigue
-                series.append({
-                    "date": key,
-                    "load": round(load, 1),
-                    "fitness": round(fitness, 1),
-                    "fatigue": round(fatigue, 1),
-                    "form": round(form, 1),
-                    "form_pct": round(100 * form / fitness, 1) if fitness > 0 else None,
-                    "projected": projected,
-                })
-        return {"series": series, "fitness_days": self.FITNESS_DAYS, "fatigue_days": self.FATIGUE_DAYS}
-
-    def _planned_load_estimator(self, daily: list[dict], today: date):
-        """Load of a planned session, from your own sessions of the last
-        PLAN_HISTORY_DAYS: its minutes (planned, or planned km at your usual
-        pace) times your load per minute for that sport, or your typical
-        session of that sport when the plan gives neither. Sports with too
-        little history fall back to all sports."""
-        since = (today - timedelta(days=self.PLAN_HISTORY_DAYS)).isoformat()
-        samples: dict[str, list[dict]] = {}
-        everything: list[dict] = []
-        for d in daily:
-            if d["date"] >= since:
-                for a in d["activities"]:
-                    samples.setdefault(a["sport_type"], []).append(a)
-                    everything.append(a)
-
-        def rates(acts: list[dict]) -> tuple[float | None, float | None, float]:
-            per_min = [a["trimp"] / a["minutes"] for a in acts if a["minutes"] > 0]
-            min_per_km = [a["minutes"] / a["km"] for a in acts if a["km"] > 0.5]
-            return (median(per_min) if per_min else None, median(min_per_km) if min_per_km else None,
-                    median([a["trimp"] for a in acts]) if acts else 0.0)
-
-        overall = rates(everything)
-        by_sport = {sport: rates(acts) for sport, acts in samples.items() if len(acts) >= 3}
-
-        def cost(session: dict) -> float:
-            sport = session.get("sport_type") or ""
-            if sport.lower() == "rest":
-                return 0.0
-            per_min, min_per_km, typical = by_sport.get(sport, overall)
-            minutes = session.get("planned_duration_mins")
-            if not minutes and session.get("planned_distance_km") and min_per_km:
-                minutes = session["planned_distance_km"] * min_per_km
-            return float(minutes * per_min) if minutes and per_min else float(typical)
-        return cost
-
-class YearInSportFeatures(StrEnum):
-    TOTAL_ACTIVITIES = "total_activities"
-    TOTAL_DISTANCE_KM = "total_distance_km"
-    TOTAL_ELEVATION_M = "total_elevation_m"
-    TOTAL_TIME_HOURS = "total_time_hours"
-    ACTIVE_DAYS = "active_days"
-    ACTIVITIES_PER_MONTH = "activities_per_month"
-    DISTANCE_PER_MONTH_KM = "distance_per_month_km"
-    MOST_ACTIVE_WEEKDAY = "most_active_weekday"
-    MONTH_MOST_ACTIVITIES = "month_most_activities"
-    MONTH_MOST_KM = "month_most_km"
-    MONTH_LEAST_KM = "month_least_km"
-    LONGEST_ACTIVITY_KM = "longest_activity_km"
-    LONGEST_ACTIVITY_KM_ID = "longest_activity_km_id"
-    LONGEST_ACTIVITY_MINS = "longest_activity_mins"
-    LONGEST_ACTIVITY_MINS_ID = "longest_activity_mins_id"
-    FASTEST_ACTIVITY_SPEED = "fastest_activity_speed"  # m/s
-    FASTEST_ACTIVITY_SPEED_ID = "fastest_activity_speed_id"
-    AVERAGE_DISTANCE_KM = "average_distance_km"
-    AVERAGE_SPEED = "average_speed"  # m/s
-    ACTIVITIES_PER_WEEK = "activities_per_week"
-
-
-class AllYearInSportFeatures(StrEnum):
-    TOTAL_ACTIVITIES = "total_activities"
-    TOTAL_DISTANCE_KM = "total_distance_km"
-    TOTAL_TIME_HOURS = "total_time_hours"
-    ACTIVE_DAYS = "active_days"
-    ACTIVITIES_PER_WEEK = "activities_per_week"
-    ACTIVITIES_PER_SPORT = "activities_per_sport"
-    MOST_ACTIVE_WEEKDAY = "most_active_weekday"
-    MOST_ACTIVE_MONTH = "most_active_month"
-    SPORT_MOST_DONE = "sport_most_done"
-
-
-class WeeklyReportFeatures(StrEnum):
-    WEEK_START = "week_start"
-    WEEK_END = "week_end"
-    TOTAL_ACTIVITIES = "total_activities"
-    TOTAL_DISTANCE_KM = "total_distance_km"
-    TOTAL_ELEVATION_M = "total_elevation_m"
-    TOTAL_TIME_HOURS = "total_time_hours"
-    ACTIVE_DAYS = "active_days"
-    ACTIVITIES_PER_DAY = "activities_per_day"  # dict: weekday (0-6) -> count
-    DISTANCE_PER_DAY_KM = "distance_per_day_km"  # dict: weekday (0-6) -> km
-    DISTANCE_PER_SPORT_KM = "distance_per_sport_km"  # dict: sport -> km
-    ACTIVITIES_PER_SPORT = "activities_per_sport"  # dict: sport -> count
-    TIME_PER_SPORT_HOURS = "time_per_sport_hours"  # dict: sport -> hours
-    SPORTS_PER_DAY = "sports_per_day"  # dict: weekday (0-6) -> list of sports
-    TIME_PER_SPORT_PER_DAY_MINS = "time_per_sport_per_day_mins"  # dict: sport -> dict: weekday (0-6) -> minutes
-    ACTIVITIES_TITLES_PER_DAY_PER_SPORT = "activities_titles_per_day_per_sport"  # dict: sport -> dict: weekday (0-6) -> list of activity titles
-    HR_ZONE_DISTRIBUTION = "hr_zone_distribution"  # dict: zone (1-5) -> count of activities
-    HR_HISTOGRAM = "hr_histogram"  # {min_bpm: int, counts: list[int]} 1 bpm bins (or null when no HR samples)
-    MOST_ACTIVE_DAY = "most_active_day"  # weekday (0-6)
-    LONGEST_ACTIVITY_KM = "longest_activity_km"
-    LONGEST_ACTIVITY_NAME = "longest_activity_name"
-    HR_ZONE_RANGES = "hr_zone_ranges"  # dict: zone (1-5) -> (min_hr, max_hr)
+        return fitness_form(daily, planned, date.today(), days)
