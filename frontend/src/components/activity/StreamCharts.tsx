@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import type { ActivityDetail, ActivityScoreResponse } from '../../api/hooks'
 import { getSportColor } from '../../constants/sportColors'
 import {
-  getSportCategory, formatPace, formatClockDuration, isSpeedSport,
+  getSportCategory, isOnFoot, formatPace, formatClockDuration, isSpeedSport,
 } from '../../utils/formatSpeed'
 import StreamChart, { type ChartMarker, type ChartZone } from '../shared/StreamChart'
 import { getSegmentColor } from '../shared/segmentUtils'
@@ -173,7 +173,7 @@ export default function StreamCharts({ activity, activityScore, streamSeries }: 
           data={streamSeries.cadence}
           color="#34d399"
           gradientId="cadGrad"
-          unit="spm"
+          unit={isOnFoot(sportCategory) ? 'spm' : 'rpm'}
           zones={segmentZones.length > 0 ? segmentZones : undefined}
           markers={stopMarkers}
           markersLegend={stopsLegend}

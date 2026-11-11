@@ -171,7 +171,9 @@ export function buildStreamData(activity: ActivityDetail | undefined): StreamDat
 
   if (activity?.streams && Array.isArray(activity.streams)) {
     const streams = activity.streams
-    const isRunning = getSportCategory(activity?.sport_type) === 'running'
+    const category = getSportCategory(activity?.sport_type)
+    const isRunning = category === 'running'
+    const cadenceFactor = isOnFoot(category) ? 2 : 1
 
     if (isRunning) {
       gSpeeds = streams.map(pt => pt.grade_adjusted_speed ?? 0)
@@ -223,13 +225,12 @@ export function buildStreamData(activity: ActivityDetail | undefined): StreamDat
         series.heartrate.push({ distance: dist, value: pt.heartrate })
       }
 
-      // Cadence
       if (pt.watts != null && pt.watts > 0) {
         series.power.push({ distance: dist, value: pt.watts })
       }
 
       if (pt.cadence != null && pt.cadence > 0) {
-        series.cadence.push({ distance: dist, value: pt.cadence })
+        series.cadence.push({ distance: dist, value: pt.cadence * cadenceFactor })
       }
     }
 
