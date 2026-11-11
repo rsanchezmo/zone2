@@ -24,7 +24,7 @@ import time
 import zlib
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import date as date_t, timedelta
+from datetime import UTC, date as date_t, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -260,6 +260,12 @@ class GarminDailyStatsCache:
                 (metric,),
             ).fetchone()
             return {"date": row["date"], "payload": _decode_payload(row["payload"])} if row else None
+
+    def last_sync_at(self) -> datetime | None:
+        """When a payload was last fetched (UTC)."""
+        with _conn() as c:
+            (last,) = c.execute("SELECT MAX(fetched_at) FROM garmin_daily_stats").fetchone()
+        return datetime.fromisoformat(last).replace(tzinfo=UTC) if last else None
 
     def status(self) -> dict[str, Any]:
         with _conn() as c:

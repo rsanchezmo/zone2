@@ -1,11 +1,10 @@
 import json
-import logging
 
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from backend.db import connect_db, get_db
+from backend.db import get_db
 from backend.dependencies import get_z2
 from backend.routers.exports import clear_export_cache
 from backend.services.stats_cache import clear_stats_cache
@@ -25,7 +24,6 @@ from backend.services.resting_hr import (
 )
 from zone2.core import Zone2
 
-logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -79,17 +77,6 @@ def _drop_zone_caches(z2: Zone2) -> None:
     z2.strava_analytics.invalidate_caches()
     clear_stats_cache()
     clear_export_cache()
-
-
-async def sync_garmin_zones(z2: Zone2) -> None:
-    """Refresh Garmin's zones after a Garmin sync, rebuilding what uses them
-    when they moved and are the ones in use."""
-    if not await refresh_garmin_zones(z2):
-        return
-    async with connect_db() as db:
-        if await get_setting(db, "hr_zones_source") == "garmin":
-            logger.info("Garmin HR zones changed: rebuilding zone-based stats")
-            _drop_zone_caches(z2)
 
 
 @router.get("/zones-settings")

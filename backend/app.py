@@ -40,6 +40,7 @@ from backend.dependencies import set_zone2
 from backend.routers import agent, coach, activities, stats, exports, calendar, calendar_feed, sync, athlete, gear, goals, workouts, races, health, garmin, coverage, plans, config as config_router
 from backend.routers.coverage import sync_all_cities, unload_idle_cities
 from backend.routers.exports import clear_export_cache
+from backend.services import garmin_sync
 from backend.services import sync as strava_sync
 from backend.services.races import refresh_race_activities
 from backend.db import connect_db, init_db
@@ -125,11 +126,6 @@ async def _periodic_garmin_sync_loop(
     restart doesn't leave a full interval-long blind window. Independent of the
     Strava lock — both can run concurrently — but shares the Garmin
     /api/garmin/sync claim so a manual sync isn't trampled."""
-    # Inline import keeps `routers.garmin` off the module-import path during
-    # cold start until it's actually needed.
-    from backend.routers.athlete import sync_garmin_zones
-    from backend.routers.garmin import _try_claim as _try_claim_garmin, _run_garmin_sync
-    from backend.services.garmin_workouts import reconcile as reconcile_workouts
     log = logging.getLogger("backend.garmin_autosync")
     log.info("Garmin auto-sync scheduler enabled (every %dh, first run in %ds)",
              interval_hours, initial_delay_s)
@@ -138,11 +134,9 @@ async def _periodic_garmin_sync_loop(
         try:
             await asyncio.sleep(delay)
             delay = interval_hours * 3600  # subsequent runs at the full interval
-            if _try_claim_garmin():
+            if garmin_sync.try_claim():
                 log.info("Garmin auto-sync starting")
-                await asyncio.to_thread(_run_garmin_sync, z2, False)
-                await reconcile_workouts(z2)
-                await sync_garmin_zones(z2)
+                await garmin_sync.run(z2, False)
                 log.info("Garmin auto-sync finished")
             else:
                 log.info("Garmin auto-sync skipped: another Garmin sync running")
@@ -277,9 +271,10 @@ app.include_router(coverage.router, prefix="/api/coverage", tags=["coverage"])
 app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
 app.include_router(coach.router, prefix="/api/coach", tags=["coach"])
 
-# A Strava sync also refreshes the PNG exports and the coverage map, whose state lives in their routers
+# Syncs also refresh the PNG exports and the coverage map, whose state lives in their routers
 strava_sync.on_changed(clear_export_cache)
 strava_sync.on_synced(sync_all_cities)
+garmin_sync.on_zones_changed(clear_export_cache)
 
 # Serve frontend build if it exists
 class _SPAStaticFiles(StaticFiles):

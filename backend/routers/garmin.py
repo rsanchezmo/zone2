@@ -22,88 +22,20 @@ Endpoints
 
 from __future__ import annotations
 
-import asyncio
-import logging
-from datetime import UTC, date as date_t, datetime, timedelta
-from threading import Lock
+from datetime import date as date_t, timedelta
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
-from backend._ttl_cache import TTLCache
 from backend.dependencies import get_z2
-from backend.routers.athlete import sync_garmin_zones
+from backend.services import garmin_sync
 from backend.services.activity_cost import activity_cost
 from backend.services.day_timeline import day_timeline
-from backend.services.garmin_workouts import reconcile as reconcile_workouts
-from zone2.garmin_client import GarminUnavailable
+from backend.services.garmin_courses import course_devices, course_line
 from zone2.garmin_extractors import SUMMARY_METRICS
 from zone2.core import Zone2
 
-logger = logging.getLogger(__name__)
 router = APIRouter()
-
-# Independent from Strava's sync lock — both can run concurrently.
-_garmin_sync_status = {"running": False, "last_error": None, "last_summary": None}
-_garmin_sync_lock = Lock()
-
-
-def _try_claim() -> bool:
-    with _garmin_sync_lock:
-        if _garmin_sync_status["running"]:
-            return False
-        _garmin_sync_status["running"] = True
-        _garmin_sync_status["last_error"] = None
-        return True
-
-
-def _release(error: str | None, summary: dict | None = None) -> None:
-    with _garmin_sync_lock:
-        _garmin_sync_status["running"] = False
-        _garmin_sync_status["last_error"] = error
-        if summary is not None:
-            _garmin_sync_status["last_summary"] = summary
-
-
-def _run_garmin_sync(z2: Zone2, full: bool, days: int = 14) -> None:
-    err: str | None = None
-    summary: dict | None = None
-    try:
-        if full:
-            summary = z2.garmin_cache.sync_full()
-        else:
-            rows = z2.garmin_cache.sync_recent(days=days)
-            summary = {"rows_written": rows}
-    except Exception as e:
-        err = f"{type(e).__name__}: {e}"
-        logger.exception("Garmin sync failed")
-    finally:
-        _release(err, summary)
-
-
-# The catch-up running now, which a later caller waits for instead of starting another
-_catching_up: asyncio.Future[None] | None = None
-
-
-def catch_up(z2: Zone2, max_age: timedelta) -> asyncio.Future[None] | None:
-    """Today's and yesterday's wellness when Garmin's last sync is older than `max_age`, the
-    client is logged in and no other Garmin sync is running, or the catch-up already running."""
-    global _catching_up
-    if _catching_up is not None and not _catching_up.done():
-        return _catching_up
-    if not z2.garmin_client.enabled:
-        return None
-    last = z2.garmin_cache.status()["last_sync_at"]
-    if last is not None and datetime.now(UTC) - datetime.fromisoformat(last) < max_age:
-        return None
-    if not _try_claim():
-        return None
-    loop = asyncio.get_running_loop()
-    started = loop.time()
-    synced = loop.run_in_executor(None, _run_garmin_sync, z2, False, 2)
-    synced.add_done_callback(lambda _: logger.info("Garmin catch-up took %.1fs", loop.time() - started))
-    _catching_up = synced
-    return synced
 
 
 # ---------------------------------------------------------------------- /status
@@ -112,16 +44,13 @@ def catch_up(z2: Zone2, max_age: timedelta) -> asyncio.Future[None] | None:
 @router.get("/status")
 def status(z2: Zone2 = Depends(get_z2)) -> dict[str, Any]:
     coverage = z2.garmin_cache.status()
-    with _garmin_sync_lock:
-        syncing = _garmin_sync_status["running"]
-        last_error = _garmin_sync_status["last_error"]
-        last_summary = _garmin_sync_status["last_summary"]
+    slot = garmin_sync.status()
     return {
         "enabled": z2.garmin_client.enabled,
         "client_error": z2.garmin_client.last_error,
-        "syncing": syncing,
-        "last_error": last_error,
-        "last_summary": last_summary,
+        "syncing": slot.running,
+        "last_error": slot.last_error,
+        "last_summary": slot.last_summary,
         **coverage,
     }
 
@@ -140,11 +69,9 @@ def trigger_sync(
             status_code=503,
             detail=z2.garmin_client.last_error or "Garmin client not configured",
         )
-    if not _try_claim():
+    if not garmin_sync.try_claim():
         return {"status": "already_running"}
-    background_tasks.add_task(_run_garmin_sync, z2, full)
-    background_tasks.add_task(reconcile_workouts, z2)
-    background_tasks.add_task(sync_garmin_zones, z2)
+    background_tasks.add_task(garmin_sync.run, z2, full)
     return {"status": "started", "full": full}
 
 
@@ -152,9 +79,7 @@ def trigger_sync(
 def cancel_sync(z2: Zone2 = Depends(get_z2)):
     """Ask a running sync (typically a long backfill) to stop at its next loop
     check. The partial result is cached, so a later sync resumes cheaply."""
-    with _garmin_sync_lock:
-        running = _garmin_sync_status["running"]
-    if not running:
+    if not garmin_sync.status().running:
         return {"status": "not_running"}
     z2.garmin_cache.request_cancel()
     return {"status": "cancelling"}
@@ -288,51 +213,6 @@ def trends(
 
 # ---------------------------------------------------------------------- /courses
 
-# Live Garmin calls, cached briefly: courses change only through Connect or
-# the planner (which clears this), a course's line never
-_courses_cache = TTLCache(maxsize=64, ttl_seconds=300)
-_course_points_cache = TTLCache(maxsize=64, ttl_seconds=24 * 3600)
-
-
-def clear_courses_cache() -> None:
-    _courses_cache.clear()
-
-
-def _live(fn, *args):
-    try:
-        return fn(*args)
-    except GarminUnavailable as e:
-        raise HTTPException(status_code=503, detail=str(e))
-    except Exception as e:
-        logger.warning("Garmin %s failed: %s: %s", fn.__name__, type(e).__name__, e)
-        raise HTTPException(status_code=502, detail=f"Garmin Connect failed: {e}")
-
-
-def course_list(z2: Zone2) -> list[dict[str, Any]]:
-    """The user's Garmin courses, newest first."""
-    cached = _courses_cache.get("courses")
-    if cached is None:
-        cached = [
-            {"course_id": c["courseId"], "name": c["courseName"],
-             "distance_km": round((c.get("distanceInMeters") or 0) / 1000, 2),
-             "start": [c.get("startLatitude"), c.get("startLongitude")],
-             "sport": (c.get("activityType") or {}).get("typeKey"),
-             "created_at": c.get("createdDateFormatted")}
-            for c in sorted(_live(z2.garmin_client.list_courses), key=lambda c: c.get("createdDate") or 0, reverse=True)
-        ]
-        _courses_cache.set("courses", cached)
-    return cached
-
-
-def course_line(z2: Zone2, course_id: int) -> dict[str, Any]:
-    """The course's line as [lon, lat] coordinates."""
-    cached = _course_points_cache.get(course_id)
-    if cached is None:
-        points = _live(z2.garmin_client.course_points, course_id)
-        cached = {"coordinates": [[round(lon, 6), round(lat, 6)] for lat, lon in points]}
-        _course_points_cache.set(course_id, cached)
-    return cached
-
 
 @router.get("/courses/{course_id}/points")
 def course_points(course_id: int, z2: Zone2 = Depends(get_z2)) -> dict[str, Any]:
@@ -340,10 +220,6 @@ def course_points(course_id: int, z2: Zone2 = Depends(get_z2)) -> dict[str, Any]
 
 
 @router.get("/devices")
-def course_devices(z2: Zone2 = Depends(get_z2)) -> list[dict[str, Any]]:
+def devices(z2: Zone2 = Depends(get_z2)) -> list[dict[str, Any]]:
     """Watches that take courses, the primary training device first."""
-    cached = _courses_cache.get("devices")
-    if cached is None:
-        cached = sorted(_live(z2.garmin_client.course_devices), key=lambda d: not d["primary"])
-        _courses_cache.set("devices", cached)
-    return cached
+    return course_devices(z2)

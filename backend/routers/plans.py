@@ -29,7 +29,7 @@ from backend.dependencies import get_z2
 from backend.routers.coverage import (
     _LAYERS_FORMAT, _cached_json, _get_matcher, _osm_dir, _read_stats_cache, _state_version,
 )
-from backend.routers.garmin import clear_courses_cache, course_line, course_list
+from backend.services.garmin_courses import clear_courses_cache, course_line, course_list
 from zone2.core import Zone2
 from zone2.garmin_client import GarminUnavailable
 from zone2.map_matching import StravaMapMatcher

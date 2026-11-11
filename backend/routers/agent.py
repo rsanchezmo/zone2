@@ -12,7 +12,7 @@ from backend.agent import load_module, preferences, reviews
 from backend.agent import usage as agent_usage
 from backend.db import connect_db, get_db
 from backend.dependencies import get_z2
-from backend.routers import garmin as garmin_sync
+from backend.services import garmin_sync
 from backend.services import sync as strava_sync
 from zone2.core import Zone2
 
@@ -57,7 +57,7 @@ async def seen(db: aiosqlite.Connection = Depends(get_db)):
 async def opened(z2: Zone2 = Depends(get_z2)):
     """The athlete opened the chat: data older than FRESH_FOR starts syncing and the agent loads
     while they type, so their message finds both ready, or waits only for the rest."""
-    strava, garmin = strava_sync.catch_up(z2, FRESH_FOR), garmin_sync.catch_up(z2, FRESH_FOR)
+    strava, garmin = strava_sync.catch_up(z2, FRESH_FOR), await garmin_sync.catch_up(z2, FRESH_FOR)
     asyncio.get_running_loop().run_in_executor(None, importlib.import_module, "backend.agent.chat")
     return {"strava_syncing": strava is not None, "garmin_syncing": garmin is not None}
 
@@ -155,7 +155,7 @@ def _streamed(chat, z2: Zone2, *, catch_up: bool = False, **turn) -> StreamingRe
     async def body():
         garmin = None
         if catch_up:
-            strava, garmin = strava_sync.catch_up(z2, FRESH_FOR), garmin_sync.catch_up(z2, FRESH_FOR)
+            strava, garmin = strava_sync.catch_up(z2, FRESH_FOR), await garmin_sync.catch_up(z2, FRESH_FOR)
             if strava:
                 yield chat.sse({"type": "tool", "tool": "sync", "args": {}})
                 await asyncio.wait([strava], timeout=SYNC_WAIT_S)
