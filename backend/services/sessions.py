@@ -8,8 +8,11 @@ import aiosqlite
 from pydantic import BaseModel, Field
 
 from backend.db import delete_row, get_row, insert_row, row_dict, update_row
+from backend.errors import Invalid, NotFound
 from backend.services import garmin_workouts, workout_library
-from backend.services.workout_library import PACE_UNIT, HrZone, Pace, Step, ZonePct, check_paces, step_paces, write_values
+from backend.services.workout_library import (
+    PACE_LOW, PACE_UNIT, HrZone, Pace, Step, ZonePct, check_kept_paces, check_paces, step_paces, write_values,
+)
 from zone2.core import Zone2
 
 JSON_COLS = ("segments",)
@@ -28,13 +31,14 @@ class SessionFields(BaseModel):
     planned_distance_km: float | None = None
     planned_duration_mins: float | None = None
     planned_intensity: Literal["easy", "moderate", "hard", "race"] | None = None
-    target_avg_pace: Pace | None = Field(None, description=PACE_UNIT.capitalize())
-    target_pace_min: Pace | None = Field(None, description="The range's lower number (a pace's fast end)")
+    target_avg_pace: Pace | None = Field(None, description=f"Target pace or speed, {PACE_UNIT}")
+    target_pace_min: Pace | None = Field(None, description=f"{PACE_LOW}, in the same unit")
     target_pace_max: Pace | None = Field(None, description="The range's higher number")
     target_hr_zone: HrZone | None = None
     target_zone_pct: ZonePct | None = Field(None, description="Share of the session to spend in that HR zone, %")
     segments: list[Step] | None = Field(None, description="Steps, for a structured session such as intervals")
-    workout_template_id: int | None = Field(None, description="A saved workout to reuse")
+    workout_template_id: int | None = Field(None, description="A saved workout of its sport to plan it from: "
+                                                              "without segments, the session takes its steps")
 
 
 class NewSession(SessionFields):
@@ -74,13 +78,29 @@ async def between(db: aiosqlite.Connection, date_from: str | None = None, date_t
 
 
 async def from_workout(db: aiosqlite.Connection, workout_template_id: int, until: str, limit: int) -> list[dict]:
-    """The sessions planned from a saved workout up to `until`, latest first: id, date and title."""
+    """The sessions planned from a saved workout up to `until`, latest first: id, date, title and sport."""
     rows = await (await db.execute(
-        "SELECT id, date, title FROM training_sessions WHERE workout_template_id = ? AND date <= ? "
+        "SELECT id, date, title, sport_type FROM training_sessions WHERE workout_template_id = ? AND date <= ? "
         "ORDER BY date DESC LIMIT ?",
         (workout_template_id, until, limit),
     )).fetchall()
     return [dict(r) for r in rows]
+
+
+async def _plan_from_workout(db: aiosqlite.Connection, values: dict[str, Any], sport_type: str) -> None:
+    """A write that names a saved workout of the session's sport and no steps takes the
+    workout's steps, as the calendar does when one is picked from the library, so linking keeps it."""
+    template_id = values.get("workout_template_id")
+    if template_id is None or values.get("segments"):
+        return
+    try:
+        workout = await workout_library.get(db, template_id)
+    except NotFound as e:
+        raise Invalid(f"There is no saved workout {template_id}") from e
+    if workout["sport_type"] != sport_type:
+        raise Invalid(f"Saved workout {template_id} is a {workout['sport_type']} workout and the session a "
+                      f"{sport_type}: give the session its sport too")
+    values["segments"] = workout["segments"]
 
 
 async def _link_saved_workout(schedule: Schedule, z2: Zone2, db: aiosqlite.Connection, session: dict) -> dict:
@@ -103,6 +123,7 @@ async def _queue_watch_sync(schedule: Schedule, z2: Zone2, db: aiosqlite.Connect
 async def create(z2: Zone2, db: aiosqlite.Connection, session: NewSession, schedule: Schedule) -> dict:
     values = write_values(session)
     values["segments"] = values["segments"] or None
+    await _plan_from_workout(db, values, session.sport_type)
     check_paces(session.sport_type, _paces(values))
     row = session_dict(await insert_row(db, "training_sessions", values, json_cols=JSON_COLS))
     row = await _link_saved_workout(schedule, z2, db, row)
@@ -112,10 +133,15 @@ async def create(z2: Zone2, db: aiosqlite.Connection, session: NewSession, sched
 async def update(z2: Zone2, db: aiosqlite.Connection, session_id: int, changes: SessionChanges,
                  schedule: Schedule) -> dict:
     values = write_values(changes, exclude_unset=True)
-    before = await (await db.execute("SELECT date, sport_type FROM training_sessions WHERE id = ?",
-                                     (session_id,))).fetchone()
+    found = await (await db.execute("SELECT * FROM training_sessions WHERE id = ?", (session_id,))).fetchone()
+    before = session_dict(found) if found is not None else None
     if before is not None:
-        check_paces(values.get("sport_type") or before["sport_type"], _paces(values))
+        sport_type = values.get("sport_type") or before["sport_type"]
+        # Naming the workout it already follows keeps its steps: a past session keeps the ones it had
+        if values.get("workout_template_id") != before["workout_template_id"] or not before["segments"]:
+            await _plan_from_workout(db, values, sport_type)
+        check_paces(sport_type, _paces(values))
+        check_kept_paces(before["sport_type"], sport_type, _paces({k: v for k, v in before.items() if k not in values}))
     row = session_dict(await update_row(db, "training_sessions", session_id, values, NOT_FOUND, json_cols=JSON_COLS))
     # Only a change of steps relinks, so marking a session done can't resave a deleted workout
     if "segments" in values or "sport_type" in values:

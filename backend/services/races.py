@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from backend.db import DB_PATH, delete_row, get_row, insert_row, row_dict, update_row
 from backend.services.stats_cache import clear_stats_cache
-from backend.services.workout_library import PACE_UNIT, Pace, check_paces
+from backend.services.workout_library import PACE_UNIT, Pace, check_kept_paces, check_paces
 from zone2.core import Zone2
 from zone2.utils import get_sport_category
 
@@ -26,7 +26,7 @@ class RaceChanges(BaseModel):
     date: datetime.date | None = None
     sport_type: str | None = Field(None, description=SPORT_TYPE)
     distance_km: float | None = None
-    target_pace: Pace | None = Field(None, description=f"Goal pace, {PACE_UNIT}")
+    target_pace: Pace | None = Field(None, description=f"Goal pace or speed, {PACE_UNIT}")
     location: str | None = None
     url: str | None = Field(None, description="The race's public page. Never a registration link with a personal "
                                                "token: race links go out in the calendar feed.")
@@ -112,8 +112,12 @@ async def create(z2: Zone2, db: aiosqlite.Connection, race: NewRace) -> dict[str
 
 async def update(z2: Zone2, db: aiosqlite.Connection, race_id: int, changes: RaceChanges) -> dict[str, Any]:
     values = changes.model_dump(mode="json", exclude_unset=True)
-    if values.get("target_pace") is not None:
-        check_paces(values.get("sport_type") or (await get(db, race_id))["sport_type"], [values["target_pace"]])
+    current = await (await db.execute("SELECT sport_type, target_pace FROM race_events WHERE id = ?",
+                                      (race_id,))).fetchone()
+    if current is not None:
+        sport_type = values.get("sport_type") or current["sport_type"]
+        check_paces(sport_type, [values.get("target_pace")])
+        check_kept_paces(current["sport_type"], sport_type, [] if "target_pace" in values else [current["target_pace"]])
     row = row_dict(await update_row(db, "race_events", race_id, values, NOT_FOUND))
     await races_changed(z2)
     return row

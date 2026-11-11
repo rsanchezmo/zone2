@@ -33,7 +33,7 @@ The last rep of intervals can be pushed. A threshold session's can't: racing its
 
 ## Write it as steps
 
-`segments` in order: `warmup`, then `work` with `repetitions` and its recovery (`recovery_duration_mins` or `recovery_distance_km`), then `cooldown`. Paces are decimal minutes per km; `target_pace_min` is the fast end, `target_pace_max` the slow end. Example, 6 × 1 km at 4:20–4:25/km with 90 s jog:
+`segments` in order: `warmup`, then `work` with `repetitions` and its recovery (`recovery_duration_mins` or `recovery_distance_km`), then `cooldown`. A run's paces are decimal minutes per km (a ride's targets are km/h, a swim's decimal minutes per 100 m); `target_pace_min` is the lower number, so a pace's fast end and a speed's slow end. Example, 6 × 1 km at 4:20–4:25/km with 90 s jog:
 
 ```json
 [

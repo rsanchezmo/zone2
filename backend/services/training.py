@@ -46,12 +46,16 @@ async def fitness_form(z2: Zone2, db: aiosqlite.Connection, days: int) -> dict[s
     return {**result, "races": races, "garmin": garmin}
 
 
-def weekly_totals(z2: Zone2, weeks: int, sport_type: str | None = None) -> dict[str, Any]:
+def weekly_totals(z2: Zone2, weeks: int, sport_type: str | None = None,
+                  category: SportCategory | None = None) -> dict[str, Any]:
     """Total distance (km) and activity count per week (Monday to Sunday) for the
-    last `weeks`, the current week included."""
+    last `weeks`, the current week included, of a Strava sport type or a sport
+    category when given."""
     activities = z2.strava_activities_cache.get_prepared_view()
     if sport_type and not activities.empty:
         activities = activities[activities["sport_type"] == sport_type]
+    if category and not activities.empty:
+        activities = activities[activities["sport_type"].map(get_sport_category) == category]
     if activities.empty:
         return {"data": [], "weeks": weeks, "sport_type": sport_type}
 

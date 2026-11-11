@@ -18,7 +18,7 @@ from backend.services import garmin_workouts
 from backend.services.garmin_workouts import segment_steps, steps_hash, workout_name
 from backend.services.zones import get_setting, set_setting
 from zone2.core import Zone2
-from zone2.utils import SportCategory, get_sport_category
+from zone2.utils import SportCategory, convert_speed, get_sport_category
 
 if TYPE_CHECKING:
     from backend.services.sessions import Schedule
@@ -28,8 +28,10 @@ LINKED_KEY = "workout_library_linked_upcoming"
 JSON_COLS = ("segments",)
 NOT_FOUND = "Template not found"
 
-# A pace in the sport's own unit, as the calendar shows it
-PACE_UNIT = "decimal minutes per km for runs (4.5 means 4:30/km), km/h for rides, minutes per 100 m for swims"
+# A target in the unit z2 stores for the sport (convert_speed's), as the calendar shows it
+PACE_UNIT = ("in the sport's unit: decimal minutes per km for runs and walks (4.5 means 4:30/km), "
+             "decimal minutes per 100 m for swims (1.75 means 1:45/100m), km/h for rides, rowing and paddling")
+PACE_LOW = "The range's lower number: a pace's fast end, a speed's slow end"
 Pace = Annotated[float, Field(gt=0)]
 # A run's pace in min/km; outside this it is another unit (seconds, km/h) by mistake
 RUN_PACE_RANGE = (2.0, 15.0)
@@ -46,7 +48,7 @@ class Step(BaseModel):
     repetitions: int = 1
     recovery_distance_km: float | None = None
     recovery_duration_mins: float | None = None
-    target_pace_min: Pace | None = Field(None, description=f"The range's lower number (a pace's fast end), {PACE_UNIT}")
+    target_pace_min: Pace | None = Field(None, description=f"{PACE_LOW}, {PACE_UNIT}")
     target_pace_max: Pace | None = Field(None, description="The range's higher number")
     target_hr_zone: HrZone | None = None
     target_zone_pct: ZonePct | None = Field(None, description="Share of the step to spend in that HR zone, %")
@@ -86,6 +88,13 @@ def check_paces(sport_type: str, paces: Iterable[float | None]) -> None:
     for pace in paces:
         if pace is not None and not low < pace < high:
             raise Invalid(f"A run's pace is decimal minutes per km, between {low:g} and {high:g}: {pace:g} isn't")
+
+
+def check_kept_paces(sport_type: str, new_sport_type: str, kept: Iterable[float | None]) -> None:
+    """Targets a change of sport keeps stay in the old sport's unit, so they must read the same in the new one's."""
+    unit, new_unit = convert_speed(1.0, sport_type)[1], convert_speed(1.0, new_sport_type)[1]
+    if unit != new_unit and any(pace is not None for pace in kept):
+        raise Invalid(f"Its targets are in {unit} and a {new_sport_type}'s are in {new_unit}: give them in {new_unit} too")
 
 
 def template_dict(row: aiosqlite.Row) -> dict[str, Any]:
@@ -185,6 +194,8 @@ async def update(z2: Zone2, db: aiosqlite.Connection, template_id: int, changes:
             current = template_dict(current)
             sport_type = values.get("sport_type") or current["sport_type"]
             check_paces(sport_type, step_paces(values.get("segments")))
+            if "segments" not in values:
+                check_kept_paces(current["sport_type"], sport_type, step_paces(current["segments"]))
             await _reject_duplicate(db, sport_type, values.get("segments") or current["segments"] or [], template_id)
     row = template_dict(await update_row(db, "workout_templates", template_id, values, NOT_FOUND,
                                          json_cols=JSON_COLS))

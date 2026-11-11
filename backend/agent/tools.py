@@ -31,6 +31,7 @@ from backend.services import sessions as planned_sessions
 from backend.services import training
 from backend.services.activity_cost import activity_cost
 from backend.services.briefing import today_briefing
+from backend.services.calendar_feed import format_target_pace
 from backend.services.goals import GoalChanges, NewGoal
 from backend.services.races import NewRace, RaceChanges
 from backend.services.resting_hr import resolve_resting_hr
@@ -105,21 +106,20 @@ def _paused(lap: dict[str, Any]) -> dict[str, Any]:
 PACE_FIELDS = ("target_pace_min", "target_pace_max", "target_avg_pace", "target_pace")
 
 
-def _clock_pace(decimal_min: Any) -> Any:
-    """Decimal minutes per km as m:ss/km (4.5 → "4:30/km"), the way people read a pace."""
-    if not isinstance(decimal_min, (int, float)):
-        return decimal_min
-    m, s = divmod(round(decimal_min * 60), 60)
-    return f"{m}:{s:02d}/km"
+def _targets(row: dict[str, Any], sport_type: str | None) -> dict[str, Any]:
+    """The row's target paces as stored, in the sport's unit: "4:30 /km", "28 km/h", "1:45 /100m"."""
+    return {k: (format_target_pace(sport_type, v) if k in PACE_FIELDS and isinstance(v, (int, float)) else v)
+            for k, v in row.items()}
 
 
 def _readable(row: dict[str, Any]) -> dict[str, Any]:
-    """A session, workout or race with its paces as m:ss/km, and empty or default fields dropped."""
-    out = {k: (_clock_pace(v) if k in PACE_FIELDS else v) for k, v in row.items()
-           if v is not None and k not in ("created_at", "plan_name") and not (k == "completed" and not v)}
+    """A session, workout or race with its targets in its sport's unit, and empty or default fields dropped."""
+    sport_type = row.get("sport_type")
+    out = _targets({k: v for k, v in row.items() if v is not None and k not in ("created_at", "plan_name")
+                    and not (k == "completed" and not v)}, sport_type)
     if isinstance(out.get("segments"), list):
-        out["segments"] = [{k: (_clock_pace(v) if k in PACE_FIELDS else v) for k, v in seg.items()
-                            if v is not None and not (k == "repetitions" and v == 1)}
+        out["segments"] = [_targets({k: v for k, v in seg.items() if v is not None
+                                     and not (k == "repetitions" and v == 1)}, sport_type)
                            for seg in out["segments"]]
     return out
 
@@ -431,14 +431,14 @@ async def fitness(ctx: RunContext[AgentDeps], days: Annotated[int, Field(ge=30, 
 async def weekly_volume(
     ctx: RunContext[AgentDeps],
     weeks: Annotated[int, Field(ge=1, le=52)] = 12,
-    sport_type: str | None = None,
+    sport: SportCategory | None = None,
 ) -> list[dict[str, Any]]:
     """Km and activities per week, this week included.
 
     Args:
-        sport_type: A Strava sport type such as "Run" or "Ride"; all sports when omitted.
+        sport: All sports when omitted. "walking" is walks and hikes, which never count as running.
     """
-    result = await asyncio.to_thread(training.weekly_totals, ctx.deps.z2, weeks, sport_type)
+    result = await asyncio.to_thread(training.weekly_totals, ctx.deps.z2, weeks, category=sport)
     return [{"week_start": w["week_start"], "km": w["total_distance_km"], "activities": w["total_activities"]}
             for w in result["data"]]
 
@@ -468,7 +468,8 @@ async def workout_history(
     limit: Annotated[int, Field(ge=1, le=20)] = 6,
 ) -> list[dict[str, Any]]:
     """Past sessions planned from the same saved workout (give the session or the workout),
-    latest first, with what was run that day: the like-for-like comparison for a session."""
+    latest first, with that day's activities of the session's sport: the like-for-like
+    comparison for a session."""
     db = ctx.deps.db
     if workout_template_id is None:
         if session_id is None:
@@ -483,10 +484,13 @@ async def workout_history(
     z2 = ctx.deps.z2
     view = z2.strava_activities_cache.get_prepared_view()
     race_ids = z2.strava_analytics.race_activity_ids
-    day = view["start_date_local"].dt.strftime("%Y-%m-%d") if not view.empty else None
+    if view.empty:
+        return [{"session_id": r["id"], "date": r["date"], "title": r["title"], "activities": []} for r in rows]
+    day = view["start_date_local"].dt.strftime("%Y-%m-%d")
+    category = view["sport_type"].map(get_sport_category)
     out = []
     for r in rows:
-        done = view[day == r["date"]] if day is not None else view
+        done = view[(day == r["date"]) & (category == get_sport_category(r["sport_type"]))]
         out.append({"session_id": r["id"], "date": r["date"], "title": r["title"],
                     "activities": [_activity(a, race_ids) for _, a in done.iterrows()]})
     return out
@@ -899,8 +903,9 @@ write_tools = _toolset(requires_approval=True)
 
 @write_tools.tool
 async def add_session(ctx: RunContext[AgentDeps], session: NewSession, reason: str) -> dict[str, Any]:
-    """Add a session to the calendar, only when the athlete asked for it. A run with steps also
-    goes to the watch."""
+    """Add a session to the calendar, only when the athlete asked for it. Planned from a saved
+    workout (`workout_template_id`), it takes the workout's steps. A run with steps also goes to
+    the watch."""
     try:
         created = await planned_sessions.create(ctx.deps.z2, ctx.deps.db, session, ctx.deps.schedule)
     except ServiceError as e:
@@ -913,7 +918,8 @@ async def add_session(ctx: RunContext[AgentDeps], session: NewSession, reason: s
 async def change_session(ctx: RunContext[AgentDeps], session_id: int, changes: SessionChanges,
                          reason: str) -> dict[str, Any]:
     """Change a planned session, only when the athlete asked for it: its day, title, targets or
-    steps. Only the fields given change."""
+    steps. Only the fields given change; a saved workout given (`workout_template_id`) brings its
+    steps."""
     try:
         before = await planned_sessions.get(ctx.deps.db, session_id)
     except NotFound as e:
