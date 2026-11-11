@@ -130,7 +130,7 @@ function sessionFields(d: SessionDraft): SessionFields {
   const segmentsKm = withSegments ? segmentsTotalKm(d.segments) : 0
   return {
     sport_type: d.sportType,
-    description: d.description || undefined,
+    description: d.description || null,
     planned_distance_km: segmentsKm > 0 && !distance ? Math.round(segmentsKm * 10) / 10 : distance,
     planned_duration_mins: d.goals.has('duration') && d.plannedDurationMins ? parseFloat(d.plannedDurationMins) : null,
     target_avg_pace: d.goals.has('avg_pace') && d.targetAvgPace ? parsePaceInput(d.targetAvgPace, useSpeed) : null,

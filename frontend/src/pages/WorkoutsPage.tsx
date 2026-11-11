@@ -168,7 +168,7 @@ export default function WorkoutsPage() {
     const payload = {
       name: name.trim(),
       sport_type: sportType,
-      description: description.trim() || undefined,
+      description: description.trim() || null,
       segments,
     }
     const onError = (e: unknown) => toast(errorDetail(e, 'Could not save the workout'), 'error')
