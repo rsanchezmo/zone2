@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { isAxiosError } from 'axios'
 import {
-  useGarminCourseLine, usePlannedLoop,
-  type AvoidableWay, type GarminCourse, type LoopPlanRequest, type PlannedLoop, type SavedRoute,
-} from '../api/hooks'
+  useGarminCourseLine, usePlannedLoop, type AvoidableWay, type GarminCourse, type LoopPlanRequest,
+  type PlannedLoop, type SavedRoute,
+} from '../api/coverage'
 
 export const PLAN_MAX_VIA = 3
 

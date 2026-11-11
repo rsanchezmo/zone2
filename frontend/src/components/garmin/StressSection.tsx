@@ -4,7 +4,7 @@ import {
   ReferenceLine, ReferenceArea,
 } from 'recharts'
 import { useTheme } from '../../hooks/useTheme'
-import type { GarminTrends } from '../../api/hooks'
+import type { GarminTrends } from '../../api/garmin'
 import ChartPanel, { LegendSwatch } from '../shared/ChartPanel'
 import {
   ACCENT, ACCENT_LIGHT, AMBER, NEG, POS, displayNum, dotProps, num, stressZoneColor,

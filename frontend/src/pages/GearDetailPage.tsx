@@ -6,7 +6,8 @@ import {
 } from 'recharts'
 import clsx from 'clsx'
 
-import { useGearDetail, usePolylines, type GearActivityPoint, type GearDetail, type GearExtreme } from '../api/hooks'
+import { useGearDetail, type GearActivityPoint, type GearDetail, type GearExtreme } from '../api/gear'
+import { usePolylines } from '../api/activities'
 import { getSportColor } from '../constants/sportColors'
 import { SHOE_LIFE_KM, WEAR_SPENT_COLOR, shoeWear } from '../constants/gear'
 import RoutesMap from '../components/shared/RoutesMap'
@@ -92,7 +93,7 @@ export default function GearDetailPage() {
     return (
       <div className="max-w-5xl mx-auto space-y-6 pb-12">
         <PageHeader title="Gear" />
-        <div className={clsx('panel p-10 text-center text-sm', isLight ? 'bg-white text-gray-500' : 'bg-surface-800 text-gray-500')}>
+        <div className="panel p-10 text-center text-sm bg-surface-800 text-gray-500">
           Could not load this gear item.
           <Link to="/profile" className="ml-2 underline" style={{ color: accent }}>Back to profile</Link>
         </div>
@@ -146,7 +147,7 @@ export default function GearDetailPage() {
       )}
 
       {data.activities.length > 2 && (
-        <PacePanel data={data} accent={accent} colors={colors} isLight={isLight} isMobile={isMobile} />
+        <PacePanel data={data} accent={accent} colors={colors} isMobile={isMobile} />
       )}
 
       {data.best_efforts.length > 0 && (
@@ -200,10 +201,10 @@ function GearHero({ data, accent, isLight }: { data: GearDetail; accent: string;
             )}
           </div>
           {gear.nickname && gear.name !== gear.nickname && (
-            <p className={clsx('text-sm mt-1', 'text-gray-500')}>{gear.name}</p>
+            <p className="text-sm mt-1 text-gray-500">{gear.name}</p>
           )}
           {gear.first_activity && gear.last_activity && (
-            <p className={clsx('text-[11px] font-mono mt-2', isLight ? 'text-gray-400' : 'text-gray-600')}>
+            <p className="text-[11px] font-mono mt-2 text-fg-faint">
               {formatDay(gear.first_activity)} → {formatDay(gear.last_activity)} · {gear.active_days.toLocaleString()} days
             </p>
           )}
@@ -212,10 +213,10 @@ function GearHero({ data, accent, isLight }: { data: GearDetail; accent: string;
         <div className="text-right shrink-0">
           <div className="text-3xl md:text-4xl font-bold tabular-nums tracking-tight" style={{ color: accent }}>
             {gear.distance_km.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-            <span className={clsx('text-sm ml-1.5 font-medium', isLight ? 'text-gray-400' : 'text-gray-600')}>km</span>
+            <span className="text-sm ml-1.5 font-medium text-fg-faint">km</span>
           </div>
           {untracked >= 1 && (
-            <div className={clsx('text-[11px] font-mono mt-1', isLight ? 'text-gray-400' : 'text-gray-600')}>
+            <div className="text-[11px] font-mono mt-1 text-fg-faint">
               {gear.strava_distance_km.toLocaleString(undefined, { maximumFractionDigits: 0 })} km on Strava
             </div>
           )}
@@ -223,7 +224,7 @@ function GearHero({ data, accent, isLight }: { data: GearDetail; accent: string;
       </div>
 
       <div className="mt-5">
-        <div className={clsx('h-2 rounded-full overflow-hidden', 'bg-surface-700')}>
+        <div className="h-2 rounded-full overflow-hidden bg-surface-700">
           <div
             className="h-full rounded-full transition-[width] duration-700"
             style={{
@@ -234,7 +235,7 @@ function GearHero({ data, accent, isLight }: { data: GearDetail; accent: string;
             }}
           />
         </div>
-        <div className={clsx('flex justify-between items-baseline mt-1.5 text-[11px]', isLight ? 'text-gray-400' : 'text-gray-600')}>
+        <div className="flex justify-between items-baseline mt-1.5 text-[11px] text-fg-faint">
           <span style={wear?.spent ? { color: WEAR_SPENT_COLOR } : undefined}>
             {wear
               ? wear.caption
@@ -275,7 +276,7 @@ function RouteMapPanel({ gearId, accent }: { gearId: string; accent: string }) {
         fitTo={fitTo}
         loading={isLoading}
         colorFor={colorFor}
-        className={clsx('h-[420px] rounded-lg overflow-hidden border', 'border-surface-600')}
+        className="h-[420px] rounded-lg overflow-hidden border border-surface-600"
       />
     </ChartPanel>
   )
@@ -416,8 +417,8 @@ function MonthlyPanel({ data, accent, colors, isLight, isMobile }: {
 // Pace signature — one dot per activity, sized by distance
 // ────────────────────────────────────────────────────────
 
-function PacePanel({ data, accent, colors, isLight, isMobile }: {
-  data: GearDetail; accent: string; colors: ThemeColors; isLight: boolean; isMobile: boolean
+function PacePanel({ data, accent, colors, isMobile }: {
+  data: GearDetail; accent: string; colors: ThemeColors; isMobile: boolean
 }) {
   const navigate = useNavigate()
   const sports = data.sport_mix.map(s => s.sport_type)
@@ -490,11 +491,11 @@ function PacePanel({ data, accent, colors, isLight, isMobile }: {
                   className="rounded-lg px-3 py-2 text-xs"
                   style={{ backgroundColor: colors.tooltipBg, border: `1px solid ${colors.tooltipBorder}` }}
                 >
-                  <div className={clsx('font-medium mb-1 max-w-[220px] truncate', isLight ? 'text-gray-900' : 'text-gray-100')}>{p.name}</div>
+                  <div className="font-medium mb-1 max-w-[220px] truncate text-fg-strong">{p.name}</div>
                   <div className="font-mono tabular-nums" style={{ color: sportColor }}>
                     {formatSpeed(p.speed_ms as number, p.sport_type)} · {p.distance_km.toFixed(1)} km
                   </div>
-                  <div className={clsx('font-mono text-[11px] mt-0.5', 'text-gray-500')}>
+                  <div className="font-mono text-[11px] mt-0.5 text-gray-500">
                     {formatDay(p.date)}{p.heartrate ? ` · ${p.heartrate} bpm` : ''}
                   </div>
                 </div>
@@ -512,7 +513,7 @@ function PacePanel({ data, accent, colors, isLight, isMobile }: {
           />
         </ScatterChart>
       </ResponsiveContainer>
-      <p className={clsx('text-[11px] mt-2', isLight ? 'text-gray-400' : 'text-gray-600')}>
+      <p className="text-[11px] mt-2 text-fg-faint">
         {useSpeed ? 'km/h' : getPaceUnit(active)} · click a dot to open the activity
       </p>
     </ChartPanel>
@@ -550,15 +551,15 @@ function BestEffortsPanel({ data, accent, isLight }: { data: GearDetail; accent:
                   All-time
                 </span>
               )}
-              <span className={clsx('text-xs truncate hidden sm:inline transition-colors', isLight ? 'text-gray-400 group-hover:text-gray-700' : 'text-gray-500 group-hover:text-gray-300')}>
+              <span className="text-xs truncate hidden sm:inline transition-colors text-fg-subtle group-hover:text-fg">
                 {effort.activity_name}
               </span>
             </div>
             <div className="flex items-baseline gap-4 shrink-0 tabular-nums">
-              <span className={clsx('font-mono font-semibold text-sm', isLight ? 'text-gray-900' : 'text-gray-100')}>
+              <span className="font-mono font-semibold text-sm text-fg-strong">
                 {formatClockDuration(effort.elapsed_time)}
               </span>
-              <span className={clsx('text-[11px] font-mono hidden md:inline w-[86px] text-right', isLight ? 'text-gray-400' : 'text-gray-600')}>
+              <span className="text-[11px] font-mono hidden md:inline w-[86px] text-right text-fg-faint">
                 {formatDay(effort.date)}
               </span>
             </div>
@@ -599,7 +600,7 @@ function ExtremesRow({ data, accent, isLight, dominantSport }: {
           <div className={clsx('text-xs mt-1 truncate transition-colors', isLight ? 'text-gray-500 group-hover:text-gray-800' : 'text-gray-500 group-hover:text-gray-300')}>
             {extreme!.name}
           </div>
-          <div className={clsx('text-[11px] font-mono mt-0.5', isLight ? 'text-gray-400' : 'text-gray-600')}>
+          <div className="text-[11px] font-mono mt-0.5 text-fg-faint">
             {formatDay(extreme!.date)}
           </div>
         </Link>

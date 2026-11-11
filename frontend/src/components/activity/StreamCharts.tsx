@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
-import type { ActivityDetail, ActivityScoreResponse } from '../../api/hooks'
+import type { ActivityDetail } from '../../api/activities'
+import type { ActivityScoreResponse } from '../../api/calendar'
 import { getSportColor } from '../../constants/sportColors'
 import {
   getSportCategory, isOnFoot, formatPace, formatClockDuration, isSpeedSport,

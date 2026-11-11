@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import {
   ComposedChart, Area, Scatter, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
-import { useWeeklyRelativeEffort, type RelativeEffortWeek } from '../../api/hooks'
+import { useWeeklyRelativeEffort, type RelativeEffortWeek } from '../../api/stats'
 import { useTheme } from '../../hooks/useTheme'
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { getSportColor } from '../../constants/sportColors'

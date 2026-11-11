@@ -1,11 +1,10 @@
 import { useMemo, useState } from 'react'
-import clsx from 'clsx'
 import {
   ResponsiveContainer, BarChart, LineChart, Bar, Line, Cell, XAxis, YAxis, Tooltip, CartesianGrid,
   ReferenceLine, ReferenceArea,
 } from 'recharts'
 import { useTheme } from '../../hooks/useTheme'
-import { useGarminTrends, type GarminTrends } from '../../api/hooks'
+import { useGarminTrends, type GarminTrends } from '../../api/garmin'
 import ChartPanel, { LegendSwatch } from '../shared/ChartPanel'
 import { parseLocalDate, todayLocalStr } from '../../utils/dates'
 import { StatusPill } from './GarminTiles'
@@ -239,7 +238,7 @@ export default function MovementSection({ trends: t, days }: { trends: GarminTre
         </>}
       >
         {vo2Data.length === 0 ? (
-          <div className={clsx('flex items-center justify-center h-[220px] text-xs', isLight ? 'text-gray-400' : 'text-gray-500')}>
+          <div className="flex items-center justify-center h-[220px] text-xs text-fg-subtle">
             {vo2AllTime && vo2HistoryLoading ? 'Loading…' : 'No VO2 max updates in this window'}
           </div>
         ) : (

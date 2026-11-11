@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useTheme } from '../../hooks/useTheme'
-import type { GarminTrends } from '../../api/hooks'
+import type { GarminTrends } from '../../api/garmin'
 import { formatDurationHM } from '../../utils/formatSpeed'
 import { num, weekdayPattern } from './garmin'
 import { RhythmTile } from './GarminTiles'

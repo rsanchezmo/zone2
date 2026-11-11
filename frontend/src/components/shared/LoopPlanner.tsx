@@ -3,9 +3,8 @@ import { Marker, Pane, Polyline, Tooltip, useMap, useMapEvents } from 'react-lea
 import L from 'leaflet'
 import clsx from 'clsx'
 import {
-  useDeleteRoute, useGarminDevices, useSaveRoute, useSendRouteToGarmin,
-  type AvoidableWay, type SavedRoute,
-} from '../../api/hooks'
+  useDeleteRoute, useGarminDevices, useSaveRoute, useSendRouteToGarmin, type AvoidableWay, type SavedRoute,
+} from '../../api/coverage'
 import { PLAN_MAX_VIA, coveredPct, type LoopPlanner } from '../../hooks/useLoopPlanner'
 import { gpxTrack } from '../../utils/gpx'
 import { RouteArrows } from './leafletHelpers'
@@ -219,7 +218,7 @@ export function LoopPlanPanel({ planner, slug, className, isLight, onClose }: {
         <span className="eyebrow text-[9px]">Plan a run</span>
         {props && (
           <span className={clsx('flex items-baseline gap-2', planning && 'opacity-50')}>
-            <span className={clsx('text-sm font-mono tabular-nums font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>
+            <span className="text-sm font-mono tabular-nums font-semibold text-fg-strong">
               {props.length_km.toFixed(1)} km
             </span>
             <span className="text-xs font-mono tabular-nums" style={{ color: PLAN_ACCENT }}>
@@ -260,7 +259,7 @@ export function LoopPlanPanel({ planner, slug, className, isLight, onClose }: {
         )}
       </div>
       {loop && props && (
-        <div className={clsx('flex flex-col gap-1.5 pt-1.5 border-t', 'border-surface-600')}>
+        <div className="flex flex-col gap-1.5 pt-1.5 border-t border-surface-600">
           <div className="flex items-center gap-1.5">
             <input
               value={name ?? defaultName}
@@ -325,11 +324,11 @@ export function RouteViewPanel({ planner, slug, className, isLight }: {
           ← Back to planning
         </button>
       </div>
-      <span className={clsx('text-sm font-semibold max-w-80 truncate', isLight ? 'text-gray-900' : 'text-gray-100')} title={view.name}>
+      <span className="text-sm font-semibold max-w-80 truncate text-fg-strong" title={view.name}>
         {view.name}
       </span>
       <span className="flex items-baseline gap-2">
-        <span className={clsx('text-sm font-mono tabular-nums font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>
+        <span className="text-sm font-mono tabular-nums font-semibold text-fg-strong">
           {view.length_km.toFixed(1)} km
         </span>
         {view.new_km !== null && view.city_km !== null && (

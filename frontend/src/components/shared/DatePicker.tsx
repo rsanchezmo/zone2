@@ -118,7 +118,7 @@ export default function DatePicker({ value, onChange, label, inputClassName }: D
           type="button"
           aria-label="Open calendar"
         >
-          <svg className={clsx('w-3.5 h-3.5', isLight ? 'text-gray-500' : 'text-gray-400')} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <svg className="w-3.5 h-3.5 text-fg-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
           </svg>
         </button>
@@ -128,26 +128,26 @@ export default function DatePicker({ value, onChange, label, inputClassName }: D
         <div
           className={clsx(
             'absolute top-full mt-1 z-50 border rounded-xl p-3 shadow-xl w-[250px]',
-            isLight ? 'bg-white border-surface-600' : 'bg-surface-800 border-surface-600',
+            'bg-surface-800 border-surface-600',
           )}
         >
           {/* Year nav */}
           <div className="flex items-center justify-between mb-1">
-            <button onClick={() => setViewMonth(m => new Date(m.getFullYear() - 1, m.getMonth(), 1))} className={clsx('px-1 text-[11px]', isLight ? 'text-gray-400 hover:text-gray-900' : 'text-gray-500 hover:text-gray-100')}>&larr;</button>
-            <span className={clsx('text-[11px]', 'text-gray-500')}>{viewMonth.getFullYear()}</span>
-            <button onClick={() => setViewMonth(m => new Date(m.getFullYear() + 1, m.getMonth(), 1))} className={clsx('px-1 text-[11px]', isLight ? 'text-gray-400 hover:text-gray-900' : 'text-gray-500 hover:text-gray-100')}>&rarr;</button>
+            <button onClick={() => setViewMonth(m => new Date(m.getFullYear() - 1, m.getMonth(), 1))} className="px-1 text-[11px] text-fg-subtle hover:text-fg-strong">&larr;</button>
+            <span className="text-[11px] text-gray-500">{viewMonth.getFullYear()}</span>
+            <button onClick={() => setViewMonth(m => new Date(m.getFullYear() + 1, m.getMonth(), 1))} className="px-1 text-[11px] text-fg-subtle hover:text-fg-strong">&rarr;</button>
           </div>
           {/* Month nav */}
           <div className="flex items-center justify-between mb-2">
-            <button onClick={() => setViewMonth(m => subMonths(m, 1))} className={clsx('px-1 text-sm', isLight ? 'text-gray-500 hover:text-gray-900' : 'text-gray-400 hover:text-gray-100')}>&larr;</button>
-            <span className={clsx('text-xs font-medium', isLight ? 'text-gray-700' : 'text-gray-300')}>{format(viewMonth, 'MMMM')}</span>
-            <button onClick={() => setViewMonth(m => addMonths(m, 1))} className={clsx('px-1 text-sm', isLight ? 'text-gray-500 hover:text-gray-900' : 'text-gray-400 hover:text-gray-100')}>&rarr;</button>
+            <button onClick={() => setViewMonth(m => subMonths(m, 1))} className="px-1 text-sm text-fg-dim hover:text-fg-strong">&larr;</button>
+            <span className="text-xs font-medium text-fg">{format(viewMonth, 'MMMM')}</span>
+            <button onClick={() => setViewMonth(m => addMonths(m, 1))} className="px-1 text-sm text-fg-dim hover:text-fg-strong">&rarr;</button>
           </div>
 
           {/* Weekday headers */}
           <div className="grid grid-cols-7 gap-0.5 text-center mb-1">
             {WEEKDAYS_MIN.map(d => (
-              <div key={d} className={clsx('text-[9px] py-0.5', isLight ? 'text-gray-400' : 'text-gray-600')}>{d}</div>
+              <div key={d} className="text-[9px] py-0.5 text-fg-faint">{d}</div>
             ))}
           </div>
 
@@ -165,7 +165,7 @@ export default function DatePicker({ value, onChange, label, inputClassName }: D
                   className={clsx(
                     'text-[11px] py-1 rounded transition-colors',
                     !inMonth && (isLight ? 'text-gray-300' : 'text-gray-700'),
-                    inMonth && !isSelected && !isTodayDate && (isLight ? 'text-gray-600 hover:bg-surface-700' : 'text-gray-400 hover:bg-surface-700'),
+                    inMonth && !isSelected && !isTodayDate && 'text-fg-muted hover:bg-surface-700',
                     isTodayDate && !isSelected && (isLight ? 'bg-surface-700 text-gray-700' : 'bg-surface-600 text-gray-300'),
                     isSelected && (isLight ? 'bg-gray-900/10 text-gray-900 font-bold' : 'bg-gray-400/20 text-gray-100 font-bold'),
                   )}
@@ -180,14 +180,14 @@ export default function DatePicker({ value, onChange, label, inputClassName }: D
           <div className="flex gap-1 mt-2">
             <button
               onClick={() => { selectDay(new Date()) }}
-              className={clsx('flex-1 text-[11px] py-1 rounded', isLight ? 'text-gray-600 hover:text-gray-900 bg-surface-700' : 'text-gray-400 hover:text-gray-100 bg-surface-700')}
+              className="flex-1 text-[11px] py-1 rounded text-fg-muted hover:text-fg-strong bg-surface-700"
             >
               Today
             </button>
             {value && (
               <button
                 onClick={() => { onChange(''); setOpen(false) }}
-                className={clsx('flex-1 text-[11px] py-1 rounded', isLight ? 'text-gray-600 hover:text-gray-900 bg-surface-700' : 'text-gray-400 hover:text-gray-100 bg-surface-700')}
+                className="flex-1 text-[11px] py-1 rounded text-fg-muted hover:text-fg-strong bg-surface-700"
               >
                 Clear
               </button>

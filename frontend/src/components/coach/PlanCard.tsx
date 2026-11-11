@@ -1,6 +1,6 @@
 import clsx from 'clsx'
 import { Link } from 'react-router-dom'
-import type { CoachPlanSummary } from '../../api/hooks'
+import type { CoachPlanSummary } from '../../api/coach'
 import { getSportColor } from '../../constants/sportColors'
 import { useTheme } from '../../hooks/useTheme'
 import { formatClockDuration } from '../../utils/formatSpeed'

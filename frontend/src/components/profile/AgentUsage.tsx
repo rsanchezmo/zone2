@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import clsx from 'clsx'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { useAgentSettings, useAgentUsage, useSetAgentSettings, type AgentUsage as Usage } from '../../api/hooks'
+import { useAgentSettings, useAgentUsage, useSetAgentSettings, type AgentUsage as Usage } from '../../api/agent'
 import { useTheme } from '../../hooks/useTheme'
 import { dateToLocalStr, parseLocalDate, todayLocalStr } from '../../utils/dates'
 import ChartPanel from '../shared/ChartPanel'
@@ -38,8 +38,6 @@ export default function AgentUsage() {
 }
 
 function CoachSettings({ credit }: { credit: Usage['credit'] }) {
-  const { theme } = useTheme()
-  const isLight = theme === 'light'
   const { data: settings } = useAgentSettings()
   const save = useSetAgentSettings()
   const [topUp, setTopUp] = useState('')
@@ -73,7 +71,7 @@ function CoachSettings({ credit }: { credit: Usage['credit'] }) {
           <div className="text-sm">
             Credit left
             {credit && (
-              <span className={clsx('ml-2 font-mono tabular-nums font-semibold', credit.left_usd < 1 ? 'text-red-400' : isLight ? 'text-gray-900' : 'text-gray-100')}>
+              <span className={clsx('ml-2 font-mono tabular-nums font-semibold', credit.left_usd < 1 ? 'text-red-400' : 'text-fg-strong')}>
                 ≈ {usd(Math.max(0, credit.left_usd))}
               </span>
             )}
@@ -102,7 +100,7 @@ function CoachSettings({ credit }: { credit: Usage['credit'] }) {
             onChange={e => setTopUp(e.target.value)}
             placeholder={credit ? credit.added_usd.toString() : '10'}
             aria-label="Credit topped up, in dollars"
-            className={clsx('w-20 rounded-md px-2 py-1 text-[13px] font-mono outline-none', 'bg-surface-700')}
+            className="w-20 rounded-md px-2 py-1 text-[13px] font-mono outline-none bg-surface-700"
           />
           <button type="submit" disabled={!(amount > 0) || save.isPending} className="text-[12px] font-medium text-blue-500 disabled:text-gray-500">
             {credit ? 'New top-up' : 'Save'}

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import clsx from 'clsx'
-import { useRotateCalendarFeedToken, type CalendarFeedUrl } from '../../api/hooks'
+import { useRotateCalendarFeedToken, type CalendarFeedUrl } from '../../api/calendar'
 import { useTheme } from '../../hooks/useTheme'
 import { useToast } from '../../hooks/useToast'
 import { useNow } from '../../hooks/useNow'
@@ -31,7 +31,7 @@ export default function CalendarSubscription({ feedUrl }: { feedUrl: CalendarFee
   return (
     <section>
       <div className="eyebrow mb-3">Calendar subscription</div>
-      <div className={clsx('rounded-lg border', isLight ? 'bg-white border-surface-600' : 'bg-surface-800 border-surface-600')}>
+      <div className="rounded-lg border bg-surface-800 border-surface-600">
         <button
           onClick={() => setShowSubscribe(v => !v)}
           className={clsx('w-full flex items-center justify-between px-4 py-2.5 text-left', isLight ? 'hover:bg-gray-50' : 'hover:bg-surface-700/50')}
@@ -43,7 +43,7 @@ export default function CalendarSubscription({ feedUrl }: { feedUrl: CalendarFee
           <span className="text-xs text-gray-500 tabular-nums">{showSubscribe ? '−' : '+'}</span>
         </button>
         {showSubscribe && (
-          <div className={clsx('px-4 pb-3 pt-1 space-y-2 border-t', 'border-surface-600')}>
+          <div className="px-4 pb-3 pt-1 space-y-2 border-t border-surface-600">
             <div className="flex gap-2 items-center">
               <input
                 readOnly

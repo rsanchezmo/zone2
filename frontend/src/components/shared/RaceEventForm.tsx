@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { RaceEvent, RaceEventInput } from '../../api/hooks'
+import type { RaceEvent, RaceEventInput } from '../../api/races'
 import { useTheme } from '../../hooks/useTheme'
 import {
   formatPace, fromInputDist, getDistUnit, getPaceUnit, isSpeedSport, parsePaceInput, toInputDist,

@@ -1,6 +1,5 @@
 import { type ReactNode, type CSSProperties } from 'react'
 import clsx from 'clsx'
-import { useTheme } from '../../hooks/useTheme'
 
 interface ChartPanelProps {
   /** Uppercase micro-cap section title (e.g. "CUMULATIVE DISTANCE"). */
@@ -45,8 +44,6 @@ export default function ChartPanel({
   className,
   glow = true,
 }: ChartPanelProps) {
-  const { theme } = useTheme()
-  const isLight = theme === 'light'
 
   const style: CSSProperties | undefined = accent
     ? ({ ['--card-accent' as string]: accent } as CSSProperties)
@@ -66,7 +63,7 @@ export default function ChartPanel({
           <h3 className="eyebrow truncate">
             {title}
             {sublabel && (
-              <span className={clsx('ml-2 normal-case tracking-normal font-medium', isLight ? 'text-gray-400' : 'text-gray-500')}>
+              <span className="ml-2 normal-case tracking-normal font-medium text-fg-subtle">
                 {sublabel}
               </span>
             )}

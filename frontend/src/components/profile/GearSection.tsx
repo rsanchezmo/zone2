@@ -1,7 +1,7 @@
 import { Fragment } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
-import type { GearSummary } from '../../api/hooks'
+import type { GearSummary } from '../../api/gear'
 import ChartPanel from '../shared/ChartPanel'
 import { getSportColor } from '../../constants/sportColors'
 import { WEAR_SPENT_COLOR, shoeWear } from '../../constants/gear'
@@ -18,7 +18,7 @@ export default function GearSection({ gear: allGear }: { gear: GearSummary[] }) 
   return (
     <ChartPanel title="Gear" glow={false}>
       <div className="space-y-6">
-        <GearTimeline items={allGear} isLight={isLight} />
+        <GearTimeline items={allGear} />
         {shoes.length > 0 && (
           <GearGroup title="Shoes" items={shoes} isLight={isLight} accent={getSportColor('Run')} />
         )}
@@ -35,7 +35,7 @@ export default function GearSection({ gear: allGear }: { gear: GearSummary[] }) 
 // piece of gear across a shared time axis
 // ────────────────────────────────────────────────────────
 
-function GearTimeline({ items, isLight }: { items: GearSummary[]; isLight: boolean }) {
+function GearTimeline({ items }: { items: GearSummary[] }) {
   const dated = items.filter(g => g.first_activity && g.last_activity)
   if (dated.length < 2) return null
 
@@ -51,7 +51,7 @@ function GearTimeline({ items, isLight }: { items: GearSummary[]; isLight: boole
 
   return (
     <div>
-      <div className={clsx('text-[11px] uppercase tracking-[0.15em] mb-3', isLight ? 'text-gray-400' : 'text-gray-500')}>
+      <div className="text-[11px] uppercase tracking-[0.15em] mb-3 text-fg-subtle">
         Rotation
       </div>
 
@@ -69,14 +69,14 @@ function GearTimeline({ items, isLight }: { items: GearSummary[]; isLight: boole
                   // desktop keeps the tighter timeline rhythm.
                   'text-[11px] truncate pr-3 self-center py-1 md:py-0 transition-colors',
                   g.retired && 'opacity-60',
-                  isLight ? 'text-gray-600 hover:text-gray-900' : 'text-gray-400 hover:text-gray-100',
+                  'text-fg-muted hover:text-fg-strong',
                 )}
                 title={g.label}
               >
                 {g.label}
               </Link>
               <Link to={`/gear/${g.id}`} className="relative h-6 md:h-5 flex items-center group">
-                <div className={clsx('absolute inset-x-0 h-px', 'bg-surface-700')} aria-hidden="true" />
+                <div className="absolute inset-x-0 h-px bg-surface-700" aria-hidden="true" />
                 <div
                   className="absolute h-2.5 rounded-full transition-all duration-200 group-hover:h-3.5"
                   style={{
@@ -94,7 +94,7 @@ function GearTimeline({ items, isLight }: { items: GearSummary[]; isLight: boole
         })}
 
         <div aria-hidden="true" />
-        <div className={clsx('relative h-4 mt-1 text-[10px] font-mono', isLight ? 'text-gray-400' : 'text-gray-600')}>
+        <div className="relative h-4 mt-1 text-[10px] font-mono text-fg-faint">
           {years.map(year => (
             <span key={year} className="absolute top-0" style={{ left: `${pct(new Date(year, 0, 1).getTime())}%` }}>
               {years.length > 8 ? `'${String(year).slice(2)}` : year}
@@ -117,7 +117,7 @@ function GearGroup({ title, items, isLight, accent }: { title: string; items: Ge
 
   return (
     <div>
-      <div className={clsx('text-[11px] uppercase tracking-[0.15em] mb-2 flex items-center gap-2', isLight ? 'text-gray-400' : 'text-gray-500')}>
+      <div className="text-[11px] uppercase tracking-[0.15em] mb-2 flex items-center gap-2 text-fg-subtle">
         <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: accent }} aria-hidden="true" />
         {title}
       </div>
@@ -138,9 +138,9 @@ function GearGroup({ title, items, isLight, accent }: { title: string; items: Ge
             >
               <div className="flex items-baseline gap-3">
                 <div className="flex-1 min-w-0 flex items-baseline gap-2 flex-wrap">
-                  <span className={clsx('text-sm font-medium truncate', isLight ? 'text-gray-900' : 'text-gray-100')}>{g.label}</span>
+                  <span className="text-sm font-medium truncate text-fg-strong">{g.label}</span>
                   {secondary && (
-                    <span className={clsx('text-[11px] truncate', 'text-gray-500')}>{secondary}</span>
+                    <span className="text-[11px] truncate text-gray-500">{secondary}</span>
                   )}
                   {g.primary && (
                     <span
@@ -154,23 +154,23 @@ function GearGroup({ title, items, isLight, accent }: { title: string; items: Ge
                     <span className={clsx('text-[9px] uppercase tracking-[0.15em] px-1.5 py-0.5 rounded border', isLight ? 'border-surface-500 text-gray-400' : 'border-gray-700 text-gray-500')}>Retired</span>
                   )}
                 </div>
-                <span className={clsx('text-sm font-mono tabular-nums shrink-0', isLight ? 'text-gray-700' : 'text-gray-300')}>
+                <span className="text-sm font-mono tabular-nums shrink-0 text-fg">
                   {g.strava_distance_km.toLocaleString(undefined, { maximumFractionDigits: 1 })}
-                  <span className={clsx('ml-1 text-[11px]', isLight ? 'text-gray-400' : 'text-gray-500')}>km</span>
+                  <span className="ml-1 text-[11px] text-fg-subtle">km</span>
                 </span>
               </div>
 
               <div className="flex items-center gap-3 mt-1.5">
                 {/* Without a fixed target a lone item always fills the track. */}
                 {(wear || items.length > 1) && (
-                  <div className={clsx('flex-1 h-1 rounded-full overflow-hidden', 'bg-surface-700')}>
+                  <div className="flex-1 h-1 rounded-full overflow-hidden bg-surface-700">
                     <div
                       className="h-full rounded-full"
                       style={{ width: `${fill * 100}%`, backgroundColor: wear?.spent ? WEAR_SPENT_COLOR : accent, opacity: 0.75 }}
                     />
                   </div>
                 )}
-                <span className={clsx('text-[10px] font-mono tabular-nums shrink-0', wear || items.length > 1 ? '' : 'ml-auto', isLight ? 'text-gray-400' : 'text-gray-600')}>
+                <span className={clsx('text-[10px] font-mono tabular-nums shrink-0', wear || items.length > 1 ? '' : 'ml-auto', 'text-fg-faint')}>
                   {wear ? `${wear.caption} · ` : ''}{g.activities} act
                 </span>
               </div>

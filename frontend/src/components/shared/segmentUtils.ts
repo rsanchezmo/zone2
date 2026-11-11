@@ -1,18 +1,7 @@
 import { getSportCategory, isSpeedSport, type SportCategory } from '../../utils/formatSpeed'
+import type { Segment } from '../../api/workouts'
 
-export interface Segment {
-  type: 'warmup' | 'work' | 'recovery' | 'cooldown' | 'rest'
-  distance_km?: number | null
-  duration_mins?: number | null
-  target_pace_min?: number | null
-  target_pace_max?: number | null
-  target_hr_zone?: number | null
-  target_zone_pct?: number | null
-  repetitions?: number | null
-  recovery_duration_mins?: number | null
-  recovery_distance_km?: number | null
-  label?: string | null
-}
+export type { Segment }
 
 export const SEGMENT_TYPES = [
   { value: 'warmup', label: 'Warmup', color: '#22d3ee' },

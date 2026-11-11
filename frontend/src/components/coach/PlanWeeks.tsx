@@ -1,6 +1,6 @@
 import clsx from 'clsx'
 import { Link } from 'react-router-dom'
-import type { CoachPlan, CoachPlanSession } from '../../api/hooks'
+import type { CoachPlan, CoachPlanSession } from '../../api/coach'
 import { useTheme } from '../../hooks/useTheme'
 import { dateToLocalStr, parseLocalDate } from '../../utils/dates'
 import { scoreColor } from '../../utils/scoreColor'
@@ -40,7 +40,7 @@ export function PlanWeeks({ plan }: { plan: CoachPlan }) {
             <div key={w.week_start} className={clsx('panel p-4', current && 'ring-1 ring-red-500/30')}>
               <div className="flex items-baseline justify-between gap-4 mb-2">
                 <div className="text-[12px]">
-                  <span className={clsx('font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>Week {i + 1}</span>
+                  <span className="font-semibold text-fg-strong">Week {i + 1}</span>
                   <span className="text-gray-500"> · {fmtDate(w.week_start)}{w.phase && ` · ${w.phase}`}</span>
                 </div>
                 <div className="text-[11px] font-mono tabular-nums text-gray-500">
@@ -88,8 +88,6 @@ function addDays(iso: string, days: number): string {
 
 /** Tests and key sessions whose result decides the plan, with the rule agreed before. */
 export function Checkpoints({ plan }: { plan: CoachPlan }) {
-  const { theme } = useTheme()
-  const isLight = theme === 'light'
   if (!plan.checkpoints.length) return null
   return (
     <section>
@@ -98,13 +96,13 @@ export function Checkpoints({ plan }: { plan: CoachPlan }) {
         {plan.checkpoints.map(c => (
           <div key={c.id} className="panel p-4 space-y-2">
             <div className="flex items-baseline justify-between gap-3">
-              <span className={clsx('text-sm font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>{c.title}</span>
+              <span className="text-sm font-semibold text-fg-strong">{c.title}</span>
               <span className="text-[11px] text-gray-500 shrink-0">{fmtDayDate(c.date)}</span>
             </div>
             <p className="text-[12px] text-gray-500 leading-relaxed">{c.rule}</p>
             {c.result ? (
               <div className="text-[12px] leading-relaxed">
-                <span className={isLight ? 'text-gray-900' : 'text-gray-100'}>{c.result}</span>
+                <span className="text-fg-strong">{c.result}</span>
                 {c.decision && <span className="text-gray-500"> → {c.decision}</span>}
               </div>
             ) : (

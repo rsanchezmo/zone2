@@ -5,12 +5,11 @@ import 'leaflet/dist/leaflet.css'
 import clsx from 'clsx'
 import { useQueryClient } from '@tanstack/react-query'
 import {
-  useCoverageCities, useCoverageEdges, useCoverageDistricts, useCoverageArea,
-  useCoverageSyncStatus, useTriggerCoverageSync, useUncoveredEdges,
-  useAddCity, useAddCityStatus, useGeocodeCity, useDeleteCity, type GeocodeSuggestion,
-  useAppConfig,
-  type AreaCoverage, type CoverageSummary, type DistrictCoverage, type DistrictLevel,
-} from '../api/hooks'
+  useCoverageCities, useCoverageEdges, useCoverageDistricts, useCoverageArea, useCoverageSyncStatus,
+  useTriggerCoverageSync, useUncoveredEdges, useAddCity, useAddCityStatus, useGeocodeCity, useDeleteCity,
+  type GeocodeSuggestion, type AreaCoverage, type CoverageSummary, type DistrictCoverage, type DistrictLevel,
+} from '../api/coverage'
+import { useAppConfig } from '../api/athlete'
 import { useNow } from '../hooks/useNow'
 import { useTheme } from '../hooks/useTheme'
 import { InvalidateSize } from '../components/shared/leafletHelpers'
@@ -426,7 +425,7 @@ export default function CoveragePage() {
   const buttonClass = clsx(
     'rounded-lg p-2 transition-colors',
     overlayClass,
-    isLight ? 'text-gray-500 hover:text-gray-900' : 'text-gray-400 hover:text-gray-100',
+    'text-fg-dim hover:text-fg-strong',
   )
 
   const rectPoints = (bounds: L.LatLngBounds): [number, number][] => {
@@ -499,7 +498,7 @@ export default function CoveragePage() {
     return (
       <div className="max-w-6xl mx-auto pb-6 space-y-4">
         <PageHeader title="Coverage" />
-        <div className={clsx('panel p-10 text-center text-sm space-y-4', isLight ? 'text-gray-500' : 'text-gray-400')}>
+        <div className="panel p-10 text-center text-sm space-y-4 text-fg-dim">
           <p>No coverage maps yet. Add a city to download its runnable street network, then sync your activities against it.</p>
           <div className="flex justify-center">
             <AddCityForm key={activeSlug ?? 'no-city'} onAdded={switchCity} />
@@ -519,7 +518,7 @@ export default function CoveragePage() {
         ref={mapRef}
         className={expanded
           ? 'fixed inset-0 z-50 w-screen h-screen'
-          : clsx('relative h-[calc(100vh-8rem)] rounded-xl overflow-hidden border', 'border-surface-600')}
+          : 'relative h-[calc(100vh-8rem)] rounded-xl overflow-hidden border border-surface-600'}
       >
         <MapContainer
           center={[0, 0]}
@@ -591,7 +590,7 @@ export default function CoveragePage() {
             </select>
           )}
           {(cities?.length ?? 0) === 1 && (
-            <span className={clsx('text-xs font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>{city?.city_name}</span>
+            <span className="text-xs font-semibold text-fg-strong">{city?.city_name}</span>
           )}
           {city && !confirmingDelete && (
             <button
@@ -624,7 +623,7 @@ export default function CoveragePage() {
           )}
           <div className="flex flex-col gap-0.5">
             <span className="eyebrow text-[9px]">Covered</span>
-            <span className={clsx('text-sm font-mono tabular-nums font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>
+            <span className="text-sm font-mono tabular-nums font-semibold text-fg-strong">
               {city?.traversed_km.toLocaleString(undefined, { maximumFractionDigits: 0 })}
               <span className="text-[10px] text-gray-500"> / {city?.total_network_km.toLocaleString(undefined, { maximumFractionDigits: 0 })} km</span>
             </span>
@@ -637,7 +636,7 @@ export default function CoveragePage() {
           </div>
           <div className="flex flex-col gap-0.5">
             <span className="eyebrow text-[9px]">Segments</span>
-            <span className={clsx('text-sm font-mono tabular-nums font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>
+            <span className="text-sm font-mono tabular-nums font-semibold text-fg-strong">
               {city?.num_unique_streets.toLocaleString()}
             </span>
           </div>
@@ -764,7 +763,7 @@ export default function CoveragePage() {
                   <span className="text-sm font-mono tabular-nums font-semibold" style={{ color: '#22d3ee' }}>
                     {areaStats.coverage_pct}%
                   </span>
-                  <span className={clsx('text-xs font-mono tabular-nums', isLight ? 'text-gray-700' : 'text-gray-300')}>
+                  <span className="text-xs font-mono tabular-nums text-fg">
                     {areaStats.covered_km} / {areaStats.total_km} km
                   </span>
                   <span className="text-[11px] text-gray-500">
@@ -806,7 +805,7 @@ export default function CoveragePage() {
         )}
 
         {edgesLoading && (
-          <div className={clsx('absolute inset-x-0 top-1/2 z-[999] flex justify-center pointer-events-none')}>
+          <div className="absolute inset-x-0 top-1/2 z-[999] flex justify-center pointer-events-none">
             <span className={clsx('px-3 py-1.5 text-[11px] rounded-lg', overlayClass, 'text-gray-400')}>Loading covered streets…</span>
           </div>
         )}

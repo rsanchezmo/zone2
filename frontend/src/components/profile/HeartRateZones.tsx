@@ -2,7 +2,7 @@ import { useState } from 'react'
 import clsx from 'clsx'
 import {
   useUpdateZonesSettings, type AthleteZonesResponse, type HrZonesSource, type ZonesSettings,
-} from '../../api/hooks'
+} from '../../api/athlete'
 import ChartPanel from '../shared/ChartPanel'
 import { useTheme } from '../../hooks/useTheme'
 
@@ -35,7 +35,7 @@ export default function HeartRateZones({ zones, zonesSettings }: {
       }
       footer={
         <div className="space-y-0.5">
-          <div className={clsx('text-[11px]', 'text-gray-500')}>
+          <div className="text-[11px] text-gray-500">
             {zones?.heart_rate?.source === 'strava' && `Custom zones from Strava · max HR ${maxHr ?? '?'} bpm`}
             {zones?.heart_rate?.source === 'manual' && `Manual zones · max HR ${maxHr ?? '?'} bpm`}
             {zones?.heart_rate?.source === 'estimated' && `Estimated from activity data · max HR ${maxHr ?? '?'} bpm`}
@@ -63,7 +63,7 @@ export default function HeartRateZones({ zones, zonesSettings }: {
             <div key={i} className="flex items-center gap-3">
               <span className="text-xs font-mono w-6 text-center font-bold" style={{ color }}>Z{i + 1}</span>
               <span className="text-sm text-gray-400 w-20 shrink-0">{name}</span>
-              <div className={clsx('flex-1 h-7 rounded overflow-hidden relative', 'bg-surface-700')}>
+              <div className="flex-1 h-7 rounded overflow-hidden relative bg-surface-700">
                 <div
                   className="absolute h-full rounded flex items-center justify-center"
                   style={{
@@ -87,7 +87,6 @@ export default function HeartRateZones({ zones, zonesSettings }: {
       {zonesSettings?.source === 'manual' && (
         <ManualZonesEditor
           initial={zonesSettings?.manual_zones ?? hrZones}
-          isLight={isLight}
           onSave={zones => updateZonesSettings.mutate({ source: 'manual', manual_zones: zones })}
           saving={updateZonesSettings.isPending}
         />
@@ -116,7 +115,7 @@ function ZoneSourceSelector({
     { value: 'manual', label: 'Manual' },
   ]
   return (
-    <div className={clsx('inline-flex rounded-md overflow-hidden border', 'border-surface-600')}>
+    <div className="inline-flex rounded-md overflow-hidden border border-surface-600">
       {options.map((o, i) => {
         const selected = current === o.value
         return (
@@ -146,10 +145,9 @@ function ZoneSourceSelector({
 // ────────────────────────────────────────────────────────
 
 function ManualZonesEditor({
-  initial, isLight, onSave, saving,
+  initial, onSave, saving,
 }: {
   initial: Array<{ min: number; max: number }>
-  isLight: boolean
   onSave: (zones: Array<{ min: number; max: number }>) => void
   saving: boolean
 }) {
@@ -180,8 +178,8 @@ function ManualZonesEditor({
 
   const accent = '#60a5fa' // blue — primary action
   return (
-    <div className={clsx('mt-5 pt-4 border-t', 'border-surface-600')}>
-      <div className={clsx('text-[10px] uppercase tracking-[0.15em] mb-3', isLight ? 'text-gray-400' : 'text-gray-500')}>
+    <div className="mt-5 pt-4 border-t border-surface-600">
+      <div className="text-[10px] uppercase tracking-[0.15em] mb-3 text-fg-subtle">
         Manual thresholds <span className="normal-case tracking-normal">— upper bpm of each zone</span>
       </div>
       <div className="grid grid-cols-3 md:grid-cols-5 gap-2 mb-3">

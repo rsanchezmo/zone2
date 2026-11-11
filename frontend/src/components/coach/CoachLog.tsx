@@ -4,8 +4,7 @@ import { Link } from 'react-router-dom'
 import {
   useCoachNotes, useDeleteCoachNote, useUpdateSuggestion, type CoachLogEntry, type CoachLogKind, type CoachNote,
   type CoachNoteTopic,
-} from '../../api/hooks'
-import { useTheme } from '../../hooks/useTheme'
+} from '../../api/coach'
 import { fmtDayDate } from '../garmin/garmin'
 
 const KIND_LABEL: Record<CoachLogKind, string> = {
@@ -18,8 +17,6 @@ const KIND_LABEL: Record<CoachLogKind, string> = {
 
 /** What the coach wrote about the block, latest first. Suggestions change nothing until you ask for them. */
 export function CoachLog({ entries }: { entries: CoachLogEntry[] }) {
-  const { theme } = useTheme()
-  const isLight = theme === 'light'
   const update = useUpdateSuggestion()
   return (
     <section>
@@ -40,7 +37,7 @@ export function CoachLog({ entries }: { entries: CoachLogEntry[] }) {
                   )}>
                     {KIND_LABEL[e.kind]}{e.kind === 'suggestion' && e.status !== 'open' && ` · ${e.status}`}
                   </span>
-                  <span className={clsx('min-w-0 basis-full sm:basis-0 flex-1 text-[13px] font-medium order-last sm:order-none', isLight ? 'text-gray-900' : 'text-gray-100')}>{e.title}</span>
+                  <span className="min-w-0 basis-full sm:basis-0 flex-1 text-[13px] font-medium order-last sm:order-none text-fg-strong">{e.title}</span>
                   {e.activity_id != null && (
                     <Link to={`/activities/${e.activity_id}`} className="ml-auto text-[11px] text-gray-500 hover:text-cyan-500 shrink-0">run ›</Link>
                   )}
@@ -71,14 +68,12 @@ const TOPICS: { key: CoachNoteTopic; label: string }[] = [
 
 /** Notes with the coach's forget button, which shows on hover. */
 function NoteList({ notes }: { notes: CoachNote[] }) {
-  const { theme } = useTheme()
-  const isLight = theme === 'light'
   const remove = useDeleteCoachNote()
   return (
     <ul className="space-y-2">
       {notes.map(n => (
         <li key={n.id} className="group flex items-start gap-2">
-          <span className={clsx('min-w-0 flex-1 text-[12px] leading-relaxed [overflow-wrap:anywhere]', isLight ? 'text-gray-600' : 'text-gray-400')}>{n.note}</span>
+          <span className="min-w-0 flex-1 text-[12px] leading-relaxed [overflow-wrap:anywhere] text-fg-muted">{n.note}</span>
           <button
             aria-label="Forget this note"
             title="Forget this note"
@@ -104,8 +99,6 @@ export function PlanAgreements({ notes }: { notes: CoachNote[] }) {
 
 /** The notes about you the coach reads in every conversation: one line, folded open by topic. */
 export function CoachNotes() {
-  const { theme } = useTheme()
-  const isLight = theme === 'light'
   const { data: notes } = useCoachNotes()
   const [open, setOpen] = useState(false)
   if (!notes) return null
@@ -126,7 +119,7 @@ export function CoachNotes() {
           'border-surface-600 hover:border-surface-500',
         )}
       >
-        <span className={clsx('text-[13px] font-medium', isLight ? 'text-gray-900' : 'text-gray-100')}>
+        <span className="text-[13px] font-medium text-fg-strong">
           {notes.length ? `The coach keeps ${notes.length} ${notes.length === 1 ? 'note' : 'notes'} about you` : 'The coach hasn\'t noted anything about you yet'}
         </span>
         <span className="flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-gray-500">
@@ -140,7 +133,7 @@ export function CoachNotes() {
           <div className="grid gap-x-8 gap-y-6 sm:grid-cols-2">
             {groups.map(g => (
               <div key={g.label}>
-                <h3 className={clsx('text-[12px] font-semibold mb-2', isLight ? 'text-gray-900' : 'text-gray-100')}>{g.label}</h3>
+                <h3 className="text-[12px] font-semibold mb-2 text-fg-strong">{g.label}</h3>
                 <NoteList notes={g.notes} />
               </div>
             ))}

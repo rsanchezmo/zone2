@@ -1,6 +1,5 @@
 import clsx from 'clsx'
-import type { AthleteProfile } from '../../api/hooks'
-import { useTheme } from '../../hooks/useTheme'
+import type { AthleteProfile } from '../../api/athlete'
 
 export default function AthleteDetails({ profile, totalActivities }: { profile: AthleteProfile; totalActivities: number | undefined }) {
   const createdAt = profile.created_at ? new Date(profile.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }) : null
@@ -28,8 +27,6 @@ export default function AthleteDetails({ profile, totalActivities }: { profile: 
 // ────────────────────────────────────────────────────────
 
 export function InfoTile({ label, value, unit, compact }: { label: string; value: string | number; unit?: string; compact?: boolean }) {
-  const { theme } = useTheme()
-  const isLight = theme === 'light'
   return (
     <div className={clsx(
       'panel p-4',
@@ -38,10 +35,10 @@ export function InfoTile({ label, value, unit, compact }: { label: string; value
       <div className={clsx(
         'font-mono tabular-nums font-semibold tracking-tight',
         compact ? 'text-sm' : 'text-xl',
-        isLight ? 'text-gray-900' : 'text-gray-100',
+        'text-fg-strong',
       )}>
         {value}
-        {unit && <span className={clsx('ml-1 font-medium tracking-normal', compact ? 'text-[11px]' : 'text-xs', isLight ? 'text-gray-400' : 'text-gray-500')}>{unit}</span>}
+        {unit && <span className={clsx('ml-1 font-medium tracking-normal', compact ? 'text-[11px]' : 'text-xs', 'text-fg-subtle')}>{unit}</span>}
       </div>
     </div>
   )

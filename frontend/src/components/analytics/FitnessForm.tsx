@@ -4,7 +4,7 @@ import {
   ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid,
   ReferenceLine, ReferenceArea,
 } from 'recharts'
-import { useFitnessForm, type FitnessDay } from '../../api/hooks'
+import { useFitnessForm, type FitnessDay } from '../../api/stats'
 import { useTheme } from '../../hooks/useTheme'
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { parseLocalDate, todayLocalStr } from '../../utils/dates'

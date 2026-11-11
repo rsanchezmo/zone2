@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import type { ActivityDetail } from '../../api/hooks'
+import type { ActivityDetail } from '../../api/activities'
 import { getSportColor } from '../../constants/sportColors'
 import { useTheme } from '../../hooks/useTheme'
 import {

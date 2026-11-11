@@ -1,5 +1,5 @@
 import polyline from '@mapbox/polyline'
-import type { ActivityPolyline } from '../../api/hooks'
+import type { ActivityPolyline } from '../../api/activities'
 
 export interface DecodedRoute {
   id: number | string

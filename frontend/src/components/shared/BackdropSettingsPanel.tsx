@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import clsx from 'clsx'
-import { useGeocodeCity, useSportTypes } from '../../api/hooks'
+import { useGeocodeCity } from '../../api/coverage'
+import { useSportTypes } from '../../api/activities'
 import { BACKDROP_MAX_OPACITY, BACKDROP_MIN_OPACITY } from '../../hooks/backdropContext'
 import { useBackdrop } from '../../hooks/useBackdrop'
 import { useTheme } from '../../hooks/useTheme'
@@ -39,7 +40,7 @@ export default function BackdropSettingsPanel() {
     })
   }
 
-  const mutedText = isLight ? 'text-gray-500' : 'text-gray-400'
+  const mutedText = 'text-fg-dim'
 
   return (
     <ChartPanel

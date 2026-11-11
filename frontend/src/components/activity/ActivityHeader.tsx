@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
-import type { ActivityDetail, ActivityPhoto as StravaPhoto } from '../../api/hooks'
+import type { ActivityDetail, ActivityPhoto as StravaPhoto } from '../../api/activities'
 import { getSportColor } from '../../constants/sportColors'
 import { useTheme } from '../../hooks/useTheme'
 import { parseLocalDate } from '../../utils/dates'
@@ -46,8 +46,6 @@ const WORKOUT_TYPE_LABELS: Partial<Record<number, string>> = { 1: 'Race', 2: 'Lo
 /** Back link, sport, name and actions, then the description, photos and metadata pills. */
 export default function ActivityHeader({ activity, id }: { activity: ActivityDetail; id: string | undefined }) {
   const navigate = useNavigate()
-  const { theme } = useTheme()
-  const isLight = theme === 'light'
   const sportAccent = getSportColor(activity.sport_type)
   const workoutType = activity.workout_type != null ? WORKOUT_TYPE_LABELS[activity.workout_type] : undefined
 
@@ -57,7 +55,7 @@ export default function ActivityHeader({ activity, id }: { activity: ActivityDet
         onClick={() => navigate(-1)}
         className={clsx(
           'action-link group gap-1.5 text-[11px] uppercase tracking-[0.18em] mb-4 transition-colors duration-150',
-          isLight ? 'text-gray-500 hover:text-gray-900' : 'text-gray-500 hover:text-gray-100',
+          'text-gray-500 hover:text-fg-strong',
         )}
       >
         <svg
@@ -86,12 +84,12 @@ export default function ActivityHeader({ activity, id }: { activity: ActivityDet
               <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: sportAccent }} aria-hidden="true" />
               {activity.sport_type}
             </span>
-            <span className={clsx('text-[11px] font-mono tabular-nums', 'text-gray-500')}>
+            <span className="text-[11px] font-mono tabular-nums text-gray-500">
               {activity.start_date_local ? parseLocalDate(activity.start_date_local).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' }) : ''}
             </span>
           </div>
           <h2
-            className={clsx('text-2xl md:text-3xl font-semibold tracking-tight leading-tight', isLight ? 'text-gray-900' : 'text-gray-100')}
+            className="text-2xl md:text-3xl font-semibold tracking-tight leading-tight text-fg-strong"
             style={{ letterSpacing: '-0.02em' }}
           >
             {activity.name}
@@ -109,7 +107,7 @@ export default function ActivityHeader({ activity, id }: { activity: ActivityDet
       </div>
 
       {activity.description && (
-        <p className={clsx('text-sm mt-4 whitespace-pre-line max-w-3xl', isLight ? 'text-gray-600' : 'text-gray-400')}>
+        <p className="text-sm mt-4 whitespace-pre-line max-w-3xl text-fg-muted">
           {activity.description}
         </p>
       )}

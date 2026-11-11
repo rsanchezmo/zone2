@@ -2,7 +2,7 @@ import { MapContainer, TileLayer, Polyline, Marker, Tooltip, CircleMarker, useMa
 import { memo, useState, useEffect, useMemo } from 'react'
 import 'leaflet/dist/leaflet.css'
 import type { LatLngBoundsExpression } from 'leaflet'
-import { useAppConfig } from '../../api/hooks'
+import { useAppConfig } from '../../api/athlete'
 import { useTheme } from '../../hooks/useTheme'
 import { useEscapeKey } from '../../hooks/useEscapeKey'
 import clsx from 'clsx'

@@ -4,7 +4,7 @@ import {
   ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceArea,
 } from 'recharts'
 import { useTheme } from '../../hooks/useTheme'
-import { useGarminDay, type GarminDay } from '../../api/hooks'
+import { useGarminDay, type GarminDay } from '../../api/garmin'
 import ChartPanel, { LegendSwatch } from '../shared/ChartPanel'
 import { ACCENT, ACCENT_LIGHT, AMBER, MUTED, POS, SLEEP_STAGE_COLORS, fmtDayDate, useGarminChartProps } from './garmin'
 

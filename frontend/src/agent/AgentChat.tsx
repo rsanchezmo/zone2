@@ -5,10 +5,10 @@ import clsx from 'clsx'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
-  refreshAfterAgentTurn, refreshPages, streamAgentTurn, useAgentConversation, useAgentStatus, useMarkCoachSeen,
-  useOpenCoach,
+  refreshAfterAgentTurn, streamAgentTurn, useAgentConversation, useAgentStatus, useMarkCoachSeen, useOpenCoach,
   type AgentPendingWrite, type AgentStreamEvent, type AgentTranscriptItem, type AgentTurn,
-} from '../api/hooks'
+} from '../api/agent'
+import { refreshPages } from '../api/invalidation'
 import { useTheme } from '../hooks/useTheme'
 import { useNow } from '../hooks/useNow'
 import { COACH } from '../components/coach/colors'
@@ -274,7 +274,7 @@ function Composer({ draft, onDraft, onSend, busy, offline, onError }: {
 
   return (
     <form
-      className={'border-t border-surface-600 p-3 flex items-end gap-2'}
+      className="border-t border-surface-600 p-3 flex items-end gap-2"
       onSubmit={e => { e.preventDefault(); submit() }}
     >
       <textarea
@@ -516,7 +516,7 @@ export default function AgentChat({ open, expanded, busy, onBusyChange, onOpenPa
           const lines = group.steps.map((step, i) => {
             const running = step.role === 'step' && step.running
             return (
-              <div key={i} className={clsx('flex items-center gap-2 text-[11px]', running ? (isLight ? 'text-gray-700' : 'text-gray-300') : 'text-gray-500')}>
+              <div key={i} className={clsx('flex items-center gap-2 text-[11px]', running ? 'text-fg' : 'text-gray-500')}>
                 <span className={clsx('w-1.5 h-1.5 rounded-full shrink-0', running ? 'bg-[var(--coach)] animate-pulse' : 'bg-surface-500')} aria-hidden="true" />
                 {stepLabel(step.tool, step.role === 'step' ? step.args : undefined)}
                 <StepTime step={step} live={live} />

@@ -1,17 +1,15 @@
 import { useMemo } from 'react'
-import clsx from 'clsx'
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts'
 import { useTheme } from '../../hooks/useTheme'
-import type { GarminTrends } from '../../api/hooks'
+import type { GarminTrends } from '../../api/garmin'
 import ChartPanel, { LegendSwatch } from '../shared/ChartPanel'
 import { ACCENT, ACCENT_LIGHT, displayNum, num, useGarminChartProps } from './garmin'
 
 /** Weight and its 7-day trend. */
 export default function BodySection({ trends: t, days }: { trends: GarminTrends | undefined; days: number }) {
-  const { theme, colors } = useTheme()
-  const isLight = theme === 'light'
+  const { colors } = useTheme()
   const { chartMargin, xAxisProps, yAxisProps, tooltipProps, dayClick } = useGarminChartProps()
 
   // Weigh-ins are sparse (manual or scale days only) — keep only real readings
@@ -52,7 +50,7 @@ export default function BodySection({ trends: t, days }: { trends: GarminTrends 
         </>}
       >
         {weightData.length === 0 ? (
-          <div className={clsx('flex items-center justify-center h-[220px] text-xs', isLight ? 'text-gray-400' : 'text-gray-500')}>
+          <div className="flex items-center justify-center h-[220px] text-xs text-fg-subtle">
             No weigh-ins in this window
           </div>
         ) : (

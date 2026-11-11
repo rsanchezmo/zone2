@@ -1,11 +1,10 @@
 import { useMemo } from 'react'
-import clsx from 'clsx'
 import {
   ResponsiveContainer, BarChart, LineChart, Bar, Line, Cell, XAxis, YAxis, Tooltip, CartesianGrid,
   ReferenceArea,
 } from 'recharts'
 import { useTheme } from '../../hooks/useTheme'
-import type { GarminTrends } from '../../api/hooks'
+import type { GarminTrends } from '../../api/garmin'
 import ChartPanel, { LegendSwatch } from '../shared/ChartPanel'
 import {
   ACCENT, AMBER, NEG, POS, acwrZoneColor, displayNum, dotProps, num, readinessZoneColor,
@@ -46,7 +45,7 @@ export default function ReadinessSection({ trends: t, days, card }: { trends: Ga
           sublabel="today · contributors to your readiness score"
           accent={ACCENT}
         >
-          <FactorBars factors={card.readinessFactors} isLight={isLight} />
+          <FactorBars factors={card.readinessFactors} />
         </ChartPanel>
       )}
 
@@ -106,7 +105,7 @@ export default function ReadinessSection({ trends: t, days, card }: { trends: Ga
           </>}
         >
           {acwrData.length === 0 ? (
-            <div className={clsx('flex items-center justify-center h-[200px] text-xs', isLight ? 'text-gray-400' : 'text-gray-500')}>
+            <div className="flex items-center justify-center h-[200px] text-xs text-fg-subtle">
               No ACWR readings in this window
             </div>
           ) : (

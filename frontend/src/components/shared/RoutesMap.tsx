@@ -6,7 +6,7 @@ import type { LatLngBoundsExpression } from 'leaflet'
 import clsx from 'clsx'
 
 import { getSportColor } from '../../constants/sportColors'
-import { useAppConfig } from '../../api/hooks'
+import { useAppConfig } from '../../api/athlete'
 import { useTheme } from '../../hooks/useTheme'
 import { useEscapeKey } from '../../hooks/useEscapeKey'
 import { tileLayerAttribution, tileLayerClass, tileLayerUrl } from '../../utils/mapTiles'
@@ -149,7 +149,7 @@ export default function RoutesMap({
           onClick={() => setFullscreen(!expanded)}
           className={clsx(
             'map-overlay p-2 transition-colors',
-            isLight ? 'text-gray-500 hover:text-gray-900' : 'text-gray-400 hover:text-gray-100',
+            'text-fg-dim hover:text-fg-strong',
           )}
           title={expanded ? 'Exit fullscreen' : 'Fullscreen'}
           aria-label={expanded ? 'Exit fullscreen' : 'Enter fullscreen'}
@@ -161,7 +161,7 @@ export default function RoutesMap({
           onToggle={() => setMapStyle(s => (s === 'satellite' ? 'street' : 'satellite'))}
           className={clsx(
             'map-overlay p-2 transition-colors',
-            isLight ? 'text-gray-500 hover:text-gray-900' : 'text-gray-400 hover:text-gray-100',
+            'text-fg-dim hover:text-fg-strong',
           )}
         />
       </div>

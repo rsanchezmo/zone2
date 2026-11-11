@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
 import clsx from 'clsx'
 import {
-  useCreateGoal, useUpdateGoal, useDeleteGoal, type Goal, type GoalProgress,
-} from '../../api/hooks'
+  useCreateGoal, useUpdateGoal, useDeleteGoal, type Goal, type GoalInput, type GoalMetric, type GoalPeriod,
+  type GoalProgress,
+} from '../../api/goals'
 import RowActions from '../shared/RowActions'
 import GoalProgressBar from '../shared/GoalProgressBar'
 import ChartPanel from '../shared/ChartPanel'
@@ -13,7 +14,7 @@ import { useTheme } from '../../hooks/useTheme'
 import { useToast } from '../../hooks/useToast'
 import { parseLocalDate } from '../../utils/dates'
 
-function getMetricOptions(sportType: string) {
+function getMetricOptions(sportType: string): { value: GoalMetric; label: string }[] {
   const isSwimming = getSportCategory(sportType) === 'swimming'
   return [
     { value: 'distance_km', label: isSwimming ? 'Distance (m)' : 'Distance (km)' },
@@ -23,7 +24,7 @@ function getMetricOptions(sportType: string) {
   ]
 }
 
-const PERIOD_OPTIONS = [
+const PERIOD_OPTIONS: { value: GoalPeriod; label: string }[] = [
   { value: 'weekly', label: 'Weekly' },
   { value: 'monthly', label: 'Monthly' },
   { value: 'yearly', label: 'Yearly' },
@@ -35,6 +36,15 @@ function metricLabel(metric: string, sportType?: string): string {
 
 function periodLabel(period: string): string {
   return PERIOD_OPTIONS.find(p => p.value === period)?.label ?? period
+}
+
+/** The goal form's fields; year and target stay text while typed. */
+interface GoalForm {
+  year: string
+  sport_type: string
+  metric: GoalMetric
+  period: GoalPeriod
+  target_value: string
 }
 
 export default function GoalsSection({ goals, progress: goalProgressData, sportTypes }: {
@@ -53,7 +63,7 @@ export default function GoalsSection({ goals, progress: goalProgressData, sportT
   const [editingGoalId, setEditingGoalId] = useState<number | null>(null)
   const [confirmDeleteGoalId, setConfirmDeleteGoalId] = useState<number | null>(null)
   const currentYear = new Date().getFullYear()
-  const [goalForm, setGoalForm] = useState({ year: String(currentYear), sport_type: 'Run', metric: 'distance_km', period: 'weekly', target_value: '' })
+  const [goalForm, setGoalForm] = useState<GoalForm>({ year: String(currentYear), sport_type: 'Run', metric: 'distance_km', period: 'weekly', target_value: '' })
 
   const inputClass = 'input'
   const selectClass = 'select'
@@ -77,7 +87,7 @@ export default function GoalsSection({ goals, progress: goalProgressData, sportT
     if (goalForm.metric === 'distance_km' && getSportCategory(goalForm.sport_type) === 'swimming') {
       target = target / 1000
     }
-    const payload = { year: yearNum, sport_type: goalForm.sport_type, metric: goalForm.metric, period: goalForm.period, target_value: target }
+    const payload: GoalInput = { year: yearNum, sport_type: goalForm.sport_type, metric: goalForm.metric, period: goalForm.period, target_value: target }
     if (editingGoalId != null) {
       updateGoal.mutate({ id: editingGoalId, ...payload }, {
         onSuccess: () => { setEditingGoalId(null); setShowGoalForm(false); toast('Goal updated', 'success') },
@@ -150,7 +160,9 @@ export default function GoalsSection({ goals, progress: goalProgressData, sportT
             </select>
             <select
               value={goalForm.metric}
-              onChange={e => setGoalForm(f => ({ ...f, metric: e.target.value }))}
+              onChange={e => setGoalForm(f => ({
+                ...f, metric: getMetricOptions(f.sport_type).find(m => m.value === e.target.value)?.value ?? f.metric,
+              }))}
               className={selectClass}
             >
               {getMetricOptions(goalForm.sport_type).map(m => (
@@ -159,7 +171,9 @@ export default function GoalsSection({ goals, progress: goalProgressData, sportT
             </select>
             <select
               value={goalForm.period}
-              onChange={e => setGoalForm(f => ({ ...f, period: e.target.value }))}
+              onChange={e => setGoalForm(f => ({
+                ...f, period: PERIOD_OPTIONS.find(p => p.value === e.target.value)?.value ?? f.period,
+              }))}
               className={selectClass}
             >
               {PERIOD_OPTIONS.map(p => (
@@ -210,7 +224,7 @@ export default function GoalsSection({ goals, progress: goalProgressData, sportT
                 key={goal.id as number}
                 className={clsx(
                   'rounded-xl border p-3 group transition-all duration-200',
-                  isLight ? 'bg-white border-surface-600 hover:border-surface-500' : 'bg-surface-800 border-surface-600 hover:border-surface-500',
+                  'bg-surface-800 border-surface-600 hover:border-surface-500',
                 )}
                 style={{ borderLeftWidth: 3, borderLeftColor: barColor }}
               >
@@ -219,10 +233,10 @@ export default function GoalsSection({ goals, progress: goalProgressData, sportT
                   <span className={clsx('text-sm font-medium', isLight ? 'text-gray-800' : 'text-gray-200')}>
                     {sport === '__all__' ? 'All Sports' : sport}
                   </span>
-                  <span className={clsx('text-[11px] px-1.5 py-0.5 rounded-md', isLight ? 'bg-surface-700 text-gray-500' : 'bg-surface-700 text-gray-400')}>
+                  <span className="text-[11px] px-1.5 py-0.5 rounded-md bg-surface-700 text-fg-dim">
                     {metricLabel(metric, sport)}
                   </span>
-                  <span className={clsx('text-[11px] px-1.5 py-0.5 rounded-md', isLight ? 'bg-surface-700 text-gray-500' : 'bg-surface-700 text-gray-400')}>
+                  <span className="text-[11px] px-1.5 py-0.5 rounded-md bg-surface-700 text-fg-dim">
                     {periodLabel(goal.period).toLowerCase()}
                   </span>
                   <span className="text-[11px] text-gray-500 font-mono">{goal.year}</span>
@@ -273,7 +287,7 @@ export default function GoalsSection({ goals, progress: goalProgressData, sportT
                         ? (isLight ? 'bg-green-100 text-green-700' : 'bg-green-500/15 text-green-400')
                         : pct >= 70
                           ? (isLight ? 'bg-blue-100 text-blue-700' : 'bg-blue-500/15 text-blue-400')
-                          : (isLight ? 'bg-surface-700 text-gray-600' : 'bg-surface-700 text-gray-400'),
+                          : 'bg-surface-700 text-fg-muted',
                     )}>
                       {pct >= 100 ? 'Done!' : `${Math.round(pct)}%`}
                     </span>
@@ -291,7 +305,7 @@ export default function GoalsSection({ goals, progress: goalProgressData, sportT
           })}
         </div>
       ) : !showGoalForm ? (
-        <div className={clsx('text-sm', isLight ? 'text-gray-400' : 'text-gray-600')}>No goals set. Add a goal to track your progress.</div>
+        <div className="text-sm text-fg-faint">No goals set. Add a goal to track your progress.</div>
       ) : null}
     </ChartPanel>
   )

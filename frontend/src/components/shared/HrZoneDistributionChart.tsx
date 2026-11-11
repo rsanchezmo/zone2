@@ -54,7 +54,7 @@ function HrZoneDistributionChart({
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(640)
-  const { theme } = useTheme()
+  const { theme, colors } = useTheme()
   const isLight = theme === 'light'
 
   useEffect(() => {
@@ -130,7 +130,7 @@ function HrZoneDistributionChart({
   const xScale = (bpm: number) => padX + ((bpm - lo) / (hi - lo)) * innerW
   const yScale = (v: number) => padTop + innerH - (v / ymax) * innerH
 
-  const tickColor = isLight ? '#6b7280' : '#9ca3af'
+  const tickColor = colors.tickFill
   const axisColor = isLight ? '#9ca3af' : '#4b5563'
 
   const segPaths = segments.map(([a, b], zi) => {

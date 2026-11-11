@@ -1,7 +1,7 @@
 import { format, parseISO, differenceInCalendarDays } from 'date-fns'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
-import type { RaceEvent } from '../../api/hooks'
+import type { RaceEvent } from '../../api/races'
 import { useTheme } from '../../hooks/useTheme'
 import { formatDistExact } from '../../utils/formatSpeed'
 import { parseLocalDate } from '../../utils/dates'
@@ -48,7 +48,7 @@ export default function RaceCountdown({ races }: { races: RaceEvent[] | undefine
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-0.5">
           <span style={{ color: '#eab308' }}><FlagIcon size={11} /></span>
-          <span className={clsx('text-sm font-semibold tracking-tight truncate', isLight ? 'text-gray-900' : 'text-gray-100')}>
+          <span className="text-sm font-semibold tracking-tight truncate text-fg-strong">
             {nextRace.name}
           </span>
         </div>

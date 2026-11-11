@@ -1,8 +1,10 @@
 import { useMemo } from 'react'
 import { useParams } from 'react-router-dom'
-import {
-  useActivity, useAthleteZones, useSimilarActivities, useActivityScore, useActivityRoute, useActivityCost,
-} from '../api/hooks'
+import { useActivity, useSimilarActivities } from '../api/activities'
+import { useAthleteZones } from '../api/athlete'
+import { useActivityScore } from '../api/calendar'
+import { useActivityRoute } from '../api/coverage'
+import { useActivityCost } from '../api/garmin'
 import ChartPanel from '../components/shared/ChartPanel'
 import HrZoneDistributionChart from '../components/shared/HrZoneDistributionChart'
 import { buildHrHistogram } from '../components/shared/hrHistogram'

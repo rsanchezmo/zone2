@@ -1,7 +1,8 @@
-import { useState, useEffect, useMemo, useLayoutEffect, useRef } from 'react'
+import { useState, useEffect, useMemo, useLayoutEffect, useRef, useCallback } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { format, getISOWeek, startOfWeek, endOfWeek, isSameMonth } from 'date-fns'
-import { useActivities, useSportTypes, useYears, useAthleteProfile, type Activity } from '../api/hooks'
+import { useActivities, useSportTypes, useYears, type Activity } from '../api/activities'
+import { useAthleteProfile } from '../api/athlete'
 import { getSportColor } from '../constants/sportColors'
 import { distValue, getDistUnit } from '../utils/formatSpeed'
 import { parseLocalDate, todayLocalStr } from '../utils/dates'
@@ -11,13 +12,62 @@ import DatePicker from '../components/shared/DatePicker'
 import RouteThumbnail from '../components/shared/RouteThumbnail'
 import PageHeader from '../components/shared/PageHeader'
 
-const SORT_OPTIONS = [
+type SortKey = 'date' | 'distance' | 'moving_time' | 'total_elevation_gain' | 'average_speed'
+
+const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: 'date', label: 'Date' },
   { value: 'distance', label: 'Distance' },
   { value: 'moving_time', label: 'Duration' },
   { value: 'total_elevation_gain', label: 'Elevation' },
   { value: 'average_speed', label: 'Pace/Speed' },
 ]
+
+function sortKey(value: string | null): SortKey {
+  return SORT_OPTIONS.find(o => o.value === value)?.value ?? 'date'
+}
+
+/** The list's filters live in the URL, so links, reloads and back/forward restore them. */
+interface ActivityFilters {
+  page: number
+  sport: string
+  year: number | undefined
+  q: string
+  from: string
+  to: string
+  sort: SortKey
+  dir: 'asc' | 'desc'
+  gearId: string
+}
+
+/** Defaults are left out of the URL; `to` defaults to today. */
+function parseFilters(params: URLSearchParams, today: string): ActivityFilters {
+  const year = Number(params.get('year'))
+  return {
+    page: Number(params.get('page')) || 1,
+    sport: params.get('sport') || '',
+    year: year > 0 ? year : undefined,
+    q: params.get('q') || '',
+    from: params.get('from') || '',
+    to: params.get('to') || today,
+    sort: sortKey(params.get('sort')),
+    dir: params.get('dir') === 'asc' ? 'asc' : 'desc',
+    gearId: params.get('gear_id') || '',
+  }
+}
+
+function filtersToParams(f: ActivityFilters, today: string): URLSearchParams {
+  const params = new URLSearchParams()
+  if (f.page > 1) params.set('page', String(f.page))
+  if (f.sport) params.set('sport', f.sport)
+  if (f.year) params.set('year', String(f.year))
+  if (f.q) params.set('q', f.q)
+  if (f.from) params.set('from', f.from)
+  if (f.to && f.to !== today) params.set('to', f.to)
+  if (f.sort !== 'date') params.set('sort', f.sort)
+  if (f.dir !== 'desc') params.set('dir', f.dir)
+  if (f.gearId) params.set('gear_id', f.gearId)
+  return params
+}
 
 function useDebounce<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value)
@@ -122,9 +172,7 @@ function ActivityCard({ activity: a, compactDate }: ActivityCardProps) {
       to={`/activities/${a.id}`}
       className={clsx(
         'group flex items-center gap-3.5 rounded-xl border card-glow transition-all duration-200 p-3.5',
-        isLight
-          ? 'bg-white border-surface-600 hover:border-surface-500'
-          : 'bg-surface-800 border-surface-600 hover:border-surface-500',
+        'bg-surface-800 border-surface-600 hover:border-surface-500',
       )}
       style={{
         borderLeftWidth: 3,
@@ -156,7 +204,7 @@ function ActivityCard({ activity: a, compactDate }: ActivityCardProps) {
                 <span className="w-1 h-1 rounded-full" style={{ backgroundColor: sportColor }} aria-hidden="true" />
                 {a.sport_type}
               </span>
-              <span className={clsx('text-[11px] font-mono tabular-nums', 'text-gray-500')}>{dateStr}</span>
+              <span className="text-[11px] font-mono tabular-nums text-gray-500">{dateStr}</span>
             </div>
           </div>
           {/* Arrow indicator */}
@@ -179,7 +227,7 @@ function ActivityCard({ activity: a, compactDate }: ActivityCardProps) {
               <svg className="w-3.5 h-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
               </svg>
-              <span className={clsx('text-sm font-mono font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>
+              <span className="text-sm font-mono font-semibold text-fg-strong">
                 {distValue(distanceKm, a.sport_type)}
               </span>
               <span className="text-[10px] text-gray-500 uppercase tracking-wider">{getDistUnit(a.sport_type)}</span>
@@ -190,7 +238,7 @@ function ActivityCard({ activity: a, compactDate }: ActivityCardProps) {
               <svg className="w-3.5 h-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                 <circle cx="12" cy="12" r="10" /><path strokeLinecap="round" d="M12 6v6l4 2" />
               </svg>
-              <span className={clsx('text-sm font-mono font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>{String(a.moving_time_formatted)}</span>
+              <span className="text-sm font-mono font-semibold text-fg-strong">{String(a.moving_time_formatted)}</span>
             </div>
           )}
           {!!a.formatted_pace && (
@@ -198,7 +246,7 @@ function ActivityCard({ activity: a, compactDate }: ActivityCardProps) {
               <svg className="w-3.5 h-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
-              <span className={clsx('text-sm font-mono font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>{String(a.formatted_pace)}</span>
+              <span className="text-sm font-mono font-semibold text-fg-strong">{String(a.formatted_pace)}</span>
             </div>
           )}
           {elevGain != null && elevGain > 0 && (
@@ -206,7 +254,7 @@ function ActivityCard({ activity: a, compactDate }: ActivityCardProps) {
               <svg className="w-3.5 h-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 17l6-6 4 4 8-8" />
               </svg>
-              <span className={clsx('text-sm font-mono font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>{Math.round(elevGain)}</span>
+              <span className="text-sm font-mono font-semibold text-fg-strong">{Math.round(elevGain)}</span>
               <span className="text-[10px] text-gray-500 uppercase tracking-wider">m</span>
             </div>
           )}
@@ -215,7 +263,7 @@ function ActivityCard({ activity: a, compactDate }: ActivityCardProps) {
               <svg className="w-3.5 h-3.5 text-red-400/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
               </svg>
-              <span className={clsx('text-sm font-mono font-semibold', isLight ? 'text-gray-900' : 'text-gray-100')}>{Math.round(avgHR)}</span>
+              <span className="text-sm font-mono font-semibold text-fg-strong">{Math.round(avgHR)}</span>
               <span className="text-[10px] text-gray-500 uppercase tracking-wider">bpm</span>
             </div>
           )}
@@ -231,35 +279,27 @@ export default function ActivitiesPage() {
   const isLight = theme === 'light'
   const [searchParams, setSearchParams] = useSearchParams()
 
-  // Initialize state from URL params (preserves state on back navigation)
-  const [page, setPage] = useState(() => Number(searchParams.get('page')) || 1)
-  const [sportType, setSportType] = useState<string>(() => searchParams.get('sport') || '')
-  const [year, setYear] = useState<number | undefined>(() => {
-    const y = searchParams.get('year')
-    return y ? Number(y) : undefined
-  })
-  const [searchInput, setSearchInput] = useState(() => searchParams.get('q') || '')
   const [todayStr] = useState(() => todayLocalStr())
-  const [dateFrom, setDateFrom] = useState(() => searchParams.get('from') || '')
-  const [dateTo, setDateTo] = useState(() => searchParams.get('to') || todayStr)
-  const [sortBy, setSortBy] = useState(() => searchParams.get('sort') || 'date')
-  const [sortDir, setSortDir] = useState<'desc' | 'asc'>(() => (searchParams.get('dir') === 'asc' ? 'asc' : 'desc'))
-  const [gearId, setGearId] = useState<string>(() => searchParams.get('gear_id') || '')
+  const filters = useMemo(() => parseFilters(searchParams, todayStr), [searchParams, todayStr])
+  const { page, sport: sportType, year, q: search, from: dateFrom, to: dateTo, sort: sortBy, dir: sortDir, gearId } = filters
 
-  // Sync state to URL params (replaces history entry so back button works)
+  // Replacing the entry keeps filter tweaks out of the history: back leaves the list
+  const setFilters = useCallback((change: Partial<ActivityFilters>) => {
+    setSearchParams(filtersToParams({ ...filters, page: 1, ...change }, todayStr), { replace: true })
+  }, [filters, setSearchParams, todayStr])
+
+  // The field follows every keystroke; the URL, and so the query, once typing pauses
+  const [searchInput, setSearchInput] = useState(search)
+  const [shownSearch, setShownSearch] = useState(search)
+  if (search !== shownSearch) {
+    setShownSearch(search)
+    setSearchInput(search)
+  }
+  const debouncedSearch = useDebounce(searchInput, 300)
   useEffect(() => {
-    const params = new URLSearchParams()
-    if (page > 1) params.set('page', String(page))
-    if (sportType) params.set('sport', sportType)
-    if (year) params.set('year', String(year))
-    if (searchInput) params.set('q', searchInput)
-    if (dateFrom) params.set('from', dateFrom)
-    if (dateTo && dateTo !== todayStr) params.set('to', dateTo)
-    if (sortBy !== 'date') params.set('sort', sortBy)
-    if (sortDir !== 'desc') params.set('dir', sortDir)
-    if (gearId) params.set('gear_id', gearId)
-    setSearchParams(params, { replace: true })
-  }, [page, sportType, year, searchInput, dateFrom, dateTo, todayStr, sortBy, sortDir, gearId, setSearchParams])
+    // Only once the field has settled: right after back/forward it holds the URL's text already
+    if (debouncedSearch === searchInput && debouncedSearch !== search) setFilters({ q: debouncedSearch })
+  }, [debouncedSearch, searchInput, search, setFilters])
 
   // Save scroll position before navigating away, restore on mount
   useEffect(() => {
@@ -270,8 +310,6 @@ export default function ActivitiesPage() {
       window.removeEventListener('beforeunload', saveScroll)
     }
   }, [])
-
-  const debouncedSearch = useDebounce(searchInput, 300)
 
   const { data: sportTypes } = useSportTypes()
   const { data: years } = useYears()
@@ -285,7 +323,7 @@ export default function ActivitiesPage() {
     page, 20,
     sportType || undefined,
     year,
-    debouncedSearch || undefined,
+    search || undefined,
     dateFrom || undefined,
     dateTo || undefined,
     sortBy,
@@ -313,22 +351,15 @@ export default function ActivitiesPage() {
   const activeFilterCount = [
     sportType,
     year,
-    debouncedSearch,
+    search,
     sortBy !== 'date' || sortDir !== 'desc' ? 'sort' : '',
     gearId,
     dateRangeChanged ? 'dates' : '',
   ].filter(Boolean).length
 
   const clearAll = () => {
-    setSportType('')
-    setYear(undefined)
     setSearchInput('')
-    setDateFrom('')
-    setDateTo(todayStr)
-    setSortBy('date')
-    setSortDir('desc')
-    setGearId('')
-    setPage(1)
+    setSearchParams(new URLSearchParams(), { replace: true })
   }
 
   // Resolve gear_id → name for the active-filter chip
@@ -371,7 +402,7 @@ export default function ActivitiesPage() {
         description={!isLoading && data ? (
           <span className="tabular-nums">
             {data.total.toLocaleString()} activit{data.total === 1 ? 'y' : 'ies'}
-            {debouncedSearch && <> matching &ldquo;<span className={isLight ? 'text-gray-700' : 'text-gray-300'}>{debouncedSearch}</span>&rdquo;</>}
+            {search && <> matching &ldquo;<span className="text-fg">{search}</span>&rdquo;</>}
           </span>
         ) : "every workout you've logged"}
         actions={activeFilterCount > 0 && (
@@ -389,16 +420,13 @@ export default function ActivitiesPage() {
         <div
           className={clsx(
             'inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-[11px] uppercase tracking-[0.15em]',
-            isLight ? 'bg-white border-surface-600 text-gray-700' : 'bg-surface-800 border-surface-600 text-gray-300',
+            'bg-surface-800 border-surface-600 text-fg',
           )}
         >
-          <span className={isLight ? 'text-gray-400' : 'text-gray-500'}>Gear</span>
-          <span className={isLight ? 'text-gray-900' : 'text-gray-100'}>{gearName ?? gearId}</span>
+          <span className="text-fg-subtle">Gear</span>
+          <span className="text-fg-strong">{gearName ?? gearId}</span>
           <button
-            onClick={() => {
-              setGearId('')
-              setPage(1)
-            }}
+            onClick={() => setFilters({ gearId: '' })}
             aria-label="Clear gear filter"
             className={clsx('ml-1', isLight ? 'text-gray-400 hover:text-gray-700' : 'text-gray-500 hover:text-gray-200')}
           >
@@ -421,17 +449,14 @@ export default function ActivitiesPage() {
             placeholder="Search by activity name..."
             aria-label="Search activities by name"
             value={searchInput}
-            onChange={e => {
-              setSearchInput(e.target.value)
-              setPage(1)
-            }}
+            onChange={e => setSearchInput(e.target.value)}
             className="input w-full !pl-9 !pr-3"
           />
           {searchInput && (
             <button
               onClick={() => {
                 setSearchInput('')
-                setPage(1)
+                setFilters({ q: '' })
               }}
               aria-label="Clear search"
               className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
@@ -445,23 +470,14 @@ export default function ActivitiesPage() {
 
         {/* Row 2: Filters */}
         <div className="flex flex-wrap items-center gap-2">
-          <DatePicker value={dateFrom || defaultDateFrom} onChange={v => {
-            setDateFrom(v)
-            setPage(1)
-          }} label="From" />
-          <DatePicker value={dateTo} onChange={v => {
-            setDateTo(v)
-            setPage(1)
-          }} label="To" />
+          <DatePicker value={dateFrom || defaultDateFrom} onChange={v => setFilters({ from: v })} label="From" />
+          <DatePicker value={dateTo} onChange={v => setFilters({ to: v })} label="To" />
 
           <div className="w-px h-6 bg-surface-600 mx-1 hidden sm:block" />
 
           <select
             value={sportType}
-            onChange={e => {
-              setSportType(e.target.value)
-              setPage(1)
-            }}
+            onChange={e => setFilters({ sport: e.target.value })}
             aria-label="Sport"
             className={selectClass}
           >
@@ -473,10 +489,7 @@ export default function ActivitiesPage() {
 
           <select
             value={year ?? ''}
-            onChange={e => {
-              setYear(e.target.value ? Number(e.target.value) : undefined)
-              setPage(1)
-            }}
+            onChange={e => setFilters({ year: e.target.value ? Number(e.target.value) : undefined })}
             aria-label="Year"
             className={selectClass}
           >
@@ -493,10 +506,7 @@ export default function ActivitiesPage() {
             <span className="eyebrow text-[9px] shrink-0">Sort</span>
             <select
               value={sortBy}
-              onChange={e => {
-                setSortBy(e.target.value)
-                setPage(1)
-              }}
+              onChange={e => setFilters({ sort: sortKey(e.target.value) })}
               aria-label="Sort by"
               className={selectClass}
             >
@@ -505,10 +515,7 @@ export default function ActivitiesPage() {
               ))}
             </select>
             <button
-              onClick={() => {
-                setSortDir(d => d === 'desc' ? 'asc' : 'desc')
-                setPage(1)
-              }}
+              onClick={() => setFilters({ dir: sortDir === 'desc' ? 'asc' : 'desc' })}
               className="btn flex items-center justify-center px-2"
               title={sortDir === 'desc' ? 'Descending — click for ascending' : 'Ascending — click for descending'}
               aria-label={sortDir === 'desc' ? 'Sort ascending' : 'Sort descending'}
@@ -528,8 +535,8 @@ export default function ActivitiesPage() {
               key={i}
               className="panel p-4 animate-pulse"
             >
-              <div className={clsx('h-4 rounded w-1/3 mb-3', 'bg-surface-700')} />
-              <div className={clsx('h-3 rounded w-1/4', 'bg-surface-700')} />
+              <div className="h-4 rounded w-1/3 mb-3 bg-surface-700" />
+              <div className="h-3 rounded w-1/4 bg-surface-700" />
             </div>
           ))}
         </div>
@@ -538,8 +545,8 @@ export default function ActivitiesPage() {
           <svg className={clsx('w-9 h-9', isLight ? 'text-gray-300' : 'text-gray-600')} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
           </svg>
-          <p className={clsx('text-sm', 'text-gray-500')}>No activities found</p>
-          <p className={clsx('text-[11px]', isLight ? 'text-gray-400' : 'text-gray-600')}>Try adjusting your filters</p>
+          <p className="text-sm text-gray-500">No activities found</p>
+          <p className="text-[11px] text-fg-faint">Try adjusting your filters</p>
         </div>
       ) : (
         <>
@@ -560,10 +567,10 @@ export default function ActivitiesPage() {
                       >
                         {group.activities.length} {group.activities.length === 1 ? 'activity' : 'activities'}
                         {group.totalKm > 0 && (
-                          <> · <span className={isLight ? 'text-gray-900' : 'text-gray-100'}>{group.totalKm.toFixed(1)} km</span></>
+                          <> · <span className="text-fg-strong">{group.totalKm.toFixed(1)} km</span></>
                         )}
                         {group.totalSeconds > 0 && <> · {formatHours(group.totalSeconds)}</>}
-                        {group.partial && <span className={isLight ? 'text-gray-400' : 'text-gray-600'}> · shown</span>}
+                        {group.partial && <span className="text-fg-faint"> · shown</span>}
                       </span>
                     </div>
                     <div className="space-y-2 stagger-children">
@@ -587,7 +594,7 @@ export default function ActivitiesPage() {
           {totalPages > 1 && (
             <div className="flex items-center justify-center gap-1 pt-2 pb-4">
               <button
-                onClick={() => setPage(1)}
+                onClick={() => setFilters({ page: 1 })}
                 disabled={page === 1}
                 aria-label="First page"
                 className={clsx(
@@ -600,7 +607,7 @@ export default function ActivitiesPage() {
                 </svg>
               </button>
               <button
-                onClick={() => setPage(p => Math.max(1, p - 1))}
+                onClick={() => setFilters({ page: Math.max(1, page - 1) })}
                 disabled={page === 1}
                 aria-label="Previous page"
                 className={clsx(
@@ -618,7 +625,7 @@ export default function ActivitiesPage() {
               {pageRange.map(p => (
                 <button
                   key={p}
-                  onClick={() => setPage(p)}
+                  onClick={() => setFilters({ page: p })}
                   className={clsx(
                     'w-8 h-8 rounded text-sm font-mono tabular-nums transition-colors',
                     p === page
@@ -637,7 +644,7 @@ export default function ActivitiesPage() {
                 <span className="text-xs text-gray-600 px-1">&hellip;</span>
               )}
               <button
-                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                onClick={() => setFilters({ page: Math.min(totalPages, page + 1) })}
                 disabled={page === totalPages}
                 aria-label="Next page"
                 className={clsx(
@@ -650,7 +657,7 @@ export default function ActivitiesPage() {
                 </svg>
               </button>
               <button
-                onClick={() => setPage(totalPages)}
+                onClick={() => setFilters({ page: totalPages })}
                 disabled={page === totalPages}
                 aria-label="Last page"
                 className={clsx(

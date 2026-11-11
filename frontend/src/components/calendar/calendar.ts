@@ -1,8 +1,9 @@
 import type { ComponentType, DragEvent as ReactDragEvent } from 'react'
 import { addDays, format, isSameMonth, parseISO } from 'date-fns'
-import type {
-  Activity, ExecutionScore, Goal, GoalMetric, RaceEvent, SessionScoresResponse, TrainingSession,
-} from '../../api/hooks'
+import type { Activity } from '../../api/activities'
+import type { ExecutionScore, SessionScoresResponse, TrainingSession } from '../../api/calendar'
+import type { Goal, GoalMetric } from '../../api/goals'
+import type { RaceEvent } from '../../api/races'
 import { SESSION_GOALS, type SessionGoalKey } from '../../constants/sessionGoals'
 import { formatDist, formatDurationHM, formatPace, getPaceUnit, isSpeedSport } from '../../utils/formatSpeed'
 import type { IconProps } from '../icons'

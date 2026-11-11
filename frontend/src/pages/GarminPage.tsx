@@ -4,7 +4,7 @@ import clsx from 'clsx'
 import { useTheme } from '../hooks/useTheme'
 import {
   useGarminStatus, useGarminLatest, useGarminTrends, useTriggerGarminSync, useCancelGarminSync,
-} from '../api/hooks'
+} from '../api/garmin'
 import PageHeader from '../components/shared/PageHeader'
 import { GarminDayContext, cardValues, fmtDate, lastDays } from '../components/garmin/garmin'
 import DayTimeline from '../components/garmin/DayTimeline'
@@ -159,7 +159,7 @@ export default function GarminPage() {
       )}
 
       {!enabled && (
-        <div className={clsx('text-center text-xs py-12', isLight ? 'text-gray-400' : 'text-gray-600')}>
+        <div className="text-center text-xs py-12 text-fg-faint">
           Configure Garmin Connect to start collecting trends.
         </div>
       )}

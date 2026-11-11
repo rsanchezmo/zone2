@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import clsx from 'clsx'
-import type { RepRecovery } from '../../api/hooks'
+import type { RepRecovery } from '../../api/activities'
 import { formatPace, formatSpeed } from '../../utils/formatSpeed'
 import { dropKey, formatDrop, type MeasuredHrRecovery } from './activityData'
 

@@ -3,10 +3,9 @@ import {
   startOfMonth, endOfMonth, eachDayOfInterval, format, addMonths, subMonths, isSameMonth, isToday,
   startOfWeek, endOfWeek, parseISO,
 } from 'date-fns'
-import {
-  useWorkoutTemplates, useCreateWorkoutTemplate, type RaceEvent, type RaceEventInput, type SessionScoresResponse,
-  type TrainingSession, type WorkoutTemplate,
-} from '../../api/hooks'
+import { useWorkoutTemplates, useCreateWorkoutTemplate, type WorkoutTemplate } from '../../api/workouts'
+import type { RaceEvent, RaceEventInput } from '../../api/races'
+import type { SessionFields, SessionScoresResponse, TrainingSession } from '../../api/calendar'
 import { getSportColor } from '../../constants/sportColors'
 import {
   getPaceUnit, getDistUnit, formatPace, isSpeedSport, parsePaceInput, toInputDist, fromInputDist,
@@ -32,6 +31,118 @@ import PlanTag from '../coach/PlanTag'
 
 const RACE_ACCENT = '#f59e0b'
 
+/** The session form while it is filled in: amounts stay as typed until saved. */
+interface SessionDraft {
+  sportType: string
+  description: string
+  goals: Set<SessionGoalKey>
+  plannedDistanceKm: string
+  plannedDurationMins: string
+  targetAvgPace: string
+  targetPaceMin: string
+  targetPaceMax: string
+  targetHrZone: string
+  targetZonePct: string
+  segments: Segment[]
+  workoutTemplateId: number | null
+}
+
+function emptyDraft(sportType: string): SessionDraft {
+  return {
+    sportType,
+    description: '',
+    goals: new Set(),
+    plannedDistanceKm: '',
+    plannedDurationMins: '',
+    targetAvgPace: '',
+    targetPaceMin: '',
+    targetPaceMax: '',
+    targetHrZone: '',
+    targetZonePct: '80',
+    segments: [],
+    workoutTemplateId: null,
+  }
+}
+
+/** A goal's fields once it is removed. */
+const GOAL_CLEARED: Record<SessionGoalKey, Partial<SessionDraft>> = {
+  distance: { plannedDistanceKm: '' },
+  duration: { plannedDurationMins: '' },
+  avg_pace: { targetAvgPace: '' },
+  pace_range: { targetPaceMin: '', targetPaceMax: '' },
+  hr_zone: { targetHrZone: '', targetZonePct: '80' },
+  segments: { segments: [], workoutTemplateId: null },
+}
+
+/** A goal's starting values when it is added, keeping any already typed. */
+function goalDefaults(key: SessionGoalKey, d: SessionDraft): Partial<SessionDraft> {
+  const perKm = getPaceUnit(d.sportType) === 'min/km'
+  switch (key) {
+    case 'distance': return { plannedDistanceKm: d.plannedDistanceKm || '10' }
+    case 'duration': return { plannedDurationMins: d.plannedDurationMins || '60' }
+    case 'avg_pace': return { targetAvgPace: d.targetAvgPace || (perKm ? '5.5' : '28') }
+    case 'pace_range': return {
+      targetPaceMin: d.targetPaceMin || (perKm ? '5.0' : '25'),
+      targetPaceMax: d.targetPaceMax || (perKm ? '6.0' : '32'),
+    }
+    case 'hr_zone': return { targetHrZone: d.targetHrZone || '2' }
+    case 'segments': return {}
+  }
+}
+
+function draftFromSession(s: TrainingSession): SessionDraft {
+  const segments = Array.isArray(s.segments) ? s.segments : []
+  const hasSegments = segments.length > 0
+  // Paces are stored as decimals: shown as M:SS for pace sports, X.X for speed sports
+  const useSpeed = isSpeedSport(s.sport_type)
+  const goals = new Set<SessionGoalKey>()
+  // A distance computed from the segments is not a goal of its own
+  if (s.planned_distance_km != null && !hasSegments) goals.add('distance')
+  if (s.planned_duration_mins != null) goals.add('duration')
+  if (s.target_avg_pace != null) goals.add('avg_pace')
+  if (s.target_pace_min != null || s.target_pace_max != null) goals.add('pace_range')
+  if (s.target_hr_zone != null) goals.add('hr_zone')
+  if (hasSegments) goals.add('segments')
+  return {
+    sportType: s.sport_type,
+    description: s.description || '',
+    goals,
+    plannedDistanceKm: s.planned_distance_km != null && !hasSegments ? toInputDist(s.planned_distance_km, s.sport_type) : '',
+    plannedDurationMins: s.planned_duration_mins != null ? String(s.planned_duration_mins) : '',
+    targetAvgPace: s.target_avg_pace != null ? formatPace(s.target_avg_pace, useSpeed) : '',
+    targetPaceMin: s.target_pace_min != null ? formatPace(s.target_pace_min, useSpeed) : '',
+    targetPaceMax: s.target_pace_max != null ? formatPace(s.target_pace_max, useSpeed) : '',
+    targetHrZone: s.target_hr_zone != null ? String(s.target_hr_zone) : '',
+    targetZonePct: s.target_zone_pct != null ? String(s.target_zone_pct) : '80',
+    segments,
+    workoutTemplateId: hasSegments ? s.workout_template_id ?? null : null,
+  }
+}
+
+/** The fields to save: a goal not in the form is sent as null, which clears it. */
+function sessionFields(d: SessionDraft): SessionFields {
+  const useSpeed = isSpeedSport(d.sportType)
+  const withRange = d.goals.has('pace_range')
+  const withZone = d.goals.has('hr_zone') && d.targetHrZone !== ''
+  const withSegments = d.goals.has('segments') && d.segments.length > 0
+  const distance = d.goals.has('distance') ? fromInputDist(d.plannedDistanceKm, d.sportType) : null
+  // Without a distance goal the segments' total stands in, so the activity can be matched
+  const segmentsKm = withSegments ? segmentsTotalKm(d.segments) : 0
+  return {
+    sport_type: d.sportType,
+    description: d.description || undefined,
+    planned_distance_km: segmentsKm > 0 && !distance ? Math.round(segmentsKm * 10) / 10 : distance,
+    planned_duration_mins: d.goals.has('duration') && d.plannedDurationMins ? parseFloat(d.plannedDurationMins) : null,
+    target_avg_pace: d.goals.has('avg_pace') && d.targetAvgPace ? parsePaceInput(d.targetAvgPace, useSpeed) : null,
+    target_pace_min: withRange && d.targetPaceMin ? parsePaceInput(d.targetPaceMin, useSpeed) : null,
+    target_pace_max: withRange && d.targetPaceMax ? parsePaceInput(d.targetPaceMax, useSpeed) : null,
+    target_hr_zone: withZone ? parseInt(d.targetHrZone) : null,
+    target_zone_pct: withZone ? (d.targetZonePct ? parseFloat(d.targetZonePct) : 80) : null,
+    segments: withSegments ? d.segments : null,
+    workout_template_id: withSegments ? d.workoutTemplateId : null,
+  }
+}
+
 /** A day's planned sessions and race events, and the form to add or edit them. */
 export default function SessionModal({
   date, sessions, scores, races, onAdd, onCopy, onUpdate, onDelete,
@@ -41,9 +152,9 @@ export default function SessionModal({
   sessions: TrainingSession[]
   scores: SessionScoresResponse | undefined
   races: RaceEvent[]
-  onAdd: (data: Record<string, unknown>) => void
+  onAdd: (fields: SessionFields) => void
   onCopy: (session: TrainingSession, targetDate: string) => void
-  onUpdate: (id: number, data: Record<string, unknown>) => void
+  onUpdate: (id: number, fields: SessionFields) => void
   onDelete: (id: number) => void
   onAddRace: (race: RaceEventInput) => void
   onUpdateRace: (id: number, race: RaceEventInput) => void
@@ -52,24 +163,13 @@ export default function SessionModal({
 }) {
   const { theme } = useTheme()
   const isLight = theme === 'light'
-  const [sportType, setSportType] = useState('Run')
-  const [description, setDescription] = useState('')
   const [editingId, setEditingId] = useState<number | null>(null)
+  const [draft, setDraft] = useState<SessionDraft>(() => emptyDraft('Run'))
+  const [showGoalPicker, setShowGoalPicker] = useState(false)
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
   const [copyingSessionId, setCopyingSessionId] = useState<number | null>(null)
   const [copyMonth, setCopyMonth] = useState(() => startOfMonth(parseISO(date)))
-  const [activeGoals, setActiveGoals] = useState<Set<SessionGoalKey>>(new Set())
-  const [plannedDistanceKm, setPlannedDistanceKm] = useState<string>('')
-  const [plannedDurationMins, setPlannedDurationMins] = useState<string>('')
-  const [targetAvgPace, setTargetAvgPace] = useState<string>('')
-  const [targetPaceMin, setTargetPaceMin] = useState<string>('')
-  const [targetPaceMax, setTargetPaceMax] = useState<string>('')
-  const [targetHrZone, setTargetHrZone] = useState<string>('')
-  const [targetZonePct, setTargetZonePct] = useState<string>('80')
-  const [showGoalPicker, setShowGoalPicker] = useState(false)
-  const [segments, setSegments] = useState<Segment[]>([])
-  const [workoutTemplateId, setWorkoutTemplateId] = useState<number | null>(null)
-  const [showTemplatePicker, setShowTemplatePicker] = useState(false)
   const [saveTemplateName, setSaveTemplateName] = useState('')
   const [showSaveTemplate, setShowSaveTemplate] = useState(false)
   const [showRaceForm, setShowRaceForm] = useState(false)
@@ -81,9 +181,19 @@ export default function SessionModal({
   const editingSession = sessions.find(s => s.id === editingId) ?? null
   const editColor = editingSession ? getSportColor(editingSession.sport_type) : null
 
-  const { data: templates } = useWorkoutTemplates(sportType)
+  const { data: templates } = useWorkoutTemplates(draft.sportType)
   const createTemplate = useCreateWorkoutTemplate()
   const { toast } = useToast()
+
+  const patch = (fields: Partial<SessionDraft>) => setDraft(d => ({ ...d, ...fields }))
+
+  /** Fills the form, or empties it, and closes its pickers. */
+  function loadForm(id: number | null, next: SessionDraft) {
+    setEditingId(id)
+    setDraft(next)
+    setShowGoalPicker(false)
+    setShowTemplatePicker(false)
+  }
 
   function startEditRace(r: RaceEvent) {
     setEditingRace(r)
@@ -96,160 +206,57 @@ export default function SessionModal({
   }
 
   function startEdit(s: TrainingSession) {
-    setEditingId(s.id)
-    setSportType(s.sport_type)
-    setDescription(s.description || '')
-    const goals = new Set<SessionGoalKey>()
-    const hasSegments = s.segments && Array.isArray(s.segments) && s.segments.length > 0
-    // Don't show distance as a separate goal if it was auto-computed from segments
-    if (s.planned_distance_km != null && !hasSegments) {
-      goals.add('distance')
-      setPlannedDistanceKm(toInputDist(s.planned_distance_km, s.sport_type))
-    } else { setPlannedDistanceKm('') }
-    if (s.planned_duration_mins != null) { goals.add('duration'); setPlannedDurationMins(String(s.planned_duration_mins)) } else { setPlannedDurationMins('') }
-    // User enters M:SS (or decimal) for pace sports, X.X for speed sports — format stored decimal back into M:SS for display
-    const useSpeed = isSpeedSport(s.sport_type)
-    if (s.target_avg_pace != null) { goals.add('avg_pace'); setTargetAvgPace(formatPace(s.target_avg_pace, useSpeed)) } else { setTargetAvgPace('') }
-    if (s.target_pace_min != null || s.target_pace_max != null) { goals.add('pace_range') }
-    setTargetPaceMin(s.target_pace_min != null ? formatPace(s.target_pace_min, useSpeed) : '')
-    setTargetPaceMax(s.target_pace_max != null ? formatPace(s.target_pace_max, useSpeed) : '')
-    if (s.target_hr_zone != null) { goals.add('hr_zone') }
-    setTargetHrZone(s.target_hr_zone != null ? String(s.target_hr_zone) : '')
-    setTargetZonePct(s.target_zone_pct != null ? String(s.target_zone_pct) : '80')
-    if (hasSegments && s.segments) {
-      goals.add('segments')
-      setSegments(s.segments)
-      setWorkoutTemplateId(s.workout_template_id ?? null)
-    } else {
-      setSegments([])
-      setWorkoutTemplateId(null)
-    }
-    setActiveGoals(goals)
-    setShowGoalPicker(false)
-    setShowTemplatePicker(false)
+    loadForm(s.id, draftFromSession(s))
     formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
   function cancelEdit() {
-    setEditingId(null)
-    setSportType('Run')
-    setDescription('')
-    setActiveGoals(new Set())
-    setPlannedDistanceKm('')
-    setPlannedDurationMins('')
-    setTargetAvgPace('')
-    setTargetPaceMin('')
-    setTargetPaceMax('')
-    setTargetHrZone('')
-    setTargetZonePct('80')
-    setShowGoalPicker(false)
-    setSegments([])
-    setWorkoutTemplateId(null)
-    setShowTemplatePicker(false)
+    loadForm(null, emptyDraft('Run'))
+  }
+
+  function save() {
+    const fields = sessionFields(draft)
+    if (editingId) {
+      onUpdate(editingId, fields)
+      cancelEdit()
+      return
+    }
+    onAdd(fields)
+    loadForm(null, emptyDraft(draft.sportType))
   }
 
   /** Saving the session saves its workout anyway; this names it first. */
   function saveAsWorkout() {
     const name = saveTemplateName.trim()
     if (!name) return
-    createTemplate.mutate({ name, sport_type: sportType, segments }, {
-      onSuccess: t => { setWorkoutTemplateId(t.id); toast(`Saved as “${t.name}”`, 'success') },
+    createTemplate.mutate({ name, sport_type: draft.sportType, segments: draft.segments }, {
+      onSuccess: t => { patch({ workoutTemplateId: t.id }); toast(`Saved as “${t.name}”`, 'success') },
       onError: e => toast(errorDetail(e, 'Could not save the workout'), 'error'),
     })
     setShowSaveTemplate(false)
     setSaveTemplateName('')
   }
 
-  function buildPayload() {
-    const data: Record<string, unknown> = {
-      sport_type: sportType,
-      description: description || undefined,
-    }
-    // Distance
-    data.planned_distance_km = activeGoals.has('distance') ? fromInputDist(plannedDistanceKm, sportType) : null
-    // Duration
-    if (activeGoals.has('duration') && plannedDurationMins) {
-      data.planned_duration_mins = parseFloat(plannedDurationMins)
-    } else {
-      data.planned_duration_mins = null
-    }
-    // Avg Pace
-    const useSpeed = isSpeedSport(sportType)
-    if (activeGoals.has('avg_pace') && targetAvgPace) {
-      data.target_avg_pace = parsePaceInput(targetAvgPace, useSpeed)
-    } else {
-      data.target_avg_pace = null
-    }
-    // Pace Range
-    if (activeGoals.has('pace_range')) {
-      data.target_pace_min = targetPaceMin ? parsePaceInput(targetPaceMin, useSpeed) : null
-      data.target_pace_max = targetPaceMax ? parsePaceInput(targetPaceMax, useSpeed) : null
-    } else {
-      data.target_pace_min = null
-      data.target_pace_max = null
-    }
-    // HR Zone
-    if (activeGoals.has('hr_zone') && targetHrZone) {
-      data.target_hr_zone = parseInt(targetHrZone)
-      data.target_zone_pct = targetZonePct ? parseFloat(targetZonePct) : 80
-    } else {
-      data.target_hr_zone = null
-      data.target_zone_pct = null
-    }
-    // Structured Workout
-    if (activeGoals.has('segments') && segments.length > 0) {
-      data.segments = segments
-      data.workout_template_id = workoutTemplateId
-      // Auto-compute planned distance from segments for activity matching
-      const totalKm = segmentsTotalKm(segments)
-      if (totalKm > 0 && !data.planned_distance_km) {
-        data.planned_distance_km = Math.round(totalKm * 10) / 10
-      }
-    } else {
-      data.segments = null
-      data.workout_template_id = null
-    }
-    return data
-  }
-
   function addGoal(key: SessionGoalKey) {
-    setActiveGoals(prev => new Set(prev).add(key))
+    patch({ ...goalDefaults(key, draft), goals: new Set(draft.goals).add(key) })
     setShowGoalPicker(false)
-    if (key === 'distance' && !plannedDistanceKm) setPlannedDistanceKm('10')
-    if (key === 'duration' && !plannedDurationMins) setPlannedDurationMins('60')
-    if (key === 'avg_pace' && !targetAvgPace) {
-      setTargetAvgPace(getPaceUnit(sportType) === 'min/km' ? '5.5' : '28')
-    }
-    if (key === 'pace_range') {
-      if (!targetPaceMin) setTargetPaceMin(getPaceUnit(sportType) === 'min/km' ? '5.0' : '25')
-      if (!targetPaceMax) setTargetPaceMax(getPaceUnit(sportType) === 'min/km' ? '6.0' : '32')
-    }
-    if (key === 'hr_zone' && !targetHrZone) setTargetHrZone('2')
   }
 
   function removeGoal(key: SessionGoalKey) {
-    setActiveGoals(prev => {
-      const next = new Set(prev)
-      next.delete(key)
-      return next
-    })
-    // Clear values for removed goal
-    if (key === 'distance') setPlannedDistanceKm('')
-    if (key === 'duration') setPlannedDurationMins('')
-    if (key === 'avg_pace') setTargetAvgPace('')
-    if (key === 'pace_range') { setTargetPaceMin(''); setTargetPaceMax('') }
-    if (key === 'hr_zone') { setTargetHrZone(''); setTargetZonePct('80') }
-    if (key === 'segments') { setSegments([]); setWorkoutTemplateId(null); setShowTemplatePicker(false) }
+    const goals = new Set(draft.goals)
+    goals.delete(key)
+    patch({ ...GOAL_CLEARED[key], goals })
+    if (key === 'segments') setShowTemplatePicker(false)
   }
 
-  const paceUnit = getPaceUnit(sportType)
+  const paceUnit = getPaceUnit(draft.sportType)
   return (
     <Modal onClose={onClose} className="p-6 max-w-md max-h-[85vh]">
         <div className="flex items-center justify-between mb-5">
           <div>
             <div className="eyebrow mb-0.5">{format(parseISO(date), 'EEEE')}</div>
             <h3
-              className={clsx('text-lg font-semibold tracking-tight tabular-nums', isLight ? 'text-gray-900' : 'text-gray-100')}
+              className="text-lg font-semibold tracking-tight tabular-nums text-fg-strong"
               style={{ letterSpacing: '-0.02em' }}
             >
               {format(parseISO(date), 'MMM d, yyyy')}
@@ -445,8 +452,8 @@ export default function SessionModal({
           <div>
             <label className="text-xs text-gray-500 mb-1 block">Session Type</label>
             <SportTypeCombobox
-              value={sportType}
-              onChange={setSportType}
+              value={draft.sportType}
+              onChange={sportType => patch({ sportType })}
               className="input w-full"
               isLight={isLight}
             />
@@ -455,35 +462,35 @@ export default function SessionModal({
             <label className="text-xs text-gray-500 mb-1 block">Description</label>
             <textarea
               placeholder="e.g. Easy 10k recovery run"
-              value={description}
-              onChange={e => setDescription(e.target.value)}
+              value={draft.description}
+              onChange={e => patch({ description: e.target.value })}
               className="input w-full"
               rows={3}
             />
           </div>
 
           {/* Goal cards */}
-          {activeGoals.size > 0 && (
+          {draft.goals.size > 0 && (
             <div className="space-y-2">
-              {activeGoals.has('distance') && (
+              {draft.goals.has('distance') && (
                 <GoalCard goal="distance" onRemove={() => removeGoal('distance')}>
                   <div className="flex items-center gap-2">
                     <input
                       type="text" inputMode="decimal" placeholder="10"
-                      value={plannedDistanceKm} onChange={e => setPlannedDistanceKm(e.target.value)}
+                      value={draft.plannedDistanceKm} onChange={e => patch({ plannedDistanceKm: e.target.value })}
                       className="input w-24"
                     />
-                    <span className="text-xs text-gray-500">{getDistUnit(sportType)}</span>
+                    <span className="text-xs text-gray-500">{getDistUnit(draft.sportType)}</span>
                   </div>
                 </GoalCard>
               )}
 
-              {activeGoals.has('duration') && (
+              {draft.goals.has('duration') && (
                 <GoalCard goal="duration" onRemove={() => removeGoal('duration')}>
                   <div className="flex items-center gap-2">
                     <input
                       type="text" inputMode="decimal" placeholder="60"
-                      value={plannedDurationMins} onChange={e => setPlannedDurationMins(e.target.value)}
+                      value={draft.plannedDurationMins} onChange={e => patch({ plannedDurationMins: e.target.value })}
                       className="input w-24"
                     />
                     <span className="text-xs text-gray-500">min</span>
@@ -491,12 +498,12 @@ export default function SessionModal({
                 </GoalCard>
               )}
 
-              {activeGoals.has('avg_pace') && (
+              {draft.goals.has('avg_pace') && (
                 <GoalCard goal="avg_pace" onRemove={() => removeGoal('avg_pace')}>
                   <div className="flex items-center gap-2">
                     <input
                       type="text" inputMode="decimal" placeholder={paceUnit === 'min/km' ? '5:10' : '28'}
-                      value={targetAvgPace} onChange={e => setTargetAvgPace(e.target.value)}
+                      value={draft.targetAvgPace} onChange={e => patch({ targetAvgPace: e.target.value })}
                       className="input w-24"
                     />
                     <span className="text-xs text-gray-500">{paceUnit}</span>
@@ -504,7 +511,7 @@ export default function SessionModal({
                 </GoalCard>
               )}
 
-              {activeGoals.has('pace_range') && (
+              {draft.goals.has('pace_range') && (
                 <GoalCard goal="pace_range" onRemove={() => removeGoal('pace_range')}>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
@@ -513,7 +520,7 @@ export default function SessionModal({
                       </label>
                       <input
                         type="text" inputMode="decimal" placeholder={paceUnit === 'min/km' ? '4:50' : '25'}
-                        value={targetPaceMin} onChange={e => setTargetPaceMin(e.target.value)}
+                        value={draft.targetPaceMin} onChange={e => patch({ targetPaceMin: e.target.value })}
                         className="input w-full"
                       />
                     </div>
@@ -523,7 +530,7 @@ export default function SessionModal({
                       </label>
                       <input
                         type="text" inputMode="decimal" placeholder={paceUnit === 'min/km' ? '5:20' : '32'}
-                        value={targetPaceMax} onChange={e => setTargetPaceMax(e.target.value)}
+                        value={draft.targetPaceMax} onChange={e => patch({ targetPaceMax: e.target.value })}
                         className="input w-full"
                       />
                     </div>
@@ -531,12 +538,12 @@ export default function SessionModal({
                 </GoalCard>
               )}
 
-              {activeGoals.has('hr_zone') && (
+              {draft.goals.has('hr_zone') && (
                 <GoalCard goal="hr_zone" onRemove={() => removeGoal('hr_zone')}>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="eyebrow mb-1 block">Zone</label>
-                      <select value={targetHrZone} onChange={e => setTargetHrZone(e.target.value)} className="select w-full">
+                      <select value={draft.targetHrZone} onChange={e => patch({ targetHrZone: e.target.value })} className="select w-full">
                         <option value="">Select</option>
                         {[1, 2, 3, 4, 5].map(z => <option key={z} value={z}>Zone {z}</option>)}
                       </select>
@@ -545,7 +552,7 @@ export default function SessionModal({
                       <label className="eyebrow mb-1 block">Target %</label>
                       <input
                         type="text" inputMode="decimal" placeholder="80"
-                        value={targetZonePct} onChange={e => setTargetZonePct(e.target.value)}
+                        value={draft.targetZonePct} onChange={e => patch({ targetZonePct: e.target.value })}
                         className="input w-full"
                       />
                     </div>
@@ -553,7 +560,7 @@ export default function SessionModal({
                 </GoalCard>
               )}
 
-              {activeGoals.has('segments') && (
+              {draft.goals.has('segments') && (
                 <GoalCard goal="segments" onRemove={() => removeGoal('segments')}>
                   {/* Template picker */}
                   <div className="mb-2">
@@ -570,13 +577,12 @@ export default function SessionModal({
                           <button
                             key={t.id}
                             onClick={() => {
-                              setSegments(t.segments || [])
-                              setWorkoutTemplateId(t.id)
+                              patch({ segments: t.segments || [], workoutTemplateId: t.id })
                               setShowTemplatePicker(false)
                             }}
                             className={clsx(
                               'w-full text-left text-xs rounded px-2 py-1.5 border transition-colors',
-                              workoutTemplateId === t.id
+                              draft.workoutTemplateId === t.id
                                 ? 'border-blue-400/40 bg-blue-400/10 text-blue-400'
                                 : 'border-surface-600 hover:border-surface-500 text-gray-300'
                             )}
@@ -588,22 +594,22 @@ export default function SessionModal({
                       </div>
                     )}
                     {showTemplatePicker && (!templates || templates.length === 0) && (
-                      <div className="text-[10px] text-gray-500 mt-1">No templates for {sportType}</div>
+                      <div className="text-[10px] text-gray-500 mt-1">No templates for {draft.sportType}</div>
                     )}
                   </div>
                   <SegmentListBuilder
-                    segments={segments}
-                    onChange={setSegments}
+                    segments={draft.segments}
+                    onChange={segments => patch({ segments })}
                     paceUnit={paceUnit}
-                    sportType={sportType}
+                    sportType={draft.sportType}
                     compact
                   />
                   {/* Save as template */}
-                  {segments.length > 0 && (
+                  {draft.segments.length > 0 && (
                     <div className="mt-2">
                       {!showSaveTemplate ? (
                         <button
-                          onClick={() => { setShowSaveTemplate(true); setSaveTemplateName(description || '') }}
+                          onClick={() => { setShowSaveTemplate(true); setSaveTemplateName(draft.description || '') }}
                           className="text-[11px] rounded px-2 py-1 border transition-all"
                           style={{ borderColor: '#a855f740', color: '#a855f7', backgroundColor: '#a855f710' }}
                         >
@@ -662,7 +668,7 @@ export default function SessionModal({
               <div className="flex flex-wrap gap-1.5 mt-2">
                 {SESSION_GOAL_KEYS.map(key => {
                   const { label, color, Icon } = SESSION_GOALS[key]
-                  const isActive = activeGoals.has(key)
+                  const isActive = draft.goals.has(key)
                   return (
                     <button
                       key={key}
@@ -687,28 +693,7 @@ export default function SessionModal({
 
           <div className="flex gap-2 pt-2">
             <button
-              onClick={() => {
-                const payload = buildPayload()
-                if (editingId) {
-                  onUpdate(editingId, payload)
-                  cancelEdit()
-                } else {
-                  onAdd(payload)
-                  setDescription('')
-                  setActiveGoals(new Set())
-                  setPlannedDistanceKm('')
-                  setPlannedDurationMins('')
-                  setTargetAvgPace('')
-                  setTargetPaceMin('')
-                  setTargetPaceMax('')
-                  setTargetHrZone('')
-                  setTargetZonePct('80')
-                  setShowGoalPicker(false)
-                  setSegments([])
-                  setWorkoutTemplateId(null)
-                  setShowTemplatePicker(false)
-                }
-              }}
+              onClick={save}
               className={clsx('flex-1 rounded py-2 text-sm font-medium transition-colors', isLight ? 'bg-gray-900 text-white hover:bg-gray-800' : 'bg-white/15 text-gray-100 border border-white/20 hover:bg-white/20')}
             >
               {editingId ? 'Save Changes' : 'Add'}

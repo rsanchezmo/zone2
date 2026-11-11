@@ -1,8 +1,6 @@
 import { useState } from 'react'
 import clsx from 'clsx'
-import {
-  useBackfillStreams, type CacheCompleteness as CacheCompletenessData,
-} from '../../api/hooks'
+import { useBackfillStreams, type CacheCompleteness as CacheCompletenessData } from '../../api/sync'
 import ChartPanel from '../shared/ChartPanel'
 import { useTheme } from '../../hooks/useTheme'
 
@@ -40,7 +38,7 @@ export default function CacheCompleteness({ completeness: cacheCompleteness, syn
       }
       footer={
         <div className="flex items-center justify-between">
-          <span className={clsx('text-[11px]', 'text-gray-500')}>
+          <span className="text-[11px] text-gray-500">
             {allComplete
               ? `All ${total.toLocaleString()} activities fully cached`
               : `${missingCount.toLocaleString()} item${missingCount !== 1 ? 's' : ''} missing · ${total.toLocaleString()} total`}
@@ -60,12 +58,12 @@ export default function CacheCompleteness({ completeness: cacheCompleteness, syn
         {/* Streams */}
         <div>
           <div className="flex items-center justify-between mb-1">
-            <span className={clsx('text-sm', isLight ? 'text-gray-600' : 'text-gray-400')}>Streams</span>
+            <span className="text-sm text-fg-muted">Streams</span>
             <span className="text-sm font-mono" style={{ color: streams.missing === 0 ? '#22c55e' : '#eab308' }}>
               {streams.complete.toLocaleString()} <span className="text-gray-500">/</span> {streams.total_expected.toLocaleString()}
             </span>
           </div>
-          <div className={clsx('h-2 rounded-full overflow-hidden', 'bg-surface-700')}>
+          <div className="h-2 rounded-full overflow-hidden bg-surface-700">
             <div
               className="h-full rounded-full transition-all"
               style={{ width: `${Math.min(streamsPct, 100)}%`, backgroundColor: streams.missing === 0 ? '#22c55e' : '#eab308' }}
@@ -76,12 +74,12 @@ export default function CacheCompleteness({ completeness: cacheCompleteness, syn
         {photos.total_expected > 0 && (
           <div>
             <div className="flex items-center justify-between mb-1">
-              <span className={clsx('text-sm', isLight ? 'text-gray-600' : 'text-gray-400')}>Photos</span>
+              <span className="text-sm text-fg-muted">Photos</span>
               <span className="text-sm font-mono" style={{ color: photos.missing === 0 ? '#22c55e' : '#eab308' }}>
                 {photos.complete.toLocaleString()} <span className="text-gray-500">/</span> {photos.total_expected.toLocaleString()}
               </span>
             </div>
-            <div className={clsx('h-2 rounded-full overflow-hidden', 'bg-surface-700')}>
+            <div className="h-2 rounded-full overflow-hidden bg-surface-700">
               <div
                 className="h-full rounded-full transition-all"
                 style={{ width: `${Math.min(photosPct, 100)}%`, backgroundColor: photos.missing === 0 ? '#22c55e' : '#eab308' }}
@@ -93,12 +91,12 @@ export default function CacheCompleteness({ completeness: cacheCompleteness, syn
         {detail && detail.total_expected > 0 && (
           <div>
             <div className="flex items-center justify-between mb-1">
-              <span className={clsx('text-sm', isLight ? 'text-gray-600' : 'text-gray-400')}>Detail</span>
+              <span className="text-sm text-fg-muted">Detail</span>
               <span className="text-sm font-mono" style={{ color: detail.missing === 0 ? '#22c55e' : '#eab308' }}>
                 {detail.complete.toLocaleString()} <span className="text-gray-500">/</span> {detail.total_expected.toLocaleString()}
               </span>
             </div>
-            <div className={clsx('h-2 rounded-full overflow-hidden', 'bg-surface-700')}>
+            <div className="h-2 rounded-full overflow-hidden bg-surface-700">
               <div
                 className="h-full rounded-full transition-all"
                 style={{ width: `${Math.min(detailPct, 100)}%`, backgroundColor: detail.missing === 0 ? '#22c55e' : '#eab308' }}
@@ -111,17 +109,17 @@ export default function CacheCompleteness({ completeness: cacheCompleteness, syn
       {showCacheDetails && !allComplete && (
         <div className={clsx('mt-4 pt-4 border-t text-xs space-y-1', isLight ? 'border-surface-700' : 'border-surface-600/50')}>
           {streams.missing > 0 && (
-            <div className={clsx(isLight ? 'text-gray-500' : 'text-gray-400')}>
+            <div className="text-fg-dim">
               <span className="font-mono tabular-nums">{streams.missing}</span> activit{streams.missing !== 1 ? 'ies' : 'y'} missing streams
             </div>
           )}
           {photos.missing > 0 && (
-            <div className={clsx(isLight ? 'text-gray-500' : 'text-gray-400')}>
+            <div className="text-fg-dim">
               <span className="font-mono tabular-nums">{photos.missing}</span> activit{photos.missing !== 1 ? 'ies' : 'y'} missing photos (of {photos.total_expected} with photos)
             </div>
           )}
           {detail && detail.missing > 0 && (
-            <div className={clsx(isLight ? 'text-gray-500' : 'text-gray-400')}>
+            <div className="text-fg-dim">
               <span className="font-mono tabular-nums">{detail.missing}</span> activit{detail.missing !== 1 ? 'ies' : 'y'} missing detail (description, laps, gear, etc.)
             </div>
           )}

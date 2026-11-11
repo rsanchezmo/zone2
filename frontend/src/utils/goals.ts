@@ -1,4 +1,4 @@
-import type { Goal } from '../api/hooks'
+import type { Goal } from '../api/goals'
 import { getSportCategory } from './formatSpeed'
 
 /** A goal bar's colour once the goal is met. */

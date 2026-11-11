@@ -1,4 +1,4 @@
-import { useCoachPlans } from '../api/hooks'
+import { useCoachPlans } from '../api/coach'
 import PageHeader from '../components/shared/PageHeader'
 import PlanCard from '../components/coach/PlanCard'
 import { CoachNotes } from '../components/coach/CoachLog'

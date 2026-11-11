@@ -6,6 +6,18 @@
   --color-surface-700: #141414;
   --color-surface-600: #1e1e1e;
   --color-surface-500: #2a2a2a;
+
+  /* Text levels, strongest first; .light points each at its own gray */
+  --color-fg-strong: var(--color-gray-100);
+  --color-fg: var(--color-gray-300);
+  --color-fg-muted: var(--color-gray-400);
+  --color-fg-dim: var(--color-gray-400);
+  --color-fg-subtle: var(--color-gray-500);
+  --color-fg-faint: var(--color-gray-600);
+  /* Skeleton bars and progress tracks */
+  --color-track: var(--color-surface-700);
+  /* Hover washes: white over dark, black over light */
+  --color-tint: var(--color-white);
 }
 
 body {
@@ -111,6 +123,15 @@ body::before {
   --color-gray-200: #374151;
   --color-gray-300: #4b5563;
   --color-gray-400: #6b7280;
+
+  --color-fg-strong: var(--color-gray-900);
+  --color-fg: var(--color-gray-700);
+  --color-fg-muted: var(--color-gray-600);
+  --color-fg-dim: var(--color-gray-500);
+  --color-fg-subtle: var(--color-gray-400);
+  --color-fg-faint: var(--color-gray-400);
+  --color-track: var(--color-surface-600);
+  --color-tint: var(--color-black);
 
   color: #1f2937;
 }

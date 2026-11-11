@@ -95,7 +95,7 @@ export default function MonthGrid({
                           'relative min-h-[54px] md:min-h-[120px] p-1 md:p-2 rounded-lg border transition-all duration-150',
                           'cursor-pointer',
                           inMonth
-                            ? isLight ? 'border-surface-600 bg-white' : 'border-surface-600 bg-surface-800'
+                            ? 'border-surface-600 bg-surface-800'
                             : isLight ? 'border-transparent bg-gray-50/50' : 'border-transparent bg-surface-900/50',
                           isToday(day) && (isLight ? 'ring-1 ring-[#9ca3af]/40 border-surface-500' : 'ring-1 ring-gray-500/30 border-gray-500/40'),
                           dragOverDate === dateStr ? 'border-gray-400/60 ring-2 ring-gray-400/20 bg-gray-400/[0.03]' : 'hover:border-surface-500',
@@ -105,7 +105,7 @@ export default function MonthGrid({
                           <span className={clsx(
                             'text-xs font-medium',
                             isToday(day) ? (isLight ? 'bg-gray-900 text-white w-5 h-5 rounded-full flex items-center justify-center text-[10px]' : 'bg-gray-400/20 text-gray-100 w-5 h-5 rounded-full flex items-center justify-center text-[10px]')
-                              : inMonth ? (isLight ? 'text-gray-600' : 'text-gray-400')
+                              : inMonth ? 'text-fg-muted'
                               : 'text-gray-600',
                           )}>
                             {format(day, 'd')}
@@ -161,9 +161,9 @@ export default function MonthGrid({
                         <div className="hidden md:block">
                           <div className="space-y-0.5">
                             {dayActivities.map((a) => (
-                              <Link key={a.id} to={`/activities/${a.id}`} onClick={e => e.stopPropagation()} className={clsx('flex items-center gap-1.5 group rounded px-1 py-0.5 -mx-1 transition-colors', isLight ? 'hover:bg-black/[0.04]' : 'hover:bg-white/[0.04]')}>
+                              <Link key={a.id} to={`/activities/${a.id}`} onClick={e => e.stopPropagation()} className="flex items-center gap-1.5 group rounded px-1 py-0.5 -mx-1 transition-colors hover:bg-tint/[0.04]">
                                 <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: getSportColor(a.sport_type) }} />
-                                <span className={clsx('text-[10px] truncate leading-tight', isLight ? 'text-gray-500 group-hover:text-gray-900' : 'text-gray-400 group-hover:text-gray-100')}>{a.name}</span>
+                                <span className="text-[10px] truncate leading-tight text-fg-dim group-hover:text-fg-strong">{a.name}</span>
                               </Link>
                             ))}
                           </div>

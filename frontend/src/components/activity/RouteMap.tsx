@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import clsx from 'clsx'
-import type { ActivityDetail, ActivityRoute } from '../../api/hooks'
+import type { ActivityDetail } from '../../api/activities'
+import type { ActivityRoute } from '../../api/coverage'
 import { getSportColor } from '../../constants/sportColors'
 import {
   getSportCategory, isOnFoot, convertSpeed, formatPace, formatClockDuration, isSpeedSport,

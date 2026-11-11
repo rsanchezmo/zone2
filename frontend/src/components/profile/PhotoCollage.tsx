@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
-import { useRecentPhotos } from '../../api/hooks'
+import { useRecentPhotos } from '../../api/activities'
 import PhotoLightbox from '../shared/PhotoLightbox'
 import { photoThumbUrl } from '../shared/photoUrls'
 

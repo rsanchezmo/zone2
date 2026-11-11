@@ -70,11 +70,11 @@ function WeekPopover({ currentWeekStart, onSelect, onClose }: {
   return (
     <div className={clsx(
       'absolute top-full mt-1 z-50 rounded-xl p-3 shadow-xl w-[260px] border',
-      isLight ? 'bg-white border-surface-600' : 'bg-surface-800 border-surface-600',
+      'bg-surface-800 border-surface-600',
     )}>
       <div className="flex items-center justify-between mb-2">
         <button onClick={() => setViewMonth(m => subMonths(m, 1))} className={clsx('px-1', isLight ? 'text-gray-400 hover:text-gray-700' : 'text-gray-400 hover:text-gray-100')}>&larr;</button>
-        <span className={clsx('text-xs font-medium', isLight ? 'text-gray-700' : 'text-gray-300')}>{format(viewMonth, 'MMMM yyyy')}</span>
+        <span className="text-xs font-medium text-fg">{format(viewMonth, 'MMMM yyyy')}</span>
         <button onClick={() => setViewMonth(m => addMonths(m, 1))} className={clsx('px-1', isLight ? 'text-gray-400 hover:text-gray-700' : 'text-gray-400 hover:text-gray-100')}>&rarr;</button>
       </div>
       <div className="grid grid-cols-7 text-center mb-1 gap-px">
@@ -100,7 +100,7 @@ function WeekPopover({ currentWeekStart, onSelect, onClose }: {
                   : isCurrent
                     ? isLight ? 'bg-surface-700 text-gray-700' : 'bg-surface-600 text-gray-300'
                     : inMonth
-                      ? isLight ? 'text-gray-600 hover:bg-surface-700' : 'text-gray-400 hover:bg-surface-700'
+                      ? 'text-fg-muted hover:bg-surface-700'
                       : isLight ? 'text-gray-300 hover:bg-gray-50' : 'text-gray-600 hover:bg-surface-700',
               )}
             >
@@ -142,11 +142,11 @@ function MonthPopover({ current, onSelect, onClose }: {
   return (
     <div className={clsx(
       'absolute top-full mt-1 z-50 rounded-xl p-3 shadow-xl w-[220px] border',
-      isLight ? 'bg-white border-surface-600' : 'bg-surface-800 border-surface-600',
+      'bg-surface-800 border-surface-600',
     )}>
       <div className="flex items-center justify-between mb-2">
         <button onClick={() => setViewYear(y => y - 1)} className={clsx('px-1', isLight ? 'text-gray-400 hover:text-gray-700' : 'text-gray-400 hover:text-gray-100')}>&larr;</button>
-        <span className={clsx('text-xs font-medium', isLight ? 'text-gray-700' : 'text-gray-300')}>{viewYear}</span>
+        <span className="text-xs font-medium text-fg">{viewYear}</span>
         <button onClick={() => setViewYear(y => y + 1)} className={clsx('px-1', isLight ? 'text-gray-400 hover:text-gray-700' : 'text-gray-400 hover:text-gray-100')}>&rarr;</button>
       </div>
       <div className="grid grid-cols-3 gap-1">
@@ -163,7 +163,7 @@ function MonthPopover({ current, onSelect, onClose }: {
                   ? isLight ? 'bg-gray-900/10 text-gray-900 font-bold' : 'bg-gray-400/20 text-gray-100 font-bold'
                   : isCurrent
                     ? isLight ? 'bg-surface-700 text-gray-700' : 'bg-surface-600 text-gray-300'
-                    : isLight ? 'text-gray-600 hover:bg-surface-700' : 'text-gray-400 hover:bg-surface-700',
+                    : 'text-fg-muted hover:bg-surface-700',
               )}
             >
               {name}

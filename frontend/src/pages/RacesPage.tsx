@@ -2,9 +2,10 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { format, parseISO, differenceInCalendarDays } from 'date-fns'
 import {
-  useRaceEvents, useCreateRaceEvent, useUpdateRaceEvent, useDeleteRaceEvent,
-  useActivitiesOnDates, type Activity, type RaceEvent, type RaceEventInput,
-} from '../api/hooks'
+  useRaceEvents, useCreateRaceEvent, useUpdateRaceEvent, useDeleteRaceEvent, type RaceEvent,
+  type RaceEventInput,
+} from '../api/races'
+import { useActivitiesOnDates, type Activity } from '../api/activities'
 import { getSportColor } from '../constants/sportColors'
 import { getPaceUnit, formatPace, isSpeedSport, formatDistExact } from '../utils/formatSpeed'
 import { localDateStr } from '../utils/dates'
@@ -173,7 +174,7 @@ export default function RacesPage() {
                         {/* Details */}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap mb-1">
-                            <span className={clsx('text-base font-semibold tracking-tight', isLight ? 'text-gray-900' : 'text-gray-100')}>{r.name}</span>
+                            <span className="text-base font-semibold tracking-tight text-fg-strong">{r.name}</span>
                             <span
                               className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.15em] px-2 py-0.5 rounded-full border font-semibold"
                               style={{ color: sportColor, borderColor: `${sportColor}40`, backgroundColor: `${sportColor}15` }}
@@ -191,7 +192,7 @@ export default function RacesPage() {
                             {r.location != null && <span className="normal-case">{r.location}</span>}
                           </div>
                           {r.description != null && (
-                            <div className={clsx('text-xs mt-2 whitespace-pre-line', isLight ? 'text-gray-500' : 'text-gray-400')}>{r.description}</div>
+                            <div className="text-xs mt-2 whitespace-pre-line text-fg-dim">{r.description}</div>
                           )}
                           {r.url != null && (
                             <a
@@ -245,7 +246,7 @@ export default function RacesPage() {
                       <div className="flex items-center gap-4">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap mb-0.5">
-                            <span className={clsx('text-sm font-semibold tracking-tight', isLight ? 'text-gray-900' : 'text-gray-100')}>{r.name}</span>
+                            <span className="text-sm font-semibold tracking-tight text-fg-strong">{r.name}</span>
                             <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: sportColor }} aria-hidden="true" />
                             <span className="text-[10px] uppercase tracking-[0.15em] text-gray-500">{r.sport_type}</span>
                             {matchedActivity && (
@@ -272,7 +273,7 @@ export default function RacesPage() {
                             )}
                           </div>
                           {r.description != null && (
-                            <div className={clsx('text-xs mt-1.5 whitespace-pre-line', isLight ? 'text-gray-400' : 'text-gray-500')}>{r.description}</div>
+                            <div className="text-xs mt-1.5 whitespace-pre-line text-fg-subtle">{r.description}</div>
                           )}
                         </div>
                         <RowActions
@@ -293,7 +294,7 @@ export default function RacesPage() {
           {upcoming.length === 0 && past.length === 0 && !showForm && (
             <div className="panel p-10 text-center flex flex-col items-center gap-3">
               <div style={{ color: RACE_ACCENT }}><FlagIcon size={32} /></div>
-              <div className={clsx('text-sm', 'text-gray-500')}>No races yet</div>
+              <div className="text-sm text-gray-500">No races yet</div>
               <button
                 onClick={() => { setEditing(null); setShowForm(true) }}
                 className="text-[11px] uppercase tracking-[0.15em] font-semibold"

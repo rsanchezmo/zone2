@@ -1,4 +1,3 @@
-import clsx from 'clsx'
 import { useTheme } from '../../hooks/useTheme'
 
 export interface HeroStatProps {
@@ -32,11 +31,11 @@ export default function HeroStat({ label, value, unit, footnote, accent, tone = 
           {value}
         </span>
         {unit && (
-          <span className={clsx('text-sm font-medium', isLight ? 'text-gray-400' : 'text-gray-500')}>{unit}</span>
+          <span className="text-sm font-medium text-fg-subtle">{unit}</span>
         )}
       </div>
       {footnote && (
-        <div className={clsx('text-[11px] mt-1', 'text-gray-500')}>{footnote}</div>
+        <div className="text-[11px] mt-1 text-gray-500">{footnote}</div>
       )}
     </div>
   )

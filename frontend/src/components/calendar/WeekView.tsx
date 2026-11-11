@@ -34,7 +34,7 @@ export default function WeekView({
     <div
       className={clsx(
         'rounded-xl border overflow-hidden divide-y',
-        isLight ? 'bg-white border-surface-600 divide-surface-600' : 'bg-surface-800 border-surface-600 divide-surface-600',
+        'bg-surface-800 border-surface-600 divide-surface-600',
       )}
       style={{ animation: 'fadeIn 200ms ease-out' }}
     >
@@ -76,7 +76,7 @@ export default function WeekView({
               <div
                 className={clsx(
                   'font-mono tabular-nums text-lg leading-none mt-0.5',
-                  today ? (isLight ? 'text-gray-900 font-semibold' : 'text-gray-100 font-semibold') : 'text-gray-400',
+                  today ? 'font-semibold text-fg-strong' : 'text-gray-400',
                 )}
                 style={{ letterSpacing: '-0.02em' }}
               >
@@ -113,7 +113,7 @@ export default function WeekView({
                     to={`/activities/${a.id}`}
                     className={clsx(
                       'flex items-center gap-2 rounded-lg px-2.5 py-1.5 group transition-colors',
-                      isLight ? 'hover:bg-black/[0.04]' : 'hover:bg-white/[0.04]',
+                      'hover:bg-tint/[0.04]',
                     )}
                   >
                     <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
@@ -187,7 +187,7 @@ export default function WeekView({
                   onClick={() => onOpenDay(dateStr)}
                   className={clsx(
                     'w-full text-left text-xs rounded-lg px-2.5 py-1.5 transition-colors',
-                    isLight ? 'text-gray-400 hover:text-gray-700 hover:bg-black/[0.03]' : 'text-gray-600 hover:text-gray-300 hover:bg-white/[0.03]',
+                    'text-fg-faint hover:text-fg hover:bg-tint/[0.03]',
                   )}
                 >
                   Nothing planned — add a session

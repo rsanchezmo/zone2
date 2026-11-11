@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { useSetWatchWorkouts, useWatchWorkouts } from '../../api/hooks'
+import { useSetWatchWorkouts, useWatchWorkouts } from '../../api/calendar'
 import { useTheme } from '../../hooks/useTheme'
 import { useToast } from '../../hooks/useToast'
 
@@ -22,7 +22,7 @@ export default function WatchWorkouts() {
   return (
     <section>
       <div className="eyebrow mb-3">Garmin watch</div>
-      <div className={clsx('rounded-lg border px-4 py-3 flex items-center justify-between gap-4', isLight ? 'bg-white border-surface-600' : 'bg-surface-800 border-surface-600')}>
+      <div className="rounded-lg border px-4 py-3 flex items-center justify-between gap-4 bg-surface-800 border-surface-600">
         <div className="min-w-0 space-y-0.5">
           <div className="text-sm">Send planned workouts to my watch</div>
           <p className="text-[11px] text-gray-500 leading-relaxed">

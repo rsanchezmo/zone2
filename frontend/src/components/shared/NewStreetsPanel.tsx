@@ -1,7 +1,7 @@
 import { memo, useMemo, useState } from 'react'
 import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import ChartPanel, { LegendSwatch } from './ChartPanel'
-import { useCoverageTimeline } from '../../api/hooks'
+import { useCoverageTimeline } from '../../api/coverage'
 import { useTheme } from '../../hooks/useTheme'
 import { useIsMobile } from '../../hooks/useIsMobile'
 

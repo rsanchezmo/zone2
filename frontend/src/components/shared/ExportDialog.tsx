@@ -142,7 +142,7 @@ function ExportDialogContent({
           <div>
             <div className="eyebrow mb-0.5">Export</div>
             <h3
-              className={clsx('text-sm font-semibold tracking-tight', isLight ? 'text-gray-900' : 'text-gray-100')}
+              className="text-sm font-semibold tracking-tight text-fg-strong"
               style={{ letterSpacing: '-0.015em' }}
             >
               {EXPORT_LABELS[exportType]}
@@ -173,7 +173,7 @@ function ExportDialogContent({
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div className={clsx(
                     'flex flex-col items-center gap-3',
-                    isLight ? 'text-gray-400' : 'text-gray-500',
+                    'text-fg-subtle',
                   )}>
                     <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
                     <span className="eyebrow">Generating preview</span>
@@ -183,7 +183,7 @@ function ExportDialogContent({
               {!previewSrc && !previewLoading && !previewError && (
                 <div className={clsx(
                   'flex flex-col items-center gap-2 py-8',
-                  isLight ? 'text-gray-400' : 'text-gray-500',
+                  'text-fg-subtle',
                 )}>
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
                     <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -194,10 +194,7 @@ function ExportDialogContent({
                 </div>
               )}
               {previewError && !previewLoading && (
-                <div className={clsx(
-                  'flex flex-col items-center gap-2 py-8 px-4 text-center',
-                  isLight ? 'text-gray-400' : 'text-gray-500'
-                )}>
+                <div className="flex flex-col items-center gap-2 py-8 px-4 text-center text-fg-subtle">
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                     <rect x="3" y="3" width="18" height="18" rx="2" />
                     <circle cx="8.5" cy="8.5" r="1.5" />
@@ -299,7 +296,7 @@ function ExportDialogContent({
                 />
               </Section>
               <div className="flex items-center justify-between">
-                <label className={clsx('text-xs font-medium', isLight ? 'text-gray-500' : 'text-gray-400')}>
+                <label className="text-xs font-medium text-fg-dim">
                   Show title
                 </label>
                 <button

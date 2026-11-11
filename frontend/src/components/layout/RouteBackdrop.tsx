@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 import polyline from '@mapbox/polyline'
-import { usePolylines } from '../../api/hooks'
+import { usePolylines } from '../../api/activities'
 import { useBackdrop } from '../../hooks/useBackdrop'
 import { useTheme } from '../../hooks/useTheme'
 import type { BackdropCity } from '../../hooks/backdropContext'

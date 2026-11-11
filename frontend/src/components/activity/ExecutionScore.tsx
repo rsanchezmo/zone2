@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import clsx from 'clsx'
-import type { ActivityScoreResponse, ScoreMetric, SegmentScore, TrainingSession } from '../../api/hooks'
+import type { ActivityScoreResponse, ScoreMetric, SegmentScore, TrainingSession } from '../../api/calendar'
 import { SESSION_GOALS, type SessionGoalKey } from '../../constants/sessionGoals'
 import { useTheme } from '../../hooks/useTheme'
 import {
@@ -229,7 +229,7 @@ function ExecutionScoreCollapsible({
                                 <span style={{ color: cfg.color }}>{cfg.icon}</span>
                                 <span className="text-gray-500">{formatGoal(key, m)}</span>
                                 <span className="text-gray-600">{'\u2192'}</span>
-                                <span className={clsx('font-mono', isLight ? 'text-gray-700' : 'text-gray-300')}>{formatActual(key, m)}</span>
+                                <span className="font-mono text-fg">{formatActual(key, m)}</span>
                                 <span className="font-bold font-mono" style={{ color: scoreColor(metricScore) }}>{metricScore}</span>
                               </div>
                             )
@@ -262,7 +262,7 @@ function ExecutionScoreCollapsible({
                       <div className="flex items-center gap-3 text-xs">
                         <div className="flex-1">
                           <div className="text-[10px] text-gray-500 uppercase mb-0.5">Goal</div>
-                          <div className={clsx('font-mono', isLight ? 'text-gray-600' : 'text-gray-400')}>{formatGoal(key, m)}</div>
+                          <div className="font-mono text-fg-muted">{formatGoal(key, m)}</div>
                         </div>
                         <div className="text-gray-600 text-lg">{'\u2192'}</div>
                         <div className="flex-1">

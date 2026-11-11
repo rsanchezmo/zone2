@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
-import type { Activity } from '../../api/hooks'
+import type { Activity } from '../../api/activities'
 import { getSportColor } from '../../constants/sportColors'
 import { useTheme } from '../../hooks/useTheme'
 import { formatDist } from '../../utils/formatSpeed'

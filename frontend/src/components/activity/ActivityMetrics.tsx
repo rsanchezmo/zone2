@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import type { ActivityDetail } from '../../api/hooks'
+import type { ActivityDetail } from '../../api/activities'
 import { getSportColor } from '../../constants/sportColors'
 import { useTheme } from '../../hooks/useTheme'
 import {
@@ -87,7 +87,7 @@ export function BestEfforts({ activity }: { activity: ActivityDetail }) {
                       : 'border-surface-600',
               )}
             >
-              <span className={clsx('text-xs', isLight ? 'text-gray-600' : 'text-gray-400')}>
+              <span className="text-xs text-fg-muted">
                 {effort.name as string}
               </span>
               <div className="flex items-center gap-1.5">

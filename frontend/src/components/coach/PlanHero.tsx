@@ -1,7 +1,5 @@
-import clsx from 'clsx'
-import type { CoachPlan } from '../../api/hooks'
+import type { CoachPlan } from '../../api/coach'
 import { getSportColor } from '../../constants/sportColors'
-import { useTheme } from '../../hooks/useTheme'
 import { parseLocalDate } from '../../utils/dates'
 import { formatClockDuration } from '../../utils/formatSpeed'
 import GoalRing from '../shared/GoalRing'
@@ -21,8 +19,6 @@ function signedClock(seconds: number): string {
 /** The plan's hero, in the Year page's form: the share of the plan done on the ring (with
  *  where you should be by now), the race, the goal against the prediction, and this week. */
 export default function PlanHero({ plan }: { plan: CoachPlan }) {
-  const { theme } = useTheme()
-  const isLight = theme === 'light'
   const p = plan.progress
   const race = plan.race
   const accent = getSportColor(race?.sport_type ?? 'Run')
@@ -123,7 +119,7 @@ export default function PlanHero({ plan }: { plan: CoachPlan }) {
                 Day <span style={{ color: accent }}>{dayOfBlock}</span> / {blockDays}
               </span>
             </div>
-            <div className={clsx('h-[3px] rounded-full overflow-hidden', isLight ? 'bg-surface-600' : 'bg-surface-700')}>
+            <div className="h-[3px] rounded-full overflow-hidden bg-track">
               <div
                 className="h-full rounded-full transition-all duration-700 ease-out"
                 style={{ width: `${(dayOfBlock / blockDays) * 100}%`, backgroundColor: accent, opacity: 0.8 }}

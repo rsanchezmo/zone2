@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import type { ActivityDrift, DriftVerdict } from '../../api/hooks'
+import type { ActivityDrift, DriftVerdict } from '../../api/activities'
 import StatusPill, { type PillTone } from '../shared/StatusPill'
 
 const VERDICT_META: Record<DriftVerdict, { label: string; tone: PillTone }> = {

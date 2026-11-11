@@ -1,12 +1,12 @@
 import { useMemo } from 'react'
-import clsx from 'clsx'
-import {
-  useAthleteProfile, useAthleteZones, useZonesSettings, useSyncStatus, useSportTypes, useGoals,
-  useGoalProgress, useRateLimits, useCacheCompleteness, useCalendarFeedUrl, useGearList,
-} from '../api/hooks'
+import { useAthleteProfile, useAthleteZones, useZonesSettings, useRateLimits } from '../api/athlete'
+import { useSyncStatus, useCacheCompleteness } from '../api/sync'
+import { useSportTypes } from '../api/activities'
+import { useGoals, useGoalProgress } from '../api/goals'
+import { useCalendarFeedUrl } from '../api/calendar'
+import { useGearList } from '../api/gear'
 import { todayLocalStr } from '../utils/dates'
 import BackdropSettingsPanel from '../components/shared/BackdropSettingsPanel'
-import { useTheme } from '../hooks/useTheme'
 import AthleteCard from '../components/profile/AthleteCard'
 import PhotoCollage from '../components/profile/PhotoCollage'
 import AthleteDetails from '../components/profile/AthleteDetails'
@@ -21,8 +21,6 @@ import AgentUsage from '../components/profile/AgentUsage'
 import PageHeader from '../components/shared/PageHeader'
 
 export default function ProfilePage() {
-  const { theme } = useTheme()
-  const isLight = theme === 'light'
   const { data: profile, isLoading: profileLoading } = useAthleteProfile()
   const { data: gearList } = useGearList()
   const { data: zones } = useAthleteZones()
@@ -41,17 +39,17 @@ export default function ProfilePage() {
     return (
       <div className="max-w-4xl mx-auto space-y-10 pb-12">
         <div className="panel p-6 flex items-center gap-6 animate-pulse">
-          <div className={clsx('w-20 h-20 rounded-full', isLight ? 'bg-surface-600' : 'bg-surface-700')} />
+          <div className="w-20 h-20 rounded-full bg-track" />
           <div className="flex-1 space-y-3">
-            <div className={clsx('h-6 w-40 rounded', isLight ? 'bg-surface-600' : 'bg-surface-700')} />
-            <div className={clsx('h-4 w-28 rounded', 'bg-surface-700')} />
+            <div className="h-6 w-40 rounded bg-track" />
+            <div className="h-4 w-28 rounded bg-surface-700" />
           </div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="panel p-4 animate-pulse">
-              <div className={clsx('h-3 w-16 rounded mb-3', isLight ? 'bg-surface-600' : 'bg-surface-700')} />
-              <div className={clsx('h-6 w-20 rounded', isLight ? 'bg-surface-600' : 'bg-surface-700')} />
+              <div className="h-3 w-16 rounded mb-3 bg-track" />
+              <div className="h-6 w-20 rounded bg-track" />
             </div>
           ))}
         </div>

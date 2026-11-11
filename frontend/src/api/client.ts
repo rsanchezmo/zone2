@@ -10,4 +10,7 @@ export function errorDetail(error: unknown, fallback: string): string {
   return typeof detail === 'string' ? detail : fallback;
 }
 
+/** A calendar day as the API reads and writes it: `yyyy-MM-dd`. */
+export type IsoDate = string;
+
 export default api;

@@ -21,10 +21,10 @@ export default function StatCard({ label, value, unit, delta, sublabel, color, t
     return (
       <div className={clsx(
         'rounded-xl p-4 border animate-pulse',
-        isLight ? 'bg-white border-surface-600' : 'bg-surface-800 border-surface-600',
+        'bg-surface-800 border-surface-600',
       )}>
-        <div className={clsx('h-3 w-16 rounded mb-3', isLight ? 'bg-surface-600' : 'bg-surface-700')} />
-        <div className={clsx('h-7 w-24 rounded', isLight ? 'bg-surface-600' : 'bg-surface-700')} />
+        <div className="h-3 w-16 rounded mb-3 bg-track" />
+        <div className="h-7 w-24 rounded bg-track" />
       </div>
     )
   }
@@ -33,9 +33,7 @@ export default function StatCard({ label, value, unit, delta, sublabel, color, t
     <div
       className={clsx(
         'rounded-xl p-4 border group relative overflow-hidden transition-all duration-200',
-        isLight
-          ? 'bg-white border-surface-600 hover:border-surface-500'
-          : 'bg-surface-800 border-surface-600 hover:border-surface-500',
+        'bg-surface-800 border-surface-600 hover:border-surface-500',
       )}
       style={accent ? {
         '--card-accent': accent,
@@ -51,11 +49,11 @@ export default function StatCard({ label, value, unit, delta, sublabel, color, t
           style={{ background: `radial-gradient(ellipse at top left, ${accent}08, transparent 70%)` }}
         />
       )}
-      <div className={clsx('text-[11px] uppercase tracking-wider mb-1.5 relative', 'text-gray-500')}>{label}</div>
+      <div className="text-[11px] uppercase tracking-wider mb-1.5 relative text-gray-500">{label}</div>
       <div className="flex items-baseline gap-2 relative">
-        <div className={clsx('text-2xl font-bold tabular-nums tracking-tight', color ?? (isLight ? 'text-gray-900' : 'text-gray-100'))}>
+        <div className={clsx('text-2xl font-bold tabular-nums tracking-tight', color ?? 'text-fg-strong')}>
           {value}
-          {unit && <span className={clsx('text-sm ml-1 font-medium tracking-normal', isLight ? 'text-gray-400' : 'text-gray-500')}>{unit}</span>}
+          {unit && <span className="text-sm ml-1 font-medium tracking-normal text-fg-subtle">{unit}</span>}
         </div>
         {delta !== undefined && delta !== null && (
           <span className={clsx(

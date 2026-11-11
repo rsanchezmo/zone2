@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { usePersonalRecords, useSportTotals, type PersonalRecord } from '../api/hooks'
+import { usePersonalRecords, useSportTotals, type PersonalRecord } from '../api/stats'
 import { getSportColor } from '../constants/sportColors'
 import { formatPrPace, formatClockDuration, formatDurationHM } from '../utils/formatSpeed'
 import { parseLocalDate } from '../utils/dates'
@@ -44,10 +44,10 @@ export default function PersonalRecordsPage() {
             key={i}
             className="panel p-5 animate-pulse"
           >
-            <div className={clsx('h-3 w-24 rounded mb-5', isLight ? 'bg-surface-600' : 'bg-surface-700')} />
+            <div className="h-3 w-24 rounded mb-5 bg-track" />
             <div className="space-y-3">
               {Array.from({ length: 5 }).map((_, j) => (
-                <div key={j} className={clsx('h-6 rounded', 'bg-surface-700')} />
+                <div key={j} className="h-6 rounded bg-surface-700" />
               ))}
             </div>
           </div>
@@ -82,11 +82,11 @@ export default function PersonalRecordsPage() {
               }
               toolbar={
                 totals ? (
-                  <div className={clsx('hidden sm:flex items-center gap-4 text-[11px] font-mono tabular-nums', isLight ? 'text-gray-500' : 'text-gray-400')}>
+                  <div className="hidden sm:flex items-center gap-4 text-[11px] font-mono tabular-nums text-fg-dim">
                     <TotalCell label="Activities" value={totals.count.toLocaleString()} />
-                    <span className={clsx('w-px h-4', 'bg-surface-600')} aria-hidden="true" />
+                    <span className="w-px h-4 bg-surface-600" aria-hidden="true" />
                     <TotalCell label="Distance" value={formatDistance(totals.distance_km, category)} accent={color} />
-                    <span className={clsx('w-px h-4', 'bg-surface-600')} aria-hidden="true" />
+                    <span className="w-px h-4 bg-surface-600" aria-hidden="true" />
                     <TotalCell label="Time" value={formatDurationHM(totals.time_s)} />
                   </div>
                 ) : undefined
@@ -127,8 +127,8 @@ export default function PersonalRecordsPage() {
           >
             <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-4.5A3.375 3.375 0 0012.75 10.5h-1.5A3.375 3.375 0 007.875 13.875v4.875m9 0H7.875" />
           </svg>
-          <p className={clsx('text-sm', 'text-gray-500')}>No personal records found</p>
-          <p className={clsx('text-xs', isLight ? 'text-gray-400' : 'text-gray-600')}>
+          <p className="text-sm text-gray-500">No personal records found</p>
+          <p className="text-xs text-fg-faint">
             Make sure your activities have GPS streams — run a stream backfill from the Profile page.
           </p>
         </div>
@@ -146,7 +146,7 @@ function TotalCell({ label, value, accent }: { label: string; value: string; acc
   const isLight = theme === 'light'
   return (
     <span className="inline-flex items-baseline gap-1.5">
-      <span className={clsx('uppercase text-[10px] tracking-[0.15em]', isLight ? 'text-gray-400' : 'text-gray-600')}>{label}</span>
+      <span className="uppercase text-[10px] tracking-[0.15em] text-fg-faint">{label}</span>
       <span
         className={clsx('font-semibold', accent ? '' : (isLight ? 'text-gray-700' : 'text-gray-200'))}
         style={accent ? { color: accent } : undefined}
@@ -158,13 +158,11 @@ function TotalCell({ label, value, accent }: { label: string; value: string; acc
 }
 
 function TotalCellBlock({ label, value, accent }: { label: string; value: string; accent?: string }) {
-  const { theme } = useTheme()
-  const isLight = theme === 'light'
   return (
     <div className="px-3 py-1 first:pl-0 last:pr-0">
       <div className="eyebrow mb-1">{label}</div>
       <div
-        className={clsx('text-sm font-mono tabular-nums font-semibold', accent ? '' : (isLight ? 'text-gray-900' : 'text-gray-100'))}
+        className={clsx('text-sm font-mono tabular-nums font-semibold', accent ? '' : 'text-fg-strong')}
         style={accent ? { color: accent } : undefined}
       >
         {value}
@@ -206,7 +204,7 @@ function PRRow({ record, color, category }: { record: PersonalRecord; color: str
         <span
           className={clsx(
             'text-xs truncate hidden sm:inline transition-colors',
-            isLight ? 'text-gray-400 group-hover:text-gray-700' : 'text-gray-500 group-hover:text-gray-300',
+            'text-fg-subtle group-hover:text-fg',
           )}
         >
           {record.activity_name}
@@ -216,15 +214,15 @@ function PRRow({ record, color, category }: { record: PersonalRecord; color: str
       {/* Right: time (hero) + pace + date, right-aligned */}
       <div className="flex items-baseline gap-4 shrink-0 tabular-nums">
         {pace && (
-          <span className={clsx('text-[11px] font-mono hidden sm:inline', isLight ? 'text-gray-400' : 'text-gray-500')}>
+          <span className="text-[11px] font-mono hidden sm:inline text-fg-subtle">
             {pace}
           </span>
         )}
-        <span className={clsx('font-mono font-semibold text-sm', isLight ? 'text-gray-900' : 'text-gray-100')}>
+        <span className="font-mono font-semibold text-sm text-fg-strong">
           {time}
         </span>
         {date && (
-          <span className={clsx('text-[11px] font-mono hidden md:inline w-[86px] text-right', isLight ? 'text-gray-400' : 'text-gray-600')}>
+          <span className="text-[11px] font-mono hidden md:inline w-[86px] text-right text-fg-faint">
             {date}
           </span>
         )}

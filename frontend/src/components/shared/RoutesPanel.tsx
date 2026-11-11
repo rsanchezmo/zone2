@@ -1,7 +1,7 @@
 import clsx from 'clsx'
 import ChartPanel from './ChartPanel'
 import { GarminIcon, PLAN_ACCENT } from './LoopPlanner'
-import { useCityGarminCourses, useSavedRoutes } from '../../api/hooks'
+import { useCityGarminCourses, useSavedRoutes } from '../../api/coverage'
 import { coveredPct, selectionKey, type RouteSelection } from '../../hooks/useLoopPlanner'
 import { useTheme } from '../../hooks/useTheme'
 

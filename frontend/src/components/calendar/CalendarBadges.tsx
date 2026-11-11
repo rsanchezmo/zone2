@@ -1,4 +1,5 @@
-import type { PlanAccomplishment, Streaks } from '../../api/hooks'
+import type { PlanAccomplishment } from '../../api/calendar'
+import type { Streaks } from '../../api/stats'
 import { useTheme } from '../../hooks/useTheme'
 import { scoreColor } from '../../utils/scoreColor'
 import { CheckIcon } from '../icons'

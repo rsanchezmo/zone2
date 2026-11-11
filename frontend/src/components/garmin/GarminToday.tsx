@@ -1,4 +1,3 @@
-import { useTheme } from '../../hooks/useTheme'
 import StatCard from '../shared/StatCard'
 import {
   ACCENT, acwrTone, bbTone, fmtKm, fmtRecovery, fmtSigned, hrvTone, readinessTone,
@@ -8,8 +7,6 @@ import { HeroTile } from './GarminTiles'
 
 /** Today's hero tiles: readiness, sleep, body battery, HRV and load ratio. */
 export function TodaySection({ card }: { card: GarminCard }) {
-  const { theme } = useTheme()
-  const isLight = theme === 'light'
   const bodyBatteryNet = card.bbCharged != null && card.bbDrained != null
     ? card.bbCharged - card.bbDrained
     : null
@@ -25,7 +22,6 @@ export function TodaySection({ card }: { card: GarminCard }) {
         qualifier={card.readinessFeedback?.text ?? card.readinessLevel}
         tone={readinessTone(card.readinessScore)}
         detail={fmtRecovery(card.recoveryTimeMin) ?? card.readinessLevel?.toLowerCase()}
-        isLight={isLight}
       />
       <HeroTile
         label="Sleep score"
@@ -35,7 +31,6 @@ export function TodaySection({ card }: { card: GarminCard }) {
         detail={card.sleepHours != null
           ? `${card.sleepHours.toFixed(1)}h asleep${card.sleepQualifier ? ` · ${card.sleepQualifier.toLowerCase()}` : ''}${card.sleepInsight ? ` · ${card.sleepInsight.text.toLowerCase()}` : ''}`
           : undefined}
-        isLight={isLight}
       />
       <HeroTile
         label="Body Battery"
@@ -47,7 +42,6 @@ export function TodaySection({ card }: { card: GarminCard }) {
         detail={card.bbCharged != null && card.bbDrained != null
           ? `${card.bbCharged} charged · ${card.bbDrained} drained`
           : undefined}
-        isLight={isLight}
       />
       <HeroTile
         label="HRV"
@@ -56,7 +50,6 @@ export function TodaySection({ card }: { card: GarminCard }) {
         qualifier={card.hrvFeedback?.text ?? card.hrvStatus}
         tone={hrvTone(card.hrvStatus)}
         detail={card.hrvWeekly != null ? `7-day avg ${card.hrvWeekly} ms` : undefined}
-        isLight={isLight}
       />
       <HeroTile
         label="Load ratio"
@@ -64,7 +57,6 @@ export function TodaySection({ card }: { card: GarminCard }) {
         qualifier={card.acwrStatus}
         tone={acwrTone(card.acwrRatio)}
         detail="acute / chronic load"
-        isLight={isLight}
       />
       </div>
     </section>

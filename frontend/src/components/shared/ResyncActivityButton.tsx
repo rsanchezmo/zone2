@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { useResyncActivity } from '../../api/hooks'
+import { useResyncActivity } from '../../api/sync'
 import { useToast } from '../../hooks/useToast'
 
 interface ResyncActivityButtonProps {

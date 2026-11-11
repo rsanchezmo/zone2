@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useLayoutEffect, useCallback, lazy, Suspense } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { useQueryClient, useIsFetching } from '@tanstack/react-query'
-import { useSyncStatus, useTriggerSync, useBackfillStreams, invalidateActivityQueries } from '../../api/hooks'
+import { useSyncStatus, useTriggerSync, useBackfillStreams } from '../../api/sync'
+import { invalidateActivityQueries } from '../../api/invalidation'
 import { useBackdrop } from '../../hooks/useBackdrop'
 import { useTheme } from '../../hooks/useTheme'
 import { useEscapeKey } from '../../hooks/useEscapeKey'
@@ -117,13 +118,11 @@ function SyncPopover({ isLight, placement }: { isLight: boolean; placement: Popo
         <div className={clsx(
           'absolute w-56 rounded-xl border p-3 space-y-2 shadow-xl',
           POPOVER_PLACEMENT[placement],
-          isLight
-            ? 'bg-white/90 backdrop-blur-xl border-surface-600'
-            : 'bg-surface-800/90 backdrop-blur-xl border-surface-600',
+          'backdrop-blur-xl bg-surface-800/90 border-surface-600',
         )}>
-          <div className={clsx('text-[11px] space-y-0.5', 'text-gray-500')}>
+          <div className="text-[11px] space-y-0.5 text-gray-500">
             {syncStatus?.athlete_name && (
-              <div className={clsx('font-medium', isLight ? 'text-gray-700' : 'text-gray-300')}>{syncStatus.athlete_name}</div>
+              <div className="font-medium text-fg">{syncStatus.athlete_name}</div>
             )}
             <div>{syncStatus?.total_activities ?? '...'} activities synced</div>
           </div>
@@ -239,7 +238,7 @@ function DockNav({ navRef, items, location, isLight, indicatorStyle, position }:
             onMouseEnter={() => setHoveredIdx(idx)}
             className={clsx(
               'relative flex items-center justify-center w-12 h-12 rounded-xl group origin-center',
-              !isActive && !isHovered && (isLight ? 'hover:bg-black/[0.04]' : 'hover:bg-white/[0.04]'),
+              !isActive && !isHovered && 'hover:bg-tint/[0.04]',
             )}
             style={{
               transform: `scale(${scale})`,
@@ -339,17 +338,17 @@ function MobileNav({ isLight, location }: { isLight: boolean; location: { pathna
       <aside
         className={clsx(
           'fixed top-0 left-0 bottom-0 z-[10003] w-[82%] max-w-[320px] border-r shadow-2xl transition-transform duration-250 ease-out flex flex-col',
-          isLight ? 'bg-white border-surface-600' : 'bg-surface-800 border-surface-600',
+          'bg-surface-800 border-surface-600',
           open ? 'translate-x-0' : '-translate-x-full',
         )}
       >
         {/* Drawer header */}
-        <div className={clsx('flex items-center justify-between px-4 py-3 border-b', 'border-surface-600')}>
-          <span className={clsx('text-[11px] uppercase tracking-[0.2em] font-semibold', isLight ? 'text-gray-500' : 'text-gray-400')}>Navigation</span>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-surface-600">
+          <span className="text-[11px] uppercase tracking-[0.2em] font-semibold text-fg-dim">Navigation</span>
           <button
             onClick={() => setOpen(false)}
             aria-label="Close navigation"
-            className={clsx('w-8 h-8 flex items-center justify-center rounded-lg', isLight ? 'text-gray-500 hover:bg-surface-700' : 'text-gray-400 hover:bg-surface-700')}
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-fg-dim hover:bg-surface-700"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M3 3l10 10M13 3l-10 10" />
@@ -384,7 +383,7 @@ function MobileNav({ isLight, location }: { isLight: boolean; location: { pathna
         </nav>
 
         {/* Utilities footer */}
-        <div className={clsx('border-t p-3 flex items-center gap-2', 'border-surface-600')}>
+        <div className="border-t p-3 flex items-center gap-2 border-surface-600">
           <div className="flex-1">
             <SyncPopover isLight={isLight} placement="above-start" />
           </div>

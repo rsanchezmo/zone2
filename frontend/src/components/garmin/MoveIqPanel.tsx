@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import clsx from 'clsx'
 import { useTheme } from '../../hooks/useTheme'
-import { useGarminEvents, useActivitiesByDateRange, type GarminAutoEvent } from '../../api/hooks'
+import { useGarminEvents, type GarminAutoEvent } from '../../api/garmin'
+import { useActivitiesByDateRange } from '../../api/activities'
 import { getSportColor, DEFAULT_SPORT_COLOR } from '../../constants/sportColors'
 import ChartPanel from '../shared/ChartPanel'
 import { formatDurationHM } from '../../utils/formatSpeed'
@@ -217,7 +218,7 @@ export default function MoveIqPanel() {
         ) : undefined}
       >
         {eventDays.length === 0 ? (
-          <div className={clsx('text-xs py-6 text-center', isLight ? 'text-gray-400' : 'text-gray-600')}>
+          <div className="text-xs py-6 text-center text-fg-faint">
             No auto-detected events cached yet — run a sync to pull them.
           </div>
         ) : (
@@ -240,7 +241,7 @@ export default function MoveIqPanel() {
             </div>
             {eventDays.map(day => (
               <div key={day.date} className="flex items-center gap-3">
-                <span className={clsx('text-xs font-mono tabular-nums w-24 shrink-0', isLight ? 'text-gray-500' : 'text-gray-400')}>
+                <span className="text-xs font-mono tabular-nums w-24 shrink-0 text-fg-dim">
                   {fmtDayDate(day.date)}
                 </span>
                 <div className={clsx('relative flex-1 h-7 rounded', isLight ? 'bg-surface-700' : 'bg-surface-700/40')}>

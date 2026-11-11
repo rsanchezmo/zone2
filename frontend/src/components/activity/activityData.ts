@@ -1,5 +1,5 @@
 import polyline from '@mapbox/polyline'
-import type { ActivityDetail, ActivityHrRecovery, ActivityStreamPoint as StreamPoint } from '../../api/hooks'
+import type { ActivityDetail, ActivityHrRecovery, ActivityStreamPoint as StreamPoint } from '../../api/activities'
 import { convertSpeed, getSportCategory, isOnFoot } from '../../utils/formatSpeed'
 
 export interface Split {

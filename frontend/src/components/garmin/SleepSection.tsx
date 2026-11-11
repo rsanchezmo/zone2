@@ -4,7 +4,7 @@ import {
   CartesianGrid,
 } from 'recharts'
 import { useTheme } from '../../hooks/useTheme'
-import type { GarminTrends } from '../../api/hooks'
+import type { GarminTrends } from '../../api/garmin'
 import ChartPanel, { LegendSwatch } from '../shared/ChartPanel'
 import { StatusPill } from './GarminTiles'
 import {

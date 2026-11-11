@@ -2,7 +2,10 @@ import { useState, useMemo } from 'react'
 import { format, addDays, parseISO } from 'date-fns'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
-import type { Activity, GoalProgress, TrainingSession, WeeklyReport } from '../../api/hooks'
+import type { Activity } from '../../api/activities'
+import type { GoalProgress } from '../../api/goals'
+import type { TrainingSession } from '../../api/calendar'
+import type { WeeklyReport } from '../../api/stats'
 import { getSportColor } from '../../constants/sportColors'
 import { WEEKDAY_LETTERS } from '../../constants/weekdays'
 import { useTheme } from '../../hooks/useTheme'
@@ -177,7 +180,7 @@ export default function WeekInspector(props: WeekInspectorProps) {
       <header className="flex items-start justify-between gap-2">
         <div>
           <div className="eyebrow text-blue-400">Week {format(parseISO(weekStart), 'w')}</div>
-          <div className={clsx('text-[17px] font-semibold tracking-tight mt-0.5', isLight ? 'text-gray-900' : 'text-gray-100')}>
+          <div className="text-[17px] font-semibold tracking-tight mt-0.5 text-fg-strong">
             {formatWeekRange(weekStart)}
           </div>
         </div>
@@ -196,7 +199,7 @@ export default function WeekInspector(props: WeekInspectorProps) {
       {loading ? (
         <div className="grid grid-cols-2 gap-2 animate-pulse">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className={clsx('h-16 rounded-lg', 'bg-surface-700')} />
+            <div key={i} className="h-16 rounded-lg bg-surface-700" />
           ))}
         </div>
       ) : (
@@ -222,7 +225,7 @@ export default function WeekInspector(props: WeekInspectorProps) {
                   <div className="flex items-center justify-between gap-2 mb-1">
                     <span className="flex items-center gap-1.5 min-w-0">
                       <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                      <span className={clsx('text-[11px] truncate', isLight ? 'text-gray-700' : 'text-gray-300')}>
+                      <span className="text-[11px] truncate text-fg">
                         {g.sport_type === '__all__' ? 'All sports' : g.sport_type}
                       </span>
                     </span>
@@ -288,7 +291,7 @@ export default function WeekInspector(props: WeekInspectorProps) {
         )}
       </section>
 
-      <div className={clsx('mt-auto pt-3 border-t border-dashed', 'border-surface-500')}>
+      <div className="mt-auto pt-3 border-t border-dashed border-surface-500">
         <PlannedSessions sessions={planned} todayStr={todayStr} weekStart={weekStart} onPickDay={onPickDay} />
       </div>
     </aside>
@@ -310,7 +313,7 @@ function InspectorKpi({ label, value, unit, delta }: {
     <div className={clsx('rounded-lg border px-3 py-2.5', isLight ? 'bg-gray-50 border-surface-600' : 'bg-surface-700/60 border-surface-600')}>
       <div className="text-[10px] uppercase tracking-[0.12em] text-gray-500 mb-1">{label}</div>
       <div className="flex items-baseline gap-1.5">
-        <span className={clsx('text-xl font-bold font-mono tabular-nums tracking-tight', isLight ? 'text-gray-900' : 'text-gray-100')}>
+        <span className="text-xl font-bold font-mono tabular-nums tracking-tight text-fg-strong">
           {value}
           {unit && <span className="text-[11px] font-medium text-gray-500 ml-1">{unit}</span>}
         </span>

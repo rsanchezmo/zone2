@@ -1,7 +1,7 @@
 import { lazy, Suspense, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
-import { useAgentStatus } from '../api/hooks'
+import { useAgentStatus } from '../api/agent'
 import { useTheme } from '../hooks/useTheme'
 import { COACH } from '../components/coach/colors'
 import { useEscapeKey } from '../hooks/useEscapeKey'
@@ -65,7 +65,7 @@ export default function AgentDock() {
     navigate(path)
   }
 
-  const surface = clsx('bg-surface-800/95 border-surface-600', isLight ? 'text-gray-900' : 'text-gray-100')
+  const surface = 'bg-surface-800/95 border-surface-600 text-fg-strong'
   const coach = isLight ? COACH.light : COACH.dark
 
   return (
@@ -84,7 +84,7 @@ export default function AgentDock() {
           )}
           style={{ ['--coach' as string]: coach, borderTopColor: coach, borderTopWidth: 2 }}
         >
-          <div className={'flex items-center gap-3 px-4 py-3 border-b border-surface-600'}>
+          <div className="flex items-center gap-3 px-4 py-3 border-b border-surface-600">
             <span className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: `${coach}22`, color: coach }} aria-hidden="true">
               <RobotIcon size={17} />
             </span>

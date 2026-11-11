@@ -5,7 +5,7 @@ import {
 import {
   useRacePredictions, useRacePredictionsHistory, type RacePrediction, type RacePredictionsResponse,
   type TrainingPace, type TrainingPaceZone,
-} from '../api/hooks'
+} from '../api/stats'
 import { getSportColor } from '../constants/sportColors'
 import { formatSpeed, formatClockDuration, formatPace } from '../utils/formatSpeed'
 import { parseLocalDate } from '../utils/dates'
@@ -177,7 +177,7 @@ export default function AnalyticsPage() {
                     <span className="eyebrow" style={{ color: isFocused ? accent : undefined }}>{p.label}</span>
                     <StatusPill accent={isRecent ? accent : undefined}>{isRecent ? 'Anchored' : 'Estimation'}</StatusPill>
                   </div>
-                  <div className={clsx('text-xl md:text-2xl font-bold font-mono tabular-nums', isLight ? 'text-gray-900' : 'text-gray-100')}>
+                  <div className="text-xl md:text-2xl font-bold font-mono tabular-nums text-fg-strong">
                     {formatClockDuration(p.predicted_time_s)}
                   </div>
                   {p.predicted_time_s > 0 && (
@@ -243,7 +243,7 @@ export default function AnalyticsPage() {
                     <span className="text-sm font-bold font-mono" style={{ color: accent }}>{p.zone}</span>
                     <span className="eyebrow">{meta.label}</span>
                   </div>
-                  <div className={clsx('text-lg md:text-xl font-bold font-mono tabular-nums', isLight ? 'text-gray-900' : 'text-gray-100')}>
+                  <div className="text-lg md:text-xl font-bold font-mono tabular-nums text-fg-strong">
                     {formatPaceRange(p)}
                   </div>
                   <div className="text-[10px] text-gray-500 mt-1">{meta.use}</div>

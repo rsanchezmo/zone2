@@ -1,6 +1,9 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useYearInSport, useYears, useSportTypes, useCumulativeDistance, useGoals, useWeeklyTotals, useSyncStatus } from '../api/hooks'
+import { useYearInSport, useCumulativeDistance, useWeeklyTotals } from '../api/stats'
+import { useYears, useSportTypes } from '../api/activities'
+import { useGoals } from '../api/goals'
+import { useSyncStatus } from '../api/sync'
 import { getSportColor } from '../constants/sportColors'
 import { formatSpeed, formatDist, formatDistAxis, distValue, getDistUnit } from '../utils/formatSpeed'
 import { parseLocalDate, todayLocalStr } from '../utils/dates'
@@ -353,7 +356,7 @@ export default function DashboardPage() {
               <>
                 <LegendSwatch color={sportColor} label={`${year}`} variant="solid" />
                 {comp && <LegendSwatch color={sportColor} label={`${year - 1}`} variant="dashed" />}
-                {yearlyDistanceGoal && <LegendSwatch color={isLight ? '#6b7280' : '#9ca3af'} label={`Target · ${formatDist(yearlyDistanceGoal, mainSport)}`} variant="dashed" />}
+                {yearlyDistanceGoal && <LegendSwatch color={colors.labelColor} label={`Target · ${formatDist(yearlyDistanceGoal, mainSport)}`} variant="dashed" />}
               </>
             }
           >
@@ -380,7 +383,7 @@ export default function DashboardPage() {
                 )}
                 <Area type="monotone" dataKey="current" stroke={sportColor} strokeWidth={2.5} fill="url(#cumulGrad)" dot={false} />
                 {yearlyDistanceGoal && (
-                  <Line type="monotone" dataKey="target" stroke={isLight ? '#6b7280' : '#9ca3af'} strokeWidth={1.5} strokeDasharray="6 4" dot={false} connectNulls />
+                  <Line type="monotone" dataKey="target" stroke={colors.labelColor} strokeWidth={1.5} strokeDasharray="6 4" dot={false} connectNulls />
                 )}
                 {todayLabel && isCurrentYear && (
                   <>
@@ -556,8 +559,8 @@ export default function DashboardPage() {
                   const pct = (d.value / max) * 100
                   return (
                     <div key={d.name} className="flex items-center gap-3">
-                      <span className={clsx('text-xs w-24 shrink-0 text-right truncate', isLight ? 'text-gray-500' : 'text-gray-400')}>{d.name}</span>
-                      <div className={clsx('flex-1 h-5 rounded overflow-hidden relative', 'bg-surface-700')}>
+                      <span className="text-xs w-24 shrink-0 text-right truncate text-fg-dim">{d.name}</span>
+                      <div className="flex-1 h-5 rounded overflow-hidden relative bg-surface-700">
                         <div
                           className="h-full rounded flex items-center px-2"
                           style={{ width: `${Math.max(pct, 8)}%`, backgroundColor: d.color, opacity: 0.72 }}
@@ -630,8 +633,6 @@ function HeroBlock(props: HeroBlockProps) {
     goalStatus, etaToGoal, daysElapsed, daysInYear, daysRemaining, isCurrentYear,
     thisWeek, totalDistanceDelta, longestActivityKm, activeDays,
   } = props
-  const { theme } = useTheme()
-  const isLight = theme === 'light'
 
   // Ring state — swim uses meters, other sports use km
   const unit = getDistUnit(sport)
@@ -656,7 +657,7 @@ function HeroBlock(props: HeroBlockProps) {
       <div className="flex items-center justify-center md:justify-start">
         {loading ? (
           <div
-            className={clsx('rounded-full animate-pulse', 'bg-surface-700')}
+            className="rounded-full animate-pulse bg-surface-700"
             style={{ width: 260, height: 260 }}
           />
         ) : (
@@ -729,7 +730,7 @@ function HeroBlock(props: HeroBlockProps) {
                 Day <span style={{ color: sportColor }}>{daysElapsed}</span> / {daysInYear}
               </span>
             </div>
-            <div className={clsx('h-[3px] rounded-full overflow-hidden', isLight ? 'bg-surface-600' : 'bg-surface-700')}>
+            <div className="h-[3px] rounded-full overflow-hidden bg-track">
               <div
                 className="h-full rounded-full transition-all duration-700 ease-out"
                 style={{ width: `${yearPace * 100}%`, backgroundColor: sportColor, opacity: 0.8 }}
@@ -744,7 +745,7 @@ function HeroBlock(props: HeroBlockProps) {
               to="/profile"
               className={clsx(
                 'inline-flex items-center gap-2 text-xs font-semibold transition-colors',
-                isLight ? 'text-gray-600 hover:text-gray-900' : 'text-gray-400 hover:text-gray-100',
+                'text-fg-muted hover:text-fg-strong',
               )}
             >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
@@ -779,11 +780,11 @@ function TelemetryCell({ label, value, unit, delta }: TelemetryCellProps) {
     <div className="px-4 py-2 md:py-1 first:pl-0 last:pr-0 md:first:pl-4 md:last:pr-4">
       <div className="eyebrow mb-1">{label}</div>
       <div className="flex items-baseline gap-1.5">
-        <span className={clsx('font-mono tabular-nums text-xl font-semibold tracking-tight', isLight ? 'text-gray-900' : 'text-gray-100')}>
+        <span className="font-mono tabular-nums text-xl font-semibold tracking-tight text-fg-strong">
           {value}
         </span>
         {unit && (
-          <span className={clsx('text-xs font-medium', isLight ? 'text-gray-400' : 'text-gray-500')}>{unit}</span>
+          <span className="text-xs font-medium text-fg-subtle">{unit}</span>
         )}
         {delta !== undefined && delta !== null && (
           <span

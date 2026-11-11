@@ -1,7 +1,7 @@
 import {
   Bar, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import type { CoachPlan } from '../../api/hooks'
+import type { CoachPlan } from '../../api/coach'
 import { useTheme } from '../../hooks/useTheme'
 import { dateToLocalStr, parseLocalDate } from '../../utils/dates'
 import { formatClockDuration } from '../../utils/formatSpeed'

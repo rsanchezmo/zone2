@@ -20,17 +20,17 @@ export function GarminSkeleton() {
   const bar = 'bg-surface-700'
   return (
     <div className="max-w-5xl mx-auto space-y-10 pb-12">
-      <div className={clsx('h-12 panel animate-pulse rounded-xl')} />
+      <div className="h-12 panel animate-pulse rounded-xl" />
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {Array.from({ length: 12 }).map((_, i) => (
-          <div key={i} className={clsx('rounded-xl p-4 panel animate-pulse')}>
+          <div key={i} className="rounded-xl p-4 panel animate-pulse">
             <div className={clsx('h-3 w-16 rounded mb-3', bar)} />
             <div className={clsx('h-7 w-20 rounded', bar)} />
           </div>
         ))}
       </div>
       {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className={clsx('panel p-5 animate-pulse')}>
+        <div key={i} className="panel p-5 animate-pulse">
           <div className={clsx('h-3 w-32 rounded mb-4', bar)} />
           <div className={clsx('h-[240px] rounded', bar)} />
         </div>
@@ -42,7 +42,7 @@ export function GarminSkeleton() {
 // ─────────────────────────────────────────── hero tile
 
 export function HeroTile({
-  label, value, unit, qualifier, tone, detail, isLight,
+  label, value, unit, qualifier, tone, detail,
 }: {
   label: string
   value: number | string | null
@@ -50,7 +50,6 @@ export function HeroTile({
   qualifier?: string
   tone: Tone
   detail?: string
-  isLight: boolean
 }) {
   const c = toneColor(tone)
   return (
@@ -70,12 +69,11 @@ export function HeroTile({
       </div>
 
       <div className="relative flex items-baseline gap-2">
-        <span className={clsx('text-3xl md:text-4xl font-bold tabular-nums tracking-tight',
-          isLight ? 'text-gray-900' : 'text-gray-100')}>
+        <span className="text-3xl md:text-4xl font-bold tabular-nums tracking-tight text-fg-strong">
           {value ?? '–'}
         </span>
         {unit && (
-          <span className={clsx('text-sm font-medium tracking-normal', isLight ? 'text-gray-400' : 'text-gray-500')}>
+          <span className="text-sm font-medium tracking-normal text-fg-subtle">
             {unit}
           </span>
         )}
@@ -88,7 +86,7 @@ export function HeroTile({
         </div>
       )}
       {detail && (
-        <div className={clsx('relative text-[11px] mt-1', 'text-gray-500')}>
+        <div className="relative text-[11px] mt-1 text-gray-500">
           {detail}
         </div>
       )}
@@ -110,7 +108,7 @@ export function RhythmTile({
     return (
       <div className="panel p-4">
         <div className="eyebrow mb-2">{label}</div>
-        <div className={clsx('text-sm py-6', isLight ? 'text-gray-400' : 'text-gray-600')}>
+        <div className="text-sm py-6 text-fg-faint">
           Not enough data
         </div>
       </div>
@@ -123,11 +121,10 @@ export function RhythmTile({
       <div className="absolute inset-0 pointer-events-none"
         style={{ background: `radial-gradient(ellipse at top left, ${ACCENT}0c, transparent 65%)` }} />
       <div className="relative eyebrow mb-1.5">{label}</div>
-      <div className={clsx('relative text-xl font-bold tracking-tight',
-        isLight ? 'text-gray-900' : 'text-gray-100')}>
+      <div className="relative text-xl font-bold tracking-tight text-fg-strong">
         {WEEKDAYS_FULL[pattern.bestIdx]}
       </div>
-      <div className={clsx('relative text-[11px] mt-0.5 mb-3', 'text-gray-500')}>
+      <div className="relative text-[11px] mt-0.5 mb-3 text-gray-500">
         avg {format(pattern.bestMean)}
         {delta != null && Math.abs(delta) >= 0.5 && (
           <span style={{ color: ACCENT }}>
@@ -151,7 +148,7 @@ export function RhythmTile({
                   }} />
               </div>
               <div className={clsx('text-[9px] leading-none',
-                winner ? 'font-semibold' : isLight ? 'text-gray-400' : 'text-gray-600')}
+                winner ? 'font-semibold' : 'text-fg-faint')}
                 style={winner ? { color: ACCENT } : undefined}>
                 {WEEKDAY_LETTERS[i]}
               </div>
@@ -166,13 +163,12 @@ export function RhythmTile({
 // ─────────────────────────────────────────── readiness factor bars
 
 export function FactorBars({
-  factors, isLight,
+  factors,
 }: {
   factors: { label: string; value: number | null }[]
-  isLight: boolean
 }) {
   if (!factors.length) {
-    return <div className={clsx('text-xs py-12 text-center', isLight ? 'text-gray-400' : 'text-gray-500')}>
+    return <div className="text-xs py-12 text-center text-fg-subtle">
       No readiness data yet
     </div>
   }
@@ -189,14 +185,14 @@ export function FactorBars({
         return (
           <div key={f.label} className="space-y-1.5">
             <div className="flex items-baseline justify-between gap-2">
-              <span className={clsx('text-[11px] uppercase tracking-[0.15em]', 'text-gray-500')}>
+              <span className="text-[11px] uppercase tracking-[0.15em] text-gray-500">
                 {f.label}
               </span>
               <span className="text-[11px] font-mono tabular-nums">
                 <span style={{ color: c }}>{f.value != null ? `${Math.round(v)}%` : '–'}</span>
               </span>
             </div>
-            <div className={clsx('relative h-2.5 rounded-full overflow-hidden', 'bg-surface-700')}>
+            <div className="relative h-2.5 rounded-full overflow-hidden bg-surface-700">
               <div
                 className="h-full rounded-full transition-all duration-300"
                 style={{
@@ -206,7 +202,7 @@ export function FactorBars({
                 }}
               />
             </div>
-            <div className={clsx('text-[10px] uppercase tracking-[0.12em]', isLight ? 'text-gray-400' : 'text-gray-500')}>
+            <div className="text-[10px] uppercase tracking-[0.12em] text-fg-subtle">
               {label}
             </div>
           </div>
@@ -232,7 +228,7 @@ export type LoadData = {
 
 export function LoadBalanceBars({ load, isLight }: { load: LoadData | null; isLight: boolean }) {
   if (!load) {
-    return <div className={clsx('text-xs py-12 text-center', isLight ? 'text-gray-400' : 'text-gray-500')}>
+    return <div className="text-xs py-12 text-center text-fg-subtle">
       No training-load data yet
     </div>
   }
@@ -271,7 +267,7 @@ export function LoadBalanceBars({ load, isLight }: { load: LoadData | null; isLi
         return (
           <div key={b.key}>
             <div className="flex items-baseline justify-between mb-1.5">
-              <span className={clsx('text-[11px] uppercase tracking-[0.15em]', 'text-gray-500')}>
+              <span className="text-[11px] uppercase tracking-[0.15em] text-gray-500">
                 {b.label}
               </span>
               <span className="text-[11px] font-mono tabular-nums" style={{ color: barColor }}>

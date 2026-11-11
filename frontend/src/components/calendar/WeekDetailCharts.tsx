@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
-import { type WeeklyReport, type HrZoneBound } from '../../api/hooks'
+import type { WeeklyReport } from '../../api/stats'
+import type { HrZoneBound } from '../../api/athlete'
 import { getSportColor, DEFAULT_SPORT_COLOR } from '../../constants/sportColors'
 import { formatDist, formatDurationHM } from '../../utils/formatSpeed'
 import { WEEKDAYS_SHORT } from '../../constants/weekdays'
@@ -226,7 +227,7 @@ function AccumulatedChart({ data, previous, titles, colorMap }: AccumulatedChart
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-[2px]" style={{ backgroundColor: prevColor }} />
             <span className="text-[11px] text-gray-400">Last week</span>
-            <span className={clsx('text-[11px] font-mono', isLight ? 'text-gray-600' : 'text-gray-400')}>
+            <span className="text-[11px] font-mono text-fg-muted">
               {formatDurationHM(prevWeekTotal * 60)}
             </span>
           </div>

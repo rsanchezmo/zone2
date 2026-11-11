@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import type { TrainingSession } from '../../api/hooks'
+import type { TrainingSession } from '../../api/calendar'
 import { todayLocalStr } from '../../utils/dates'
 import { DeviceIcon } from '../icons'
 

@@ -6,13 +6,18 @@ import {
   isSameMonth, startOfWeek, endOfWeek, parseISO,
 } from 'date-fns'
 import clsx from 'clsx'
+import { useActivitiesByDateRange, useActivities, type Activity } from '../api/activities'
 import {
-  useActivitiesByDateRange, useCalendarSessionsByRange, useCreateSession, useUpdateSession,
-  useDeleteSession, useWeeklyReport, useAthleteZones, useStreaks, useGoalProgress, useGoals,
-  useSessionScores, usePlanAccomplishment, useRaceEventsByRange, useUpcomingRaces,
-  useCreateRaceEvent, useUpdateRaceEvent, useDeleteRaceEvent, useActivities, type Activity,
-  type RaceEvent, type TrainingSession,
-} from '../api/hooks'
+  useCalendarSessionsByRange, useCreateSession, useUpdateSession, useDeleteSession, useSessionScores,
+  usePlanAccomplishment, type SessionFields, type TrainingSession,
+} from '../api/calendar'
+import { useWeeklyReport, useStreaks } from '../api/stats'
+import { useAthleteZones } from '../api/athlete'
+import { useGoalProgress, useGoals } from '../api/goals'
+import {
+  useRaceEventsByRange, useUpcomingRaces, useCreateRaceEvent, useUpdateRaceEvent, useDeleteRaceEvent,
+  type RaceEvent,
+} from '../api/races'
 import { getSportColor } from '../constants/sportColors'
 import { localDateStr, parseLocalDate } from '../utils/dates'
 import { useTheme } from '../hooks/useTheme'
@@ -293,29 +298,33 @@ export default function CalendarPage() {
     return rows
   }, [days, weekSummaries])
 
-  function handleAddSession(data: Record<string, unknown>) {
+  function handleAddSession(fields: SessionFields) {
     if (!selectedDate) return
-    createSession.mutate({ date: selectedDate, title: data.sport_type as string, ...data })
+    createSession.mutate({ date: selectedDate, title: fields.sport_type, ...fields })
   }
 
   const handleCopySession = useCallback((session: TrainingSession, targetDate: string) => {
-    const copyFields = [
-      'sport_type', 'description',
-      'planned_distance_km', 'planned_duration_mins', 'planned_intensity',
-      'target_avg_pace', 'target_pace_min', 'target_pace_max',
-      'target_hr_zone', 'target_zone_pct',
-      'segments', 'workout_template_id',
-    ] as const
-    const data: Record<string, unknown> = { date: targetDate, title: session.sport_type }
-    for (const f of copyFields) {
-      if (session[f] != null) data[f] = session[f]
-    }
-    createSession.mutate(data)
+    createSession.mutate({
+      date: targetDate,
+      title: session.sport_type,
+      sport_type: session.sport_type,
+      description: session.description,
+      planned_distance_km: session.planned_distance_km,
+      planned_duration_mins: session.planned_duration_mins,
+      planned_intensity: session.planned_intensity,
+      target_avg_pace: session.target_avg_pace,
+      target_pace_min: session.target_pace_min,
+      target_pace_max: session.target_pace_max,
+      target_hr_zone: session.target_hr_zone,
+      target_zone_pct: session.target_zone_pct,
+      segments: session.segments,
+      workout_template_id: session.workout_template_id,
+    })
     showToast(`Session copied to ${format(parseISO(targetDate), 'EEE, MMM d')}`)
   }, [createSession, showToast])
 
-  function handleUpdateSession(id: number, data: Record<string, unknown>) {
-    updateSession.mutate({ id, title: data.sport_type as string, ...data })
+  function handleUpdateSession(id: number, fields: SessionFields) {
+    updateSession.mutate({ id, title: fields.sport_type, ...fields })
   }
 
   const openDay = useCallback((dateStr: string) => {

@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import type { AthleteProfile } from '../../api/hooks'
+import type { AthleteProfile } from '../../api/athlete'
 import { useTheme } from '../../hooks/useTheme'
 
 export default function AthleteCard({ profile }: { profile: AthleteProfile }) {
@@ -19,12 +19,12 @@ export default function AthleteCard({ profile }: { profile: AthleteProfile }) {
         <img
           src={profile.profile_medium}
           alt={fullName}
-          className={clsx('w-24 h-24 rounded-full border object-cover shrink-0', 'border-surface-600')}
+          className="w-24 h-24 rounded-full border object-cover shrink-0 border-surface-600"
         />
       ) : (
         <div className={clsx(
           'w-24 h-24 rounded-full border flex items-center justify-center text-3xl font-semibold shrink-0',
-          isLight ? 'border-surface-600 bg-surface-700 text-gray-400' : 'border-surface-600 bg-surface-700 text-gray-500',
+          'border-surface-600 bg-surface-700 text-fg-subtle',
         )}>
           {(profile.firstname?.[0] ?? '?').toUpperCase()}
         </div>
@@ -32,19 +32,19 @@ export default function AthleteCard({ profile }: { profile: AthleteProfile }) {
       <div className="flex-1 min-w-0">
         <div className="eyebrow mb-1.5">Athlete</div>
         <h1
-          className={clsx('text-2xl md:text-3xl font-semibold tracking-tight truncate', isLight ? 'text-gray-900' : 'text-gray-100')}
+          className="text-2xl md:text-3xl font-semibold tracking-tight truncate text-fg-strong"
           style={{ letterSpacing: '-0.02em' }}
         >
           {fullName || 'Athlete'}
         </h1>
         <div className="flex items-center gap-3 mt-1.5 flex-wrap text-[11px] font-mono tabular-nums">
           {profile.username && (
-            <span className={'text-gray-500'}>@{profile.username}</span>
+            <span className="text-gray-500">@{profile.username}</span>
           )}
           {location && (
             <>
               {profile.username && <span className={isLight ? 'text-gray-300' : 'text-gray-700'}>·</span>}
-              <span className={'text-gray-500'}>{location}</span>
+              <span className="text-gray-500">{location}</span>
             </>
           )}
           {(profile.premium || profile.summit) && (

@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import type { ActivityCost as Cost } from '../../api/hooks'
+import type { ActivityCost as Cost } from '../../api/garmin'
 import { formatDurationHM } from '../../utils/formatSpeed'
 import StatCard from '../shared/StatCard'
 import { hrvZoneColor, readinessZoneColor, restingHrTone, toneColor } from '../garmin/garmin'

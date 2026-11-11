@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import type { ActivityDetail } from '../../api/hooks'
+import type { ActivityDetail } from '../../api/activities'
 import { useTheme } from '../../hooks/useTheme'
 import {
   getSportCategory, isOnFoot, convertSpeed, formatPace, formatClockDuration, formatDist, isSpeedSport,
@@ -22,7 +22,7 @@ export default function SegmentEfforts({ activity }: { activity: ActivityDetail 
     >
       <summary className="eyebrow cursor-pointer select-none list-none flex items-center justify-between">
         <span>Strava segments · {efforts.length}</span>
-        <span className={clsx('text-[10px] transition-transform group-open:rotate-180', isLight ? 'text-gray-400' : 'text-gray-600')}>▼</span>
+        <span className="text-[10px] transition-transform group-open:rotate-180 text-fg-faint">▼</span>
       </summary>
       <div className="space-y-3 mt-4">
         {efforts.map((effort, i) => {
@@ -64,7 +64,7 @@ export default function SegmentEfforts({ activity }: { activity: ActivityDetail 
                     </span>
                   )}
                   {prRank != null && prRank > 1 && prRank <= 3 && (
-                    <span className={clsx('text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0', isLight ? 'bg-surface-700 text-gray-500' : 'bg-surface-700 text-gray-400')}>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0 bg-surface-700 text-fg-dim">
                       {prRank === 2 ? '2nd' : '3rd'}
                     </span>
                   )}
@@ -76,10 +76,10 @@ export default function SegmentEfforts({ activity }: { activity: ActivityDetail 
 
               {/* Stats row */}
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-                <span className={clsx('font-mono', isLight ? 'text-gray-600' : 'text-gray-400')}>
+                <span className="font-mono text-fg-muted">
                   {distKm < 1 ? `${Math.round(distance)} m` : formatDist(distKm, activity.sport_type, 2)}
                 </span>
-                <span className={clsx('font-mono', isLight ? 'text-gray-600' : 'text-gray-400')}>
+                <span className="font-mono text-fg-muted">
                   {paceStr} <span className="text-gray-500">{paceUnit}</span>
                 </span>
                 {avgGrade != null && avgGrade !== 0 && (

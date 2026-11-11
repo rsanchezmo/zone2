@@ -1,7 +1,7 @@
 import { createContext, useContext } from 'react'
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { useTheme } from '../../hooks/useTheme'
-import type { GarminLatestResponse, GarminTrendRow as TrendRow, GarminTrends } from '../../api/hooks'
+import type { GarminLatestResponse, GarminTrendRow as TrendRow, GarminTrends } from '../../api/garmin'
 import { dateToLocalStr } from '../../utils/dates'
 
 // Single accent for the whole page. Variations come from opacity / tints

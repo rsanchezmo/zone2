@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
-import type { Fade, FadeAnchor, FadeVerdict } from '../../api/hooks'
+import type { Fade, FadeAnchor, FadeVerdict } from '../../api/stats'
 import { formatClockDuration } from '../../utils/formatSpeed'
 import { localDateStr, parseLocalDate } from '../../utils/dates'
 import StatusPill from '../shared/StatusPill'
@@ -53,7 +53,7 @@ export default function FadeSummary({ fade, labels, accent, isLight }: {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-baseline gap-2">
           <span className="eyebrow">Fade</span>
-          <span className={clsx('text-sm font-bold font-mono tabular-nums', isLight ? 'text-gray-900' : 'text-gray-100')}>
+          <span className="text-sm font-bold font-mono tabular-nums text-fg-strong">
             {fade.exponent.toFixed(3)}
           </span>
           {fade.stderr != null && (
@@ -75,7 +75,7 @@ export default function FadeSummary({ fade, labels, accent, isLight }: {
             to={`/activities/${a.activity_id}`}
             className={clsx(
               'text-[10px] font-mono tabular-nums px-2 py-1 rounded-md border transition-colors max-w-full truncate',
-              isLight ? 'border-surface-600 text-gray-600 hover:bg-surface-700' : 'border-surface-600 text-gray-400 hover:bg-surface-700',
+              'border-surface-600 text-fg-muted hover:bg-surface-700',
             )}
             title={a.activity_name}
           >
