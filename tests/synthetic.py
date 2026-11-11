@@ -3,8 +3,10 @@ real activities, coordinates or names here."""
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
+from datetime import date, timedelta
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from zone2.analytics import StravaAnalytics
@@ -92,3 +94,100 @@ def make_analytics(rows: list[dict] | None = None,
     activities = activities_frame(rows) if rows else pd.DataFrame()
     cache = FakeActivitiesCache(activities, streams)
     return StravaAnalytics(cache, FakeUserCache()), cache  # type: ignore[arg-type]
+
+
+# ── Street grids ─────────────────────────────────────────────────────────
+
+def street_grid(n: int, spacing: float = 100.0, x0: float = 0.0, y0: float = 0.0,
+                first_id: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """An n×n grid of straight streets in projected metres, as the planner and the matcher take
+    a network: end node ids (node (i, j) is first_id + j·n + i) and LineStrings oriented u -> v
+    with a vertex halfway. Rows first, then columns."""
+    from shapely.geometry import LineString
+
+    def node(i: int, j: int) -> int:
+        return first_id + j * n + i
+    u, v, geoms = [], [], []
+    for (i, j, di, dj) in [(i, j, 1, 0) for j in range(n) for i in range(n - 1)] + \
+                          [(i, j, 0, 1) for i in range(n) for j in range(n - 1)]:
+        a = (x0 + spacing * i, y0 + spacing * j)
+        b = (x0 + spacing * (i + di), y0 + spacing * (j + dj))
+        u.append(node(i, j))
+        v.append(node(i + di, j + dj))
+        geoms.append(LineString([a, ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2), b]))
+    return np.asarray(u, dtype=np.int64), np.asarray(v, dtype=np.int64), np.asarray(geoms, dtype=object)
+
+
+# ── The activity store the API tests stand the app on ────────────────────
+
+ATHLETE_PROFILE = {"id": 1, "firstname": "Test", "lastname": "Athlete",
+                   "shoes": [{"id": "g-shoe-1", "name": "Synthetic trainer", "distance": 100000.0, "retired": False}],
+                   "bikes": []}
+# Open ocean, far from any coast
+_ORIGIN = (0.0, -25.0)
+SHOE = "g-shoe-1"
+RUN_PACE_S_PER_KM = 300
+# The recent runs: every third day back from three days ago, oldest id highest
+RECENT_RUNS = 28
+STREAM_RUN_IDS = (101, 102)
+
+
+def _polyline(offset: float) -> str:
+    import polyline
+    lat, lon = _ORIGIN
+    return polyline.encode([(lat + offset, lon), (lat + offset + 0.001, lon + 0.001), (lat + offset, lon + 0.002)])
+
+
+def _activity(activity_id: int, sport_type: str, day: date, km: float, seconds: int, *, hour: int = 8,
+              heartrate: float | None = None, elevation: float = 0.0, name: str | None = None,
+              gear_id: str | None = None, **extra: Any) -> dict:
+    """An activity as Strava's list endpoint returns it, an hour ahead of UTC."""
+    return {
+        "id": activity_id, "name": name or f"Synthetic {sport_type.lower()} {activity_id}", "sport_type": sport_type,
+        "type": sport_type, "distance": km * 1000.0, "moving_time": seconds, "elapsed_time": seconds + 60,
+        "total_elevation_gain": elevation, "start_date": f"{day.isoformat()}T{hour - 1:02d}:00:00Z",
+        "start_date_local": f"{day.isoformat()}T{hour:02d}:00:00Z", "utc_offset": 3600.0, "timezone": None,
+        "average_speed": km * 1000.0 / seconds, "max_speed": km * 1000.0 / seconds * 1.3,
+        "average_heartrate": heartrate, "max_heartrate": heartrate + 20 if heartrate else None,
+        "gear_id": gear_id, "map": {"summary_polyline": _polyline(activity_id / 10_000)}, **extra,
+    }
+
+
+def _run_stream(km: float, heartrate: float, with_latlng: bool) -> dict:
+    seconds = int(km * RUN_PACE_S_PER_KM)
+    streams = steady_stream(seconds, 1000 / RUN_PACE_S_PER_KM, lambda t: heartrate + 5 * (t % 60 < 30))
+    streams["altitude"] = [10.0] * seconds
+    if with_latlng:
+        lat, lon = _ORIGIN
+        streams["latlng"] = [[lat, lon + d / 111_320] for d in streams["distance"]]
+    return streams
+
+
+def store_activities(today: date) -> list[dict]:
+    """A history of made-up activities: a fixed 2024 (four runs, the last in ISO week 1 of 2025,
+    and a ride), then runs every third day over the twelve weeks before `today`, a ride, a swim and
+    a hike. The two latest runs have streams."""
+    rows = [
+        _activity(1, "Run", date(2024, 3, 4), 10, 3000, heartrate=145, elevation=50, name="Synthetic morning run",
+                  gear_id=SHOE),
+        _activity(2, "Run", date(2024, 3, 6), 5, 1500, heartrate=150, elevation=10),
+        _activity(3, "Run", date(2024, 6, 10), 21.1, 6600, heartrate=155, elevation=120, name="Synthetic half"),
+        _activity(4, "Ride", date(2024, 6, 15), 40, 4800, heartrate=130, elevation=300),
+        _activity(5, "Run", date(2024, 12, 30), 8, 2400, heartrate=140),
+        _activity(201, "Ride", today - timedelta(days=10), 40, 4800, heartrate=130, elevation=250),
+        _activity(202, "Swim", today - timedelta(days=5), 2, 2400, heartrate=125),
+        _activity(203, "Hike", today - timedelta(days=20), 8, 9600, heartrate=110, elevation=400),
+    ]
+    for k in range(1, RECENT_RUNS + 1):
+        km = (6, 8, 10, 12)[k % 4]
+        heartrate = 140 + 4 * (k % 4)
+        activity_id = 100 + k
+        extra: dict[str, Any] = {}
+        if activity_id in STREAM_RUN_IDS:
+            extra["streams"] = _run_stream(km, heartrate, with_latlng=activity_id == STREAM_RUN_IDS[0])
+        if activity_id == STREAM_RUN_IDS[0]:
+            extra.update(description="Steady", splits_metric=[{"split": 1, "distance": 1000.0, "moving_time": 300}])
+        rows.append(_activity(activity_id, "Run", today - timedelta(days=3 * k), km, int(km * RUN_PACE_S_PER_KM),
+                              heartrate=heartrate, elevation=30, name="Tempo run" if k % 4 == 3 else "Easy run",
+                              gear_id=SHOE if k % 2 == 0 else None, **extra))
+    return rows
