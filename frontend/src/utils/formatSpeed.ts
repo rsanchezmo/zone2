@@ -45,6 +45,9 @@ export function isSpeedSport(sportType: string | undefined | null): boolean {
 }
 
 /** Strava counts a foot sport's cadence per leg: doubled, it is steps per minute. */
+/** Categories whose sport types are all one sport (a trail run is a run); the rest group different sports. */
+export const ONE_SPORT_CATEGORIES: ReadonlySet<SportCategory> = new Set<SportCategory>(['running', 'cycling', 'swimming'])
+
 export function isOnFoot(category: SportCategory): boolean {
   return category === 'running' || category === 'walking'
 }

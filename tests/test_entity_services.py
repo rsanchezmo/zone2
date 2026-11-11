@@ -23,6 +23,7 @@ from backend.services.goals import GoalChanges, NewGoal
 from backend.services.races import NewRace, RaceChanges
 from backend.services.sessions import NewSession, SessionChanges
 from backend.services.workout_library import NewWorkout, WorkoutChanges
+from zone2.clock import Clock
 from zone2.garmin_client import GarminUnavailable
 
 INTERVALS = [
@@ -52,7 +53,7 @@ class Garmin:
 
 @pytest.fixture
 def z2() -> SimpleNamespace:
-    return SimpleNamespace(garmin_client=SimpleNamespace(email=None, enabled=False))
+    return SimpleNamespace(garmin_client=SimpleNamespace(email=None, enabled=False), clock=Clock())
 
 
 @pytest.fixture
@@ -114,7 +115,7 @@ def test_race_round_trip(z2: SimpleNamespace, race_refreshes: list[object]) -> N
         assert created["date"] == "2027-03-07" and created["target_pace"] == 4.0
         moved = await races.update(z2, db, created["id"], RaceChanges(date="2027-03-14"))
         assert moved["date"] == "2027-03-14" and moved["name"] == "Harbour 10K"
-        assert await races.upcoming(db) == [moved]
+        assert await races.upcoming(z2, db) == [moved]
         assert await races.races_between(db, "2027-03-01", "2027-03-10") == []
         assert (await races.delete(z2, db, created["id"]))["id"] == created["id"]
         with pytest.raises(NotFound, match="Race event not found"):

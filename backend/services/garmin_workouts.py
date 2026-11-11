@@ -18,7 +18,6 @@ import asyncio
 import hashlib
 import json
 import logging
-from datetime import date
 from enum import StrEnum
 from typing import Any
 
@@ -402,7 +401,7 @@ async def mark_pending(z2: Zone2, db: aiosqlite.Connection, session: dict[str, A
                        previous_date: str | None = None) -> bool:
     """Mark the session pending when its entry needs a change, and say whether
     it does. A session that was and stays in the past is left alone."""
-    if max(session["date"], previous_date or session["date"]) < date.today().isoformat():
+    if max(session["date"], previous_date or session["date"]) < z2.clock.today().isoformat():
         return False
     entry, template = await _session_context(db, session)
     if not needs_sync(session, entry, template, await is_enabled(z2, db)):
@@ -431,7 +430,7 @@ async def forget_session(z2: Zone2, session_id: int) -> None:
     in flight for it, so nothing it adds is left behind."""
     async with _lock, connect_db() as db:
         await db.execute("UPDATE garmin_workout_schedules SET session_id = NULL WHERE session_id = ? AND date < ?",
-                         (session_id, date.today().isoformat()))
+                         (session_id, z2.clock.today().isoformat()))
         await db.commit()
         rows = await (await db.execute("SELECT schedule_id FROM garmin_workout_schedules WHERE session_id = ?",
                                        (session_id,))).fetchall()
@@ -442,10 +441,10 @@ async def forget_session(z2: Zone2, session_id: int) -> None:
                 logger.warning("Removing Garmin entry %s failed: %s: %s", r["schedule_id"], type(e).__name__, e)
 
 
-async def _due(db: aiosqlite.Connection, enabled: bool) -> list[tuple[dict, dict | None, dict | None]]:
-    """Sessions from today on whose entry needs a change, with their entry and saved workout."""
+async def _due(z2: Zone2, db: aiosqlite.Connection, enabled: bool) -> list[tuple[dict, dict | None, dict | None]]:
+    """Sessions from the athlete's today on whose entry needs a change, with their entry and saved workout."""
     rows = await (await db.execute("SELECT * FROM training_sessions WHERE date >= ? ORDER BY date",
-                                   (date.today().isoformat(),))).fetchall()
+                                   (z2.clock.today().isoformat(),))).fetchall()
     sessions = [row_dict(r, json_cols=("segments",)) for r in rows]
     entries = await _entries(db, [s["id"] for s in sessions])
     templates = {t["id"]: t for t in await _templates(db)}
@@ -459,7 +458,7 @@ async def _due(db: aiosqlite.Connection, enabled: bool) -> list[tuple[dict, dict
 
 async def mark_due_pending(z2: Zone2, db: aiosqlite.Connection) -> None:
     """Mark every upcoming session whose entry needs a change, before a `reconcile`."""
-    due = await _due(db, await is_enabled(z2, db))
+    due = await _due(z2, db, await is_enabled(z2, db))
     await db.executemany("UPDATE training_sessions SET garmin_sync_state = ?, garmin_sync_error = NULL WHERE id = ?",
                          [(SyncState.PENDING, s["id"]) for s, _, _ in due])
     await db.commit()
@@ -476,7 +475,7 @@ async def reconcile(z2: Zone2) -> None:
     async with _lock, connect_db() as db:
         enabled = await is_enabled(z2, db)
         stale = [t for t in await _templates(db) if library_state(t, enabled) not in (None, SyncState.SYNCED)]
-        due = await _due(db, enabled)
+        due = await _due(z2, db, enabled)
         if not stale and not due:
             return
         # One login attempt for the lot, rather than one per change
@@ -486,7 +485,7 @@ async def reconcile(z2: Zone2) -> None:
                 await _set_state(db, s["id"], SyncState.FAILED, error)
             return
         await _sync_library(db, client, enabled)
-        due = await _due(db, enabled)  # copies may have changed ids
+        due = await _due(z2, db, enabled)  # copies may have changed ids
         for s, entry, template in due:
             await _apply(db, client, s, entry, template, enabled)
         logger.info("Garmin workouts reconciled: %d copies, %d entries", len(stale), len(due))

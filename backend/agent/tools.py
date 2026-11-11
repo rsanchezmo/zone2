@@ -500,7 +500,7 @@ async def workout_history(
 async def races(ctx: RunContext[AgentDeps], include_past: bool = False) -> list[dict[str, Any]]:
     """The race calendar: date, name, sport, distance and target pace."""
     db = ctx.deps.db
-    rows = await (race_service.races_between(db) if include_past else race_service.upcoming(db))
+    rows = await (race_service.races_between(db) if include_past else race_service.upcoming(ctx.deps.z2, db))
     return [_readable(r) for r in rows]
 
 
@@ -700,7 +700,7 @@ async def log_entry(
         body: The detail in a few lines; tables are fine.
         day: The day it is about; today when omitted.
     """
-    entry = await coach_log.add(ctx.deps.db, kind=coach_log.Kind(kind), title=title, body=body,
+    entry = await coach_log.add(ctx.deps.z2, ctx.deps.db, kind=coach_log.Kind(kind), title=title, body=body,
                                 day=day.isoformat() if day else None, plan_id=plan_id,
                                 session_id=session_id, activity_id=activity_id)
     return f"Logged ({entry['id']})."
@@ -724,8 +724,8 @@ def _changes(before: dict[str, Any], after: dict[str, Any], fields: list[str]) -
 async def _log_change(ctx: RunContext[AgentDeps], session: dict[str, Any], title: str, reason: str,
                       detail: str | None = None) -> None:
     body = reason if not detail else f"{reason}\n{detail}"
-    await coach_log.add(ctx.deps.db, kind=coach_log.Kind.CHANGE, title=title, body=body, day=session["date"],
-                        plan_id=session.get("plan_id"), session_id=session["id"])
+    await coach_log.add(ctx.deps.z2, ctx.deps.db, kind=coach_log.Kind.CHANGE, title=title, body=body,
+                        day=session["date"], plan_id=session.get("plan_id"), session_id=session["id"])
 
 
 @memory_tools.tool
@@ -1003,7 +1003,7 @@ async def change_plan(ctx: RunContext[AgentDeps], plan_id: int, changes: PlanCha
         after = await plans.update_plan(ctx.deps.db, plan_id, values)
     except ServiceError as e:
         raise ModelRetry(f"That change didn't apply: {e.message}") from e
-    await coach_log.add(ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Changed the plan {after['name']}",
+    await coach_log.add(ctx.deps.z2, ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Changed the plan {after['name']}",
                         body=f"{reason}\n{_changes(before, after, list(values))}", plan_id=plan_id)
     return after
 
@@ -1037,9 +1037,9 @@ async def record_checkpoint(ctx: RunContext[AgentDeps], checkpoint_id: int, resu
         checkpoint = await plans.update_checkpoint(ctx.deps.db, checkpoint_id, {"result": result, "decision": decision})
     except NotFound as e:
         raise ModelRetry(f"There is no checkpoint {checkpoint_id}; see plan_detail.") from e
-    await coach_log.add(ctx.deps.db, kind=coach_log.Kind.DECISION, title=f"{checkpoint['title']}: {result}",
-                        body=decision, day=checkpoint["date"], plan_id=checkpoint["plan_id"],
-                        session_id=checkpoint.get("session_id"))
+    await coach_log.add(ctx.deps.z2, ctx.deps.db, kind=coach_log.Kind.DECISION,
+                        title=f"{checkpoint['title']}: {result}", body=decision, day=checkpoint["date"],
+                        plan_id=checkpoint["plan_id"], session_id=checkpoint.get("session_id"))
     return checkpoint
 
 
@@ -1051,8 +1051,8 @@ async def add_race(ctx: RunContext[AgentDeps], race: NewRace, reason: str) -> di
         row = await race_service.create(ctx.deps.z2, ctx.deps.db, race)
     except ServiceError as e:
         raise ModelRetry(f"It wasn't added: {e.message}") from e
-    await coach_log.add(ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Added the race {row['name']} on {row['date']}",
-                        body=reason)
+    await coach_log.add(ctx.deps.z2, ctx.deps.db, kind=coach_log.Kind.CHANGE,
+                        title=f"Added the race {row['name']} on {row['date']}", body=reason)
     return _readable(row)
 
 
@@ -1066,7 +1066,7 @@ async def change_race(ctx: RunContext[AgentDeps], race_id: int, changes: RaceCha
         raise ModelRetry(f"There is no race {race_id}; see races with include_past.") from e
     except ServiceError as e:
         raise ModelRetry(f"That change didn't apply: {e.message}") from e
-    await coach_log.add(ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Changed the race {row['name']}",
+    await coach_log.add(ctx.deps.z2, ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Changed the race {row['name']}",
                         body=f"{reason}\n" + ", ".join(_set_fields(changes)))
     return _readable(row)
 
@@ -1076,7 +1076,7 @@ async def set_goal(ctx: RunContext[AgentDeps], goal: NewGoal, reason: str) -> di
     """Add a goal, when the athlete asks: e.g. 2000 km of running in 2027 (yearly), or 3 strength
     sessions a week (activities, weekly)."""
     row = await goal_service.create(ctx.deps.db, goal)
-    await coach_log.add(ctx.deps.db, kind=coach_log.Kind.CHANGE, body=reason,
+    await coach_log.add(ctx.deps.z2, ctx.deps.db, kind=coach_log.Kind.CHANGE, body=reason,
                         title=f"Set a goal: {row['target_value']:g} {row['metric']} {row['period']} ({row['sport_type']}, {row['year']})")
     return row
 
@@ -1091,7 +1091,7 @@ async def change_goal(ctx: RunContext[AgentDeps], goal_id: int, changes: GoalCha
     except ServiceError as e:
         raise ModelRetry(f"That change didn't apply: {e.message}") from e
     given = changes.model_dump(exclude_unset=True)
-    await coach_log.add(ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Changed goal {goal_id}",
+    await coach_log.add(ctx.deps.z2, ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Changed goal {goal_id}",
                         body=f"{reason}\n" + ", ".join(f"{k}: {v}" for k, v in given.items()))
     return row
 
@@ -1103,7 +1103,8 @@ async def remove_goal(ctx: RunContext[AgentDeps], goal_id: int, reason: str) -> 
         await goal_service.delete(ctx.deps.db, goal_id)
     except NotFound as e:
         raise ModelRetry(f"There is no goal {goal_id}; see goals.") from e
-    await coach_log.add(ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Removed goal {goal_id}", body=reason)
+    await coach_log.add(ctx.deps.z2, ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Removed goal {goal_id}",
+                        body=reason)
     return f"Goal {goal_id} removed."
 
 
@@ -1124,7 +1125,8 @@ async def save_workout(ctx: RunContext[AgentDeps], workout: NewWorkout, reason: 
         row = await workout_library.create(ctx.deps.z2, ctx.deps.db, workout, ctx.deps.schedule)
     except ServiceError as e:
         raise ModelRetry(f"It wasn't saved: {e.message}") from e
-    await coach_log.add(ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Saved the workout {row['name']}", body=reason)
+    await coach_log.add(ctx.deps.z2, ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Saved the workout {row['name']}",
+                        body=reason)
     return _workout_view(row)
 
 
@@ -1142,7 +1144,8 @@ async def change_workout(ctx: RunContext[AgentDeps], workout_id: int, changes: W
     except ServiceError as e:
         raise ModelRetry(f"That change didn't apply: {e.message}") from e
     body = f"{reason}\n{_changes(before, after, _set_fields(changes))}"
-    await coach_log.add(ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Changed the workout {before['name']}", body=body)
+    await coach_log.add(ctx.deps.z2, ctx.deps.db, kind=coach_log.Kind.CHANGE,
+                        title=f"Changed the workout {before['name']}", body=body)
     return _workout_view(after)
 
 
@@ -1154,6 +1157,6 @@ async def remove_workout(ctx: RunContext[AgentDeps], workout_id: int, reason: st
         workout = await workout_library.delete(ctx.deps.z2, ctx.deps.db, workout_id, ctx.deps.schedule)
     except NotFound as e:
         raise ModelRetry(f"There is no saved workout {workout_id}; see saved_workouts.") from e
-    await coach_log.add(ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Deleted the workout {workout['name']}",
-                        body=reason)
+    await coach_log.add(ctx.deps.z2, ctx.deps.db, kind=coach_log.Kind.CHANGE,
+                        title=f"Deleted the workout {workout['name']}", body=reason)
     return f"Workout {workout_id} deleted."

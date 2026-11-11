@@ -1,12 +1,12 @@
 """What the coach wrote about the training: session reviews, the changes the athlete
 asked for (with why, before and after), checkpoint decisions, suggestions and summaries."""
 
-from datetime import date
 from enum import StrEnum
 
 import aiosqlite
 
 from backend.db import insert_row, row_dict
+from zone2.core import Zone2
 
 
 class Kind(StrEnum):
@@ -23,11 +23,12 @@ class SuggestionStatus(StrEnum):
     DISMISSED = "dismissed"
 
 
-async def add(db: aiosqlite.Connection, *, kind: Kind, title: str, body: str | None = None,
+async def add(z2: Zone2, db: aiosqlite.Connection, *, kind: Kind, title: str, body: str | None = None,
               day: str | None = None, plan_id: int | None = None, session_id: int | None = None,
               activity_id: int | None = None) -> dict:
+    """Log an entry, dated `day` or the athlete's today."""
     return row_dict(await insert_row(db, "coach_log", {
-        "kind": kind, "title": title, "body": body, "date": day or date.today().isoformat(),
+        "kind": kind, "title": title, "body": body, "date": day or z2.clock.today().isoformat(),
         "plan_id": plan_id, "session_id": session_id, "activity_id": activity_id,
         "status": SuggestionStatus.OPEN if kind == Kind.SUGGESTION else None,
     }))

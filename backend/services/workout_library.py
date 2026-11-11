@@ -233,7 +233,7 @@ async def update(z2: Zone2, db: aiosqlite.Connection, template_id: int, changes:
     if "segments" in values:
         upcoming = await (await db.execute(
             "SELECT id, segments, planned_distance_km FROM training_sessions WHERE workout_template_id = ? AND date >= ?",
-            (template_id, date.today().isoformat()))).fetchall()
+            (template_id, z2.clock.today().isoformat()))).fetchall()
         await db.executemany(
             "UPDATE training_sessions SET segments = ?, planned_distance_km = ? WHERE id = ?",
             [(json.dumps(row["segments"]),

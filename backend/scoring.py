@@ -9,7 +9,7 @@ A "slice" is the same shape with shorter arrays. Helpers `_len`, `_get`, and
 
 from __future__ import annotations
 
-from zone2.utils import convert_speed, hr_zone_counts
+from zone2.utils import ONE_SPORT_CATEGORIES, convert_speed, get_sport_category, hr_zone_counts
 from zone2.streams_store import moving_time, slice_streams as _slice, stream_length as _len
 
 
@@ -19,13 +19,17 @@ def match_activity(
 ) -> dict | None:
     """Match a session to the best activity on the same day.
 
-    1. Filter by sport_type (exact match).
+    1. Filter by sport_type; without one of that type, by its sport in any
+       setting (a TrailRun or VirtualRun for a Run, a GravelRide for a Ride).
     2. If multiple: sort by closest planned_distance_km (if set),
        else planned_duration_mins, else first.
     3. Return best match or None.
     """
     sport = session.get("sport_type", "")
     candidates = [a for a in activities_on_day if a.get("sport_type") == sport]
+    category = get_sport_category(sport)
+    if not candidates and category in ONE_SPORT_CATEGORIES:
+        candidates = [a for a in activities_on_day if get_sport_category(a.get("sport_type")) == category]
     if not candidates:
         return None
     if len(candidates) == 1:

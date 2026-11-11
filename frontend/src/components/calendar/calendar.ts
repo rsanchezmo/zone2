@@ -5,7 +5,7 @@ import type { ExecutionScore, SessionScoresResponse, TrainingSession } from '../
 import type { Goal, GoalMetric } from '../../api/goals'
 import type { RaceEvent } from '../../api/races'
 import { SESSION_GOALS, type SessionGoalKey } from '../../constants/sessionGoals'
-import { formatDist, formatDurationHM, formatPace, getPaceUnit, isSpeedSport } from '../../utils/formatSpeed'
+import { ONE_SPORT_CATEGORIES, formatDist, formatDurationHM, formatPace, getPaceUnit, getSportCategory, isSpeedSport } from '../../utils/formatSpeed'
 import type { IconProps } from '../icons'
 import { distanceFollowsSteps } from '../shared/segmentUtils'
 
@@ -27,9 +27,13 @@ export function dayPlanStatus(
 ): 'done' | 'missed' | null {
   if (sessions.length === 0 || !isPastOrToday) return null
   const activitySports = new Set(activities.map(a => a.sport_type))
+  const activityCategories = new Set(activities.map(a => getSportCategory(a.sport_type)))
   const allMatched = sessions.every(s => {
     if (s.sport_type.toLowerCase() === 'rest') return activities.length === 0
-    return activitySports.has(s.sport_type)
+    if (activitySports.has(s.sport_type)) return true
+    // Mirrors the backend's match_activity: a trail or treadmill run does a planned run
+    const category = getSportCategory(s.sport_type)
+    return ONE_SPORT_CATEGORIES.has(category) && activityCategories.has(category)
   })
   return allMatched ? 'done' : 'missed'
 }

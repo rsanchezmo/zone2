@@ -20,8 +20,8 @@ async def list_race_events(
 
 
 @router.get("/upcoming")
-async def upcoming_race_events(db: aiosqlite.Connection = Depends(get_db)):
-    return await races.upcoming(db)
+async def upcoming_race_events(db: aiosqlite.Connection = Depends(get_db), z2: Zone2 = Depends(get_z2)):
+    return await races.upcoming(z2, db)
 
 
 @router.post("/", status_code=201)

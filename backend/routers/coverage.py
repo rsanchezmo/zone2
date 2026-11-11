@@ -1,6 +1,5 @@
 import logging
 import time
-from datetime import date
 from pathlib import Path
 from threading import Lock
 
@@ -227,7 +226,9 @@ def activity_route(activity_id: int, z2: Zone2 = Depends(get_z2)):
 def coverage_timeline(slug: str, z2: Zone2 = Depends(get_z2)):
     """Streets walked for the first time per month (`new_km`, adding up to
     the city's covered km as `cumulative_km`), from the first matched run to
-    this month, with the runs matched in the city that month."""
+    the athlete's current month, with the runs matched in the city that month."""
+    this_month = z2.clock.today().strftime('%Y-%m')
+
     def build():
         new = _new_streets(slug, z2)
         started = coverage.start_times(z2)
@@ -236,7 +237,7 @@ def coverage_timeline(slug: str, z2: Zone2 = Depends(get_z2)):
             return {"months": []}
         month = pd.to_datetime(runs['start'], utc=True).dt.strftime('%Y-%m')
         per_month = runs.groupby(month).agg(new_m=('new_m', 'sum'), runs=('activity_id', 'size'))
-        months = pd.period_range(per_month.index.min(), date.today().strftime('%Y-%m'), freq='M').strftime('%Y-%m')
+        months = pd.period_range(per_month.index.min(), this_month, freq='M').strftime('%Y-%m')
         per_month = per_month.reindex(months, fill_value=0)
         cumulative = per_month['new_m'].cumsum()
         return {"months": [
@@ -245,7 +246,7 @@ def coverage_timeline(slug: str, z2: Zone2 = Depends(get_z2)):
             for m, row, total in zip(per_month.index, per_month.itertuples(), cumulative)
         ]}
     # The months run up to this one
-    version = coverage.state_version(slug) + (coverage.LAYERS_FORMAT, date.today().strftime('%Y-%m'))
+    version = coverage.state_version(slug) + (coverage.LAYERS_FORMAT, this_month)
     return coverage.cached_json(("timeline", slug), version, build)
 
 

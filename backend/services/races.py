@@ -92,10 +92,10 @@ async def races_between(db: aiosqlite.Connection, date_from: str | None = None,
     return [row_dict(row) for row in await cursor.fetchall()]
 
 
-async def upcoming(db: aiosqlite.Connection) -> list[dict[str, Any]]:
-    """The races from today on, by date."""
+async def upcoming(z2: Zone2, db: aiosqlite.Connection) -> list[dict[str, Any]]:
+    """The races from the athlete's today on, by date."""
     cursor = await db.execute("SELECT * FROM race_events WHERE date >= ? ORDER BY date",
-                              (datetime.date.today().isoformat(),))
+                              (z2.clock.today().isoformat(),))
     return [row_dict(row) for row in await cursor.fetchall()]
 
 

@@ -10,13 +10,14 @@ and lazily generated on first access.
 from __future__ import annotations
 
 import hmac
-from datetime import date, timedelta
+from datetime import timedelta
 
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 
 from backend.db import get_db, row_dict
+from backend.dependencies import get_z2
 from backend.services.calendar_feed import (
     build_ics,
     get_last_fetched_at,
@@ -26,6 +27,7 @@ from backend.services.calendar_feed import (
     record_fetch,
     rotate_token,
 )
+from zone2.core import Zone2
 
 router = APIRouter()
 
@@ -49,12 +51,13 @@ async def calendar_feed(
     request: Request,
     token: str = Query(default=""),
     db: aiosqlite.Connection = Depends(get_db),
+    z2: Zone2 = Depends(get_z2),
 ):
     stored = await get_or_create_token(db)
     if not token or not hmac.compare_digest(token, stored):
         raise HTTPException(status_code=401, detail="invalid token")
 
-    today = date.today()
+    today = z2.clock.today()
     date_from = (today - timedelta(days=PAST_DAYS)).isoformat()
     date_to = (today + timedelta(days=FUTURE_DAYS)).isoformat()
 

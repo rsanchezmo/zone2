@@ -6,7 +6,7 @@ import asyncio
 import logging
 import sqlite3
 from collections.abc import Iterable
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
 import aiosqlite
@@ -59,11 +59,11 @@ def queue(ids: Iterable[int], again: bool = False) -> None:
 
 
 def queue_new(z2: Zone2, before: set[int]) -> None:
-    """Queue what a sync brought in from the last REVIEW_WINDOW: the ids not in `before`."""
+    """Queue what a sync brought in from the athlete's last REVIEW_WINDOW: the ids not in `before`."""
     view = z2.strava_activities_cache.get_prepared_view()
     if view.empty:
         return
-    recent = view[view["start_date_local"].dt.date >= date.today() - REVIEW_WINDOW]
+    recent = view[view["start_date_local"].dt.date >= z2.clock.today() - REVIEW_WINDOW]
     queue(i for i in (int(x) for x in recent["id"]) if i not in before)
 
 

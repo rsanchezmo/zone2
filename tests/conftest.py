@@ -82,11 +82,10 @@ def no_network() -> Iterator[None]:
 
 
 def pin_clock(monkeypatch: pytest.MonkeyPatch, z2: object, at: datetime) -> None:
-    """Pin the athlete's clock of a Zone2 and its analytics to `at`, in UTC (Garmin's cache keeps
-    its own: none of these tests sync Garmin)."""
+    """Pin the athlete's clock of a Zone2, its analytics and its Garmin cache to `at`, in UTC."""
     from zone2.clock import Clock
     clock = Clock(lambda: timezone.utc, lambda: at)
-    for holder in (z2, z2.strava_analytics):
+    for holder in (z2, z2.strava_analytics, z2.garmin_cache):
         monkeypatch.setattr(holder, "clock", clock)
 
 

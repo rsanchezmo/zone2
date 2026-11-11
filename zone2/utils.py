@@ -48,6 +48,9 @@ _CATEGORY_BY_SPORT: dict[str, SportCategory] = {
 }
 # Read as speed (km/h) rather than pace
 SPEED_CATEGORIES = frozenset({SportCategory.CYCLING, SportCategory.WATER, SportCategory.SPEED})
+# Each type of these is one sport in another setting (trail, treadmill, gravel...). The other
+# categories group different sports, and walking types differ in terrain and length.
+ONE_SPORT_CATEGORIES = frozenset({SportCategory.RUNNING, SportCategory.CYCLING, SportCategory.SWIMMING})
 
 
 def gpx_track(name: str, lonlat: list[list[float]]) -> bytes:

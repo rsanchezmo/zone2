@@ -18,6 +18,32 @@ def test_match_activity_picks_the_closest_of_the_same_sport():
     assert match_activity({"sport_type": "Swim"}, acts) is None
 
 
+def test_a_session_is_done_by_any_type_of_its_sport():
+    trail = {"id": 1, "sport_type": "TrailRun", "distance_km": 12.0}
+    treadmill = {"id": 2, "sport_type": "VirtualRun", "distance_km": 8.0}
+    gravel = {"id": 3, "sport_type": "GravelRide", "distance_km": 40.0}
+    assert match_activity({"sport_type": "Run"}, [trail])["id"] == 1
+    assert match_activity({"sport_type": "Run", "planned_distance_km": 8}, [trail, treadmill])["id"] == 2
+    assert match_activity({"sport_type": "Ride"}, [trail, gravel])["id"] == 3
+
+
+def test_the_planned_type_wins_over_another_of_its_sport():
+    road = {"id": 1, "sport_type": "Run", "distance_km": 10.0}
+    treadmill = {"id": 2, "sport_type": "VirtualRun", "distance_km": 10.0}
+    assert match_activity({"sport_type": "VirtualRun"}, [road, treadmill])["id"] == 2
+    assert match_activity({"sport_type": "Run", "planned_distance_km": 9.9}, [treadmill, road])["id"] == 1
+
+
+def test_a_sport_is_not_done_by_another():
+    assert match_activity({"sport_type": "Run"}, [{"id": 1, "sport_type": "Walk"}, {"id": 2, "sport_type": "Hike"}]) is None
+    assert match_activity({"sport_type": "Walk"}, [{"id": 1, "sport_type": "Run"}]) is None
+    # Gym and racket sports share a category for display only: each is its own sport
+    assert match_activity({"sport_type": "WeightTraining"}, [{"id": 1, "sport_type": "Workout"}]) is None
+    assert match_activity({"sport_type": "Squash"}, [{"id": 1, "sport_type": "Padel"}]) is None
+    assert match_activity({"sport_type": "Kayaking"}, [{"id": 1, "sport_type": "Rowing"}]) is None
+    assert match_activity({"sport_type": "Football"}, [{"id": 1, "sport_type": "Golf"}]) is None
+
+
 def test_score_distance():
     cases = [(10, 10), (10, 9), (10, 11), (10, 35), (0, 5)]
     assert [_score_distance(target, actual)["score"] for target, actual in cases] == [100, 90, 90, 0, 0]
