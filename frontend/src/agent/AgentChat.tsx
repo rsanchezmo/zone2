@@ -361,6 +361,32 @@ export default function AgentChat({ open, expanded, busy, onBusyChange, onOpenPa
   const [draft, setDraft] = useState('')
   const scroller = useRef<HTMLDivElement>(null)
 
+  // The conversation lives on the server and another device may have continued it: coming back
+  // to the chat (reopening it, or returning to the tab) shows the server's copy again
+  const busyNow = useRef(busy)
+  useEffect(() => {
+    busyNow.current = busy
+  }, [busy])
+  const openedBefore = useRef(false)
+  useEffect(() => {
+    if (!open) return
+    async function resync() {
+      if (busyNow.current) return
+      await qc.refetchQueries({ queryKey: ['agent-conversation', CONVERSATION] })
+      if (busyNow.current) return
+      setItems(null)
+      setPending(null)
+    }
+    // The first open loads the conversation through its query
+    if (openedBefore.current) void resync()
+    openedBefore.current = true
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void resync()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [open, qc])
+
   const transcript: LiveItem[] = items ?? history?.messages ?? NO_ITEMS
   const grouped = useMemo(() => groups(transcript), [transcript])
   const waiting = pending ?? history?.pending ?? []
