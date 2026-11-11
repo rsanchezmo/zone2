@@ -189,7 +189,7 @@ async def today(ctx: RunContext[AgentDeps]) -> dict[str, Any]:
     await _garmin_synced(ctx)
     z2 = ctx.deps.z2
     view = z2.strava_activities_cache.get_prepared_view()
-    done = view[view["start_date_local"].dt.date == date.today()] if not view.empty else view
+    done = view[view["start_date_local"].dt.date == z2.clock.today()] if not view.empty else view
     race_ids = z2.strava_analytics.race_activity_ids
     briefing = await today_briefing(z2, ctx.deps.db, [_activity(r, race_ids) for _, r in done.iterrows()])
     briefing["sessions"] = [_readable(s) for s in briefing["sessions"]]
@@ -416,7 +416,7 @@ async def fitness(ctx: RunContext[AgentDeps], days: Annotated[int, Field(ge=30, 
     points ahead projected from the planned sessions."""
     result = await training.fitness_form(ctx.deps.z2, ctx.deps.db, days)
     series = result.get("series", [])
-    recent_from = (date.today() - timedelta(days=7)).isoformat()
+    recent_from = (ctx.deps.z2.clock.today() - timedelta(days=7)).isoformat()
     keep = [
         d for i, d in enumerate(series)
         if (d["date"] >= recent_from and not d["projected"]) or i % 7 == 0 or d is series[-1]
@@ -449,7 +449,7 @@ async def planned_sessions_between(ctx: RunContext[AgentDeps], date_from: date, 
     steps and plan, and for those done their execution score (0-100) and activity."""
     db = ctx.deps.db
     sessions = await planned_sessions.between(db, date_from.isoformat(), date_to.isoformat())
-    today_iso = date.today().isoformat()
+    today_iso = ctx.deps.z2.clock.today().isoformat()
     past = [s for s in sessions if s["date"] <= today_iso]
     scores = await session_scores.scores(ctx.deps.z2, db, past, date_from.isoformat(), date_to.isoformat()) if past else {}
     out = []
@@ -480,8 +480,8 @@ async def workout_history(
             workout_template_id = None
         if workout_template_id is None:
             raise ModelRetry(f"Session {session_id} isn't planned from a saved workout; try find_activities by name.")
-    rows = await planned_sessions.from_workout(db, workout_template_id, date.today().isoformat(), limit)
     z2 = ctx.deps.z2
+    rows = await planned_sessions.from_workout(db, workout_template_id, z2.clock.today().isoformat(), limit)
     view = z2.strava_activities_cache.get_prepared_view()
     race_ids = z2.strava_analytics.race_activity_ids
     if view.empty:
@@ -637,7 +637,8 @@ async def plan_detail(ctx: RunContext[AgentDeps], plan_id: int) -> dict[str, Any
 async def goals(ctx: RunContext[AgentDeps], year: int | None = None) -> list[dict[str, Any]]:
     """Goals for a year (this year when omitted): a target per week, month or year for a sport
     or all sports, with the value so far this period."""
-    ref = date.today() if year is None or year == date.today().year else date(year, 12, 31)
+    today = ctx.deps.z2.clock.today()
+    ref = today if year is None or year == today.year else date(year, 12, 31)
     rows = await goal_service.progress(ctx.deps.z2, ctx.deps.db, ref)
     keep = ("id", "year", "sport_type", "metric", "period", "target_value", "current_value", "percentage",
             "period_start", "period_end")
@@ -822,11 +823,11 @@ history_tools = _toolset()
 """Years, all-time totals and streaks, loaded with the history capability."""
 
 
-def _year(features: dict[Any, Any], sport_type: str) -> dict[str, Any]:
+def _year(features: dict[Any, Any], sport: SportCategory) -> dict[str, Any]:
     f = {str(k): v for k, v in features.items()}
     for key in ("average_speed", "fastest_activity_speed"):
         if key in f:
-            f[key.replace("speed", "pace")] = _pace(f.pop(key), sport_type)
+            f[key.replace("speed", "pace")] = _pace(f.pop(key), sport)
     if "fastest_activity_speed_id" in f:
         f["fastest_activity_id"] = f.pop("fastest_activity_speed_id")
     if (weekday := f.get("most_active_weekday")) is not None:
@@ -835,25 +836,25 @@ def _year(features: dict[Any, Any], sport_type: str) -> dict[str, Any]:
 
 
 @history_tools.tool
-async def year_stats(ctx: RunContext[AgentDeps], year: int | None = None, sport_type: str = "Run",
-                     compare_to: int | None = None) -> dict[str, Any]:
-    """A year in sport: totals for `sport_type` (km, time, climb, activities, per month, the
-    longest and fastest, its activity ids) and for all sports (count per sport). The year in
+async def year_stats(ctx: RunContext[AgentDeps], year: int | None = None,
+                     sport: SportCategory = SportCategory.RUNNING, compare_to: int | None = None) -> dict[str, Any]:
+    """A year in sport: totals for `sport` (km, time, climb, activities, per month, the
+    longest and fastest, its activity ids) and for all sports (count per Strava sport type). The year in
     progress counts up to today, and so does `compare_to`, so "this year vs last year" is like for like.
 
     Args:
         year: This year when omitted.
-        sport_type: A Strava sport type such as "Run" or "Ride".
+        sport: "walking" is walks and hikes, which never count as running.
         compare_to: Another year, counted up to the same day.
     """
-    today = date.today()
+    z2 = ctx.deps.z2
+    today = z2.clock.today()
     year = year or today.year
     cutoff = (today.month, today.day) if year == today.year else None
-    z2 = ctx.deps.z2
 
     def one(y: int) -> dict[str, Any]:
-        data = training.year_in_sport(z2, y, sport_type, cutoff)
-        return {"year": y, sport_type: _year(data["main"], sport_type), "all_sports": _year(data["all"], sport_type)}
+        data = training.year_in_sport(z2, y, sport, cutoff)
+        return {"year": y, sport.value: _year(data["main"], sport), "all_sports": _year(data["all"], sport)}
 
     result = await asyncio.to_thread(one, year)
     if cutoff:
@@ -887,7 +888,7 @@ async def night(ctx: RunContext[AgentDeps], day: date | None = None) -> dict[str
     the minutes deep, light, REM and awake with the average heart rate, HRV, stress and body
     battery. `day` is the morning the night ended; today when omitted."""
     await _garmin_synced(ctx)
-    result = await asyncio.to_thread(day_timeline.night, ctx.deps.z2, day or date.today())
+    result = await asyncio.to_thread(day_timeline.night, ctx.deps.z2, day or ctx.deps.z2.clock.today())
     if result is None:
         return "Garmin has no sleep for that night."
     result["asleep"] = _hm(result.pop("asleep_seconds"))

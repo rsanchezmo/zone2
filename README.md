@@ -73,7 +73,7 @@ The other `STRAVA_WEB_*` settings, such as the Coach's model (`STRAVA_WEB_AGENT_
 
 With Garmin credentials set, Garmin syncs every 6 hours, and Backfill all on the Garmin page fetches your whole history. If your account asks for a two-factor code, run `poetry run python scripts/garmin_poc.py` once in a terminal so the login gets cached in `.strava/garmin/`.
 
-Everything z2 keeps is in two folders: `.strava/` (activities, streams, tokens, and the SQLite database with the calendar, plans and workouts) and `zone2_workdir/` (street maps and exports). Those are the folders to back up.
+Everything z2 keeps is in two folders: `.strava/` (activities, streams, tokens, and the SQLite database with the calendar, plans and workouts) and `zone2_workdir/` (street maps and exports), both in the checkout unless `STRAVA_WEB_DATA_DIR` and `STRAVA_WEB_WORKDIR` point elsewhere. Those are the folders to back up. The backend, the bot and the scripts read `.env` from the checkout, wherever you start them from.
 
 ## Running it on a home server
 
@@ -90,7 +90,7 @@ The app has no login of its own, so it only listens on the server's loopback and
 
 Two older pieces still work: `telegram_bot.py` posts the weekly report and year in sport cards to a Telegram chat (it needs `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`), and `main.py` is my scratchpad for using the `zone2` package straight from Python.
 
-If you change things, run `./scripts/install-hooks.sh` once. Its pre-commit hook catches secrets like `.env` before they're committed. CI runs `npm run lint` and the frontend build, so keep both at zero errors.
+If you change things, run `./scripts/install-hooks.sh` once. Its pre-commit hook catches secrets like `.env` before they're committed. CI runs the frontend's `npm run lint` and build, ruff, the Python tests (`poetry run pytest -q`, synthetic data only) and the Docker build, so keep them all passing.
 
 ## Strava
 

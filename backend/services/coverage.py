@@ -1,7 +1,7 @@
 """Coverage cities, shared by the coverage and planner routers and the Strava sync: the street
 networks loaded in memory (a few at most, released when idle), the map-layer responses cached
-per city, the coverage sync that matches new activities in each city, and the Garmin courses
-starting in a city."""
+per city, the coverage sync that matches new activities in each city, the loops planned and not
+saved yet, and the Garmin courses starting in a city."""
 
 import ctypes
 import gc
@@ -51,6 +51,11 @@ _responses_lock = Lock()
 # Per-city sync status; matching runs in a BackgroundTasks thread.
 _sync_status: dict[str, dict] = {}
 _sync_lock = Lock()
+
+# Loops planned but not saved yet, by plan_id, so saving one stores exactly the loop on screen
+_MAX_HELD_PLANS = 32
+_held_plans: "OrderedDict[str, dict]" = OrderedDict()
+_held_plans_lock = Lock()
 
 # Part of the map layers' cache version: bump when their content changes for
 # the same coverage state, so responses persisted by older code aren't served.
@@ -180,12 +185,32 @@ def state_version(slug: str, *extra: Path) -> tuple:
         fp.stat().st_mtime_ns if fp.exists() else 0 for fp in extra)
 
 
+def hold_plan(plan_id: str, plan: dict) -> None:
+    """Keep a planned loop ({slug, feature, new_ways, network, request}) until it is saved, the
+    most recent ones only."""
+    with _held_plans_lock:
+        _held_plans[plan_id] = plan
+        _held_plans.move_to_end(plan_id)
+        while len(_held_plans) > _MAX_HELD_PLANS:
+            _held_plans.popitem(last=False)
+
+
+def held_plan(slug: str, plan_id: str) -> dict | None:
+    """The city's loop planned under `plan_id`, if still held."""
+    with _held_plans_lock:
+        plan = _held_plans.get(plan_id)
+    return plan if plan is not None and plan["slug"] == slug else None
+
+
 def delete_city(slug: str) -> int:
     """Unload the city, forget everything held for it and remove its map, its matched state and
     its cached layers from disk. Returns the number of files removed."""
     with _matchers_lock:
         _matchers.pop(slug, None)
         _matcher_used.pop(slug, None)
+    with _held_plans_lock:
+        for plan_id in [k for k, plan in _held_plans.items() if plan["slug"] == slug]:
+            del _held_plans[plan_id]
     with _responses_lock:
         for key in [k for k in _responses if k[1] == slug]:
             del _responses[key]

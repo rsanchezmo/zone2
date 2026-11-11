@@ -12,12 +12,13 @@ from pydantic_ai import ModelRetry, ModelResponse, ToolCallPart
 
 import backend.db as calendar_db
 from backend.agent import chat, conversations, message_store, tools
-from backend.services import races, sessions, training, workout_library
+from backend.services import races, sessions, workout_library
 from backend.services.races import NewRace, RaceChanges
 from backend.services.sessions import NewSession, SessionChanges
 from backend.services.workout_library import NewWorkout, WorkoutChanges
 from tests.synthetic import activities_frame
 from tests.test_agent_conversations import exchange, prompt
+from zone2.clock import Clock
 from zone2.utils import SportCategory
 
 RUN_STEPS = [
@@ -50,7 +51,7 @@ def database(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def z2() -> SimpleNamespace:
-    return SimpleNamespace(garmin_client=SimpleNamespace(email=None, enabled=False))
+    return SimpleNamespace(garmin_client=SimpleNamespace(email=None, enabled=False), clock=Clock())
 
 
 def run[T](work: Callable[[Any], Awaitable[T]]) -> T:
@@ -272,17 +273,14 @@ def test_activities_read_in_each_sports_unit() -> None:
 
 # ── Sport filters ───────────────────────────────────────────────────────
 
-def test_weekly_volume_counts_runs_by_category_and_never_walks(monkeypatch: pytest.MonkeyPatch) -> None:
-    class Today(date):
-        @classmethod
-        def today(cls) -> date:
-            return date(2027, 3, 3)
-    monkeypatch.setattr(training, "date", Today)
+def test_weekly_volume_counts_runs_by_category_and_never_walks() -> None:
     view = activities_frame([
         {"id": i, "sport_type": sport, "start_date_local": "2027-03-01T08:00:00Z", "distance": km * 1000.0}
         for i, (sport, km) in enumerate([("Run", 10), ("TrailRun", 12), ("Walk", 5), ("Hike", 8), ("Ride", 30)])
     ])
-    z2 = SimpleNamespace(strava_activities_cache=SimpleNamespace(get_prepared_view=lambda: view))
+    noon = datetime(2027, 3, 3, 12, tzinfo=timezone.utc)
+    z2 = SimpleNamespace(strava_activities_cache=SimpleNamespace(get_prepared_view=lambda: view),
+                         clock=Clock(lambda: timezone.utc, lambda: noon))
     c = SimpleNamespace(deps=SimpleNamespace(z2=z2))
     assert asyncio.run(tools.weekly_volume(c, weeks=1, sport=SportCategory.RUNNING)) == [
         {"week_start": "2027-03-01", "km": 22.0, "activities": 2}]

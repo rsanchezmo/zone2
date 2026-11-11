@@ -28,6 +28,7 @@ from datetime import UTC, date as date_t, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from zone2.clock import Clock
 from zone2.garmin_client import GarminClient
 from zone2.garmin_extractors import SUMMARY_METRICS, extract, is_finalized, summary_version
 
@@ -87,9 +88,11 @@ def _conn(db_path: Path) -> Iterator[sqlite3.Connection]:
 class GarminDailyStatsCache:
     """CRUD + sync orchestration over the `garmin_daily_stats` table."""
 
-    def __init__(self, client: GarminClient, db_path: Path):
+    def __init__(self, client: GarminClient, db_path: Path, clock: Clock | None = None):
         self.client = client
         self._db_path = db_path
+        # Garmin files each day under the athlete's local date
+        self._clock = clock or Clock()
         # Single sync worker at a time (writes interleave fine but the
         # garminconnect HTTP session isn't safe to hammer concurrently).
         self._sync_lock = threading.Lock()
@@ -477,7 +480,7 @@ class GarminDailyStatsCache:
         if not self.client.enabled:
             return 0
         self._cancel.clear()
-        today = date_t.today()
+        today = self._clock.today()
         start = today - timedelta(days=days - 1)
         total = 0
         # per-day metrics: gaps everywhere + intraday refresh for today/yesterday
@@ -512,7 +515,7 @@ class GarminDailyStatsCache:
             return {"started": False, "reason": "garmin client disabled"}
 
         self._cancel.clear()
-        today = date_t.today()
+        today = self._clock.today()
         start_t = time.monotonic()
         deadline = start_t + _BACKFILL_MAX_RUNTIME_S
 

@@ -11,7 +11,8 @@ from backend.db import delete_row, get_row, insert_row, row_dict, update_row
 from backend.errors import Invalid, NotFound
 from backend.services import garmin_workouts, workout_library
 from backend.services.workout_library import (
-    PACE_LOW, PACE_UNIT, HrZone, Pace, Step, ZonePct, check_kept_paces, check_paces, step_paces, write_values,
+    PACE_LOW, PACE_UNIT, HrZone, Pace, Step, ZonePct, check_kept_paces, check_paces, distance_after_steps, step_paces,
+    write_values,
 )
 from zone2.core import Zone2
 
@@ -140,6 +141,9 @@ async def update(z2: Zone2, db: aiosqlite.Connection, session_id: int, changes: 
         # Naming the workout it already follows keeps its steps: a past session keeps the ones it had
         if values.get("workout_template_id") != before["workout_template_id"] or not before["segments"]:
             await _plan_from_workout(db, values, sport_type)
+        if "segments" in values and "planned_distance_km" not in values:
+            values["planned_distance_km"] = distance_after_steps(before["planned_distance_km"], before["segments"],
+                                                                 values["segments"])
         check_paces(sport_type, _paces(values))
         check_kept_paces(before["sport_type"], sport_type, _paces({k: v for k, v in before.items() if k not in values}))
     row = session_dict(await update_row(db, "training_sessions", session_id, values, NOT_FOUND, json_cols=JSON_COLS))

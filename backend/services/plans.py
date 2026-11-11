@@ -104,6 +104,7 @@ async def _prediction(z2: Zone2, db: aiosqlite.Connection, plan: dict, race: dic
     if not race or not race.get("distance_km") or sport not in z2.strava_analytics.RECORD_SPORTS:
         return None
     metres = race["distance_km"] * 1000
+    today = z2.clock.today()
     analytics = z2.strava_analytics
     now = await asyncio.to_thread(analytics.get_race_predictions, sport)
     candidates = now.get("predictions") or []
@@ -120,16 +121,16 @@ async def _prediction(z2: Zone2, db: aiosqlite.Connection, plan: dict, race: dic
                   if sport == SportCategory.RUNNING and abs(garmin_distance - target["distance_m"]) < 0.01 * garmin_distance else None)
     if garmin_key:
         recent = await asyncio.to_thread(z2.garmin_cache.get_summary_range, "race_predictions",
-                                         (date.today() - timedelta(days=GARMIN_FRESH_DAYS)).isoformat(),
-                                         date.today().isoformat())
+                                         (today - timedelta(days=GARMIN_FRESH_DAYS)).isoformat(),
+                                         today.isoformat())
         latest = next((r["summary"][garmin_key] for r in reversed(recent) if r["summary"].get(garmin_key)), None)
         if latest:
             now_only.update(now_s=latest, source="garmin")
     if not trend:
         return now_only
     # A finished plan's trend stops at its end
-    upto = min(date.today().isoformat(), plan["end_date"])
-    weeks = max(1, math.ceil((date.today() - date.fromisoformat(plan["start_date"])).days / 7) + 1)
+    upto = min(today.isoformat(), plan["end_date"])
+    weeks = max(1, math.ceil((today - date.fromisoformat(plan["start_date"])).days / 7) + 1)
     history = await asyncio.to_thread(get_race_predictions_history_cached, z2, sport, min(weeks, 104), 7)
     z2_trend = [
         {"date": point["end_date"], "time_s": p["predicted_time_s"]}
@@ -151,7 +152,7 @@ async def progress(z2: Zone2, db: aiosqlite.Connection, plan: dict, race: dict |
     week (target, planned, run), the race prediction against the goal, and current form.
     `race` is the plan's (race_of). Without `detail` (a list of plans), the prediction's
     trend and the form are left out."""
-    today = date.today()
+    today = z2.clock.today()
     today_iso = today.isoformat()
     sessions = await plan_sessions(db, plan["id"])
     sport = get_sport_category((race or {}).get("sport_type") or "Run")

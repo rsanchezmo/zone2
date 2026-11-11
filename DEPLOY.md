@@ -112,9 +112,10 @@ app locally once on your laptop, complete OAuth there, then copy the populated
 `.strava/` directory onto the Pi before the first `docker compose up`.
 
 On your laptop, after running the app once and authorizing with Strava, the
-`.strava/` folder contains `token.json`, `metadata.json`, and cached Parquet
-activity files. **It is gitignored**, so a fresh `git clone` on the Pi doesn't
-have it — rsync it before the first start:
+`.strava/` folder (or the one `STRAVA_WEB_DATA_DIR` names) contains
+`token.json`, `metadata.json`, and cached Parquet activity files. **It is
+gitignored**, so a fresh `git clone` on the Pi doesn't have it — rsync it
+before the first start:
 
 ```bash
 # On the Pi, switch to bind-mounts first (see docker-compose.override.yml below).
@@ -142,6 +143,9 @@ volumes:
 
 The `!override` tag replaces (rather than merges) the base list, and
 `!reset null` drops the named volumes inherited from `docker-compose.yml`.
+Inside the container the app reads `/app/.strava` and `/app/zone2_workdir`,
+the defaults of `STRAVA_WEB_DATA_DIR` and `STRAVA_WEB_WORKDIR`; mount the
+folders elsewhere only together with those variables in `.env`.
 
 `docker-compose.yml` publishes the app on `127.0.0.1:8000` only: the app has
 no auth of its own, so Cloudflare Tunnel (behind Access) is the only path in.
@@ -330,7 +334,7 @@ sudo systemctl start z2-deploy.service
 - **Strava auth issues on the Pi**: if the cache wasn't seeded and you hit
   the interactive OAuth prompt, the container will wait forever for input.
   Either seed `.strava/` (Step 4) or attach a TTY and paste the code:
-  `docker compose run --rm app python -c "from zone2.endpoint import StravaEndpoint; StravaEndpoint()"`.
+  `docker compose run --rm app python -c "from backend.config import settings; from zone2.endpoint import StravaEndpoint; from zone2.paths import DataDir; StravaEndpoint(DataDir(settings.data_dir).token)"`.
 - **`docker: permission denied` during auto-deploy**: the `pi` user must be
   in the `docker` group — `sudo usermod -aG docker pi`, then log out and
   back in.

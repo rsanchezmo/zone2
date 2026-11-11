@@ -31,15 +31,15 @@ def _cached_json(endpoint):
     def cached(**kwargs) -> Response:
         z2: Zone2 = kwargs["z2"]
         params = tuple(sorted((k, v) for k, v in kwargs.items() if k != "z2"))
-        key = (endpoint.__name__, params, z2.strava_activities_cache.cache_version, today_key())
+        key = (endpoint.__name__, params, z2.strava_activities_cache.cache_version, today_key(z2))
         return _stats_cache.json_response(key, lambda: endpoint(**kwargs))
     return cached
 
 
-async def _cached_json_in_threadpool(key: tuple, build) -> Response:
+async def _cached_json_in_threadpool(z2: Zone2, key: tuple, build) -> Response:
     """_stats_cache.json_response for async endpoints: the build is blocking
     pandas work, so it runs off the event loop."""
-    return await run_in_threadpool(_stats_cache.json_response, key + (today_key(),), build)
+    return await run_in_threadpool(_stats_cache.json_response, key + (today_key(z2),), build)
 
 
 def _serialize_enum_dict(d: dict) -> dict:
@@ -67,7 +67,7 @@ async def weekly_report(
 
     key = ("weekly_report_response", week_start, zones_signature(hr_zones),
            z2.strava_activities_cache.cache_version)
-    return await _cached_json_in_threadpool(key, build)
+    return await _cached_json_in_threadpool(z2, key, build)
 
 
 @router.get("/year-in-sport")
@@ -78,7 +78,7 @@ def year_in_sport(
     comparison_year: int | None = None,
     z2: Zone2 = Depends(get_z2),
 ):
-    today = date.today()
+    today = z2.clock.today()
     year = year or today.year
     is_current_year = year == today.year
 
@@ -117,7 +117,7 @@ def cumulative_distance(
     """Daily cumulative distance for a year (optionally with comparison year and target)."""
     import calendar as cal
 
-    year = year or date.today().year
+    year = year or z2.clock.today().year
     activities = z2.strava_activities_cache.get_prepared_view()
 
     days_in_year = 366 if cal.isleap(year) else 365
@@ -247,7 +247,7 @@ async def relative_effort_weekly(
         round(resolved_rhr["value"], 1),
         z2.strava_activities_cache.cache_version,
     )
-    return await _cached_json_in_threadpool(key, lambda: z2.strava_analytics.get_weekly_relative_effort(
+    return await _cached_json_in_threadpool(z2, key, lambda: z2.strava_analytics.get_weekly_relative_effort(
         hr_zones=resolved_zones["zones"],
         hr_rest=resolved_rhr["value"],
         sports=sports,

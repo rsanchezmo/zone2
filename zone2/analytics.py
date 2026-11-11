@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from functools import partial
 import logging
 from threading import RLock
@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 import numpy as np
 from zone2.activities_cache import StravaActivitiesCache
+from zone2.clock import Clock
 from zone2.best_efforts import (
     BESTS_COLUMNS, RECORD_SPORTS, BestEffort, PersonalRecord, RankedBests, per_activity_bests,
     personal_records, rank_bests, recent_best_efforts, sport_distances, stream_best_efforts, summary_name,
@@ -30,13 +31,6 @@ from zone2.user_cache import StravaUserCache
 from zone2.utils import SportCategory, get_sport_category
 
 logger = logging.getLogger(__name__)
-
-
-def _utc_now_naive() -> datetime:
-    """UTC wallclock as a naive datetime. Matches the codebase's UTC-as-base
-    convention while staying comparable with other naive datetimes used for
-    year-boundary math."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _in_category(activities: pd.DataFrame, sport_category: SportCategory) -> pd.Series:
@@ -73,10 +67,11 @@ class StravaAnalytics:
     RE_SPORTS = RE_SPORTS
 
     def __init__(self, strava_activities_cache: StravaActivitiesCache, strava_user_cache: StravaUserCache,
-                 garmin_cache=None):
+                 garmin_cache=None, clock: Clock | None = None):
         self.strava_activities_cache = strava_activities_cache # inmutable data (historical activities)
         self.strava_user_cache = strava_user_cache # mutable data (user profile, stats, zones)
         self.garmin_cache = garmin_cache # optional GarminDailyStatsCache for measured RHR/VO2max
+        self.clock = clock or Clock()
         # Races the user keeps outside Strava's race flag (see set_race_activity_ids)
         self.race_activity_ids: frozenset[int] = frozenset()
         self.prediction_tuning = PredictionTuning()
@@ -245,19 +240,19 @@ class StravaAnalytics:
 
     # ── Year in sport and weekly report ───────────────────────────────
 
-    def get_year_in_sport(self, year: int, main_sport: str,
+    def get_year_in_sport(self, year: int, main_sport: str | SportCategory,
                           cutoff_month_day: tuple[int, int] | None = None) -> dict[YearInSportFeatures, Any]:
-        """Year in sport for `main_sport` (a Strava sport type), up to the
+        """Year in sport for `main_sport` (a Strava sport type, or a category), up to the
         (month, day) `cutoff_month_day` when given, for a fair year-over-year
         comparison."""
         activities = self.strava_activities_cache.get_prepared_view()
-        return year_in_sport(activities, year, main_sport, cutoff_month_day, _utc_now_naive())
+        return year_in_sport(activities, year, main_sport, cutoff_month_day, self.clock.now().replace(tzinfo=None))
 
     def get_all_year_in_sport(self, year: int,
                               cutoff_month_day: tuple[int, int] | None = None) -> dict[AllYearInSportFeatures, Any]:
         """Year in sport across all sports, up to `cutoff_month_day` when given."""
         activities = self.strava_activities_cache.get_prepared_view()
-        return all_year_in_sport(activities, year, cutoff_month_day, _utc_now_naive())
+        return all_year_in_sport(activities, year, cutoff_month_day, self.clock.now().replace(tzinfo=None))
 
     def get_weekly_report(self, week_start_date: str | None = None, cutoff_date: str | None = None,
                           hr_zones: list[HrZone] | None = None) -> dict[WeeklyReportFeatures, Any]:
@@ -266,7 +261,7 @@ class StravaAnalytics:
         when given to compare with a week still running. HR zones default to
         the athlete's."""
         activities = self.strava_activities_cache.get_prepared_view()
-        week_start, week_end = week_bounds(week_start_date, cutoff_date, datetime.now(timezone.utc))
+        week_start, week_end = week_bounds(week_start_date, cutoff_date, self.clock.now())
         activities_week = activities_between(activities, week_start, week_end)
         zones = hr_zones if hr_zones is not None else self._get_hr_zones_cached()
         hr_counts: list[HeartRateCounts] = []
@@ -359,7 +354,7 @@ class StravaAnalytics:
     ) -> list[BestEffort]:
         """best_efforts.recent_best_efforts of the sport, up to `end_date` (now
         when None)."""
-        end = datetime.now(timezone.utc) if end_date is None else end_date
+        end = self.clock.now() if end_date is None else end_date
         return recent_best_efforts(self._ranked_bests(sport_category), end, within_days, top_k)
 
     # ── Race predictions ──────────────────────────────────────────────
@@ -388,7 +383,7 @@ class StravaAnalytics:
         """race_predictions.predict_races for the sport as of now, cached per
         day (the recency weights count from today)."""
         caches = self._caches()
-        now = datetime.now(timezone.utc)
+        now = self.clock.now()
         cache_key = (sport_category, now.date())
         if cache_key in caches.race_predictions:
             return caches.race_predictions[cache_key]
@@ -422,7 +417,7 @@ class StravaAnalytics:
             self._ranked_bests(sport_category),
             self._compute_race_residuals(sport_category),
             sport_category,
-            datetime.now(timezone.utc),
+            self.clock.now(),
             self.get_max_heart_rate() or 0,
             weeks,
             step_days,
@@ -481,4 +476,4 @@ class StravaAnalytics:
         sessions ahead (date, sport_type, planned_duration_mins,
         planned_distance_km)."""
         daily = self.get_daily_training_load(hr_rest=hr_rest, hr_zones=hr_zones)
-        return fitness_form(daily, planned, date.today(), days)
+        return fitness_form(daily, planned, self.clock.today(), days)

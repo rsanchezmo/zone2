@@ -11,6 +11,7 @@ import aiosqlite
 
 from backend.services.resting_hr import resolve_resting_hr
 from backend.services import sessions as planned_sessions
+from backend.services.session_scores import accomplished, activities_by_day
 from backend.services.zones import resolve_hr_zones
 from zone2.core import Zone2
 from zone2.garmin_cache import GarminDailyStatsCache
@@ -133,12 +134,26 @@ def classify(recovery: dict | None, form_pct: float | None) -> Recovery:
     return Recovery.GOOD if form_pct > FRESH_FORM_PCT else Recovery.OK
 
 
+def _is_rest(session: dict) -> bool:
+    return (session.get("sport_type") or "").lower() == "rest"
+
+
+def trained(sessions: list[dict], day_activities: list[dict]) -> bool:
+    """Whether today's training is done: each session planned (rest aside) has its activity, as
+    the calendar matches them, or was marked completed. With only rest or nothing planned, any
+    activity counts."""
+    planned = [s for s in sessions if not _is_rest(s)]
+    if not planned:
+        return bool(day_activities)
+    return all(accomplished(s, day_activities) for s in planned)
+
+
 def day_of(sessions: list[dict], trained_today: bool, race_today: dict | None) -> Day:
     if race_today:
         return Day.RACE
     if trained_today:
         return Day.DONE
-    planned = [s for s in sessions if (s.get("sport_type") or "").lower() != "rest"]
+    planned = [s for s in sessions if not _is_rest(s)]
     if sessions and not planned:
         return Day.REST
     if any(is_hard(s) for s in planned):
@@ -239,8 +254,12 @@ async def today_briefing(z2: Zone2, db: aiosqlite.Connection, done: list[dict]) 
     """Today at a glance: the planned sessions, what's already `done` (in the
     caller's own activity shape), last night's recovery, current form, the
     races close ahead, and a suggestion weighing them."""
-    today = date.today()
-    sessions = await planned_sessions.between(db, today.isoformat(), today.isoformat())
+    today = z2.clock.today()
+    today_iso = today.isoformat()
+    sessions = await planned_sessions.between(db, today_iso, today_iso)
+    day_activities = (await asyncio.to_thread(activities_by_day, z2, today_iso, today_iso)).get(today_iso, [])
+    # The suggestion weighs what is left to do: a session done no longer makes the day hard
+    open_sessions = [s for s in sessions if _is_rest(s) or not accomplished(s, day_activities)]
     recovery = await asyncio.to_thread(recovery_today, z2.garmin_cache, today)
     zones = await resolve_hr_zones(z2, db)
     rhr = await resolve_resting_hr(z2, db)
@@ -250,14 +269,15 @@ async def today_briefing(z2: Zone2, db: aiosqlite.Connection, done: list[dict]) 
     form = {k: now[k] for k in ("date", "fitness", "fatigue", "form_pct")} if now else None
     cur = await db.execute(
         "SELECT date, name FROM race_events WHERE date BETWEEN ? AND ? ORDER BY date",
-        (today.isoformat(), (today + timedelta(days=RACE_SOON_DAYS)).isoformat()),
+        (today_iso, (today + timedelta(days=RACE_SOON_DAYS)).isoformat()),
     )
     races = [{"date": r["date"], "name": r["name"]} for r in await cur.fetchall()]
     return {
-        "date": today.isoformat(),
+        "date": today_iso,
         "sessions": sessions,
         "done": done,
         "recovery": recovery,
         "form": form,
-        "suggestion": suggest(sessions, bool(done), recovery, form["form_pct"] if form else None, races, today),
+        "suggestion": suggest(open_sessions, trained(sessions, day_activities), recovery,
+                              form["form_pct"] if form else None, races, today),
     }

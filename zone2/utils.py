@@ -68,8 +68,18 @@ def df_rows(df: pd.DataFrame, *columns: str) -> list[dict]:
 
 def get_sport_category(sport_type: str | None) -> SportCategory:
     """The category of a Strava sport type ('Run', 'Hike', 'Ride', 'Swim'...),
-    OTHER for one it doesn't know."""
+    OTHER for one it doesn't know; a category is its own."""
+    if isinstance(sport_type, SportCategory):
+        return sport_type
     return _CATEGORY_BY_SPORT.get((sport_type or '').lower().replace(' ', ''), SportCategory.OTHER)
+
+
+def sport_mask(sport_types: pd.Series, sport: str | SportCategory) -> pd.Series:
+    """Rows of `sport`: every type of the category for a SportCategory, only
+    that Strava sport type otherwise."""
+    if isinstance(sport, SportCategory):
+        return sport_types.map(get_sport_category) == sport
+    return sport_types == sport
 
 
 def is_speed_sport(sport_type: str | None) -> bool:
@@ -418,13 +428,12 @@ def compute_trimp_zone_weighted(time_in_zones_min: list[float], zone_weights: li
     return sum(t * w for t, w in zip(time_in_zones_min, zone_weights))
 
 
-def previous_week(week_start: str, today: date | None = None) -> tuple[str, str | None]:
+def previous_week(week_start: str, today: date) -> tuple[str, str | None]:
     """Monday of the week before `week_start`, and the cutoff that compares it fairly
     (None for a full week): while `week_start`'s week is still running, the previous
     week counts only up to the same weekday."""
     monday = datetime.strptime(week_start, '%Y-%m-%d').date()
     prev_monday = monday - timedelta(days=7)
-    today = today or date.today()
     cutoff = None
     if today <= monday + timedelta(days=6):
         cutoff = (prev_monday + timedelta(days=(today - monday).days)).isoformat()

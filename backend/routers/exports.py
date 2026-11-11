@@ -1,5 +1,4 @@
 import asyncio
-from datetime import date
 
 import matplotlib.pyplot as plt
 import aiosqlite
@@ -102,7 +101,7 @@ def export_year_in_sport(
     dpi: int = 300,
     z2: Zone2 = Depends(get_z2),
 ):
-    year = year or date.today().year
+    year = year or z2.clock.today().year
     dpi = _clamp_dpi(dpi)
     params = {
         "year": year,

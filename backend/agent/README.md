@@ -60,7 +60,7 @@ Nothing else combines the whole loop: plan by conversation, write to the calenda
   - the coach's log: reviews, changes, decisions and suggestions;
   - the notes the coach keeps about you.
 - **Writes need a yes.** A write tool returns a draft, the panel shows it as a confirm card, and only the confirm applies it.
-- **Tools call services, never routers.** Tools are typed Python functions (Pydantic in and out) over `backend/services/`. Where logic sits in a router today, it moves into a service when a tool needs it, so the router and the tool share it.
+- **Tools call services, never routers.** Tools are typed Python functions (Pydantic in and out) over `backend/services/`, the same functions the routers call, so a write from the chat and one from a page go through one path. A service's domain error (`backend/errors.py`) reaches the model as a retry with its message. Each turn's "today" is the athlete's (`z2.clock`).
 - **What it knows about you lives in notes.** These are facts z2's data doesn't hold: preferences, constraints, baselines, sensor changes. Every turn sees them. What's agreed for one plan (its structure, the block's guardrails, the race-day plan) is a note on that plan instead: the plan page shows it, and the agent reads it in `plan_detail` with the checkpoints. The agent adds and drops notes as it learns (`remember`, `forget`), and you can edit them with the `notes` command.
 - **Coaching know-how lives in guides.**
   - Guides are playbooks the agent loads only when a question needs them:
@@ -80,22 +80,24 @@ Nothing else combines the whole loop: plan by conversation, write to the calenda
 backend/agent/
   agent.py          the agent: instructions, tools, guides; run_turn stores and accounts each turn
   instructions.md   the coaching prompt
-  tools.py          read tools over z2's services, and the calendar writes (each needs approval)
+  tools.py          read tools over z2's services, and the writes (each needs approval)
   guides/           coaching playbooks, one SKILL.md folder each, loaded on demand (pydantic-ai-harness Skills)
+  chat.py           the chat panel's turns: the reply, the tools used and the writes waiting for a yes, as JSON
+  reviews.py        the coach's reviews of new activities that fulfil a planned session: a queue in agent_reviews and a worker
   notes.py          what it keeps about the athlete (preferences, baselines, sensor changes), in every turn, and each plan's agreements
-  conversations.py  message history per conversation: the session a turn continues, its recap, pages for the chat
-  message_store.py  the messages in calendar.db, a row each, so a turn appends; imports nothing from Pydantic AI
+  conversations.py  the conversation as Pydantic AI messages: the session a turn continues, its recap, pages for the chat
+  message_store.py  the messages in calendar.db (agent_messages), a row each, so a turn appends; imports nothing from Pydantic AI
+  preferences.py    the model and the provider credit set on the Profile page; imports nothing from Pydantic AI
   usage.py          tokens and cost per turn, in calendar.db; imports nothing from Pydantic AI
   __main__.py       the terminal chat
   voice.py          live transcription for the mic, relayed over the /api/agent/listen WebSocket
 backend/routers/agent.py   the chat panel's API: chat, approve, conversations, settings, usage, and /listen for the mic
 backend/routers/coach.py   the Coach page's API: plans with progress, the coach's log, notes
 backend/services/plans.py, coach_log.py, session_scores.py   plans and their progress, the log, and session scoring (shared with the calendar)
-frontend/src/pages/CoachPage.tsx, components/coach/        the Coach page
+frontend/src/agent/        the button and chat panel on every page, the mic, and the page context sent with each message
+frontend/src/pages/CoachPage.tsx, CoachPlanPage.tsx, components/coach/        the Coach page and a plan's page
 frontend/src/components/profile/AgentUsage.tsx   the agent's cost on the Profile page
 ```
-
-Later: `frontend/src/agent/` for the button, the transcript panel, the mic, and the page-context hook.
 
 The agent button sits bottom-right on every page. It's a flat dark disc with a waveform icon, red while offline, with no glow and no toasts. Clicking it opens a transcript card upward from the button: your words as a live caption, the agent's reply streaming in, tool calls as chips, confirm cards for writes, and a text box to type instead.
 

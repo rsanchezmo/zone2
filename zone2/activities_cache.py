@@ -8,7 +8,9 @@ import pyarrow.parquet as pq
 import json
 from datetime import datetime, timedelta
 from typing import Any, Callable, Iterable
+from zoneinfo import ZoneInfo
 
+from zone2.clock import zone_from_strava
 from zone2.endpoint import StravaRateLimitError, StravaStreamFetchError
 from zone2.streams_store import (
     StreamsStore,
@@ -73,6 +75,7 @@ class StravaActivitiesCache:
         # with the cache version it was built from: one assignment, so a reader
         # never pairs a view with another version.
         self._prepared_view: tuple[int, pd.DataFrame] | None = None
+        self._latest_zone: tuple[int, ZoneInfo | None] | None = None
 
     @property
     def cache_version(self) -> int:
@@ -107,6 +110,21 @@ class StravaActivitiesCache:
         if date_to:
             mask &= sdl < pd.Timestamp(date_to, tz=sdl.dt.tz) + pd.Timedelta(days=1)
         return mask
+
+    def latest_zone(self) -> ZoneInfo | None:
+        """The time zone of the latest activity that names one (Strava's `timezone`):
+        where the athlete trains now, so their today. None without one."""
+        version = self._cache_version
+        cached = self._latest_zone
+        if cached is not None and cached[0] == version:
+            return cached[1]
+        activities = self._load_to_memory()
+        zone = None
+        if 'timezone' in activities.columns:
+            zone = next((z for z in map(zone_from_strava, reversed(activities['timezone'].dropna().tolist()))
+                         if z is not None), None)
+        self._latest_zone = (version, zone)
+        return zone
 
     # ── streams API ──────────────────────────────────────────────────
     def get_streams(self, activity_id: int) -> dict | None:

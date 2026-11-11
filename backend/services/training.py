@@ -19,7 +19,7 @@ async def fitness_form(z2: Zone2, db: aiosqlite.Connection, days: int) -> dict[s
     chronic load alongside."""
     resolved_zones = await resolve_hr_zones(z2, db)
     resolved_rhr = await resolve_resting_hr(z2, db)
-    today = date.today().isoformat()
+    today = z2.clock.today().isoformat()
     cur = await db.execute(
         "SELECT date, sport_type, planned_distance_km, planned_duration_mins FROM training_sessions WHERE date >= ?",
         (today,),
@@ -59,7 +59,8 @@ def weekly_totals(z2: Zone2, weeks: int, sport_type: str | None = None,
     if activities.empty:
         return {"data": [], "weeks": weeks, "sport_type": sport_type}
 
-    current_monday = date.today() - timedelta(days=date.today().weekday())
+    today = z2.clock.today()
+    current_monday = today - timedelta(days=today.weekday())
     monday = current_monday - timedelta(weeks=weeks - 1)
     day = activities["start_date_local"].dt.date
     result = []
@@ -77,10 +78,12 @@ def weekly_totals(z2: Zone2, weeks: int, sport_type: str | None = None,
     return {"data": result, "weeks": weeks, "sport_type": sport_type}
 
 
-def year_in_sport(z2: Zone2, year: int, main_sport: str, cutoff: tuple[int, int] | None) -> dict[str, Any]:
-    """A year's totals for its main sport and for all sports, up to `cutoff` (month, day) when
-    given, so a year in progress compares like for like."""
-    key = ("year_in_sport", year, main_sport, cutoff, z2.strava_activities_cache.cache_version)
+def year_in_sport(z2: Zone2, year: int, main_sport: str | SportCategory,
+                  cutoff: tuple[int, int] | None) -> dict[str, Any]:
+    """A year's totals for its main sport (a Strava sport type, or a category) and for all sports,
+    up to `cutoff` (month, day) when given, so a year in progress compares like for like."""
+    key = ("year_in_sport", year, main_sport, isinstance(main_sport, SportCategory), cutoff,
+           z2.strava_activities_cache.cache_version)
     cached = stats_cache.get(key)
     if cached is not None:
         return cached
@@ -100,7 +103,7 @@ def streaks(z2: Zone2) -> dict[str, Any]:
     if not len(active_dates):
         return {"current_streak": 0, "longest_streak": 0, "longest_streak_start": None, "longest_streak_end": None}
 
-    today = date.today()
+    today = z2.clock.today()
     # Build streaks
     longest = 1
     longest_start = active_dates[0]

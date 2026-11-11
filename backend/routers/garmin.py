@@ -151,7 +151,7 @@ def events(
     """Move IQ auto-detected activities (walking, biking, …) the watch spotted
     without a recorded activity. Reads the cached `all_day_events` payloads and
     flattens them into slim event dicts, newest first."""
-    end = date_t.today()
+    end = z2.clock.today()
     start = end - timedelta(days=days - 1)
     rows = z2.garmin_cache.get_range("all_day_events", start, end)
 
@@ -189,7 +189,7 @@ def trends(
     projections written at sync time (see zone2/garmin_extractors), so a 365d
     request touches a few hundred KB instead of deserializing ~135MB of fat
     payloads."""
-    end = date_t.today()
+    end = z2.clock.today()
     start = end - timedelta(days=days - 1)
     s_iso, e_iso = start.isoformat(), end.isoformat()
 

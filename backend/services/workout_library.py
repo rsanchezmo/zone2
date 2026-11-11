@@ -5,6 +5,7 @@ steps and targets every structured write shares (sessions, workouts, races)."""
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Iterable
 from datetime import date
 from typing import TYPE_CHECKING, Annotated, Any, Literal
@@ -35,6 +36,8 @@ PACE_LOW = "The range's lower number: a pace's fast end, a speed's slow end"
 Pace = Annotated[float, Field(gt=0)]
 # A run's pace in min/km; outside this it is another unit (seconds, km/h) by mistake
 RUN_PACE_RANGE = (2.0, 15.0)
+# A stored distance within this of the steps' total was taken from them (stored to one decimal)
+STEPS_KM_ROUNDING = 0.05 + 1e-9
 HrZone = Annotated[int, Field(ge=1, le=5)]
 ZonePct = Annotated[float, Field(gt=0, le=100)]
 
@@ -74,6 +77,34 @@ def write_values(fields: BaseModel, *, exclude_unset: bool = False) -> dict[str,
     if values.get("segments"):
         values["segments"] = [{k: v for k, v in step.items() if v is not None} for step in values["segments"]]
     return values
+
+
+def steps_km(segments: list[dict[str, Any]] | None) -> float:
+    """The steps' total distance, the recoveries between repetitions included."""
+    total = 0.0
+    for step in segments or []:
+        reps = max(1, step.get("repetitions") or 1)
+        total += (step.get("distance_km") or 0) * reps + (step.get("recovery_distance_km") or 0) * (reps - 1)
+    return total
+
+
+def steps_distance(segments: list[dict[str, Any]] | None) -> float | None:
+    """The planned distance a session without a distance goal takes from its steps: their total to
+    one decimal, as the calendar stores it (half up, like its Math.round); None when no step has one."""
+    total = steps_km(segments)
+    return math.floor(total * 10 + 0.5) / 10 if total > 0 else None
+
+
+def distance_after_steps(distance_km: float | None, segments: list[dict[str, Any]] | None,
+                         new_segments: list[dict[str, Any]] | None) -> float | None:
+    """A session's planned distance once its steps change to `new_segments`: the new steps' when
+    it was the old steps' total (taken from them, not a goal of its own), else unchanged."""
+    old = steps_distance(segments)
+    if distance_km is None or old is None:
+        from_steps = distance_km is None and old is None
+    else:
+        from_steps = abs(distance_km - steps_km(segments)) <= STEPS_KM_ROUNDING
+    return steps_distance(new_segments) if from_steps else distance_km
 
 
 def step_paces(segments: list[dict[str, Any]] | None) -> list[float | None]:
@@ -200,8 +231,15 @@ async def update(z2: Zone2, db: aiosqlite.Connection, template_id: int, changes:
     row = template_dict(await update_row(db, "workout_templates", template_id, values, NOT_FOUND,
                                          json_cols=JSON_COLS))
     if "segments" in values:
-        await db.execute("UPDATE training_sessions SET segments = ? WHERE workout_template_id = ? AND date >= ?",
-                         (json.dumps(row["segments"]), template_id, date.today().isoformat()))
+        upcoming = await (await db.execute(
+            "SELECT id, segments, planned_distance_km FROM training_sessions WHERE workout_template_id = ? AND date >= ?",
+            (template_id, date.today().isoformat()))).fetchall()
+        await db.executemany(
+            "UPDATE training_sessions SET segments = ?, planned_distance_km = ? WHERE id = ?",
+            [(json.dumps(row["segments"]),
+              distance_after_steps(s["planned_distance_km"], json.loads(s["segments"]) if s["segments"] else None,
+                                   row["segments"]),
+              s["id"]) for s in upcoming])
         await db.commit()
     if row["garmin_workout_id"] is not None and not garmin_workouts.is_run_workout(row):
         await db.execute("UPDATE workout_templates SET garmin_workout_id = NULL, garmin_sync_hash = NULL WHERE id = ?",

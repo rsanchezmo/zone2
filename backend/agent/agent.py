@@ -4,7 +4,6 @@ loads when a question needs them."""
 import asyncio
 import dataclasses
 from collections import defaultdict
-from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
@@ -38,7 +37,7 @@ QUICK = ModelSettings(thinking="low")
 
 
 def _now_and_page(ctx: RunContext[AgentDeps]) -> str:
-    today = date.today()
+    today = ctx.deps.z2.clock.today()
     lines = [f"Today is {today:%A} {today.isoformat()}."]
     if ctx.deps.first_name:
         lines.append(f"The athlete's first name is {ctx.deps.first_name}: use it, or the name your notes say "

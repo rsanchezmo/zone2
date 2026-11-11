@@ -19,6 +19,7 @@ from backend.services import stats_cache
 from backend.services.resting_hr import resolve_resting_hr
 from backend.services.session_scores import score_sessions
 from backend.services.zones import resolve_hr_zones, set_setting
+from zone2.clock import Clock
 from zone2.utils import SportCategory
 from tests.synthetic import ZONES, activities_frame, steady_stream
 
@@ -124,7 +125,7 @@ def test_race_predictions_history_is_computed_once_a_day_per_version(monkeypatch
         return [{"end_date": "2027-03-01", "predictions": []}]
 
     z2 = SimpleNamespace(strava_activities_cache=SimpleNamespace(cache_version=0),
-                         strava_analytics=SimpleNamespace(get_race_predictions_history=history))
+                         strava_analytics=SimpleNamespace(get_race_predictions_history=history), clock=Clock())
     get = stats_cache.get_race_predictions_history_cached
     assert get(z2, SportCategory.RUNNING, 6, 7) == get(z2, SportCategory.RUNNING, 6, 7)
     assert len(calls) == 1

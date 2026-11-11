@@ -1,6 +1,6 @@
 """Pure pieces of backend/services: HR zones from Garmin, race matching,
 streaks, totals, today's briefing, and the stats response cache."""
-from datetime import date
+from datetime import date, datetime, time, timezone
 from types import SimpleNamespace
 
 import pandas as pd
@@ -11,6 +11,7 @@ from backend.services import training
 from backend.services.briefing import Day, Recovery, classify, day_of, is_hard
 from backend.services.races import race_activity_ids
 from backend.services.zones import zones_from_garmin
+from zone2.clock import Clock
 from zone2.utils import SportCategory
 from tests.synthetic import activities_frame
 
@@ -61,26 +62,18 @@ def test_race_events_find_their_activity():
 
 # ── Streaks and totals ───────────────────────────────────────────────────
 
-def frozen_today(monkeypatch, today: date) -> None:
-    class Today(date):
-        @classmethod
-        def today(cls) -> date:
-            return today
-    monkeypatch.setattr(training, "date", Today)
-
-
-def z2_with(rows: list[dict]) -> SimpleNamespace:
+def z2_with(rows: list[dict], today: date = date(2026, 12, 31)) -> SimpleNamespace:
     activities = activities_frame(rows)
     cache = SimpleNamespace(get_prepared_view=lambda: activities, activities_raw=activities)
-    return SimpleNamespace(strava_activities_cache=cache)
+    noon = datetime.combine(today, time(12), timezone.utc)
+    return SimpleNamespace(strava_activities_cache=cache, clock=Clock(lambda: timezone.utc, lambda: noon))
 
 
 STREAK_DAYS = ["2026-12-24", "2026-12-25", "2026-12-26", "2026-12-29", "2027-01-04", "2027-01-05"]
 
 
-def test_day_and_week_streaks_across_a_new_year(monkeypatch):
-    frozen_today(monkeypatch, date(2027, 1, 6))
-    z2 = z2_with([{"sport_type": "Run", "start_date_local": f"{d}T07:00:00Z"} for d in STREAK_DAYS])
+def test_day_and_week_streaks_across_a_new_year():
+    z2 = z2_with([{"sport_type": "Run", "start_date_local": f"{d}T07:00:00Z"} for d in STREAK_DAYS], date(2027, 1, 6))
     streaks = training.streaks(z2)
     assert (streaks["longest_streak"], streaks["longest_streak_start"], streaks["longest_streak_end"]) == (
         3, "2026-12-24", "2026-12-26")
@@ -90,9 +83,8 @@ def test_day_and_week_streaks_across_a_new_year(monkeypatch):
     assert streaks["current_week_streak"] == 3
 
 
-def test_a_day_off_ends_the_day_streak_but_not_the_week_streak(monkeypatch):
-    frozen_today(monkeypatch, date(2027, 1, 8))
-    z2 = z2_with([{"sport_type": "Run", "start_date_local": f"{d}T07:00:00Z"} for d in STREAK_DAYS])
+def test_a_day_off_ends_the_day_streak_but_not_the_week_streak():
+    z2 = z2_with([{"sport_type": "Run", "start_date_local": f"{d}T07:00:00Z"} for d in STREAK_DAYS], date(2027, 1, 8))
     streaks = training.streaks(z2)
     assert (streaks["current_streak"], streaks["current_week_streak"]) == (0, 3)
 

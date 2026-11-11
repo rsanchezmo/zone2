@@ -12,7 +12,8 @@ from backend.db import delete_row, insert_row, row_dict, update_row
 from zone2.core import Zone2
 
 NOT_FOUND = "Goal not found"
-SPORT_TYPE = 'A Strava sport type ("Run", "Ride", "Swim"…) or "__all__"'
+SPORT_TYPE = ('A Strava sport type ("Run", "Ride", "Swim"…), which counts that type only ("Run" leaves out '
+              'TrailRun and VirtualRun), or "__all__" for every sport')
 GoalMetric = Literal["distance_km", "time_hours", "activities", "elevation_m"]
 GoalPeriod = Literal["weekly", "monthly", "yearly"]
 Target = Annotated[float, Field(gt=0)]

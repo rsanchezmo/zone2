@@ -4,6 +4,7 @@ from pathlib import Path
 from zone2.analytics import StravaAnalytics, YearInSportFeatures
 from zone2.user_cache import StravaUserCache
 from zone2.activities_cache import StravaActivitiesCache
+from zone2.clock import Clock
 from zone2.endpoint import StravaEndpoint
 from zone2.utils import get_activities_as_gdf, previous_week
 from zone2.visualizer import StravaVisualizer
@@ -23,6 +24,7 @@ class Zone2:
 
         self.strava_endpoint = StravaEndpoint(self.data.token)
         self.strava_activities_cache = StravaActivitiesCache(self.data.activities, self.data.streams, self.data.metadata)
+        self.clock = Clock(self.strava_activities_cache.latest_zone)
         self.strava_user_cache = StravaUserCache(self.strava_endpoint, self.data.gear)
 
         # Optional Garmin Connect integration — disabled if env vars missing
@@ -34,11 +36,11 @@ class Zone2:
             password=os.environ.get("GARMIN_PASSWORD"),
             token_dir=Path(garmin_token_dir) if garmin_token_dir else self.data.garmin_tokens,
         )
-        self.garmin_cache = GarminDailyStatsCache(self.garmin_client, self.data.calendar_db)
+        self.garmin_cache = GarminDailyStatsCache(self.garmin_client, self.data.calendar_db, clock=self.clock)
 
         self.strava_analytics = StravaAnalytics(
             self.strava_activities_cache, self.strava_user_cache,
-            garmin_cache=self.garmin_cache,
+            garmin_cache=self.garmin_cache, clock=self.clock,
         )
         self.strava_visualizer = StravaVisualizer(self.strava_analytics, workdir)
 
@@ -201,7 +203,7 @@ class Zone2:
         
         last_week_report = None
         if weekly_report.get("week_start"):
-            prev_monday, cutoff = previous_week(weekly_report["week_start"])
+            prev_monday, cutoff = previous_week(weekly_report["week_start"], self.clock.today())
             last_week_report = self.strava_analytics.get_weekly_report(prev_monday, cutoff_date=cutoff)
         
         output_folder = self.workdir / "weekly_reports"

@@ -16,8 +16,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections import OrderedDict
-from threading import Lock
 
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException
@@ -47,12 +45,6 @@ class PlanRequest(BaseModel):
     seed: int = 0
 
 
-# Recent plans by plan_id, so saving one stores exactly the loop on screen
-_MAX_RECENT_PLANS = 32
-_recent_plans: OrderedDict[str, dict] = OrderedDict()
-_recent_lock = Lock()
-
-
 def _plan(slug: str, request: PlanRequest) -> dict:
     """Plan a loop and hold it for saving: {slug, feature, new_ways, network,
     request}. Raises 422 when there is no loop."""
@@ -75,11 +67,7 @@ def _plan(slug: str, request: PlanRequest) -> dict:
     plan = {"slug": slug, "feature": feature, "new_ways": new_ways,
             "network": city.network_stamp(),
             "request": {**request.model_dump(mode="json"), "start": list(start)}}
-    with _recent_lock:
-        _recent_plans[plan_id] = plan
-        _recent_plans.move_to_end(plan_id)
-        while len(_recent_plans) > _MAX_RECENT_PLANS:
-            _recent_plans.popitem(last=False)
+    coverage.hold_plan(plan_id, plan)
     return plan
 
 
@@ -139,9 +127,8 @@ class SaveRequest(BaseModel):
 
 @router.post("/{slug}/plans")
 async def save_plan(slug: str, payload: SaveRequest, db: aiosqlite.Connection = Depends(get_db)):
-    with _recent_lock:
-        plan = _recent_plans.get(payload.plan_id)
-    if plan is None or plan["slug"] != slug:
+    plan = coverage.held_plan(slug, payload.plan_id)
+    if plan is None:
         plan = await run_in_threadpool(_plan, slug, payload.request)
     props = plan["feature"]["properties"]
     cursor = await db.execute(

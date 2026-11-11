@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import timedelta
 import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from pydantic import BaseModel
@@ -24,7 +24,7 @@ router = APIRouter()
 @router.get("/briefing")
 async def briefing(z2: Zone2 = Depends(get_z2), db: aiosqlite.Connection = Depends(get_db)):
     """Today at a glance for the top of the calendar (see `today_briefing`)."""
-    done = await run_in_threadpool(activities.on_dates, z2, {date.today().isoformat()})
+    done = await run_in_threadpool(activities.on_dates, z2, {z2.clock.today().isoformat()})
     return await today_briefing(z2, db, done)
 
 
@@ -86,8 +86,8 @@ async def get_plan_accomplishment(
     recent 28-day window.
     """
     window_days = 28
-    now = datetime.now()
-    today = now.strftime("%Y-%m-%d")
+    today_date = z2.clock.today()
+    today = today_date.isoformat()
     cursor = await db.execute(
         "SELECT * FROM training_sessions WHERE date <= ? ORDER BY date", (today,),
     )
@@ -101,7 +101,7 @@ async def get_plan_accomplishment(
         }
 
     activity_map = await run_in_threadpool(activities_by_day, z2, sessions[0]["date"], today)
-    recent_from = (now - timedelta(days=window_days)).strftime("%Y-%m-%d")
+    recent_from = (today_date - timedelta(days=window_days)).isoformat()
 
     total = completed = recent_total = recent_completed = 0
     for session in sessions:

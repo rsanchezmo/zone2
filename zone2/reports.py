@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from zone2.training_load import HeartRateCounts, HrZone
-from zone2.utils import hr_zone_counts
+from zone2.utils import SportCategory, hr_zone_counts, sport_mask
 
 
 class YearInSportFeatures(StrEnum):
@@ -73,13 +73,13 @@ class WeeklyReportFeatures(StrEnum):
 
 
 def year_activities(activities: pd.DataFrame, year: int, cutoff_month_day: tuple[int, int] | None,
-                    sport_type: str | None = None) -> pd.DataFrame:
-    """The activities of `year` (of `sport_type` when given), up to the end
-    of the (month, day) `cutoff_month_day` when given."""
+                    sport: str | SportCategory | None = None) -> pd.DataFrame:
+    """The activities of `year` (of `sport` when given, see sport_mask), up to
+    the end of the (month, day) `cutoff_month_day` when given."""
     dates = activities['start_date_local']
     mask = dates.dt.year == year
-    if sport_type is not None:
-        mask = mask & (activities['sport_type'] == sport_type)
+    if sport is not None:
+        mask = mask & sport_mask(activities['sport_type'], sport)
     if cutoff_month_day:
         cutoff = pd.Timestamp(year, cutoff_month_day[0], cutoff_month_day[1], 23, 59, 59)
         if dates.dt.tz is not None:
@@ -91,7 +91,7 @@ def year_activities(activities: pd.DataFrame, year: int, cutoff_month_day: tuple
 def activities_per_week(total_activities: int, year: int, cutoff_month_day: tuple[int, int] | None,
                         now: datetime) -> float:
     """Activities per week elapsed in `year`: up to the cutoff when given,
-    otherwise up to `now` (naive UTC) or the year's end."""
+    otherwise up to `now` (the athlete's wall clock, naive) or the year's end."""
     if not total_activities:
         return 0.0
     year_start = datetime(year, 1, 1)
@@ -103,11 +103,11 @@ def activities_per_week(total_activities: int, year: int, cutoff_month_day: tupl
     return total_activities / weeks_in_year
 
 
-def year_in_sport(activities: pd.DataFrame, year: int, main_sport: str,
+def year_in_sport(activities: pd.DataFrame, year: int, main_sport: str | SportCategory,
                   cutoff_month_day: tuple[int, int] | None, now: datetime) -> dict[YearInSportFeatures, Any]:
-    """A year of `main_sport` (a Strava sport type), up to `cutoff_month_day`
+    """A year of `main_sport` (a Strava sport type, or a category), up to `cutoff_month_day`
     when given for a fair comparison with a year in progress (e.g. only up
-    to Feb 20). `now` is naive UTC."""
+    to Feb 20). `now` is the athlete's wall clock, naive."""
     activities_year = year_activities(activities, year, cutoff_month_day, main_sport)
 
     total_activities = len(activities_year)
@@ -174,7 +174,7 @@ def year_in_sport(activities: pd.DataFrame, year: int, main_sport: str,
 def all_year_in_sport(activities: pd.DataFrame, year: int, cutoff_month_day: tuple[int, int] | None,
                       now: datetime) -> dict[AllYearInSportFeatures, Any]:
     """A year across all sports, up to `cutoff_month_day` when given. `now`
-    is naive UTC."""
+    is the athlete's wall clock, naive."""
     activities_year = year_activities(activities, year, cutoff_month_day)
 
     total_activities = len(activities_year)
@@ -208,7 +208,8 @@ def all_year_in_sport(activities: pd.DataFrame, year: int, cutoff_month_day: tup
 def week_bounds(week_start_date: str | None, cutoff_date: str | None, now: datetime) -> tuple[datetime, datetime]:
     """Monday 00:00 of the week of `week_start_date` ('YYYY-MM-DD', `now`'s
     week when None) and the end of its Sunday, or of `cutoff_date` when given
-    to compare a full week with one still running."""
+    to compare a full week with one still running. `now` is the athlete's wall
+    clock labelled UTC, like start_date_local (Clock.now)."""
     if week_start_date is None:
         last_monday = now - timedelta(days=now.weekday())
         week_start = last_monday.replace(hour=0, minute=0, second=0, microsecond=0)
