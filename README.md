@@ -15,11 +15,11 @@ Each **activity** has the usual splits, charts and segments, plus the things I w
 
 **Analytics** predicts race times from my recent best efforts, tracks fitness and form from training load, and estimates how much I slow down as the distance grows. Next to it are a year in sport page, all-time records, a map of every route, and pages for races, saved workouts, goals and gear (with a heads-up when a pair of shoes is near the end of its life). The weekly report, the year in sport, single activities and a route heatmap also export as neon PNG cards for sharing.
 
-**Coverage** downloads a city's streets from OpenStreetMap, matches every run to them and shows how much of the city I've run, district by district. A route planner then builds a loop of the length I ask for, mostly over streets I haven't run yet, and sends it to the watch as a course.
+**Coverage** downloads a city's streets from OpenStreetMap, matches every run to them and shows how much of the city I've run, district by district. A route planner then builds a loop of the length I ask for, with the share of new streets I choose, staying off the kinds of way I want to avoid, and sends it to the watch as a course.
 
 The **Garmin** page collects the wellness data Strava doesn't have: sleep, HRV, training readiness, body battery, stress, steps and a timeline of the day.
 
-The **Coach** is an AI agent with a chat on every page. You can type, or hold the mic and dictate. It answers from your whole history, builds training plans with checkpoints, and after each sync reviews the activities that fulfilled a session you planned. It never changes anything on its own: each change it proposes comes as a card you approve or turn down. It uses OpenAI models through Pydantic AI, or a local model through Ollama. [`backend/agent/README.md`](backend/agent/README.md) explains how it works.
+The **Coach** is an AI agent with a chat on every page. You can type, or hold the mic and dictate. It answers from your whole history, builds training plans with checkpoints, keeps notes of what you agree on, answers about your street coverage and plans loops (or sets up a new city) when you ask, and after each sync reviews the activities that fulfilled a session you planned. It never changes anything on its own: each change it proposes comes as a card you approve or turn down. The conversation lives on the server, so you can start it on the laptop and carry on from the phone, and the robot shows a badge for replies and reviews you haven't read yet. It uses OpenAI models through Pydantic AI, or a local model through Ollama. [`backend/agent/README.md`](backend/agent/README.md) explains how it works.
 
 ## What you need
 
@@ -82,11 +82,11 @@ docker compose up -d --build        # the app on 127.0.0.1:8000, plus the Cloudf
 docker compose up -d --build app    # just the app
 ```
 
-The app has no login of its own, so it only listens on the server's loopback and Cloudflare Access guards the way in. A container can't do the interactive Strava login either, so authorise once on your laptop and copy `.strava/` onto the server. [DEPLOY.md](DEPLOY.md) walks through that, setting up Cloudflare Tunnel and Access, and an optional timer that redeploys when you push.
+The app has no login of its own, so it only listens on the server's loopback and Cloudflare Access guards the way in. A container can't do the interactive Strava login either, so authorise once on your laptop and copy `.strava/` onto the server. [DEPLOY.md](DEPLOY.md) walks through that, setting up Cloudflare Tunnel and Access, and an optional timer that redeploys when you push. Days and weeks follow the time zone of your latest activity, so a server running in UTC still rolls over at your midnight.
 
 ## Finding your way around
 
-`zone2/` is the core library: the Strava client, the local cache, analytics and map matching. `backend/` is the FastAPI app on top of it, `backend/agent/` is the Coach, and `frontend/` is the React app. [CLAUDE.md](CLAUDE.md) has the architecture in more detail.
+`zone2/` is the core library: the Strava and Garmin clients, the local cache, analytics, map matching and the route planner. `backend/` is the FastAPI app on top of it, with thin routers over `backend/services/`; `backend/agent/` is the Coach, `frontend/` is the React app and `tests/` the test suite. [CLAUDE.md](CLAUDE.md) has the architecture in more detail.
 
 Two older pieces still work: `telegram_bot.py` posts the weekly report and year in sport cards to a Telegram chat (it needs `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`), and `main.py` is my scratchpad for using the `zone2` package straight from Python.
 
