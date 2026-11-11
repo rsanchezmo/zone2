@@ -7,6 +7,7 @@ import { useTheme } from '../../hooks/useTheme'
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { getSportColor } from '../../constants/sportColors'
 import ChartPanel from './ChartPanel'
+import { parseLocalDate } from '../../utils/dates'
 import clsx from 'clsx'
 
 const STATUS_META: Record<RelativeEffortWeek['status'], { label: string; color: string }> = {
@@ -57,7 +58,7 @@ export default function RelativeEffortChart({ sportType }: { sportType?: string 
           <XAxis
             dataKey="date"
             tick={{ fill: colors.tickFill, fontSize: 10 }}
-            tickFormatter={(v: string) => new Date(v).toLocaleDateString('en-US', { month: 'short', year: '2-digit' })}
+            tickFormatter={(v: string) => parseLocalDate(v).toLocaleDateString('en-US', { month: 'short', year: '2-digit' })}
             interval={chartData.length <= 14 ? 0 : Math.floor(chartData.length / 10)}
             axisLine={false}
             tickLine={false}
@@ -79,7 +80,7 @@ export default function RelativeEffortChart({ sportType }: { sportType?: string 
               return undefined
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
             }) as any}
-            labelFormatter={(v) => new Date(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+            labelFormatter={(v) => parseLocalDate(String(v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
           />
           {/* Expected-range band: dataKey returns [low, high] so Recharts fills between them. */}
           <Area

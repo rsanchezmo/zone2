@@ -11,6 +11,7 @@ import { getSportColor } from '../../constants/sportColors'
 import { getSportCategory } from '../../utils/formatSpeed'
 import { useTheme } from '../../hooks/useTheme'
 import { useToast } from '../../hooks/useToast'
+import { parseLocalDate } from '../../utils/dates'
 
 function getMetricOptions(sportType: string) {
   const isSwimming = getSportCategory(sportType) === 'swimming'
@@ -278,9 +279,9 @@ export default function GoalsSection({ goals, progress: goalProgressData, sportT
                     </span>
                     {progress?.period_start && progress?.period_end && (
                       <span className="text-[10px] text-gray-500">
-                        {new Date(progress.period_start).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                        {parseLocalDate(progress.period_start).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                         {' — '}
-                        {new Date(progress.period_end).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                        {parseLocalDate(progress.period_end).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                       </span>
                     )}
                   </div>

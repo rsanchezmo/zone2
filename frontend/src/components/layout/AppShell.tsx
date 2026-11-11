@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useLayoutEffect, useCallback, lazy, Suspense } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { useQueryClient, useIsFetching } from '@tanstack/react-query'
-import { useSyncStatus, useTriggerSync, useBackfillStreams } from '../../api/hooks'
+import { useSyncStatus, useTriggerSync, useBackfillStreams, invalidateActivityQueries } from '../../api/hooks'
 import { useBackdrop } from '../../hooks/useBackdrop'
 import { useTheme } from '../../hooks/useTheme'
 import { useEscapeKey } from '../../hooks/useEscapeKey'
@@ -46,11 +46,6 @@ const NAV_ITEMS: { to: string; label: string; color: string; icon: React.ReactNo
       <path d="M4 14V9M8 14V6M12 14V3" />
     </svg>
   )},
-  // { to: '/training', label: 'Training', color: '#fb923c', icon: (
-  //   <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-  //     <path d="M2 12l3-4 3 2 4-6" /><circle cx="13" cy="3.5" r="1" />
-  //   </svg>
-  // )},
   { to: '/workouts', label: 'Workouts', color: '#22d3ee', icon: (
     <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <rect x="1" y="6" width="3" height="4" rx="0.5" /><rect x="12" y="6" width="3" height="4" rx="0.5" /><rect x="4" y="4" width="3" height="8" rx="0.5" /><rect x="9" y="4" width="3" height="8" rx="0.5" /><line x1="7" y1="8" x2="9" y2="8" />
@@ -493,26 +488,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     triggerSync({ include_streams: true })
   }, [syncStatus?.needs_sync, syncStatus?.syncing, syncTriggerPending, triggerSync])
 
-  // Invalidate only activity-dependent queries, and only when the sync changed
-  // the data. Hitting qc.invalidateQueries() with no filter refetches
-  // everything (theme, static config, etc.) and causes a visible refetch storm.
+  // Refetch only when the sync changed the data
   useEffect(() => {
-    if (wasSyncing.current && syncStatus?.syncing === false && syncStatus.cache_version !== idleCacheVersion.current) {
-      const activityDependentKeys = [
-        'activities', 'activities-range', 'activities-on-dates', 'activity',
-        'similar-activities', 'polylines', 'sport-types', 'years',
-        'weekly-report', 'year-in-sport', 'cumulative-distance',
-        'streaks', 'personal-records', 'sport-totals', 'weekly-totals',
-        'race-predictions', 'race-predictions-history', 'relative-effort-weekly',
-        'session-scores', 'activity-score', 'goal-progress',
-        'cache-completeness', 'fitness-form', 'briefing', 'gear',
-      ]
-      for (const key of activityDependentKeys) {
-        qc.invalidateQueries({ queryKey: [key] })
-      }
-    }
     if (wasSyncing.current && syncStatus?.syncing === false) {
-      toast(`Synced ${syncStatus.total_activities ?? ''} activities`, 'success')
+      if (syncStatus.cache_version !== idleCacheVersion.current) invalidateActivityQueries(qc)
+      if (syncStatus.last_error) toast(`Sync failed: ${syncStatus.last_error}`, 'error')
+      else toast(`Synced ${syncStatus.total_activities} activities`, 'success')
     }
     if (syncStatus && !syncStatus.syncing) idleCacheVersion.current = syncStatus.cache_version
     wasSyncing.current = syncStatus?.syncing ?? false

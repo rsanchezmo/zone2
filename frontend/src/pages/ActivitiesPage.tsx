@@ -413,12 +413,13 @@ export default function ActivitiesPage() {
       <section className="panel p-3 space-y-2.5">
         {/* Row 1: Search */}
         <div className="relative">
-          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z" />
           </svg>
           <input
             type="text"
             placeholder="Search by activity name..."
+            aria-label="Search activities by name"
             value={searchInput}
             onChange={e => {
               setSearchInput(e.target.value)
@@ -432,9 +433,10 @@ export default function ActivitiesPage() {
                 setSearchInput('')
                 setPage(1)
               }}
+              aria-label="Clear search"
               className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
@@ -460,6 +462,7 @@ export default function ActivitiesPage() {
               setSportType(e.target.value)
               setPage(1)
             }}
+            aria-label="Sport"
             className={selectClass}
           >
             <option value="">All Sports</option>
@@ -474,6 +477,7 @@ export default function ActivitiesPage() {
               setYear(e.target.value ? Number(e.target.value) : undefined)
               setPage(1)
             }}
+            aria-label="Year"
             className={selectClass}
           >
             <option value="">All Years</option>
@@ -493,6 +497,7 @@ export default function ActivitiesPage() {
                 setSortBy(e.target.value)
                 setPage(1)
               }}
+              aria-label="Sort by"
               className={selectClass}
             >
               {SORT_OPTIONS.map(o => (
@@ -584,24 +589,26 @@ export default function ActivitiesPage() {
               <button
                 onClick={() => setPage(1)}
                 disabled={page === 1}
+                aria-label="First page"
                 className={clsx(
                   'px-2 py-1 rounded text-xs transition-colors disabled:opacity-20',
                   'hover:bg-surface-700 text-gray-500',
                 )}
               >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
                 </svg>
               </button>
               <button
                 onClick={() => setPage(p => Math.max(1, p - 1))}
                 disabled={page === 1}
+                aria-label="Previous page"
                 className={clsx(
                   'px-2 py-1 rounded text-xs transition-colors disabled:opacity-20',
                   'hover:bg-surface-700 text-gray-500',
                 )}
               >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
                 </svg>
               </button>
@@ -632,24 +639,26 @@ export default function ActivitiesPage() {
               <button
                 onClick={() => setPage(p => Math.min(totalPages, p + 1))}
                 disabled={page === totalPages}
+                aria-label="Next page"
                 className={clsx(
                   'px-2 py-1 rounded text-xs transition-colors disabled:opacity-20',
                   'hover:bg-surface-700 text-gray-500',
                 )}
               >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                 </svg>
               </button>
               <button
                 onClick={() => setPage(totalPages)}
                 disabled={page === totalPages}
+                aria-label="Last page"
                 className={clsx(
                   'px-2 py-1 rounded text-xs transition-colors disabled:opacity-20',
                   'hover:bg-surface-700 text-gray-500',
                 )}
               >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
                 </svg>
               </button>

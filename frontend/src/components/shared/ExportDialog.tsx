@@ -18,12 +18,7 @@ const QUALITY_OPTIONS = [
   { label: 'Ultra', dpi: 600 },
 ] as const
 
-const DEFAULT_DPIS: Record<ExportType, number> = {
-  'weekly-report': 300,
-  'year-in-sport': 300,
-  'activity': 300,
-  'thunderstorm-heatmap': 600,
-}
+const DEFAULT_DPI = 300
 
 const EXPORT_LABELS: Record<ExportType, string> = {
   'weekly-report': 'Weekly Report',
@@ -61,7 +56,7 @@ function ExportDialogContent({
 
   const [neonColor, setNeonColor] = useState('#fc0101')
   const [filename, setFilename] = useState(defaultFilename)
-  const [quality, setQuality] = useState<number>(DEFAULT_DPIS[exportType])
+  const [quality, setQuality] = useState<number>(DEFAULT_DPI)
   const [title, setTitle] = useState('')
   const [showTitle, setShowTitle] = useState(true)
   const [radiusKm, setRadiusKm] = useState('20')

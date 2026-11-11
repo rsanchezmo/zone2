@@ -37,6 +37,14 @@ export function formatSegmentAmount(km: number | null | undefined, mins: number 
   return ''
 }
 
+/** Planned km of a workout, with the recovery between reps (none after the last) as the watch runs it. */
+export function segmentsTotalKm(segments: Segment[]): number {
+  return segments.reduce((sum, s) => {
+    const reps = Math.max(1, s.repetitions ?? 1)
+    return sum + (s.distance_km ?? 0) * reps + (s.recovery_distance_km ?? 0) * (reps - 1)
+  }, 0)
+}
+
 /** One step of a workout as the watch runs it, with reps unrolled. */
 export interface WorkoutBlock {
   segment: Segment

@@ -6,6 +6,7 @@ import {
   formatSegmentAmount,
   getSegmentColor,
   getSegmentLabel,
+  segmentsTotalKm,
   type Segment,
 } from './segmentUtils'
 
@@ -312,11 +313,7 @@ export default function SegmentListBuilder({ segments, onChange, paceUnit = 'min
 export function SegmentSummary({ segments }: { segments: Segment[] }) {
   if (!segments || segments.length === 0) return null
 
-  const totalKm = segments.reduce((sum, s) => {
-    const dist = s.distance_km ?? 0
-    const reps = s.repetitions ?? 1
-    return sum + dist * reps
-  }, 0)
+  const totalKm = segmentsTotalKm(segments)
 
   return (
     <div className="flex flex-wrap gap-1 items-center">

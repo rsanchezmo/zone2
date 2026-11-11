@@ -19,6 +19,7 @@ import { FlagIcon } from '../icons'
 import clsx from 'clsx'
 import { useTheme } from '../../hooks/useTheme'
 import SegmentListBuilder, { SegmentSummary, type Segment } from '../shared/SegmentListBuilder'
+import { segmentsTotalKm } from '../shared/segmentUtils'
 import RaceEventForm from '../shared/RaceEventForm'
 import { SESSION_GOALS, SESSION_GOAL_KEYS, type SessionGoalKey } from '../../constants/sessionGoals'
 import RowActions from '../shared/RowActions'
@@ -200,12 +201,7 @@ export default function SessionModal({
       data.segments = segments
       data.workout_template_id = workoutTemplateId
       // Auto-compute planned distance from segments for activity matching
-      const totalKm = segments.reduce((sum, s) => {
-        const dist = s.distance_km ?? 0
-        const reps = s.repetitions ?? 1
-        const recDist = s.recovery_distance_km ?? 0
-        return sum + (dist * reps) + (recDist * Math.max(0, reps - 1))
-      }, 0)
+      const totalKm = segmentsTotalKm(segments)
       if (totalKm > 0 && !data.planned_distance_km) {
         data.planned_distance_km = Math.round(totalKm * 10) / 10
       }

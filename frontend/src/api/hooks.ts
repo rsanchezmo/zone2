@@ -1053,26 +1053,30 @@ export function useTriggerSync() {
   });
 }
 
+/** Every query computed from the synced activities. */
+const ACTIVITY_QUERY_KEYS = [
+  'activities', 'activities-range', 'activities-on-dates', 'activity', 'similar-activities',
+  'polylines', 'sport-types', 'years', 'recent-photos', 'activity-cost',
+  'weekly-report', 'year-in-sport', 'cumulative-distance', 'streaks', 'personal-records',
+  'sport-totals', 'weekly-totals', 'race-predictions', 'race-predictions-history',
+  'relative-effort-weekly', 'fitness-form', 'briefing', 'gear', 'cache-completeness',
+  'session-scores', 'activity-score', 'plan-accomplishment', 'goal-progress',
+  'coach-plans', 'coach-plan',
+] as const;
+
+/** Refetch what a sync or a re-fetched activity can change, and nothing else: an unfiltered
+ *  invalidation would also refetch static config and cause a visible refetch storm. Keys match
+ *  by prefix, so string and numeric ids alike are caught. */
+export function invalidateActivityQueries(qc: QueryClient) {
+  for (const key of ACTIVITY_QUERY_KEYS) qc.invalidateQueries({ queryKey: [key] });
+}
+
 export function useResyncActivity() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, includeStreams = false }: { id: number | string; includeStreams?: boolean }) =>
       api.post<{ status: string }>(`/sync/activity/${id}`, null, { params: { include_streams: includeStreams } }).then(r => r.data),
-    onSuccess: () => {
-      // Prefix match: routes pass string ids while useActivity keys on
-      // numbers, so an exact ['activity', id] filter would miss the entry.
-      qc.invalidateQueries({ queryKey: ['activity'] });
-      qc.invalidateQueries({ queryKey: ['activities'] });
-      qc.invalidateQueries({ queryKey: ['polylines'] });
-      qc.invalidateQueries({ queryKey: ['similar-activities'] });
-      qc.invalidateQueries({ queryKey: ['personal-records'] });
-      qc.invalidateQueries({ queryKey: ['sport-totals'] });
-      qc.invalidateQueries({ queryKey: ['weekly-report'] });
-      qc.invalidateQueries({ queryKey: ['session-scores'] });
-      qc.invalidateQueries({ queryKey: ['activity-score'] });
-      qc.invalidateQueries({ queryKey: ['plan-accomplishment'] });
-      qc.invalidateQueries({ queryKey: ['cache-completeness'] });
-    },
+    onSuccess: () => invalidateActivityQueries(qc),
   });
 }
 
@@ -2543,7 +2547,6 @@ export type AgentStreamEvent =
   | { type: 'done'; turn: AgentTurn }
   | { type: 'error'; detail: string };
 
-/** After a turn: refresh the cost, and whatever a write or a note may have changed on screen. */
 /** Everything the pages show, so they refetch after the coach changed or synced your data. */
 export function refreshPages(qc: QueryClient) {
   qc.invalidateQueries({ predicate: q => !String(q.queryKey[0]).startsWith('agent-') });
