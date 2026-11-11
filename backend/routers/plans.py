@@ -30,7 +30,6 @@ from backend.services import coverage
 from backend.services.garmin_courses import clear_courses_cache
 from zone2.core import Zone2
 from zone2.garmin_client import GarminUnavailable
-from zone2.map_matching import StravaMapMatcher
 from zone2.route_planner import ExplorationPlanner, UnreachablePoint, WayClass
 from zone2.utils import gpx_track
 
@@ -57,8 +56,8 @@ _recent_lock = Lock()
 def _plan(slug: str, request: PlanRequest) -> dict:
     """Plan a loop and hold it for saving: {slug, feature, new_ways, network,
     request}. Raises 422 when there is no loop."""
-    osm_dir = coverage.osm_dir()
-    start = request.start or StravaMapMatcher.usual_start_of(osm_dir, slug)
+    city = coverage.city_coverage(slug)
+    start = request.start or city.usual_start()
     if start is None:
         raise HTTPException(status_code=422, detail="Pick a start point: no run matched here yet")
     try:
@@ -70,11 +69,11 @@ def _plan(slug: str, request: PlanRequest) -> dict:
     if planned is None:
         raise HTTPException(status_code=422, detail="No loop of that distance through these points")
     feature, new_ways = planned
-    key = f"{slug}|{request.model_dump_json()}|{StravaMapMatcher.state_version_of(osm_dir, slug)}"
+    key = f"{slug}|{request.model_dump_json()}|{city.state_version()}"
     plan_id = hashlib.sha1(key.encode()).hexdigest()[:16]
     feature["properties"].update(start=list(start), plan_id=plan_id)
     plan = {"slug": slug, "feature": feature, "new_ways": new_ways,
-            "network": StravaMapMatcher.network_stamp_of(osm_dir, slug),
+            "network": city.network_stamp(),
             "request": {**request.model_dump(mode="json"), "start": list(start)}}
     with _recent_lock:
         _recent_plans[plan_id] = plan
@@ -109,7 +108,8 @@ def _route(row: aiosqlite.Row, new_km_now: float | None) -> dict:
 
 
 def _new_km_now(slug: str, rows: list[aiosqlite.Row]) -> list[float | None]:
-    return [StravaMapMatcher.new_km_now(coverage.osm_dir(), slug, json.loads(r["new_ways"]), r["network"]) for r in rows]
+    city = coverage.city_coverage(slug)
+    return [city.new_km_now(json.loads(r["new_ways"]), r["network"]) for r in rows]
 
 
 async def _fetch_route(db: aiosqlite.Connection, slug: str, route_id: int) -> aiosqlite.Row:

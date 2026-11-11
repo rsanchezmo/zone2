@@ -12,7 +12,7 @@ from backend.config import settings
 from backend.dependencies import get_z2
 from backend.services import coverage
 from zone2.core import Zone2
-from zone2.map_matching import StravaMapMatcher
+from zone2.map_matching import StravaMapMatcher, city_slug
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ def list_cities(streets_only: bool = Query(False)):
     variant = "streets" if streets_only else "all"
     out = []
     for slug, city_name in coverage.known_cities().items():
-        cached = coverage.read_stats_cache(slug)
+        cached = coverage.city_coverage(slug).read_stats()
         if cached and variant in cached:
             out.append({
                 "slug": slug,
@@ -42,9 +42,9 @@ def list_cities(streets_only: bool = Query(False)):
         out.append({
             "slug": slug,
             "city_name": city_name,
-            "num_matched_activities": len(matcher.matched_activity_ids()),
+            "num_matched_activities": len(matcher.coverage.matched_ids()),
             "bbox": matcher.city_bbox(),
-            **{k: v for k, v in stats.items() if not k.startswith("_")},
+            **stats,
         })
     return out
 
@@ -67,7 +67,7 @@ def _run_add_city(city_name: str):
         matcher = StravaMapMatcher(
             city_name=city_name, workdir=Path(settings.workdir), on_progress=report
         )
-        slug = matcher._slug()
+        slug = matcher.slug
         coverage.remember_matcher(slug, matcher)
         # Seed the stats cache and viewport index so the first /cities call
         # and map pans needn't build a matcher.
@@ -85,7 +85,7 @@ def _run_add_city(city_name: str):
 @router.post("/add")
 def add_city(background_tasks: BackgroundTasks, city_name: str = Query(min_length=3)):
     """Download and store the runnable street network for a new city."""
-    slug = city_name.replace(", ", "_").lower()
+    slug = city_slug(city_name)
     if slug in coverage.known_cities():
         raise HTTPException(status_code=409, detail=f"'{city_name}' is already added")
     with _add_lock:
@@ -194,12 +194,13 @@ _new_streets_lock = Lock()
 
 
 def _new_streets(slug: str, z2: Zone2) -> pd.DataFrame:
-    """Each matched activity's new streets (see StravaMapMatcher.write_new_streets),
+    """Each matched activity's new streets (see CityCoverage.write_new_streets),
     written after every sync that adds runs; built here only when missing."""
-    new = StravaMapMatcher.new_streets_of(coverage.osm_dir(), slug)
+    city = coverage.city_coverage(slug)
+    new = city.new_streets()
     if new is None:
         with _new_streets_lock:
-            new = StravaMapMatcher.new_streets_of(coverage.osm_dir(), slug)
+            new = city.new_streets()
             if new is None:
                 new = coverage.get_matcher(slug).write_new_streets(coverage.start_times(z2))
     return new
@@ -212,7 +213,7 @@ def activity_route(activity_id: int, z2: Zone2 = Depends(get_z2)):
     streets it walked first (`new_km`); no features when none has."""
     features = []
     for slug, city_name in coverage.known_cities().items():
-        geometry = StravaMapMatcher.read_route(coverage.osm_dir(), slug, activity_id)
+        geometry = coverage.city_coverage(slug).read_route(activity_id)
         if geometry is not None:
             new = _new_streets(slug, z2)
             new_m = new.loc[new['activity_id'] == activity_id, 'new_m'].sum()
@@ -265,10 +266,10 @@ def _missing_geojson(slug: str, bbox: str, streets_only: bool, counts: bool) -> 
     the city, except to build the index on the first pan of a city (or of a
     new street map)."""
     box = _parse_bbox(bbox)
+    city = coverage.city_coverage(slug)
 
     def query():
-        return StravaMapMatcher.viewport_missing_geojson(coverage.osm_dir(), slug, box,
-                                                         streets_only=streets_only, with_counts=counts)
+        return city.viewport_missing_geojson(box, streets_only=streets_only, with_counts=counts)
     body = query()
     if body is None:
         with _viewport_index_lock:

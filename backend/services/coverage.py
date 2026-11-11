@@ -8,7 +8,6 @@ import gc
 import hashlib
 import json
 import logging
-import os
 import time
 from collections import OrderedDict
 from collections.abc import Callable
@@ -24,6 +23,7 @@ from backend._serialize import PackedJSON, PackedJSONResponse
 from backend.config import settings
 from backend.errors import NotFound
 from backend.services.garmin_courses import course_line, course_list
+from zone2.city_coverage import CityCoverage, atomic_write, edge_feature
 from zone2.core import Zone2
 from zone2.map_matching import StravaMapMatcher
 from zone2.utils import get_activities_as_gdf_from_streams
@@ -62,6 +62,11 @@ _COURSES_FORMAT = 2
 
 def osm_dir() -> Path:
     return Path(settings.workdir) / "osm_maps"
+
+
+def city_coverage(slug: str) -> CityCoverage:
+    """The city's persisted coverage, read without loading the city."""
+    return CityCoverage(osm_dir(), slug)
 
 
 def known_cities() -> dict[str, str]:
@@ -140,9 +145,7 @@ def _response_file(key: tuple, version: tuple) -> Path:
 
 def _persist_response(fp: Path, body: bytes) -> None:
     fp.parent.mkdir(parents=True, exist_ok=True)
-    tmp = fp.with_name(f".{fp.name}.tmp{os.getpid()}")
-    tmp.write_bytes(body)
-    os.replace(tmp, fp)
+    atomic_write(fp, body)
     # Older versions of the same layer
     key_prefix = fp.name.rsplit("__", 1)[0] + "__"
     for old in fp.parent.iterdir():
@@ -173,25 +176,16 @@ def cached_json(key: tuple, version: tuple, build: Callable[[], dict | list]) ->
 
 
 def state_version(slug: str, *extra: Path) -> tuple:
-    return StravaMapMatcher.state_version_of(osm_dir(), slug) + tuple(
+    return city_coverage(slug).state_version() + tuple(
         fp.stat().st_mtime_ns if fp.exists() else 0 for fp in extra)
 
 
-def read_stats_cache(slug: str) -> dict | None:
-    fp = osm_dir() / f"{slug}_stats.json"
-    if not fp.exists():
-        return None
-    try:
-        return json.loads(fp.read_text())
-    except (json.JSONDecodeError, OSError):
-        return None
-
-
 def delete_city(slug: str) -> int:
-    """Unload the city and remove its map, its matched state and its cached layers from disk.
-    Returns the number of files removed."""
+    """Unload the city, forget everything held for it and remove its map, its matched state and
+    its cached layers from disk. Returns the number of files removed."""
     with _matchers_lock:
         _matchers.pop(slug, None)
+        _matcher_used.pop(slug, None)
     with _responses_lock:
         for key in [k for k in _responses if k[1] == slug]:
             del _responses[key]
@@ -199,15 +193,9 @@ def delete_city(slug: str) -> int:
         for fp in _responses_dir().iterdir():
             if fp.name.startswith(f"{slug}__"):
                 fp.unlink(missing_ok=True)
-    # Explicit artifact names — a bare glob on the slug prefix could match
-    # another city whose slug extends this one.
-    paths = [StravaMapMatcher.artifact_path(osm_dir(), slug, name) for name in StravaMapMatcher.ARTIFACTS]
-    paths += osm_dir().glob(f"{slug}_districts_*.parquet")
-    removed = 0
-    for fp in paths:
-        if fp.exists():
-            fp.unlink()
-            removed += 1
+    with _sync_lock:
+        _sync_status.pop(slug, None)
+    removed = city_coverage(slug).remove()
     logger.info("Deleted city %s (%d files)", slug, removed)
     return removed
 
@@ -231,7 +219,7 @@ def edges_to_geojson(subset, include_times: bool = False) -> dict:
     starts = [0, *ends[:-1]]
     for start, end, name, t in zip(starts, ends, names, times):
         if start < end:
-            features.append(StravaMapMatcher.edge_feature(rounded[start:end], name, t))
+            features.append(edge_feature(rounded[start:end], name, t))
     return {"type": "FeatureCollection", "features": features}
 
 
@@ -249,7 +237,7 @@ def districts(slug: str, admin_level: int, geometry: bool, streets_only: bool) -
         return get_matcher(slug).coverage_by_district(
             admin_level=admin_level, include_geometry=geometry, streets_only=streets_only
         )
-    districts_fp = StravaMapMatcher.artifact_path(osm_dir(), slug, f"districts_{admin_level}.parquet")
+    districts_fp = city_coverage(slug).districts_path(admin_level)
     return cached_json(("districts", slug, admin_level, geometry, streets_only),
                        state_version(slug, districts_fp) + (LAYERS_FORMAT,), build)
 
@@ -259,14 +247,15 @@ def city_garmin_courses(slug: str, z2: Zone2) -> Response:
     streets of its part in the city, and `new_km`, those not run yet (both
     null when it doesn't match here). Kept until the coverage or the courses
     change; warmed after syncs."""
-    south, west, north, east = (read_stats_cache(slug) or {}).get("bbox") or get_matcher(slug).city_bbox()
+    city = city_coverage(slug)
+    south, west, north, east = (city.read_stats() or {}).get("bbox") or get_matcher(slug).city_bbox()
     courses = [c for c in course_list(z2)
                if c["start"][0] is not None and south <= c["start"][0] <= north and west <= c["start"][1] <= east]
 
     def build():
         # A course's id and distance identify its line; a changed course is matched again
         keys = {f"{c['course_id']}:{c['distance_km']}": c for c in courses}
-        streets = StravaMapMatcher.course_streets_of(osm_dir(), slug)
+        streets = city.course_streets()
         if any(key not in streets for key in keys):
             streets = get_matcher(slug).match_courses({
                 key: (lambda c=c: [(lat, lon) for lon, lat in course_line(z2, c["course_id"])["coordinates"]])
@@ -274,7 +263,7 @@ def city_garmin_courses(slug: str, z2: Zone2) -> Response:
             })
         out = []
         for key, c in keys.items():
-            new_km, city_km = StravaMapMatcher.street_km_of(osm_dir(), slug, streets.get(key)) or (None, None)
+            new_km, city_km = city.street_km(streets.get(key)) or (None, None)
             out.append({**c, "new_km": new_km, "city_km": city_km})
         return out
     version = state_version(slug) + (LAYERS_FORMAT, _COURSES_FORMAT,
@@ -306,7 +295,7 @@ def run_city_sync(slug: str, z2: Zone2, sport_types: list[str], keep_loaded: boo
     try:
         cache = z2.strava_activities_cache
         activities = cache.activities_raw[cache.activities_raw["sport_type"].isin(sport_types)]
-        todo = StravaMapMatcher.pending_activities(osm_dir(), slug, activities)
+        todo = city_coverage(slug).pending_activities(activities)
         # High-resolution GPS streams, which the matcher thins to ~20 m. No
         # summary-polyline fallback: a match is persisted once and never
         # redone, so an activity whose streams aren't cached yet waits for a
@@ -343,12 +332,13 @@ def _warm_map_layers(slug: str, z2: Zone2) -> None:
     new runs doesn't wait for them. A current layer is only a cache read; the
     city is loaded just to rebuild a stale one."""
     walked_edges(slug, streets_only=False, counts=True)
-    if StravaMapMatcher.new_streets_of(osm_dir(), slug) is None:
+    city = city_coverage(slug)
+    if city.new_streets() is None:
         get_matcher(slug).write_new_streets(start_times(z2))
-    if not StravaMapMatcher.has_viewport_index(osm_dir(), slug):
+    if not city.has_viewport_index():
         get_matcher(slug).write_viewport_index()
     # Districts only when already downloaded: fetching them is the page's call.
-    if StravaMapMatcher.artifact_path(osm_dir(), slug, "districts_9.parquet").exists():
+    if city.districts_path(9).exists():
         districts(slug, admin_level=9, geometry=True, streets_only=False)
     if z2.garmin_client.enabled:
         try:

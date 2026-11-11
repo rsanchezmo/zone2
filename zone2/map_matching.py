@@ -1,29 +1,32 @@
-import functools
+"""Map matching: each activity matched to one continuous route on its city's
+walkable network, and the coverage views that need that network loaded
+(walked layers, totals, districts, hexes, areas, planned loops). The city's
+persisted coverage state is CityCoverage's (zone2/city_coverage.py)."""
+from __future__ import annotations
+
 import json
 import logging
-import os
-import threading
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import Literal, NotRequired, TypedDict
 
 import geopandas as gpd
 import h3
-import pyarrow as pa
-import pyarrow.compute as pc
-import pyarrow.parquet as pq
 import numpy as np
 import pandas as pd
 import shapely
-from pyproj import Transformer
 from shapely.geometry import LineString, MultiLineString, Point, Polygon as ShapelyPolygon, mapping as shapely_mapping
 from shapely.prepared import prep
 
+from zone2.city_coverage import (
+    ActivityId, CityCoverage, CityStats, CoverageStats, LatLon, LineStringGeometry, MatchRecord, NewWay, StateVersion,
+    covered_at, from_wgs84, merge_intervals, round_coords, substrings, to_wgs84,
+)
 from zone2.route_matching import MatchedRoute, RouteMatcher
 from zone2.route_planner import WAY_CLASSES, ExplorationPlanner, WayClass
-from zone2.utils import summary_polyline_geometry
 
 logger = logging.getLogger(__name__)
 
@@ -39,64 +42,9 @@ def _import_osmnx():
     return ox
 
 
-def _merge_intervals(intervals: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    """Union of [lo, hi] intervals, sorted and non-overlapping."""
-    merged: list[list[float]] = []
-    for lo, hi in sorted(intervals):
-        if merged and lo <= merged[-1][1]:
-            merged[-1][1] = max(merged[-1][1], hi)
-        else:
-            merged.append([lo, hi])
-    return [(lo, hi) for lo, hi in merged]
-
-
-def _substrings(lines: np.ndarray, start: np.ndarray, end: np.ndarray) -> np.ndarray:
-    """shapely.ops.substring of many LineStrings at once, for distances within
-    each line and start != end: the points at both distances with the vertices
-    strictly between them, reversed when start > end."""
-    start, end = np.asarray(start, dtype=np.float64), np.asarray(end, dtype=np.float64)
-    xy, owner = shapely.get_coordinates(lines, return_index=True)
-    count = np.bincount(owner, minlength=len(lines))
-    first = np.r_[0, np.cumsum(count)[:-1]]
-    last = first + count - 1
-    # Each vertex's distance along its line, summed per line in substring's
-    # order and arithmetic, so a cut on a vertex includes it exactly as it would
-    d = np.diff(xy, axis=0)
-    seg = np.r_[0.0, np.power(d[:, 0] ** 2 + d[:, 1] ** 2, 0.5)]   # seg[i]: vertex i-1 to i
-    dist = np.zeros(len(xy))
-    for n in np.unique(count[count > 1]).tolist():
-        rows = first[count == n][:, None] + np.arange(1, n)
-        dist[rows] = np.cumsum(seg[rows], axis=1)
-    lo = np.clip(np.minimum(start, end), 0.0, dist[last])
-    hi = np.clip(np.maximum(start, end), 0.0, dist[last])
-
-    def vertex_at_or_before(t: np.ndarray) -> np.ndarray:
-        """Per line, the last vertex at distance <= t (binary search within the line)."""
-        left, right = first.copy(), last.copy()
-        while (active := left < right).any():
-            mid = (left + right + 1) // 2
-            ok = dist[mid] <= t
-            left = np.where(active & ok, mid, left)
-            right = np.where(active & ~ok, mid - 1, right)
-        return left
-
-    i_lo, i_hi = vertex_at_or_before(lo), vertex_at_or_before(hi)
-    # Interior vertices: distance strictly between lo and hi
-    begin = i_lo + 1
-    stop = np.where(dist[i_hi] == hi, i_hi, i_hi + 1)
-    n_inner = np.maximum(stop - begin, 0)
-    sizes = n_inner + 2
-    out_first = np.r_[0, np.cumsum(sizes)[:-1]]
-    coords = np.empty((int(sizes.sum()), 2))
-    # GEOS interpolation, as substring's own
-    coords[out_first] = shapely.get_coordinates(shapely.line_interpolate_point(lines, lo))
-    coords[out_first + sizes - 1] = shapely.get_coordinates(shapely.line_interpolate_point(lines, hi))
-    k = np.arange(int(n_inner.sum())) - np.repeat(np.r_[0, np.cumsum(n_inner)[:-1]], n_inner)
-    coords[np.repeat(out_first + 1, n_inner) + k] = xy[np.repeat(begin, n_inner) + k]
-    pieces = shapely.linestrings(coords, indices=np.repeat(np.arange(len(lines)), sizes))
-    reverse = start > end
-    pieces[reverse] = shapely.reverse(pieces[reverse])
-    return pieces
+def city_slug(city_name: str) -> str:
+    """The name a city's files are kept under."""
+    return city_name.replace(', ', '_').lower()
 
 
 class WayRole(StrEnum):
@@ -109,10 +57,23 @@ class WayRole(StrEnum):
     CONNECTOR = 'connector'
 
 
+class MatchQuality(TypedDict):
+    num_points: int
+    num_outliers: int
+    num_breaks: int
+    route_km: float
+    gps_km: float
+    pct_on_connectors: float
+    # Distinct street metres walked (laps count once)
+    street_km: float
+    # Share of the (thinned) in-city points the route explains
+    coverage_pct: float
+
+
 @dataclass
 class MatchResult:
     """Result of map matching a single activity."""
-    activity_id: int | str
+    activity_id: ActivityId
     original_geometry: LineString       # GPS track (projected CRS)
     # The matched route in travel order, one row per walked piece of a
     # segment (geometry oriented in the direction of travel); `street` is
@@ -122,7 +83,40 @@ class MatchResult:
     # way's geometry (`way` is a row of the walkable network), merged per way.
     walked: pd.DataFrame
     outliers: np.ndarray                # GPS observations left out by the matcher (x, y)
-    quality: dict
+    quality: MatchQuality
+
+
+class ScopedStats(TypedDict):
+    total_km: float
+    covered_km: float
+    coverage_pct: float
+    num_streets: int
+    num_covered_streets: int
+
+
+class PolygonGeometry(TypedDict):
+    type: str
+    coordinates: list
+
+
+class PolygonCoverage(ScopedStats):
+    name: str
+    # [south, west, north, east] for map fitBounds
+    bbox: list[float]
+    geometry: NotRequired[PolygonGeometry]
+
+
+class LoopProperties(TypedDict):
+    length_km: float
+    new_km: float
+    start: NotRequired[list[float]]
+    plan_id: NotRequired[str]
+
+
+class LoopFeature(TypedDict):
+    type: Literal['Feature']
+    geometry: LineStringGeometry
+    properties: LoopProperties
 
 
 class StravaMapMatcher:
@@ -166,12 +160,6 @@ class StravaMapMatcher:
     # Per-segment attributes persisted per city (streets / connectors); the
     # rest of the OSM tags only decide the way's role at download.
     EDGE_COLUMNS = ('u', 'v', 'key', 'highway', 'name', 'length', 'geometry')
-    # Every file a city keeps under `{slug}_` besides its districts_{level}.parquet
-    ARTIFACTS = (
-        'edges.parquet', 'connectors.parquet', 'boundary.parquet', 'meta.json', 'viewport.parquet',
-        'walked.parquet', 'matched_activities.parquet', 'routes.parquet', 'new_streets.parquet',
-        'stats.json', 'way_classes.parquet', 'far_activities.parquet', 'courses.parquet', 'covered_edges.parquet',
-    )
     CONNECTOR_COLUMNS = ('u', 'v', 'highway', 'footway', 'length', 'geometry')
     WAY_TAGS = ('highway', 'name', 'footway', 'access', 'foot', 'tunnel')
 
@@ -190,8 +178,6 @@ class StravaMapMatcher:
     MIN_WALKED_M = 0.5
     # The segment tally counts a segment once at least this share of it was walked.
     SEGMENT_COUNT_FRACTION = 0.5
-    # A street's unwalked remainder shorter than this isn't drawn as missing.
-    MIN_MISSING_M = 5.0
 
     def __init__(self, city_name: str, workdir: Path, force_reload: bool = False,
                  on_progress: Callable[[str], None] | None = None):
@@ -203,8 +189,10 @@ class StravaMapMatcher:
             each phase of a first-time city download.
         """
         self.city_name = city_name
+        self.slug = city_slug(city_name)
         self.workdir = workdir / "osm_maps"
         self.workdir.mkdir(parents=True, exist_ok=True)
+        self.coverage = CityCoverage(self.workdir, self.slug)
         self._on_progress = on_progress or (lambda stage: None)
 
         self._edges_gdf: gpd.GeoDataFrame = None  # type: ignore[assignment]
@@ -216,25 +204,11 @@ class StravaMapMatcher:
         self._matcher: RouteMatcher | None = None
         self._planner: ExplorationPlanner | None = None
         # Coverage derived from the persisted state, reused until a sync rewrites it
-        self._flagged_cache: dict[bool, tuple[tuple, gpd.GeoDataFrame]] = {}
-        self._layer_cache: dict[bool, tuple[tuple, gpd.GeoDataFrame]] = {}
-        # Serializes state-file reads/writes so a background sync rewriting the
-        # coverage parquet can't be observed mid-write by request threads.
-        self._state_lock = threading.RLock()
+        self._flagged_cache: dict[bool, tuple[StateVersion, gpd.GeoDataFrame]] = {}
+        self._layer_cache: dict[bool, tuple[StateVersion, gpd.GeoDataFrame]] = {}
 
         self._load_map(force_reload=force_reload)
         logger.info("Map for %s loaded with %d street segments", self.city_name, len(self._edges_gdf))
-
-    def _slug(self) -> str:
-        return self.city_name.replace(', ', '_').lower()
-
-    @staticmethod
-    def artifact_path(osm_dir: Path, slug: str, name: str) -> Path:
-        """Where a city's artifact `name` (e.g. 'edges.parquet') lives."""
-        return osm_dir / f"{slug}_{name}"
-
-    def _artifact(self, name: str) -> Path:
-        return self.artifact_path(self.workdir, self._slug(), name)
 
     @staticmethod
     def _as_tags(val) -> set[str]:
@@ -287,8 +261,8 @@ class StravaMapMatcher:
         (the coverage network), connector segments (walkable but never
         counted, read for matching and drawing) and the city boundary.
         """
-        edges_fp, connectors_fp = self._artifact('edges.parquet'), self._artifact('connectors.parquet')
-        boundary_fp, meta_fp = self._artifact('boundary.parquet'), self._artifact('meta.json')
+        edges_fp, connectors_fp = self.coverage.path('edges.parquet'), self.coverage.path('connectors.parquet')
+        boundary_fp, meta_fp = self.coverage.path('boundary.parquet'), self.coverage.path('meta.json')
 
         if not force_reload and edges_fp.exists() and boundary_fp.exists():
             edges = gpd.read_parquet(edges_fp, columns=list(self.EDGE_COLUMNS))
@@ -506,7 +480,7 @@ class StravaMapMatcher:
         `street` flags the rows coverage counts."""
         if self._walkable is None:
             streets = self._edges_gdf.reset_index()
-            connectors_fp = self._artifact('connectors.parquet')
+            connectors_fp = self.coverage.path('connectors.parquet')
             if connectors_fp.exists():
                 connectors = gpd.read_parquet(connectors_fp)
             else:
@@ -536,7 +510,7 @@ class StravaMapMatcher:
                                          penalty=np.where(w['street'].to_numpy(), 0.0, self.CONNECTOR_COST))
         return self._matcher
 
-    def match(self, activities: gpd.GeoDataFrame) -> dict[int | str, MatchResult]:
+    def match(self, activities: gpd.GeoDataFrame) -> dict[ActivityId, MatchResult]:
         """Match each activity to one continuous route on the walkable
         network and record the stretches of each way it walked.
 
@@ -548,7 +522,7 @@ class StravaMapMatcher:
         utm_crs = self._edges_gdf.crs
         acts = activities.to_crs(utm_crs)
         acts = acts[acts.intersects(self._city_boundary.union_all())]
-        results: dict[int | str, MatchResult] = {}
+        results: dict[ActivityId, MatchResult] = {}
         for idx, row in acts.iterrows():
             geom = row.geometry
             if not isinstance(geom, LineString) or geom.is_empty:
@@ -569,7 +543,7 @@ class StravaMapMatcher:
                         q['num_outliers'], q['num_breaks'])
         return results
 
-    def _walked_result(self, activity_id, geom: LineString, routes: list[tuple[np.ndarray, MatchedRoute]],
+    def _walked_result(self, activity_id: ActivityId, geom: LineString, routes: list[tuple[np.ndarray, MatchedRoute]],
                        walk: gpd.GeoDataFrame, rm: RouteMatcher) -> MatchResult:
         street = walk['street'].to_numpy()
         by_way: dict[int, list[tuple[float, float]]] = defaultdict(list)
@@ -581,9 +555,9 @@ class StravaMapMatcher:
                 by_way[e].append((min(a, b), max(a, b)))
                 piece_rows.append((e, a, b))
         ways, starts, ends = (np.asarray(c) for c in zip(*piece_rows)) if piece_rows else (np.zeros(0, np.int64),) * 3
-        pieces = list(zip(_substrings(rm.geoms[ways], starts, ends) if piece_rows else [], street[ways].tolist()))
+        pieces = list(zip(substrings(rm.geoms[ways], starts, ends) if piece_rows else [], street[ways].tolist()))
         walked = pd.DataFrame(
-            [(e, lo, hi) for e, ivs in by_way.items() for lo, hi in _merge_intervals(ivs)],
+            [(e, lo, hi) for e, ivs in by_way.items() for lo, hi in merge_intervals(ivs)],
             columns=['way', 'lo', 'hi'],
         ).astype({'way': np.int64, 'lo': np.float64, 'hi': np.float64})
 
@@ -595,225 +569,45 @@ class StravaMapMatcher:
         on_streets = float((walked['hi'] - walked['lo'])[street[walked['way'].to_numpy()]].sum()) if len(walked) else 0.0
         n_points = sum(len(p) for p, _ in routes)
         outliers = np.array([p[t] for p, r in routes for t in r.outliers]).reshape(-1, 2)
-        quality = {
+        quality: MatchQuality = {
             'num_points': n_points,
             'num_outliers': len(outliers),
             'num_breaks': sum(len(r.breaks) for _, r in routes),
             'route_km': round(route_m / 1000, 2),
             'gps_km': round(gps_m / 1000, 2),
             'pct_on_connectors': round(100 * on_connectors / route_m, 1) if route_m else 0.0,
-            # Distinct street metres walked (laps count once)
             'street_km': round(on_streets / 1000, 2),
-            # Share of the (thinned) in-city points the route explains
             'coverage_pct': round(100 * (1 - len(outliers) / n_points), 1) if n_points else 0.0,
         }
         return MatchResult(activity_id=activity_id, original_geometry=geom, route=route_gdf,
                            walked=walked, outliers=outliers, quality=quality)
 
     # ------------------------------------------------------------------
-    # Coverage analysis & incremental state
+    # Persisting matches
     # ------------------------------------------------------------------
-
-    @classmethod
-    def _state_paths_of(cls, osm_dir: Path, slug: str) -> tuple[Path, Path]:
-        """The walked stretches of every matched activity, and the activities
-        matched (or attempted)."""
-        return (cls.artifact_path(osm_dir, slug, 'walked.parquet'),
-                cls.artifact_path(osm_dir, slug, 'matched_activities.parquet'))
-
-    def _state_paths(self) -> tuple[Path, Path]:
-        return self._state_paths_of(self.workdir, self._slug())
-
-    def _atomic_write_parquet(self, df: pd.DataFrame, path: Path, **kwargs) -> None:
-        """Write a parquet via a temp file + atomic rename, so a crash mid-write
-        (e.g. OOM kill) can never leave a truncated file that readers choke on."""
-        tmp = path.parent / f"{path.name}.tmp{os.getpid()}"
-        df.to_parquet(tmp, **kwargs)
-        os.replace(tmp, path)
-
-    @classmethod
-    def _network_stamp(cls, osm_dir: Path, slug: str) -> bytes:
-        """Identifies the street map a walked `way` indexes into (a row of the
-        walkable network built from the streets and connectors files)."""
-        fps = (cls.artifact_path(osm_dir, slug, 'edges.parquet'), cls.artifact_path(osm_dir, slug, 'connectors.parquet'))
-        return ','.join(str(fp.stat().st_mtime_ns) if fp.exists() else '0' for fp in fps).encode()
-
-    @classmethod
-    def _state_is_current(cls, osm_dir: Path, slug: str) -> bool:
-        """Whether the walked stretches exist and index into the current street
-        map. When not (a state from before walked stretches, or a re-downloaded
-        map), every activity counts as unmatched and the next sync re-matches all."""
-        walked_fp, _ = cls._state_paths_of(osm_dir, slug)
-        if not walked_fp.exists():
-            return False
-        return (pq.read_metadata(walked_fp).metadata or {}).get(b'network') == cls._network_stamp(osm_dir, slug)
-
-    @classmethod
-    def state_version_of(cls, osm_dir: Path, slug: str) -> tuple[int, int]:
-        """Changes whenever a sync rewrites the city's persisted coverage state."""
-        return tuple(fp.stat().st_mtime_ns if fp.exists() else 0 for fp in cls._state_paths_of(osm_dir, slug))
-
-    def state_version(self) -> tuple[int, int]:
-        return self.state_version_of(self.workdir, self._slug())
-
-    @classmethod
-    def _matched_ids_of(cls, osm_dir: Path, slug: str) -> set:
-        """Ids of activities already matched (or attempted) against city `slug`."""
-        _, meta_fp = cls._state_paths_of(osm_dir, slug)
-        if not meta_fp.exists() or not cls._state_is_current(osm_dir, slug):
-            return set()
-        return set(pd.read_parquet(meta_fp, columns=['activity_id'])['activity_id'])
-
-    @classmethod
-    def pending_activities(cls, osm_dir: Path, slug: str, activities: pd.DataFrame) -> pd.DataFrame:
-        """Activities still to match against city `slug`: not in its state yet
-        and with a summary route near the city. Reads only the small state and
-        boundary files, so a sync with nothing new never loads the network or
-        any GPS stream. The ones found away from the city are remembered (for
-        that boundary), so each summary route is decoded once, not every sync."""
-        todo = activities[~activities['id'].isin(cls._matched_ids_of(osm_dir, slug))]
-        if todo.empty:
-            return todo
-        boundary_fp = cls.artifact_path(osm_dir, slug, 'boundary.parquet')
-        far_fp = cls.artifact_path(osm_dir, slug, 'far_activities.parquet')
-        stamp = str(boundary_fp.stat().st_mtime_ns).encode()
-        far: set[int] = set()
-        if far_fp.exists() and (pq.read_metadata(far_fp).metadata or {}).get(b'boundary') == stamp:
-            far = set(pq.read_table(far_fp).column('activity_id').to_pylist())
-        todo = todo[~todo['id'].isin(far)]
-        if todo.empty:
-            return todo
-        boundary = gpd.read_parquet(boundary_fp)
-        # ~200 m of slack: summary polylines are simplified versions of the GPS track
-        near = boundary.to_crs('EPSG:4326').union_all().buffer(0.002)
-        routes = todo['map'].map(summary_polyline_geometry)
-        is_near = np.array([g is not None and g.intersects(near) for g in routes], dtype=bool)
-        if (~is_near).any():
-            ids = sorted(far | set(todo['id'][~is_near].astype('int64').tolist()))
-            table = pa.table({'activity_id': pa.array(ids, pa.int64())}).replace_schema_metadata({'boundary': stamp})
-            tmp = far_fp.parent / f"{far_fp.name}.tmp{os.getpid()}"
-            pq.write_table(table, tmp)
-            os.replace(tmp, far_fp)
-        return todo[is_near]
-
-    def matched_activity_ids(self) -> set:
-        """Ids of activities already matched (or attempted) against this city."""
-        with self._state_lock:
-            return self._matched_ids_of(self.workdir, self._slug())
-
-    # (osm_dir, slug) -> (state version, (stretches, covered metres of each way))
-    _walked_by_city: dict[tuple[Path, str], tuple[tuple, tuple[pd.DataFrame, np.ndarray]]] = {}
-
-    @classmethod
-    def walked_state_of(cls, osm_dir: Path, slug: str) -> tuple[pd.DataFrame, np.ndarray]:
-        """Coverage of city `slug` from its state file alone, reused until a
-        sync rewrites it:
-          - stretches: every walked stretch (columns way, lo, hi, times), split
-            where the number of distinct activities that walked it changes;
-          - covered: metres walked of each way (indexed by way, 0 when unwalked),
-            each metre counted once however many runs covered it."""
-        version = cls.state_version_of(osm_dir, slug)
-        cached = cls._walked_by_city.get((osm_dir, slug))
-        if cached is None or cached[0] != version:
-            walked_fp, _ = cls._state_paths_of(osm_dir, slug)
-            walked = (pd.read_parquet(walked_fp, columns=['way', 'lo', 'hi'])
-                      if cls._state_is_current(osm_dir, slug) else pd.DataFrame(columns=['way', 'lo', 'hi']))
-            stretches = cls._stretches(walked)
-            covered = np.bincount(stretches['way'].to_numpy(dtype=np.int64),
-                                  weights=(stretches['hi'] - stretches['lo']).to_numpy(dtype=np.float64))
-            cached = cls._walked_by_city[(osm_dir, slug)] = (version, (stretches, covered))
-        return cached[1]
-
-    @staticmethod
-    def _stretches(walked: pd.DataFrame) -> pd.DataFrame:
-        """Overlay the activities' walked intervals: each activity's intervals
-        are merged per way, so the overlap depth is the number of activities."""
-        n = len(walked)
-        way = np.concatenate([walked['way'].to_numpy(dtype=np.int64)] * 2)
-        pos = np.concatenate([walked['lo'].to_numpy(dtype=np.float64), walked['hi'].to_numpy(dtype=np.float64)])
-        delta = np.r_[np.ones(n, np.int64), -np.ones(n, np.int64)]
-        order = np.lexsort((delta, pos, way))   # by way, then position, ends before starts
-        way, pos, delta = way[order], pos[order], delta[order]
-        depth = np.cumsum(delta)                 # each way's deltas sum to 0
-        keep = (way[:-1] == way[1:]) & (depth[:-1] > 0) & (pos[1:] > pos[:-1])
-        way, lo, hi, times = way[:-1][keep], pos[:-1][keep], pos[1:][keep], depth[:-1][keep]
-        if not len(way):
-            return pd.DataFrame({'way': pd.Series(dtype=np.int64), 'lo': pd.Series(dtype=np.float64),
-                                 'hi': pd.Series(dtype=np.float64), 'times': pd.Series(dtype=np.int64)})
-        # Join touching stretches walked by as many activities
-        new = np.r_[True, (way[1:] != way[:-1]) | (times[1:] != times[:-1]) | (lo[1:] != hi[:-1])]
-        starts = np.flatnonzero(new)
-        ends = np.r_[starts[1:], len(way)] - 1
-        return pd.DataFrame({'way': way[starts], 'lo': lo[starts], 'hi': hi[ends], 'times': times[starts]})
 
     def save_match_state(
         self,
-        match_results: dict[int | str, MatchResult],
-        attempted_ids: list | None = None,
+        match_results: dict[ActivityId, MatchResult],
+        attempted_ids: list[ActivityId] | None = None,
     ) -> None:
-        """Append per-activity walked stretches and matched routes to the
-        persisted state. A state that isn't current (see _state_is_current) is
-        replaced rather than appended to.
-
-        Activities attempted but not matched are recorded with nothing walked
-        so incremental runs don't retry them forever.
+        """Persist the walked stretches and routes of matched activities (see
+        CityCoverage.save_matches). Activities attempted but not matched are
+        recorded with nothing walked so incremental runs don't retry them forever.
         """
-        walked_fp, meta_fp = self._state_paths()
-        routes_fp = self._artifact('routes.parquet')
-        current = self._state_is_current(self.workdir, self._slug())
-
-        walked_rows = [r.walked.assign(activity_id=aid) for aid, r in match_results.items() if len(r.walked)]
-        meta_rows = []
-        route_ids, route_geoms = [], []
-        for aid, result in match_results.items():
-            if not result.route.empty:
-                route_ids.append(aid)
-                route_geoms.append(self._route_lines(result.route))
-            meta_rows.append({
-                'activity_id': aid,
-                'matched_at': pd.Timestamp.utcnow().isoformat(),
-                'street_km': result.quality.get('street_km'),
-                'coverage_pct': result.quality.get('coverage_pct'),
-            })
-        matched_ids = set(match_results.keys())
-        for aid in (attempted_ids or []):
-            if aid not in matched_ids:
-                meta_rows.append({
-                    'activity_id': aid,
-                    'matched_at': pd.Timestamp.utcnow().isoformat(),
-                    'street_km': 0.0,
-                    'coverage_pct': 0.0,
-                })
-
-        with self._state_lock:
-            if walked_rows or not current:
-                new_walked = pd.concat(walked_rows, ignore_index=True) if walked_rows else pd.DataFrame(
-                    {'way': pd.Series(dtype=np.int64), 'lo': pd.Series(dtype=np.float64),
-                     'hi': pd.Series(dtype=np.float64), 'activity_id': pd.Series(dtype=np.int64)})
-                if current:
-                    old = pd.read_parquet(walked_fp)
-                    # A re-matched activity replaces its stretches
-                    new_walked = pd.concat([old[~old['activity_id'].isin(matched_ids)], new_walked], ignore_index=True)
-                table = pa.Table.from_pandas(new_walked[['activity_id', 'way', 'lo', 'hi']], preserve_index=False)
-                table = table.replace_schema_metadata({'network': self._network_stamp(self.workdir, self._slug())})
-                tmp = walked_fp.parent / f"{walked_fp.name}.tmp{os.getpid()}"
-                pq.write_table(table, tmp)
-                os.replace(tmp, walked_fp)
-            if meta_rows:
-                new_meta = pd.DataFrame(meta_rows)
-                if current and meta_fp.exists():
-                    new_meta = pd.concat([pd.read_parquet(meta_fp), new_meta], ignore_index=True)
-                self._atomic_write_parquet(
-                    new_meta.drop_duplicates('activity_id', keep='last'), meta_fp)
-            if route_ids:
-                new_routes = gpd.GeoDataFrame({'activity_id': route_ids}, geometry=route_geoms,
-                                              crs=self._edges_gdf.crs).to_crs('EPSG:4326')
-                if routes_fp.exists():
-                    new_routes = pd.concat([gpd.read_parquet(routes_fp), new_routes], ignore_index=True)
-                # Sorted in small row groups: an activity page's lookup (read_route) reads one
-                self._atomic_write_parquet(
-                    new_routes.drop_duplicates('activity_id', keep='last').sort_values('activity_id'), routes_fp,
-                    row_group_size=self.ROUTES_ROW_GROUP)
+        records: list[MatchRecord] = [
+            {'activity_id': aid, 'matched_at': pd.Timestamp.utcnow().isoformat(),
+             'street_km': result.quality['street_km'], 'coverage_pct': result.quality['coverage_pct']}
+            for aid, result in match_results.items()
+        ]
+        records += [
+            {'activity_id': aid, 'matched_at': pd.Timestamp.utcnow().isoformat(), 'street_km': 0.0, 'coverage_pct': 0.0}
+            for aid in (attempted_ids or []) if aid not in match_results
+        ]
+        routed = [(aid, result.route) for aid, result in match_results.items() if not result.route.empty]
+        routes = gpd.GeoDataFrame({'activity_id': [aid for aid, _ in routed]},
+                                  geometry=[self._route_lines(route) for _, route in routed], crs=self._edges_gdf.crs)
+        self.coverage.save_matches({aid: result.walked for aid, result in match_results.items()}, records, routes)
 
     @staticmethod
     def _route_lines(route: gpd.GeoDataFrame) -> MultiLineString:
@@ -829,48 +623,12 @@ class StravaMapMatcher:
                 lines.append(coords)
         return MultiLineString([ln for ln in lines if len(ln) >= 2]).simplify(1.0)
 
-    @classmethod
-    def read_route(cls, osm_dir: Path, slug: str, activity_id: int) -> dict | None:
-        """The matched route of an activity in city `slug` as a GeoJSON
-        MultiLineString (EPSG:4326, lines oriented in travel order), or None
-        when the city hasn't matched it. Reads only the routes file, so it
-        never builds a matcher."""
-        routes_fp = cls.artifact_path(osm_dir, slug, 'routes.parquet')
-        if activity_id not in cls._route_ids(routes_fp):
-            return None
-        # The stored WKB straight from pyarrow: geopandas would also build the
-        # file's CRS, most of a lookup's time, and routes are already EPSG:4326
-        hit = pq.read_table(routes_fp, columns=['geometry'], filters=[('activity_id', '==', activity_id)])
-        if hit.num_rows == 0:
-            return None
-        geom = shapely.from_wkb(hit.column('geometry')[0].as_py())
-        lines = [geom] if isinstance(geom, LineString) else list(geom.geoms)
-        return {'type': 'MultiLineString', 'coordinates': [cls._round_coords(shapely_mapping(ln)['coordinates'])
-                                                           for ln in lines]}
-
-    # routes file -> (mtime, activity ids in it)
-    _route_ids_cache: dict[Path, tuple[int, frozenset[int]]] = {}
-
-    @classmethod
-    def _route_ids(cls, routes_fp: Path) -> frozenset[int]:
-        """Activities with a route in `routes_fp`, so a route lookup opens only
-        the city that has it (the activity page asks every city)."""
-        try:
-            mtime = routes_fp.stat().st_mtime_ns
-        except FileNotFoundError:
-            return frozenset()
-        cached = cls._route_ids_cache.get(routes_fp)
-        if cached is None or cached[0] != mtime:
-            ids = pq.read_table(routes_fp, columns=['activity_id']).column('activity_id').to_pylist()
-            cached = cls._route_ids_cache[routes_fp] = (mtime, frozenset(ids))
-        return cached[1]
-
-    def match_incremental(self, activities: gpd.GeoDataFrame) -> dict:
+    def match_incremental(self, activities: gpd.GeoDataFrame) -> CoverageStats:
         """Match only activities not yet in the persisted state, then return
         the updated coverage stats. This is the entry point for sync flows:
         the backfill cost is paid once, each new activity costs one match.
         """
-        done = self.matched_activity_ids()
+        done = self.coverage.matched_ids()
         todo = activities[~activities['id'].isin(done)] if 'id' in activities.columns else activities
         if not todo.empty:
             # Only attempt activities that touch this city at all
@@ -892,35 +650,40 @@ class StravaMapMatcher:
         its routing graphs, a few hundred MB for a large city); rebuilt on use."""
         self._walkable = self._matcher = self._planner = None
 
-    def _stats_cache_path(self) -> Path:
-        return self.workdir / f"{self._slug()}_stats.json"
-
     def write_stats_cache(self) -> None:
-        """Persist summary coverage stats to JSON so list endpoints can report
-        numbers without constructing a matcher (which would hold ~140 MB per
-        city). Written after every sync and on city add."""
-        payload = {
+        """Persist summary coverage stats so list endpoints can report numbers
+        without constructing a matcher (which would hold ~140 MB per city).
+        Written after every sync and on city add."""
+        stats: CityStats = {
             'city_name': self.city_name,
-            'num_matched_activities': len(self.matched_activity_ids()),
+            'num_matched_activities': len(self.coverage.matched_ids()),
             'bbox': self.city_bbox(),
-            'all': {k: v for k, v in self.coverage_stats_from_state(streets_only=False).items()
-                    if not k.startswith('_')},
-            'streets': {k: v for k, v in self.coverage_stats_from_state(streets_only=True).items()
-                        if not k.startswith('_')},
+            'all': self.coverage_stats_from_state(streets_only=False),
+            'streets': self.coverage_stats_from_state(streets_only=True),
         }
-        path = self._stats_cache_path()
-        tmp = path.parent / f"{path.name}.tmp{os.getpid()}"
-        tmp.write_text(json.dumps(payload))
-        os.replace(tmp, path)
+        self.coverage.write_stats(stats)
 
-    def coverage_stats_from_state(self, streets_only: bool = False) -> dict:
+    def write_new_streets(self, started: pd.Series) -> pd.DataFrame:
+        """Each matched activity's new streets (see CityCoverage.write_new_streets)."""
+        und = self._undirected_gdf()
+        return self.coverage.write_new_streets(pd.Series(und['length'].to_numpy(), index=und['way'].to_numpy()), started)
+
+    def write_viewport_index(self) -> None:
+        """Write the city's viewport index (see CityCoverage.viewport_missing_geojson)."""
+        self.coverage.write_viewport_index(self._undirected_gdf())
+
+    # ------------------------------------------------------------------
+    # Coverage on the street network
+    # ------------------------------------------------------------------
+
+    def coverage_stats_from_state(self, streets_only: bool = False) -> CoverageStats:
         """Coverage from the persisted state: the metres of the street network
         (streets_only: without paths) the matched routes walked, each counted
         once however many runs covered it."""
         und = self.undirected_with_covered(streets_only=streets_only)
         total_m = float(und['length'].sum())
         walked_m = float(und['covered_m'].sum())
-        stats = {
+        stats: CoverageStats = {
             'total_network_km': round(total_m / 1000, 2),
             'traversed_km': round(walked_m / 1000, 2),
             'coverage_pct': round(100 * walked_m / total_m, 2) if total_m > 0 else 0,
@@ -931,25 +694,17 @@ class StravaMapMatcher:
                     stats['num_unique_streets'])
         return stats
 
-    @staticmethod
-    def _covered_at(covered: np.ndarray, ways: np.ndarray) -> np.ndarray:
-        """covered[ways], 0 past the last walked way."""
-        out = np.zeros(len(ways))
-        inside = ways < len(covered)
-        out[inside] = covered[ways[inside]]
-        return out
-
     def walked_layer(self, streets_only: bool = False) -> gpd.GeoDataFrame:
         """The walked stretches as drawn on the coverage map, in EPSG:4326:
         exactly the ways the routes used (connectors included unless
         streets_only, which keeps streets without paths), with `times`, the
         number of distinct activities that walked each stretch. Reused until
         the state changes; callers must not modify it."""
-        version = self.state_version()
+        version = self.coverage.state_version()
         cached = self._layer_cache.get(streets_only)
         if cached is not None and cached[0] == version:
             return cached[1]
-        stretches, _ = self.walked_state_of(self.workdir, self._slug())
+        stretches = self.coverage.walked_state().stretches
         # Least run first, so where lines touch the busiest stretch is drawn on top
         stretches = stretches.sort_values('times', kind='stable')
         walk = self._walkable_network()
@@ -957,15 +712,11 @@ class StravaMapMatcher:
         if streets_only:
             keep = (walk['street'].to_numpy() & self._street_flags(walk['highway']))[ways]
             stretches, ways = stretches[keep], ways[keep]
-        geoms = _substrings(walk.geometry.to_numpy()[ways], stretches['lo'].to_numpy(), stretches['hi'].to_numpy())
+        geoms = substrings(walk.geometry.to_numpy()[ways], stretches['lo'].to_numpy(), stretches['hi'].to_numpy())
         layer = gpd.GeoDataFrame({'name': walk['name'].to_numpy()[ways], 'times': stretches['times'].to_numpy()},
                                  geometry=geoms, crs=walk.crs).to_crs('EPSG:4326')
         self._layer_cache[streets_only] = (version, layer)
         return layer
-
-    # ------------------------------------------------------------------
-    # Scoped coverage: districts & arbitrary areas
-    # ------------------------------------------------------------------
 
     def city_bbox(self) -> list[float]:
         """City bounds as [south, west, north, east] in EPSG:4326."""
@@ -1011,72 +762,23 @@ class StravaMapMatcher:
         routes walked, and `covered`, whether at least SEGMENT_COUNT_FRACTION
         of it was. Callers must not modify the result, which is reused until
         the state changes."""
-        version = self.state_version()
+        version = self.coverage.state_version()
         cached = self._flagged_cache.get(streets_only)
         if cached is not None and cached[0] == version:
             return cached[1]
         und = self._undirected_gdf()
         if streets_only:
             und = und[und['street']]
-        _, covered = self.walked_state_of(self.workdir, self._slug())
+        covered = self.coverage.walked_state().covered
         out = und.copy()
-        out['covered_m'] = np.minimum(self._covered_at(covered, und['way'].to_numpy()), und['length'].to_numpy())
+        out['covered_m'] = np.minimum(covered_at(covered, und['way'].to_numpy()), und['length'].to_numpy())
         out['covered'] = out['covered_m'] >= self.SEGMENT_COUNT_FRACTION * out['length']
         self._flagged_cache[streets_only] = (version, out)
         return out
 
-    @classmethod
-    def _new_streets_path(cls, osm_dir: Path, slug: str) -> Path:
-        return cls.artifact_path(osm_dir, slug, 'new_streets.parquet')
-
-    def write_new_streets(self, started: pd.Series) -> pd.DataFrame:
-        """Per matched activity, the metres of street network it walked that no
-        activity started earlier had (`started`: activity id -> start time):
-        its new streets. They add up to the city's covered total. Persisted
-        for the current coverage state, see new_streets_of."""
-        walked_fp, _ = self._state_paths()
-        und = self._undirected_gdf()
-        length = pd.Series(und['length'].to_numpy(), index=und['way'].to_numpy())
-        walked = (pd.read_parquet(walked_fp) if self._state_is_current(self.workdir, self._slug())
-                  else pd.DataFrame(columns=['activity_id', 'way', 'lo', 'hi']))
-        walked = walked[walked['way'].isin(length.index)]   # the street network, as the totals count it
-        start = pd.to_datetime(walked['activity_id'].map(started), utc=True)
-        # Unknown start times go last; ties by id
-        start_ns = start.astype('int64').where(start.notna(), np.iinfo(np.int64).max).to_numpy()
-        order = np.lexsort((walked['activity_id'].to_numpy(), start_ns, walked['way'].to_numpy()))
-        new_m: dict[int, float] = defaultdict(float)
-        union: list[tuple[float, float]] = []
-        last_way = None
-        for aid, way, lo, hi in zip(walked['activity_id'].to_numpy()[order].tolist(), walked['way'].to_numpy()[order].tolist(),
-                                    walked['lo'].to_numpy()[order].tolist(), walked['hi'].to_numpy()[order].tolist()):
-            if way != last_way:
-                union, last_way = [], way
-            hi = min(hi, float(length[way]))
-            if hi <= lo:
-                continue
-            seen = sum(max(0.0, min(hi, b) - max(lo, a)) for a, b in union)
-            new_m[int(aid)] += (hi - lo) - seen
-            union = _merge_intervals([*union, (lo, hi)])
-        out = pd.DataFrame({'activity_id': sorted(self.matched_activity_ids())})
-        out['new_m'] = out['activity_id'].map(new_m).fillna(0.0)
-        table = pa.Table.from_pandas(out, preserve_index=False).replace_schema_metadata(
-            {'state': repr(self.state_version()).encode()})
-        fp = self._new_streets_path(self.workdir, self._slug())
-        tmp = fp.parent / f"{fp.name}.tmp{os.getpid()}"
-        pq.write_table(table, tmp)
-        os.replace(tmp, fp)
-        return out
-
-    @classmethod
-    def new_streets_of(cls, osm_dir: Path, slug: str) -> pd.DataFrame | None:
-        """write_new_streets' result for the current coverage state, or None
-        when it hasn't been written since the state last changed."""
-        fp = cls._new_streets_path(osm_dir, slug)
-        if not fp.exists():
-            return None
-        if (pq.read_metadata(fp).metadata or {}).get(b'state') != repr(cls.state_version_of(osm_dir, slug)).encode():
-            return None
-        return pd.read_parquet(fp)
+    # ------------------------------------------------------------------
+    # Planned loops and courses
+    # ------------------------------------------------------------------
 
     @classmethod
     def _way_class(cls, highway) -> WayClass:
@@ -1095,16 +797,7 @@ class StravaMapMatcher:
         Sidewalks take the class of the nearest street, so avoiding main roads
         avoids their sidewalks too; crossings stay streets. That nearest-street
         search is computed once per street map and kept on disk."""
-        fp = self._artifact('way_classes.parquet')
-        stamp = self._network_stamp(self.workdir, self._slug())
-        if fp.exists() and (pq.read_metadata(fp).metadata or {}).get(b'network') == stamp:
-            return pq.read_table(fp).column('code').to_numpy()
-        codes = self._compute_way_classes()
-        table = pa.table({'code': pa.array(codes, pa.int8())}).replace_schema_metadata({'network': stamp})
-        tmp = fp.parent / f"{fp.name}.tmp{os.getpid()}"
-        pq.write_table(table, tmp)
-        os.replace(tmp, fp)
-        return codes
+        return self.coverage.way_classes(self._compute_way_classes)
 
     def _compute_way_classes(self) -> np.ndarray:
         w = self._walkable_network()
@@ -1120,14 +813,14 @@ class StravaMapMatcher:
             codes[sidewalk[at]] = codes[streets[nearest]]
         return codes
 
-    def plan_loop(self, start_latlon: tuple[float, float], distance_m: float,
-                  via_latlon: list[tuple[float, float]] = (), new_share: float = 1.0,
-                  avoid: frozenset[WayClass] = frozenset(), seed: int = 0) -> tuple[dict, list[tuple[int, float]]] | None:
+    def plan_loop(self, start_latlon: LatLon, distance_m: float,
+                  via_latlon: list[LatLon] = (), new_share: float = 1.0,
+                  avoid: frozenset[WayClass] = frozenset(), seed: int = 0) -> tuple[LoopFeature, list[NewWay]] | None:
         """A loop of about distance_m from the start through the via points
         (lat, lon) over streets not run yet, new_share of it where it can (see
         ExplorationPlanner), as a GeoJSON Feature in EPSG:4326, with the rows
-        of its new streets and their lengths, (row, metres), for new_km_now.
-        None when no loop of that length is found."""
+        of its new streets and their lengths, (row, metres), for
+        CityCoverage.new_km_now. None when no loop of that length is found."""
         # Held locally: a sync may release the network meanwhile
         planner = self._planner
         if planner is None:
@@ -1141,47 +834,31 @@ class StravaMapMatcher:
         missing = np.zeros(len(planner.u))
         missing[ways] = np.maximum(0.0, planner.length[ways] - covered[ways])
 
-        to_crs = self._from_wgs84(str(self._edges_gdf.crs))
+        to_crs = from_wgs84(str(self._edges_gdf.crs))
         start_xy = to_crs.transform(start_latlon[1], start_latlon[0])
         via_xy = [to_crs.transform(lon, lat) for lat, lon in via_latlon]
         loop = planner.plan(start_xy, distance_m, missing, covered, via_xy=via_xy, new_share=new_share,
                             avoid=avoid, seed=seed)
         if loop is None:
             return None
-        xs, ys = self._to_wgs84(str(self._edges_gdf.crs)).transform(*shapely.get_coordinates(loop.line).T)
-        feature = {"type": "Feature",
-                   "geometry": {"type": "LineString",
-                                "coordinates": [[round(x, 6), round(y, 6)] for x, y in zip(xs.tolist(), ys.tolist())]},
-                   "properties": {"length_km": round(loop.length_m / 1000, 2), "new_km": round(loop.new_m / 1000, 2)}}
+        xs, ys = to_wgs84(str(self._edges_gdf.crs)).transform(*shapely.get_coordinates(loop.line).T)
+        feature: LoopFeature = {
+            "type": "Feature",
+            "geometry": {"type": "LineString",
+                         "coordinates": [[round(x, 6), round(y, 6)] for x, y in zip(xs.tolist(), ys.tolist())]},
+            "properties": {"length_km": round(loop.length_m / 1000, 2), "new_km": round(loop.new_m / 1000, 2)},
+        }
         rows = np.unique(loop.rows)
         rows = rows[missing[rows] > 0]
         return feature, [(int(r), round(float(planner.length[r]), 2)) for r in rows]
 
-    @classmethod
-    def network_stamp_of(cls, osm_dir: Path, slug: str) -> str:
-        """The street map that plan_loop's network rows index into."""
-        return cls._network_stamp(osm_dir, slug).decode()
-
-    @classmethod
-    def new_km_now(cls, osm_dir: Path, slug: str, new_ways: list[tuple[int, float]], network: str) -> float | None:
-        """Km of a planned loop's new streets (plan_loop's (row, metres)) still
-        not run; None when the city's street map changed since it was planned.
-        Reads only the coverage state."""
-        if network != cls.network_stamp_of(osm_dir, slug):
-            return None
-        if not new_ways:
-            return 0.0
-        rows, metres = (np.asarray(x) for x in zip(*new_ways))
-        _, covered = cls.walked_state_of(osm_dir, slug)
-        return round(float(np.maximum(0.0, metres - cls._covered_at(covered, rows.astype(np.int64))).sum()) / 1000, 2)
-
-    def new_km_along(self, latlon: list[tuple[float, float]]) -> tuple[float, float] | None:
+    def new_km_along(self, latlon: list[LatLon]) -> tuple[float, float] | None:
         """(km of streets not run yet, km of streets) along a route drawn
         elsewhere (points as (lat, lon)): its part in this city, matched like a
         run and counted like the coverage totals. None when it doesn't match here."""
-        return self.street_km_of(self.workdir, self._slug(), self._streets_along(latlon))
+        return self.coverage.street_km(self._streets_along(latlon))
 
-    def _streets_along(self, latlon: list[tuple[float, float]]) -> pd.DataFrame | None:
+    def _streets_along(self, latlon: list[LatLon]) -> pd.DataFrame | None:
         """The street stretches (way, lo, hi) a route drawn elsewhere walks
         here, matched like a run; None when it doesn't match."""
         line = LineString([(lon, lat) for lat, lon in latlon])
@@ -1190,281 +867,23 @@ class StravaMapMatcher:
             return None
         return result.walked[result.walked['way'].isin(self._undirected_gdf()['way'])].reset_index(drop=True)
 
-    @classmethod
-    def street_km_of(cls, osm_dir: Path, slug: str, streets: pd.DataFrame | None) -> tuple[float, float] | None:
-        """(km not run yet, km) of street stretches (way, lo, hi) of city `slug`,
-        from its coverage state alone; None for None."""
-        if streets is None:
-            return None
-        stretches, _ = cls.walked_state_of(osm_dir, slug)
-        run = {way: list(zip(g['lo'], g['hi'])) for way, g in stretches[stretches['way'].isin(streets['way'])].groupby('way')}
-        new_m = sum((hi - lo) - sum(max(0.0, min(hi, b) - max(lo, a)) for a, b in run.get(way, ()))
-                    for way, lo, hi in streets[['way', 'lo', 'hi']].itertuples(index=False))
-        return round(max(new_m, 0.0) / 1000, 2), round(float((streets['hi'] - streets['lo']).sum()) / 1000, 2)
-
-    @classmethod
-    def course_streets_of(cls, osm_dir: Path, slug: str) -> dict[str, pd.DataFrame | None]:
-        """The street stretches of each course matched in city `slug` (see
-        match_courses), by course key, for its current street map."""
-        fp = cls.artifact_path(osm_dir, slug, 'courses.parquet')
-        if not fp.exists() or (pq.read_metadata(fp).metadata or {}).get(b'network') != cls._network_stamp(osm_dir, slug):
-            return {}
-        rows = pd.read_parquet(fp)
-        return {key: (None if (g['way'] < 0).all() else g[['way', 'lo', 'hi']].reset_index(drop=True))
-                for key, g in rows.groupby('key', sort=False)}
-
-    def match_courses(self, points: dict[str, Callable[[], list[tuple[float, float]]]]) -> dict[str, pd.DataFrame | None]:
+    def match_courses(self, points: dict[str, Callable[[], list[LatLon]]]) -> dict[str, pd.DataFrame | None]:
         """Match routes drawn elsewhere (Garmin courses) once per street map:
         `points[key]()` gives a course's (lat, lon) points and is called only
         for keys not matched yet. Kept in `{slug}_courses.parquet`, since what
         a course walks doesn't change with the coverage. Returns every course
         matched here, by key."""
-        known = self.course_streets_of(self.workdir, self._slug())
+        known = self.coverage.course_streets()
         new = {key: self._streets_along(get()) for key, get in points.items() if key not in known}
         if not new:
             return known
         known.update(new)
-        rows = pd.concat(
-            [(g if g is not None else pd.DataFrame({'way': [-1], 'lo': [0.0], 'hi': [0.0]})).assign(key=key)
-             for key, g in known.items()], ignore_index=True)
-        table = pa.Table.from_pandas(rows.astype({'way': np.int64, 'lo': np.float64, 'hi': np.float64})[['key', 'way', 'lo', 'hi']],
-                                     preserve_index=False)
-        fp = self._artifact('courses.parquet')
-        tmp = fp.parent / f"{fp.name}.tmp{os.getpid()}"
-        pq.write_table(table.replace_schema_metadata({'network': self._network_stamp(self.workdir, self._slug())}), tmp)
-        os.replace(tmp, fp)
+        self.coverage.write_courses(known)
         return known
 
-    @classmethod
-    def usual_start_of(cls, osm_dir: Path, slug: str) -> tuple[float, float] | None:
-        """(lat, lon) where the city's matched runs most often start: the mean
-        start in the ~300 m cell with the most. None before any match."""
-        routes_fp = cls.artifact_path(osm_dir, slug, 'routes.parquet')
-        if not routes_fp.exists():
-            return None
-        routes = gpd.read_parquet(routes_fp, columns=['geometry'])
-        if routes.empty:
-            return None
-        # The first line's first point; a LineString is its own first part
-        starts = shapely.get_coordinates(shapely.get_point(shapely.get_geometry(routes.geometry.values, 0), 0))
-        cells = np.round(starts / [0.004, 0.0027])   # ~300 m at mid latitudes
-        _, cell_of, counts = np.unique(cells, axis=0, return_inverse=True, return_counts=True)
-        lon, lat = starts[cell_of.ravel() == counts.argmax()].mean(axis=0)
-        return round(float(lat), 6), round(float(lon), 6)
-
-    @staticmethod
-    def edge_feature(coords: list, name, times: int | None = None) -> dict:
-        """GeoJSON feature of an edge served to the coverage map."""
-        props = {"name": None if name is None or str(name) == "nan" else str(name)}
-        if times is not None:
-            props["times"] = int(times)
-        return {"type": "Feature", "geometry": {"type": "LineString", "coordinates": coords}, "properties": props}
-
-    # Viewport index: the undirected edges in EPSG:4326, ordered along a
-    # Z-order curve of ~200 m cells and stored in small row groups, so the
-    # row-group bounds statistics let a viewport query skip most of the city.
-    # Each edge's feature is stored rendered up to its closing braces, so an
-    # unwalked edge costs joined bytes, no per-coordinate work; partly walked
-    # ones are cut from their projected geometry, stored alongside.
-    VIEWPORT_CELL_DEG = 0.002
-    VIEWPORT_ROW_GROUP = 1024
-    VIEWPORT_INDEX_VERSION = b'5'   # bump when the index layout or rendering changes
-    ROUTES_ROW_GROUP = 32
-
-    @classmethod
-    def _viewport_index_path(cls, osm_dir: Path, slug: str) -> Path:
-        return cls.artifact_path(osm_dir, slug, 'viewport.parquet')
-
-    # index path -> ((index mtime, map mtime), (footer, bounds of each row group) or None if not current)
-    _viewport_meta_cache: dict[Path, tuple[tuple[int, int], tuple[pq.FileMetaData, np.ndarray] | None]] = {}
-
-    @classmethod
-    def _viewport_meta(cls, osm_dir: Path, slug: str) -> tuple[pq.FileMetaData, np.ndarray] | None:
-        """The current viewport index's footer and per-row-group [minx, miny,
-        maxx, maxy], read once per index file; None when it is missing, older
-        than the street map or of another layout."""
-        fp = cls._viewport_index_path(osm_dir, slug)
-        edges_fp = cls.artifact_path(osm_dir, slug, 'edges.parquet')
-        if not fp.exists() or not edges_fp.exists():
-            return None
-        mtimes = (fp.stat().st_mtime_ns, edges_fp.stat().st_mtime_ns)
-        cached = cls._viewport_meta_cache.get(fp)
-        if cached is None or cached[0] != mtimes:
-            meta = None
-            footer = pq.read_metadata(fp)
-            current = (footer.metadata or {}).get(b'viewport_index_version') == cls.VIEWPORT_INDEX_VERSION
-            if current and mtimes[0] >= mtimes[1]:
-                names = footer.schema.to_arrow_schema().names
-                bounds = np.empty((footer.num_row_groups, 4))
-                for g in range(footer.num_row_groups):
-                    group = footer.row_group(g)
-                    for i, (col, use_min) in enumerate((('minx', True), ('miny', True), ('maxx', False), ('maxy', False))):
-                        stats = group.column(names.index(col)).statistics
-                        bound = (stats.min if use_min else stats.max) if stats is not None and stats.has_min_max else np.nan
-                        # A group without usable statistics is always read
-                        bounds[g, i] = bound if np.isfinite(bound) else (-np.inf if use_min else np.inf)
-                meta = (footer, bounds)
-            cached = cls._viewport_meta_cache[fp] = (mtimes, meta)
-        return cached[1]
-
-    @classmethod
-    def has_viewport_index(cls, osm_dir: Path, slug: str) -> bool:
-        """Whether the viewport index is current: this layout, newer than the street map."""
-        return cls._viewport_meta(osm_dir, slug) is not None
-
-    def write_viewport_index(self) -> None:
-        """Write the city's viewport index (see viewport_missing_geojson). It
-        depends on the street map only, not on coverage, so it is built once per map."""
-        und = self._undirected_gdf()
-        projected = und.geometry.values
-        geoms = und.geometry.to_crs('EPSG:4326').values
-        bounds = shapely.bounds(geoms)
-        cells = ((bounds[:, :2] + bounds[:, 2:]) / 2 - bounds[:, :2].min(axis=0)) // self.VIEWPORT_CELL_DEG
-        order = np.argsort(self._z_order(cells[:, 0].astype(np.uint32), cells[:, 1].astype(np.uint32)), kind='stable')
-        geoms, names = geoms[order], und['name'].to_numpy()[order]
-        xy, owner = shapely.get_coordinates(geoms, return_index=True)
-        ends = np.cumsum(np.bincount(owner, minlength=len(geoms))).tolist()
-        rounded = [[round(x, 6), round(y, 6)] for x, y in xy.tolist()]
-        # Rendered as the viewport response renders it (FastAPI's compact JSON),
-        # minus the closing '}}' so `times` can still be appended.
-        features = [
-            self._compact_json(self.edge_feature(rounded[a:b], name))[:-2] if b > a else None
-            for a, b, name in zip([0, *ends[:-1]], ends, names)
-        ]
-        table = pa.table({
-            'order': pa.array(order, pa.int32()),
-            'way': und['way'].to_numpy()[order],
-            'street': und['street'].to_numpy(dtype=bool)[order],
-            'minx': bounds[order, 0], 'miny': bounds[order, 1],
-            'maxx': bounds[order, 2], 'maxy': bounds[order, 3],
-            'geometry': pa.array(shapely.to_wkb(geoms), pa.binary()),
-            'feature': pa.array([f.decode() if f is not None else None for f in features], pa.string()),
-            # Walked offsets are metres along the projected geometry
-            'geometry_m': pa.array(shapely.to_wkb(projected[order]), pa.binary()),
-            'length_m': shapely.length(projected[order]),
-            'name': pa.array(names, pa.string(), from_pandas=True),
-        }).replace_schema_metadata({'viewport_index_version': self.VIEWPORT_INDEX_VERSION,
-                                    'crs': und.crs.to_string()})
-        fp = self._viewport_index_path(self.workdir, self._slug())
-        tmp = fp.parent / f"{fp.name}.tmp{os.getpid()}"
-        pq.write_table(table, tmp, row_group_size=self.VIEWPORT_ROW_GROUP)
-        os.replace(tmp, fp)
-
-    @staticmethod
-    def _compact_json(obj) -> bytes:
-        return json.dumps(obj, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
-
-    @staticmethod
-    def _z_order(x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """Morton code of 16-bit cell coordinates: nearby cells get nearby codes."""
-        def spread(n: np.ndarray) -> np.ndarray:
-            n = n & 0xFFFF
-            n = (n | (n << 8)) & 0x00FF00FF
-            n = (n | (n << 4)) & 0x0F0F0F0F
-            n = (n | (n << 2)) & 0x33333333
-            return (n | (n << 1)) & 0x55555555
-        return spread(x) | (spread(y) << 1)
-
-    # (osm_dir, slug) -> (state version, walked [lo, hi] of each walked way, merged)
-    _walked_union_cache: dict[tuple[Path, str], tuple[tuple, dict[int, list[tuple[float, float]]]]] = {}
-
-    @classmethod
-    def _walked_union_of(cls, osm_dir: Path, slug: str) -> dict[int, list[tuple[float, float]]]:
-        version = cls.state_version_of(osm_dir, slug)
-        cached = cls._walked_union_cache.get((osm_dir, slug))
-        if cached is None or cached[0] != version:
-            stretches, _ = cls.walked_state_of(osm_dir, slug)
-            union: dict[int, list[tuple[float, float]]] = defaultdict(list)
-            for way, lo, hi in zip(stretches['way'].tolist(), stretches['lo'].tolist(), stretches['hi'].tolist()):
-                ivs = union[way]
-                if ivs and lo <= ivs[-1][1]:
-                    ivs[-1] = (ivs[-1][0], max(ivs[-1][1], hi))
-                else:
-                    ivs.append((lo, hi))
-            cached = cls._walked_union_cache[(osm_dir, slug)] = (version, dict(union))
-        return cached[1]
-
-    @staticmethod
-    @functools.lru_cache(maxsize=8)
-    def _to_wgs84(crs: str) -> Transformer:
-        return Transformer.from_crs(crs, 'EPSG:4326', always_xy=True)
-
-    @staticmethod
-    @functools.lru_cache(maxsize=8)
-    def _from_wgs84(crs: str) -> Transformer:
-        return Transformer.from_crs('EPSG:4326', crs, always_xy=True)
-
-    @classmethod
-    def viewport_missing_geojson(cls, osm_dir: Path, slug: str, bbox: tuple[float, float, float, float],
-                                 streets_only: bool = False, with_counts: bool = False) -> bytes | None:
-        """GeoJSON (compact bytes, EPSG:4326) of what is left to run around
-        `bbox` (south, west, north, east): the street-network edges intersecting
-        it, minus the stretches the matched routes walked (remainders under
-        MIN_MISSING_M aren't drawn). Read from the viewport index without
-        loading the city; None when the index isn't current (build it with
-        write_viewport_index)."""
-        meta = cls._viewport_meta(osm_dir, slug)
-        if meta is None:
-            return None
-        footer, group_bounds = meta
-        south, west, north, east = bbox
-        groups = np.flatnonzero((group_bounds[:, 0] <= east) & (group_bounds[:, 2] >= west)
-                                & (group_bounds[:, 1] <= north) & (group_bounds[:, 3] >= south))
-        near = pq.ParquetFile(cls._viewport_index_path(osm_dir, slug), metadata=footer).read_row_groups(
-            groups.tolist(), columns=['order', 'way', 'street', 'minx', 'miny', 'maxx', 'maxy', 'geometry',
-                                      'feature', 'geometry_m', 'length_m', 'name'])
-        minx, miny, maxx, maxy = (near.column(c).to_numpy() for c in ('minx', 'miny', 'maxx', 'maxy'))
-        overlaps = (minx <= east) & (maxx >= west) & (miny <= north) & (maxy >= south)
-        # An edge whose bounds lie inside the bbox intersects it; only the ones
-        # crossing its border need their geometry decoded.
-        hit = overlaps & (minx >= west) & (maxx <= east) & (miny >= south) & (maxy <= north)
-        crossing = np.flatnonzero(overlaps & ~hit)
-        geoms = shapely.from_wkb(near.column('geometry').take(crossing).to_numpy(zero_copy_only=False))
-        hit[crossing] = shapely.intersects(geoms, shapely.box(west, south, east, north))
-        hit &= near.column('feature').is_valid().to_numpy(zero_copy_only=False)
-        if streets_only:
-            hit &= near.column('street').to_numpy()
-
-        _, covered = cls.walked_state_of(osm_dir, slug)
-        way = near.column('way').to_numpy()
-        length = near.column('length_m').to_numpy()
-        walked_m = cls._covered_at(covered, way)
-        order = near.column('order').to_numpy()
-
-        # Unwalked edges: their stored features, joined in edge order
-        rows = np.flatnonzero(hit & (walked_m == 0))
-        rows = rows[np.argsort(order[rows], kind='stable')]
-        whole = near.column('feature').take(rows).combine_chunks()
-        suffix = ',"times":0}}' if with_counts else '}}'
-        whole = pc.binary_join_element_wise(whole, suffix, '')
-        parts = [pc.binary_join(pa.ListArray.from_arrays(pa.array([0, len(rows)], pa.int32()), whole), ',')[0]
-                 .as_buffer().to_pybytes()] if len(rows) else []
-
-        # Partly walked edges: the remainders, cut from the projected geometry
-        partial = np.flatnonzero(hit & (walked_m > 0) & (length - walked_m >= cls.MIN_MISSING_M))
-        partial = partial[np.argsort(order[partial], kind='stable')]
-        if len(partial):
-            union = cls._walked_union_of(osm_dir, slug)
-            to_wgs84 = cls._to_wgs84(footer.metadata[b'crs'].decode())
-            lines = shapely.from_wkb(near.column('geometry_m').take(partial).to_numpy(zero_copy_only=False))
-            names = near.column('name').take(partial).to_pylist()
-            # Every remainder of every edge first, then cut and reprojected in one go
-            cut_line, cut_start, cut_end = [], [], []
-            for k, (line, w) in enumerate(zip(lines, way[partial].tolist())):
-                start = 0.0
-                for lo, hi in [*union.get(w, []), (line.length, line.length)]:
-                    if lo - start >= cls.MIN_MISSING_M:
-                        cut_line.append(k); cut_start.append(start); cut_end.append(lo)
-                    start = max(start, hi)
-            if cut_line:
-                pieces = _substrings(lines[cut_line], np.asarray(cut_start), np.asarray(cut_end))
-                xy, owner = shapely.get_coordinates(pieces, return_index=True)
-                xs, ys = to_wgs84.transform(xy[:, 0], xy[:, 1])
-                rounded = [[round(x, 6), round(y, 6)] for x, y in zip(xs.tolist(), ys.tolist())]
-                ends = np.cumsum(np.bincount(owner, minlength=len(pieces))).tolist()
-                for k, a, b in zip(cut_line, [0, *ends[:-1]], ends):
-                    parts.append(cls._compact_json(cls.edge_feature(rounded[a:b], names[k], 0 if with_counts else None)))
-        return b'{"type":"FeatureCollection","features":[' + b','.join(parts) + b']}'
+    # ------------------------------------------------------------------
+    # Scoped coverage: districts & arbitrary areas
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _named_polygons(feats: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -1481,7 +900,7 @@ class StravaMapMatcher:
         districts administratively (e.g. NL, where Amsterdam's stadsdelen are
         place=suburb) fall back to place polygons.
         """
-        fp = self.workdir / f"{self._slug()}_districts_{admin_level}.parquet"
+        fp = self.coverage.districts_path(admin_level)
         if fp.exists() and not force_reload:
             cached = gpd.read_parquet(fp)
             if len(cached):
@@ -1544,7 +963,7 @@ class StravaMapMatcher:
         return polys if self._subdivides_city(polys) else self._city_polygon_fallback()
 
     @staticmethod
-    def _scoped_stats(total_m: float, covered_m: float, num_streets: float, num_covered: float) -> dict:
+    def _scoped_stats(total_m: float, covered_m: float, num_streets: float, num_covered: float) -> ScopedStats:
         total_m, covered_m = float(total_m), float(covered_m)
         return {
             'total_km': round(total_m / 1000, 2),
@@ -1579,12 +998,6 @@ class StravaMapMatcher:
         shares['share'] = 1.0 / shares.groupby('seg')['seg'].transform('size')
         return shares
 
-    @staticmethod
-    def _round_coords(obj: list | float) -> list | float:
-        if isinstance(obj, (list, tuple)):
-            return [StravaMapMatcher._round_coords(x) for x in obj]
-        return round(obj, 5)
-
     def load_hexes(self, resolution: int = HEX_RESOLUTION) -> gpd.GeoDataFrame:
         """The H3 cells overlapping the city, named by cell id."""
         city = self._city_boundary.union_all()
@@ -1601,17 +1014,17 @@ class StravaMapMatcher:
         return hexes[hexes.intersects(city)].reset_index(drop=True)
 
     def coverage_by_district(self, admin_level: int = 9, include_geometry: bool = False,
-                             streets_only: bool = False) -> list[dict]:
+                             streets_only: bool = False) -> list[PolygonCoverage]:
         """Coverage stats per administrative district, best-covered first."""
         return self._coverage_by_polygon(self.load_districts(admin_level), include_geometry, streets_only)
 
     def coverage_by_hex(self, resolution: int = HEX_RESOLUTION, include_geometry: bool = False,
-                        streets_only: bool = False) -> list[dict]:
+                        streets_only: bool = False) -> list[PolygonCoverage]:
         """Coverage stats per H3 cell with streets, best-covered first."""
         return self._coverage_by_polygon(self.load_hexes(resolution), include_geometry, streets_only)
 
     def _coverage_by_polygon(self, polys: gpd.GeoDataFrame, include_geometry: bool,
-                             streets_only: bool) -> list[dict]:
+                             streets_only: bool) -> list[PolygonCoverage]:
         """Coverage stats per named polygon with streets, best-covered first.
 
         Segments count for their polygon, border streets split between the
@@ -1633,31 +1046,28 @@ class StravaMapMatcher:
         bounds = by_name.to_crs('EPSG:4326').bounds
         geoms_4326 = by_name.simplify(20).to_crs('EPSG:4326') if include_geometry else None
 
-        results = []
+        results: list[PolygonCoverage] = []
         for name, row in per_polygon.iterrows():
             stats = self._scoped_stats(row['total_m'], row['covered_m'], row['num_streets'], row['num_covered'])
             b = bounds.loc[name]
-            entry = {
+            entry: PolygonCoverage = {
                 'name': name,
                 **stats,
-                # [south, west, north, east] for map fitBounds
                 'bbox': [round(b['miny'], 5), round(b['minx'], 5), round(b['maxy'], 5), round(b['maxx'], 5)],
             }
             if geoms_4326 is not None:
                 gj = shapely_mapping(geoms_4326[name])
                 entry['geometry'] = {
                     'type': gj['type'],
-                    'coordinates': self._round_coords(gj['coordinates']),
+                    'coordinates': round_coords(gj['coordinates']),
                 }
             results.append(entry)
         return sorted(results, key=lambda r: r['coverage_pct'], reverse=True)
 
-    def coverage_in_polygon(self, latlon_coords: list[tuple[float, float]],
-                            streets_only: bool = False) -> dict:
+    def coverage_in_polygon(self, latlon_coords: list[LatLon], streets_only: bool = False) -> ScopedStats:
         """Coverage stats within an arbitrary polygon of (lat, lon) vertices."""
         poly = ShapelyPolygon([(lon, lat) for lat, lon in latlon_coords])
         poly_proj = gpd.GeoSeries([poly], crs='EPSG:4326').to_crs(self._edges_gdf.crs).iloc[0]
         und = self.undirected_with_covered(streets_only=streets_only)
         inside = und[und.representative_point().within(poly_proj)]
         return self._scoped_stats(inside['length'].sum(), inside['covered_m'].sum(), len(inside), inside['covered'].sum())
-
