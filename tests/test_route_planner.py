@@ -106,6 +106,31 @@ def test_waypoints_are_reached_in_metres_whatever_the_streets_cost(grid: Explora
         assert loop.new_m == pytest.approx(missing[np.unique(loop.rows)].sum())
 
 
+# A 15×15 grid run from x = KNOWN_X east, or not at all; the starts on the row y = 700 have
+# nothing run within 300 m and 800 m of them
+KNOWN_X = 1000.0
+
+
+@pytest.mark.parametrize("known, share", [(False, 0.5), (True, 0.5), (True, 0.0)])
+@pytest.mark.parametrize("start", [(200.0, 700.0), (700.0, 700.0)])
+@pytest.mark.parametrize("target", [2400.0, 3200.0])
+def test_the_new_share_is_honoured_with_nothing_run_near_the_start(known: bool, share: float,
+                                                                    start: tuple[float, float], target: float):
+    p = planner(*street_grid(15))
+    east = np.array([g.interpolate(0.5, normalized=True).x >= KNOWN_X for g in p.geoms])
+    missing, covered = coverage(p, east & known)
+    for seed in range(5):
+        loop = p.plan(start, target, missing, covered, new_share=share, seed=seed)
+        assert loop is not None
+        assert_closed_loop(p, loop, start, target)
+        if share == 0.5:
+            # Out and back over unrun streets is half new, wherever the run ones are
+            assert loop.new_m / loop.length_m == pytest.approx(0.5, abs=0.05)
+        else:
+            # New only on the way to the run streets, once however often it is run
+            assert loop.new_m <= 1.1 * (KNOWN_X - start[0])
+
+
 def district_with_a_bridge() -> tuple[ExplorationPlanner, int]:
     """A 7×7 grid and a 4×4 one across the water east of it, joined by a 200 m main road
     bridge at y = 300; with the bridge's row."""
@@ -119,7 +144,11 @@ def district_with_a_bridge() -> tuple[ExplorationPlanner, int]:
 
 def test_an_avoided_way_counts_its_avoid_cost_in_the_waypoint_reach():
     p, bridge = district_with_a_bridge()
-    unrun, run = p.length.copy(), np.zeros(len(p.u))
+    # Unrun: the far district, the bridge, and the near district's north and south edges
+    ends = np.array([(g.coords[0], g.coords[-1]) for g in p.geoms])
+    far = ends[:, :, 0].min(axis=1) >= 600
+    edge = (ends[:, :, 1].max(axis=1) == 0) | (ends[:, :, 1].min(axis=1) == 600)
+    unrun, run = coverage(p, ~(far | edge))
     # The far district is 300 + 200 m away, AVOID_COST × 200 m more over an avoided bridge:
     # beyond the reach of a 2.4 km loop, which then fits on the near side
     for seed in range(3):

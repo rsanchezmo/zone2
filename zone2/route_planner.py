@@ -13,7 +13,6 @@ come closest to the share wins.
 from __future__ import annotations
 
 import itertools
-import math
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -180,21 +179,25 @@ class ExplorationPlanner:
         stops_xy = node_xy[sources] - node_xy[start]
         angle = dict(zip(sources.tolist(), np.arctan2(stops_xy[:, 1], stops_xy[:, 0]).tolist()))
 
-        legs: dict[tuple[int, int], tuple[np.ndarray, float, float] | None] = {}
+        leg_id: dict[tuple[int, int], int | None] = {}
+        leg_rows: list[np.ndarray] = []
+        leg_m: list[float] = []
 
-        def leg(p: int, q: int) -> tuple[np.ndarray, float, float] | None:
-            """Rows, length and new metres of the shortest leg p -> q, built once."""
-            if (p, q) not in legs:
+        def leg(p: int, q: int) -> int | None:
+            """The shortest leg p -> q, built once: its index into leg_rows and leg_m."""
+            if (p, q) not in leg_id:
                 chain = self._leg(p, q, pred, index)
                 if chain is None:
-                    legs[(p, q)] = None
+                    leg_id[(p, q)] = None
                 else:
-                    path = pair_row[np.searchsorted(pair_key, chain[:-1] * n + chain[1:])]
-                    legs[(p, q)] = (path, float(self.length[path].sum()), float(missing_m[np.unique(path)].sum()))
-            return legs[(p, q)]
+                    leg_id[(p, q)] = len(leg_rows)
+                    leg_rows.append(pair_row[np.searchsorted(pair_key, chain[:-1] * n + chain[1:])])
+                    leg_m.append(float(self.length[leg_rows[-1]].sum()))
+            return leg_id[(p, q)]
 
         tolerance = self.LENGTH_TOLERANCE * target_m
-        shortlist: list[tuple[float, tuple[int, ...]]] = []
+        loops: list[tuple[int, ...]] = []
+        loop_legs: list[list[int]] = []
         free_max = max(1, self.MAX_WAYPOINTS - len(via))
         for k in range(0 if via else 1, free_max + 1):
             for combo in itertools.combinations(pick.tolist(), k):
@@ -207,31 +210,40 @@ class ExplorationPlanner:
                     parts = [leg(p, q) for p, q in zip(loop, loop[1:])]
                     if any(part is None for part in parts):
                         continue
-                    loop_m = sum(part[1] for part in parts)
-                    if abs(loop_m - target_m) <= tolerance:
-                        # Legs may share streets: their new metres are an upper bound
-                        new_bound = sum(part[2] for part in parts)
-                        shortlist.append((self._score(loop_m, new_bound, target_m, new_share), tuple(loop)))
-        best, best_score = None, -math.inf
-        for _, loop in sorted(shortlist, reverse=True)[:self.SHORTLIST]:
-            path = np.concatenate([legs[(p, q)][0] for p, q in zip(loop, loop[1:])])
-            loop_m = float(self.length[path].sum())
-            new = float(missing_m[np.unique(path)].sum())
-            score = self._score(loop_m, new, target_m, new_share)
-            if score > best_score:
-                best_score, best = score, (loop, path, loop_m, new)
-        if best is None:
+                    if abs(sum(leg_m[part] for part in parts) - target_m) <= tolerance:
+                        loops.append(tuple(loop))
+                        loop_legs.append(parts)
+        if not loops:
             return None
-        loop, path, loop_m, new = best
-        return PlannedLoop(line=self._line(loop, pred, index, nodes, pair_key, pair_row), length_m=loop_m, new_m=new,
-                           rows=path)
 
-    def _score(self, length_m: float, new_m: float, target_m: float, new_share: float) -> float:
-        """New metres up to the wanted share (those beyond it count against),
-        less the weighted metres off the target beyond the slack."""
+        # A loop's new metres: its legs' less what each pair of them shares, so a street run twice
+        # (all of an out-and-back) counts once; exact unless a street is on three legs
+        on_leg = np.repeat(np.arange(len(leg_rows)), [len(r) for r in leg_rows])
+        on_row = np.concatenate(leg_rows)
+        shape = (len(leg_rows) + 1, len(self.u))   # the last leg is empty: padding for shorter loops
+        shared = (csr_matrix((missing_m[on_row], (on_leg, on_row)), shape=shape)
+                  @ csr_matrix((np.ones(len(on_row)), (on_leg, on_row)), shape=shape).T).toarray()
+        width = max(len(parts) for parts in loop_legs)
+        legs_of = np.array([parts + [len(leg_rows)] * (width - len(parts)) for parts in loop_legs])
+        own = np.diag(shared)[legs_of]
+        overlap = sum(shared[legs_of[:, i], legs_of[:, j]] for i, j in itertools.combinations(range(width), 2))
+        new_estimate = np.maximum(own.sum(axis=1) - overlap, own.max(axis=1))
+        loop_m = np.r_[leg_m, 0.0][legs_of].sum(axis=1)
+        shortlist = np.argsort(-self._score(loop_m, new_estimate, target_m, new_share), kind='stable')[:self.SHORTLIST]
+
+        paths = [np.concatenate([leg_rows[part] for part in loop_legs[i]]) for i in shortlist]
+        new = np.array([missing_m[np.unique(path)].sum() for path in paths])
+        best = int(np.argmax(self._score(loop_m[shortlist], new, target_m, new_share)))
+        loop, path = loops[shortlist[best]], paths[best]
+        return PlannedLoop(line=self._line(loop, pred, index, nodes, pair_key, pair_row),
+                           length_m=float(self.length[path].sum()), new_m=float(new[best]), rows=path)
+
+    def _score(self, length_m: np.ndarray, new_m: np.ndarray, target_m: float, new_share: float) -> np.ndarray:
+        """Per loop, new metres up to the wanted share (those beyond it count
+        against), less the weighted metres off the target beyond the slack."""
         wanted = new_share * length_m
-        off = max(0.0, abs(length_m - target_m) - self.LENGTH_SLACK * target_m)
-        return min(new_m, wanted) - max(0.0, new_m - wanted) - self.OFF_TARGET_WEIGHT * off
+        off = np.maximum(0.0, np.abs(length_m - target_m) - self.LENGTH_SLACK * target_m)
+        return np.minimum(new_m, wanted) - np.maximum(0.0, new_m - wanted) - self.OFF_TARGET_WEIGHT * off
 
     @staticmethod
     def _orders(stops: tuple[int, ...], angle: dict[int, float]) -> list[tuple[int, ...]]:
