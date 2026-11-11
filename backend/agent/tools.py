@@ -39,7 +39,7 @@ from zone2.core import Zone2
 from zone2.drift import heart_rate_drift
 from zone2.hr_recovery import heart_rate_recovery
 from zone2.streams_store import detect_stops
-from zone2.utils import format_pace_or_speed, get_sport_category
+from zone2.utils import SportCategory, format_pace_or_speed, get_sport_category
 
 
 @dataclass
@@ -59,7 +59,8 @@ class AgentDeps:
     """Garmin's sync, when this message started one; the tools that read Garmin wait for it."""
 
 
-SportCategory = Literal["running", "cycling", "swimming"]
+# The sports with standard distances (StravaAnalytics.RECORD_SPORTS)
+RecordSport = Literal["running", "cycling", "swimming"]
 MAX_LIST = 50
 MAX_WELLNESS_DAYS = 62
 # Strava's own race flags (run, ride); races in z2's race calendar come as ids
@@ -228,6 +229,7 @@ async def find_activities(
     """Search every activity back to the first. Dates and distances are inclusive.
 
     Args:
+        sport: "walking" is walks and hikes, which never count as running.
         name_contains: Case-insensitive text in the name.
         races_only: Races (the race calendar's, or flagged on Strava).
         sort_by: "pace" with descending puts the fastest first.
@@ -308,7 +310,7 @@ async def activity_detail(ctx: RunContext[AgentDeps], activity_id: int) -> dict[
     detail["best_efforts"] = [
         {"name": e.get("name"), "time": _hms(e.get("moving_time"))} for e in _json(row.get("best_efforts")) or []
     ]
-    if get_sport_category(sport_type) == "running":
+    if get_sport_category(sport_type) == SportCategory.RUNNING:
         streams = await asyncio.to_thread(cache.get_streams, activity_id)
         if streams:
             detail["hr_drift"] = heart_rate_drift(streams)
@@ -340,7 +342,7 @@ async def similar_activities(ctx: RunContext[AgentDeps], activity_id: int,
 
 
 @read_tools.tool
-async def personal_records(ctx: RunContext[AgentDeps], sport: SportCategory = "running") -> list[dict[str, Any]]:
+async def personal_records(ctx: RunContext[AgentDeps], sport: RecordSport = "running") -> list[dict[str, Any]]:
     """All-time best effort at each standard distance, with its activity."""
     records = await asyncio.to_thread(ctx.deps.z2.strava_analytics.get_personal_records)
     return [
@@ -367,7 +369,7 @@ def _training_paces(paces: dict[str, Any] | None) -> dict[str, Any] | None:
 @read_tools.tool
 async def race_predictions(
     ctx: RunContext[AgentDeps],
-    sport: SportCategory = "running",
+    sport: RecordSport = "running",
     history_weeks: Annotated[int, Field(ge=0, le=104)] = 0,
 ) -> dict[str, Any]:
     """Predicted race times with a likely range, the current best and Garmin's prediction per
@@ -379,7 +381,7 @@ async def race_predictions(
         history_weeks: Also how the predictions moved, a point a week over this many weeks.
     """
     analytics = ctx.deps.z2.strava_analytics
-    result = await asyncio.to_thread(analytics.get_race_predictions, sport)
+    result = await asyncio.to_thread(analytics.get_race_predictions, SportCategory(sport))
     out: dict[str, Any] = {
         "predictions": [
             _compact({"distance": p["label"], "predicted": _hms(p.get("predicted_time_s")),
@@ -395,7 +397,8 @@ async def race_predictions(
         "fade": {k: (result.get("fade") or {}).get(k) for k in ("exponent", "stderr", "typical", "verdict")},
     }
     if history_weeks:
-        points = await asyncio.to_thread(analytics.get_race_predictions_history, sport, weeks=history_weeks, step_days=7)
+        points = await asyncio.to_thread(analytics.get_race_predictions_history, SportCategory(sport),
+                                         weeks=history_weeks, step_days=7)
         out["history"] = [
             _compact({"date": p.get("end_date"), "vdot": p.get("athlete_vdot"), "fade": p.get("fitted_exponent"),
                       "predicted": {q["label"]: _hms(q.get("predicted_time_s")) for q in p.get("predictions", [])}})
@@ -794,12 +797,12 @@ async def sync_now(ctx: RunContext[AgentDeps], activity_id: int | None = None) -
     if ctx.deps.sync is None:
         return "Syncing isn't available here."
     cache = ctx.deps.z2.strava_activities_cache
-    before = len(cache.activities)
+    before = len(cache.activities_raw)
     if error := await ctx.deps.sync(activity_id):
         return f"The sync didn't finish: {error}"
     if activity_id is not None:
         return f"Activity {activity_id} is fetched again; read it with activity_detail."
-    new = len(cache.activities) - before
+    new = len(cache.activities_raw) - before
     return f"Synced: {new} new {'activity' if new == 1 else 'activities'}." if new else "Synced: nothing new on Strava."
 
 

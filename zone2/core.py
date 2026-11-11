@@ -99,7 +99,7 @@ class Zone2:
     
     def plot_last_activity(self, sport_type: str):
         """Plot the last activity of the specified sport type."""
-        activities = self.strava_activities_cache.activities
+        activities = self.strava_activities_cache.activities_raw
 
         # filter by sport type
         activities = activities[activities['sport_type'] == sport_type]

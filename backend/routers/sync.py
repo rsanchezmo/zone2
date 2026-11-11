@@ -46,7 +46,6 @@ def _finalize_sync(z2: Zone2, error: str | None, version_before: int) -> str | N
         if z2.strava_activities_cache.cache_version == version_before:
             logger.info("Sync changed nothing: caches kept")
             return error
-        z2.strava_analytics.invalidate_caches()
         clear_stats_cache()
         clear_export_cache()
         clear_gear_cache()
@@ -74,10 +73,12 @@ def _sync_activities(z2: Zone2, full_sync: bool, include_streams: bool) -> str |
     queue the new ones for the coach to review. Returns the error, if any."""
     err: str | None = None
     version = z2.strava_activities_cache.cache_version
-    before = reviews.activity_ids(z2)
+    before: set[int] = set()
     try:
+        before = reviews.activity_ids(z2)
         z2.sync_activities(full_sync=full_sync, include_streams=include_streams)
     except Exception as e:
+        logger.exception("Strava sync failed")
         err = str(e)
     err = _finalize_sync(z2, err, version)
     if err is None and z2.strava_activities_cache.cache_version != version:
@@ -152,6 +153,7 @@ def _run_backfill_streams(z2: Zone2):
     try:
         z2.ensure_activities_with_streams()
     except Exception as e:
+        logger.exception("Stream backfill failed")
         err = str(e)
     finally:
         _finalize_sync(z2, err, version)
@@ -181,6 +183,7 @@ def _resync_activity(z2: Zone2, activity_id: int, include_streams: bool) -> tupl
             include_streams=include_streams,
         )
     except Exception as e:
+        logger.exception("Resyncing activity %s failed", activity_id)
         err = str(e)
     return found, _finalize_sync(z2, err, version)
 

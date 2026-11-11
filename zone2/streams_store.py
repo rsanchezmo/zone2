@@ -29,7 +29,7 @@ import os
 import pickle
 import tempfile
 from pathlib import Path
-from threading import RLock
+from threading import Lock, RLock
 from typing import Any, Callable, Iterable
 
 import numpy as np
@@ -60,6 +60,12 @@ class StreamsStore:
         self._index_years: dict[int, tuple[int, list[int]]] = {}
         # summary name -> {activity_id: value}
         self._summaries: dict[str, dict[int, Any]] | None = None
+        # One build per summary at a time, so concurrent callers don't compute it twice
+        self._summary_locks: dict[str, Lock] = {}
+        # Bumped by every save, and each saved activity's last bump: a summary
+        # computed from streams read before a save of its activity is dropped.
+        self._generation = 0
+        self._saved_at: dict[int, int] = {}
 
     # ── public API ────────────────────────────────────────────────────
 
@@ -92,28 +98,44 @@ class StreamsStore:
         with self._lock:
             return self._year_for(int(activity_id)) is not None
 
+    def derive(self, activity_ids: Iterable[int], compute: Callable[[dict], Any]) -> dict[int, Any]:
+        """compute(streams) of each activity with streams, reading a year at a
+        time: the whole history's streams don't fit in memory at once on a Pi.
+        The store stays unlocked while computing."""
+        by_year: dict[int, list[int]] = {}
+        with self._lock:
+            for a in activity_ids:
+                year = self._year_for(int(a))
+                if year is not None:
+                    by_year.setdefault(year, []).append(int(a))
+        out: dict[int, Any] = {}
+        for year_ids in by_year.values():
+            for aid, streams in self.get_many(year_ids).items():
+                out[aid] = compute(streams)
+        return out
+
     def summaries(self, name: str, activity_ids: Iterable[int],
                   compute: Callable[[dict], Any]) -> dict[int, Any]:
         """Per-activity values derived from streams by `compute`, persisted
         under `name` and computed only for activities not summarized yet, so
         history-wide stats never reload every year of streams. `name` must
         change whenever `compute` does. Activities without streams are absent."""
+        ids = [int(a) for a in activity_ids]
         with self._lock:
-            table = self._load_summaries().setdefault(name, {})
-            ids = [int(a) for a in activity_ids]
-            missing_by_year: dict[int, list[int]] = {}
-            for a in ids:
-                year = self._year_for(a)
-                if a not in table and year is not None:
-                    missing_by_year.setdefault(year, []).append(a)
-            # A year at a time: a first build spans the whole history, whose
-            # streams don't fit in memory at once on a Pi.
-            for year_ids in missing_by_year.values():
-                for aid, streams in self.get_many(year_ids).items():
-                    table[aid] = compute(streams)
-            if missing_by_year:
-                self._write_atomic(self.store_dir / _SUMMARIES_FILE, self._summaries)
-            return {a: table[a] for a in ids if a in table}
+            build_lock = self._summary_locks.setdefault(name, Lock())
+        with build_lock:
+            with self._lock:
+                done = self._load_summaries().get(name, {})
+                missing = [a for a in ids if a not in done and self._year_for(a) is not None]
+                generation = self._generation
+            computed = self.derive(missing, compute) if missing else {}
+            with self._lock:
+                table = self._load_summaries().setdefault(name, {})
+                fresh = {a: v for a, v in computed.items() if self._saved_at.get(a, -1) <= generation}
+                if fresh:
+                    table.update(fresh)
+                    self._write_atomic(self.store_dir / _SUMMARIES_FILE, self._summaries)
+                return {a: table[a] for a in ids if a in table}
 
     def save(self, streams_by_id: dict[int, dict | None], activity_year: dict[int, int]):
         """Persist a batch of streams, grouped by their activity year.
@@ -135,6 +157,9 @@ class StreamsStore:
 
         with self._lock:
             self._ensure_index()
+            self._generation += 1
+            for aid in streams_by_id:
+                self._saved_at[aid] = self._generation
             # Drop stale summaries before the streams change on disk: a crash
             # in between only costs recomputing them from the old streams.
             summaries = self._load_summaries()

@@ -30,12 +30,11 @@ from backend.services.calendar_feed import format_distance_km, format_target_pac
 from backend.services.zones import get_setting
 from zone2.core import Zone2
 from zone2.garmin_client import GarminClient, GarminNotFound
-from zone2.utils import convert_speed
+from zone2.utils import SportCategory, convert_speed, get_sport_category
 
 logger = logging.getLogger(__name__)
 
 SETTING_KEY = "garmin_send_workouts"
-RUNNING_SPORTS = frozenset({"Run", "TrailRun", "VirtualRun"})
 # Garmin's pace targets are ranges, so a single pace gets this much either side
 PACE_BAND_S = 5
 ERROR_MAX = 200
@@ -225,7 +224,7 @@ async def is_enabled(z2: Zone2, db: aiosqlite.Connection) -> bool:
 
 
 def is_run_workout(template: dict[str, Any]) -> bool:
-    return template["sport_type"] in RUNNING_SPORTS and bool(template.get("segments"))
+    return get_sport_category(template["sport_type"]) == SportCategory.RUNNING and bool(template.get("segments"))
 
 
 def library_workout(template: dict[str, Any]) -> tuple[dict[str, Any], str]:
@@ -330,7 +329,8 @@ async def _entries(db: aiosqlite.Connection, session_ids: list[int]) -> dict[int
 
 def _wanted(session: dict[str, Any], template: dict[str, Any] | None, enabled: bool) -> dict[str, Any] | None:
     """The saved workout the session's entry should be of, or None for no entry."""
-    if not enabled or template is None or session.get("sport_type") not in RUNNING_SPORTS or not is_run_workout(template):
+    if (not enabled or template is None or get_sport_category(session.get("sport_type")) != SportCategory.RUNNING
+            or not is_run_workout(template)):
         return None
     return template
 

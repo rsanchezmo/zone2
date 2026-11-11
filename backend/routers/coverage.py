@@ -638,7 +638,8 @@ def trigger_coverage_sync(
     sport_types: str = Query("Run", description="Comma-separated sport types"),
     z2: Zone2 = Depends(get_z2),
 ):
-    _get_matcher(slug)  # 404 before claiming the slot
+    if slug not in _known_cities():
+        raise HTTPException(status_code=404, detail=f"No coverage map for '{slug}'")
     with _sync_lock:
         if _sync_status.get(slug, {}).get("running"):
             raise HTTPException(status_code=409, detail="Coverage sync already running")

@@ -66,8 +66,6 @@ class StravaTokenData(BaseModel):
         with open(filepath, 'w') as f:
             json.dump(self.model_dump(), f, indent=2)
 
-        print(f"✓ Token saved to {filepath}")
-
 class StravaEndpoint:
 
     # Strava moves the API to a new host on 2027-06-01; confirm it in the official

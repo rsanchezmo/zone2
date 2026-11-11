@@ -160,7 +160,7 @@ class StravaVisualizer:
         filename = f"thunderstorm_{location or 'median'}_{sport_str.replace(' ', '_')}.png"
         save_path = self.output_dir / filename.lower()
 
-        result = self._finalize_figure(fig, save_path, dpi=dpi or 600, return_buffer=return_buffer, pad_inches=0.2)
+        result = self._finalize_figure(fig, save_path, dpi=dpi or 300, return_buffer=return_buffer, pad_inches=0.2)
         if not return_buffer:
             logger.info("Thunderstorm map saved to: %s", save_path)
         return result
@@ -183,7 +183,7 @@ class StravaVisualizer:
         """
         
         # Get activity from cache
-        activities = self.strava_analytics.strava_activities_cache.activities
+        activities = self.strava_analytics.strava_activities_cache.activities_raw
         activity = activities[activities['id'] == int(activity_id)]
         
         if activity.empty:

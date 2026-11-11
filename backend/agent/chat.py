@@ -21,7 +21,7 @@ from backend.agent.agent import Output, build_agent, run_turn
 from backend.agent.tools import AgentDeps, memory_tools, workout_tools, write_tools
 from backend.db import connect_db
 from zone2.core import Zone2
-from zone2.utils import get_sport_category
+from zone2.utils import SportCategory, get_sport_category
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +164,8 @@ then the one or two numbers that matter, in a few lines. If the session is a pla
 its rule, looking up any metric it names, and propose record_checkpoint and any change the rule calls \
 for as write calls, with your message: they wait for the athlete's yes. Change nothing else, and ask \
 nothing."""
-KIND = {"running": "run", "cycling": "ride", "swimming": "swim"}
+KIND = {SportCategory.RUNNING: "run", SportCategory.WALKING: "walk", SportCategory.CYCLING: "ride",
+        SportCategory.SWIMMING: "swim"}
 
 
 async def review(z2: Zone2, activity_id: int, session: dict[str, Any]) -> None:
@@ -173,7 +174,7 @@ async def review(z2: Zone2, activity_id: int, session: dict[str, Any]) -> None:
     started = time.monotonic()
     row = z2.strava_activities_cache.get_activity_by_id(activity_id)
     prompt = REVIEW_PROMPT.format(
-        mark=conversations.EVENT_MARK, kind=KIND.get(get_sport_category(row.get("sport_type")) or "", "session"),
+        mark=conversations.EVENT_MARK, kind=KIND.get(get_sport_category(row.get("sport_type")), "session"),
         name=row.get("name"), activity_id=activity_id, when=str(row.get("start_date_local"))[:16],
         session_id=session["id"], title=session["title"], date=session["date"],
         plan=f", plan {session['plan_id']} ({session['plan_name']})" if session.get("plan_id") else "",

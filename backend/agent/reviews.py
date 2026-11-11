@@ -12,7 +12,7 @@ from enum import StrEnum
 import aiosqlite
 import pandas as pd
 
-from backend.agent import preferences
+from backend.agent import load_module, preferences
 from backend.db import DB_PATH, connect_db
 from backend.services import session_scores
 from backend.services import sessions as planned_sessions
@@ -41,7 +41,7 @@ _wake: asyncio.Event | None = None
 
 
 def activity_ids(z2: Zone2) -> set[int]:
-    activities = z2.strava_activities_cache.activities
+    activities = z2.strava_activities_cache.activities_raw
     return set() if activities.empty else {int(i) for i in activities["id"]}
 
 
@@ -94,7 +94,7 @@ async def _review(z2: Zone2, activity_id: int) -> None:
             return
     status = ReviewStatus.DONE
     try:
-        from backend.agent import chat  # Pydantic AI loads with the first review, not at startup
+        chat = await load_module("chat")
         await chat.review(z2, activity_id, session)
     except Exception:
         logger.exception("The coach's review of activity %s failed", activity_id)

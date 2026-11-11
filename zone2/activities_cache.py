@@ -64,9 +64,10 @@ class StravaActivitiesCache:
         # so stale entries self-invalidate without needing an explicit clear.
         self._cache_version: int = 0
 
-        # Prepared view for list/filter hot paths (start_date_local parsed once).
-        self._prepared_view: pd.DataFrame | None = None
-        self._prepared_view_version: int = -1
+        # Prepared view for list/filter hot paths (start_date_local parsed once),
+        # with the cache version it was built from: one assignment, so a reader
+        # never pairs a view with another version.
+        self._prepared_view: tuple[int, pd.DataFrame] | None = None
 
     @property
     def cache_version(self) -> int:
@@ -76,20 +77,20 @@ class StravaActivitiesCache:
         """The activities with `start_date_local` parsed and the `map` cell's
         polyline as a `summary_polyline` column, built once per cache version.
         Callers MUST NOT mutate it (it's the live cache)."""
-        if self._prepared_view is not None and self._prepared_view_version == self._cache_version:
-            return self._prepared_view
-        raw = self._load_to_memory()
-        if raw.empty:
-            self._prepared_view = raw
-        else:
+        # Read before the data, so a change while building leaves the view stamped older
+        version = self._cache_version
+        prepared = self._prepared_view
+        if prepared is not None and prepared[0] == version:
+            return prepared[1]
+        view = self._load_to_memory()
+        if not view.empty:
             # Shallow: only the added columns are new, the rest shares the raw cache's data.
-            view = raw.copy(deep=False)
+            view = view.copy(deep=False)
             view["start_date_local"] = pd.to_datetime(view["start_date_local"], utc=True)
             if "map" in view.columns:
                 view["summary_polyline"] = view["map"].map(_summary_polyline)
-            self._prepared_view = view
-        self._prepared_view_version = self._cache_version
-        return self._prepared_view
+        self._prepared_view = (version, view)
+        return view
 
     def days_mask(self, date_from: str | None = None, date_to: str | None = None) -> pd.Series:
         """Mask over the prepared view for activities on local days

@@ -1,3 +1,4 @@
+from datetime import date
 import json
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,7 +12,7 @@ from zone2.activities_cache import _has_full_photo_list
 from zone2.core import Zone2
 from zone2.drift import heart_rate_drift
 from zone2.hr_recovery import heart_rate_recovery
-from zone2.utils import df_rows, format_pace_or_speed, get_sport_category
+from zone2.utils import SportCategory, df_rows, format_pace_or_speed, get_sport_category
 from zone2.streams_store import columnar_to_points, detect_stops, grade_adjusted_speeds
 
 router = APIRouter()
@@ -82,7 +83,7 @@ def _activity_to_dict(row: pd.Series, include_streams: bool = False, streams: di
             d["summary_polyline"] = None
 
     if include_streams:
-        is_run = bool(streams) and get_sport_category(row.get("sport_type")) == "running"
+        is_run = bool(streams) and get_sport_category(row.get("sport_type")) == SportCategory.RUNNING
         gap = grade_adjusted_speeds(streams) if is_run else None
         if gap is not None:
             streams = {**streams, "grade_adjusted_speed": [None if np.isnan(v) else float(v) for v in gap]}
@@ -112,8 +113,8 @@ def list_activities(
     per_page: int = Query(20, ge=1, le=100),
     sport_type: str | None = None,
     year: int | None = None,
-    date_from: str | None = None,
-    date_to: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
     gear_id: str | None = None,
     search: str | None = Query(None),
     sort_by: str = Query("date"),
@@ -138,7 +139,9 @@ def list_activities(
     if year:
         mask &= sdl.dt.year == year
     if date_from or date_to:
-        mask &= z2.strava_activities_cache.days_mask(date_from, date_to)
+        mask &= z2.strava_activities_cache.days_mask(
+            date_from.isoformat() if date_from else None, date_to.isoformat() if date_to else None,
+        )
     activities = activities[mask]
 
     # Sort

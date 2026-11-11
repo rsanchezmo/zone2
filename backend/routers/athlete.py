@@ -76,8 +76,7 @@ class ZonesSettings(BaseModel):
 
 def _drop_zone_caches(z2: Zone2) -> None:
     """Drop caches so downstream analytics rebuild against the current zones."""
-    z2.strava_analytics._hr_zones_cache = None
-    z2.strava_analytics._training_load_cache = {}
+    z2.strava_analytics.invalidate_caches()
     clear_stats_cache()
     clear_export_cache()
 
@@ -192,7 +191,7 @@ async def update_resting_hr_settings(
     await set_setting(db, "resting_hr_source", payload.source)
 
     # Resting HR feeds daily TRIMP → relative effort.
-    z2.strava_analytics._training_load_cache = {}
+    z2.strava_analytics.invalidate_caches()
     clear_stats_cache()
     clear_export_cache()
 

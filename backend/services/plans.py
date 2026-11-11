@@ -16,7 +16,7 @@ from backend.services.sessions import session_dict
 from backend.services.zones import resolve_hr_zones
 from backend.scoring import has_targets
 from zone2.core import Zone2
-from zone2.utils import get_sport_category
+from zone2.utils import SportCategory, get_sport_category
 
 PLAN_JSON = ("phases",)
 # Garmin's daily race predictions, by the distance they predict
@@ -96,11 +96,11 @@ def _phase_on(phases: list[dict] | None, day: str) -> dict | None:
 
 
 async def _prediction(z2: Zone2, db: aiosqlite.Connection, plan: dict, race: dict | None,
-                      sport: str, trend: bool) -> dict[str, Any] | None:
+                      sport: SportCategory, trend: bool) -> dict[str, Any] | None:
     """The race distance's prediction now and its weekly trend over the plan, z2's and Garmin's.
     `now_s` is Garmin's when it predicts the distance and predicted it lately (its `source`),
     else z2's; `z2_now_s` and `range_s` are z2's either way."""
-    if not race or not race.get("distance_km") or sport not in ("running", "cycling", "swimming"):
+    if not race or not race.get("distance_km") or sport not in z2.strava_analytics.RECORD_SPORTS:
         return None
     metres = race["distance_km"] * 1000
     analytics = z2.strava_analytics
@@ -116,7 +116,7 @@ async def _prediction(z2: Zone2, db: aiosqlite.Connection, plan: dict, race: dic
     # Garmin predicts four distances; it counts only when it predicts the same one as z2
     garmin_distance = min(GARMIN_PREDICTIONS, key=lambda m: abs(m - target["distance_m"]))
     garmin_key = (GARMIN_PREDICTIONS[garmin_distance]
-                  if sport == "running" and abs(garmin_distance - target["distance_m"]) < 0.01 * garmin_distance else None)
+                  if sport == SportCategory.RUNNING and abs(garmin_distance - target["distance_m"]) < 0.01 * garmin_distance else None)
     if garmin_key:
         recent = await asyncio.to_thread(z2.garmin_cache.get_summary_range, "race_predictions",
                                          (date.today() - timedelta(days=GARMIN_FRESH_DAYS)).isoformat(),
@@ -152,7 +152,7 @@ async def progress(z2: Zone2, db: aiosqlite.Connection, plan: dict, *, detail: b
     today_iso = today.isoformat()
     sessions = await plan_sessions(db, plan["id"])
     race = await race_of(db, plan)
-    sport = get_sport_category((race or {}).get("sport_type") or "Run") or "running"
+    sport = get_sport_category((race or {}).get("sport_type") or "Run")
     span_start = min([plan["start_date"], *(s["date"] for s in sessions)])
     span_end = min(today_iso, max([plan["end_date"], *(s["date"] for s in sessions)]))
     activity_map = (await asyncio.to_thread(activities_by_day, z2, span_start, span_end)

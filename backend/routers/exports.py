@@ -178,7 +178,7 @@ def export_thunderstorm_heatmap(
     radius_km: float = 20.0,
     neon_color: str = "#fc0101",
     show_title: bool = True,
-    dpi: int = 600,
+    dpi: int = 300,
     z2: Zone2 = Depends(get_z2),
 ):
     dpi = _clamp_dpi(dpi)

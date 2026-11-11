@@ -10,7 +10,7 @@ from backend.services.resting_hr import resolve_resting_hr
 from backend.services.stats_cache import stats_cache
 from backend.services.zones import resolve_hr_zones
 from zone2.core import Zone2
-from zone2.utils import df_rows
+from zone2.utils import SportCategory, df_rows, get_sport_category
 
 
 async def fitness_form(z2: Zone2, db: aiosqlite.Connection, days: int) -> dict[str, Any]:
@@ -194,29 +194,18 @@ def streaks(z2: Zone2) -> dict[str, Any]:
     }
 
 
-def sport_totals(z2: Zone2) -> dict[str, dict[str, Any]]:
+TOTALS_SPORTS = (SportCategory.RUNNING, SportCategory.CYCLING, SportCategory.SWIMMING)
+
+
+def sport_totals(z2: Zone2) -> dict[SportCategory, dict[str, Any]]:
     """All-time distance (km), moving time (s) and count per sport category: running, cycling, swimming."""
     activities = z2.strava_activities_cache.activities_raw
     if activities.empty:
         return {}
-    RUNNING_TYPES = {"run", "trailrun", "virtualrun"}
-    CYCLING_TYPES = {"ride", "virtualride", "ebikeride", "gravelride", "mountainbikeride", "emountainbikeride", "handcycle", "velomobile"}
-    SWIMMING_TYPES = {"swim"}
-
-    def _category(sport_type: str | None) -> str | None:
-        st = (sport_type or "").lower().replace(" ", "")
-        if st in RUNNING_TYPES:
-            return "running"
-        if st in CYCLING_TYPES:
-            return "cycling"
-        if st in SWIMMING_TYPES:
-            return "swimming"
-        return None
-
-    totals: dict[str, dict] = {}
+    totals: dict[SportCategory, dict] = {}
     for row in df_rows(activities, "sport_type", "distance", "moving_time"):
-        cat = _category(row.get("sport_type"))
-        if cat is None:
+        cat = get_sport_category(row.get("sport_type"))
+        if cat not in TOTALS_SPORTS:
             continue
         if cat not in totals:
             totals[cat] = {"distance_km": 0.0, "time_s": 0.0, "count": 0}

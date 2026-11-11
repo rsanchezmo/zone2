@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from backend.agent import preferences, reviews
+from backend.agent import load_module, preferences, reviews
 from backend.agent import usage as agent_usage
 from backend.db import connect_db, get_db
 from backend.dependencies import get_z2
@@ -92,7 +92,7 @@ async def put_settings(update: SettingsUpdate, db: aiosqlite.Connection = Depend
 @router.get("/conversations/{conversation_id}")
 async def conversation(conversation_id: str, db: aiosqlite.Connection = Depends(get_db)):
     """A conversation as the chat panel shows it, with any writes still waiting for a yes."""
-    from backend.agent import chat
+    chat = await load_module("chat")
     return await chat.history(db, conversation_id)
 
 
@@ -121,9 +121,9 @@ async def chat_turn(turn: ChatTurn, z2: Zone2 = Depends(get_z2)):
     """One message to the agent, streamed as server-sent events (see `chat.stream`). Writes
     it wants to make come back as `pending` in the final `done` event, for approval."""
     await _check_available()
-    from backend.agent import chat
-    from backend.agent.conversations import MAIN
-    conversation_id = turn.conversation_id or MAIN
+    chat = await load_module("chat")
+    conversations = await load_module("conversations")
+    conversation_id = turn.conversation_id or conversations.MAIN
     return _streamed(chat, z2, catch_up=True, conversation_id=conversation_id, page=turn.page,
                      message=turn.message)
 
@@ -132,7 +132,7 @@ async def chat_turn(turn: ChatTurn, z2: Zone2 = Depends(get_z2)):
 async def approve_turn(turn: ApprovalTurn, z2: Zone2 = Depends(get_z2)):
     """Your yes or no to each pending write; the agent then carries on, streamed like a chat turn."""
     await _check_available()
-    from backend.agent import chat
+    chat = await load_module("chat")
     return _streamed(chat, z2, conversation_id=turn.conversation_id, page=turn.page, approvals=turn.approvals)
 
 
@@ -142,7 +142,7 @@ async def listen(socket: WebSocket):
     if not preferences.has_key("openai:"):
         await socket.close(code=1008, reason="The coach has no key for OpenAI")
         return
-    from backend.agent import voice
+    voice = await load_module("voice")
     async with connect_db() as db:
         await voice.listen(socket, db)
 

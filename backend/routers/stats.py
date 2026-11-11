@@ -12,7 +12,7 @@ from backend.services.stats_cache import stats_cache as _stats_cache
 from backend.services.zones import resolve_hr_zones
 from backend.services.resting_hr import resolve_resting_hr
 from zone2.core import Zone2
-from zone2.utils import get_sport_category, previous_week
+from zone2.utils import SportCategory, get_sport_category, previous_week
 
 router = APIRouter()
 
@@ -217,7 +217,7 @@ def weekly_totals(
 @router.get("/race-predictions")
 @_cached_json
 def race_predictions(
-    sport_category: str = Query(default="running"),
+    sport_category: SportCategory = Query(default=SportCategory.RUNNING),
     z2: Zone2 = Depends(get_z2),
 ):
     result = z2.strava_analytics.get_race_predictions(sport_category)
@@ -227,7 +227,7 @@ def race_predictions(
 @router.get("/race-predictions/history")
 @_cached_json
 def race_predictions_history(
-    sport_category: str = Query(default="running"),
+    sport_category: SportCategory = Query(default=SportCategory.RUNNING),
     weeks: int = Query(default=52, ge=1, le=520),
     step_days: int = Query(default=7, ge=1, le=30),
     z2: Zone2 = Depends(get_z2),

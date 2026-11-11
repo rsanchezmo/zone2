@@ -31,7 +31,7 @@ def resolve_gear_catalog(z2: Zone2) -> dict[str, dict]:
         for g in (profile.get("shoes") or []) + (profile.get("bikes") or [])
     }
 
-    activities = z2.strava_activities_cache.activities
+    activities = z2.strava_activities_cache.activities_raw
     if not activities.empty and "gear_id" in activities.columns:
         missing = sorted(set(activities["gear_id"].dropna()) - set(catalog))
         for gear in z2.strava_user_cache.get_gear_details(missing).values():

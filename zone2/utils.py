@@ -11,7 +11,20 @@ import json
 from zone2.constants import BASE_CRS
 
 
+class SportCategory(StrEnum):
+    RUNNING = 'running'
+    # Foot sports that aren't runs: read as pace, but never count as running
+    WALKING = 'walking'
+    CYCLING = 'cycling'
+    SWIMMING = 'swimming'
+    WATER = 'water'
+    SPEED = 'speed'
+    OTHER = 'other'
+
+
 # Sport category sets for reuse across functions (lowercase for matching)
+RUNNING_SPORTS = {'run', 'trailrun', 'virtualrun'}
+WALKING_SPORTS = {'walk', 'hike', 'snowshoe'}
 CYCLING_SPORTS = {
     'ride', 'virtualride', 'ebikeride', 'handcycle', 'velomobile',
     'gravelride', 'mountainbikeride', 'emountainbikeride', 'rollerski',
@@ -25,6 +38,16 @@ SPEED_SPORTS = {
     'nordicski', 'snowboard', 'iceskate', 'inlineskate', 'skateboard',
     'soccer', 'basketball', 'volleyball', 'cricket', 'golf',
 }
+_CATEGORY_BY_SPORT: dict[str, SportCategory] = {
+    **dict.fromkeys(RUNNING_SPORTS, SportCategory.RUNNING),
+    **dict.fromkeys(WALKING_SPORTS, SportCategory.WALKING),
+    **dict.fromkeys(CYCLING_SPORTS, SportCategory.CYCLING),
+    **dict.fromkeys(SWIMMING_SPORTS, SportCategory.SWIMMING),
+    **dict.fromkeys(WATER_SPORTS, SportCategory.WATER),
+    **dict.fromkeys(SPEED_SPORTS, SportCategory.SPEED),
+}
+# Read as speed (km/h) rather than pace
+SPEED_CATEGORIES = frozenset({SportCategory.CYCLING, SportCategory.WATER, SportCategory.SPEED})
 
 
 def gpx_track(name: str, lonlat: list[list[float]]) -> bytes:
@@ -43,34 +66,15 @@ def df_rows(df: pd.DataFrame, *columns: str) -> list[dict]:
     return df[[c for c in columns if c in df.columns]].to_dict("records")
 
 
-def get_sport_category(sport_type: str | None) -> str:
-    """
-    Determine the sport category from sport type.
-
-    Args:
-        sport_type: Strava sport type (e.g., 'Run', 'Ride', 'Swim')
-
-    Returns:
-        Category string: 'cycling', 'swimming', 'water', 'speed', or 'running' (default)
-    """
-    sport_type = sport_type or ""
-    sport_lower = sport_type.lower().replace(' ', '')
-
-    if sport_lower in CYCLING_SPORTS:
-        return 'cycling'
-    elif sport_lower in SWIMMING_SPORTS:
-        return 'swimming'
-    elif sport_lower in WATER_SPORTS:
-        return 'water'
-    elif sport_lower in SPEED_SPORTS:
-        return 'speed'
-    else:
-        return 'running'
+def get_sport_category(sport_type: str | None) -> SportCategory:
+    """The category of a Strava sport type ('Run', 'Hike', 'Ride', 'Swim'...),
+    OTHER for one it doesn't know."""
+    return _CATEGORY_BY_SPORT.get((sport_type or '').lower().replace(' ', ''), SportCategory.OTHER)
 
 
 def is_speed_sport(sport_type: str | None) -> bool:
     """Whether the sport reads as speed (km/h) rather than pace."""
-    return get_sport_category(sport_type) in ('cycling', 'water', 'speed')
+    return get_sport_category(sport_type) in SPEED_CATEGORIES
 
 
 def convert_speed(speed_ms: float, sport_type: str | None = None) -> tuple[float, str]:
@@ -83,7 +87,7 @@ def convert_speed(speed_ms: float, sport_type: str | None = None) -> tuple[float
     
     Returns:
         Tuple of (converted_value, unit_label):
-        - Running sports: (pace in min/km, "min/km")
+        - Running, walking and other sports: (pace in min/km, "min/km")
         - Cycling sports: (speed in km/h, "km/h")
         - Swimming sports: (pace in min/100m, "min/100m")
     """
@@ -92,18 +96,18 @@ def convert_speed(speed_ms: float, sport_type: str | None = None) -> tuple[float
     
     category = get_sport_category(sport_type)
     
-    if category == 'swimming':
+    if category == SportCategory.SWIMMING:
         # Swimming: pace per 100m (in minutes)
         pace_min_per_100m = (100 / speed_ms) / 60
         return (pace_min_per_100m, "min/100m")
 
-    elif category in ('cycling', 'water', 'speed'):
+    elif category in SPEED_CATEGORIES:
         # Cycling, water & speed sports: speed in km/h
         speed_kmh = speed_ms * 3.6
         return (speed_kmh, "km/h")
 
     else:
-        # Running and other sports: pace per km (in minutes)
+        # Running, walking and other sports: pace per km (in minutes)
         pace_min_per_km = 1000 / (60 * speed_ms)
         return (pace_min_per_km, "min/km")
 
@@ -118,7 +122,7 @@ def format_pace_or_speed(avg_speed: float, sport_type: str | None = None) -> str
     
     Returns:
         Formatted string:
-        - Running sports: pace in min:sec /km (e.g., "5:30 /km")
+        - Running and walking sports: pace in min:sec /km (e.g., "5:30 /km")
         - Cycling sports: speed in km/h (e.g., "25.3 km/h")
         - Swimming sports: pace in min:sec /100m (e.g., "1:45 /100m")
         - Other sports: pace in min:sec /km (default)
@@ -128,7 +132,7 @@ def format_pace_or_speed(avg_speed: float, sport_type: str | None = None) -> str
     
     category = get_sport_category(sport_type)
     
-    if category == 'swimming':
+    if category == SportCategory.SWIMMING:
         # Swimming: pace per 100m
         pace_sec_per_100m = 100 / avg_speed  # seconds per 100m
         pace_mins = int(pace_sec_per_100m // 60)
@@ -138,13 +142,13 @@ def format_pace_or_speed(avg_speed: float, sport_type: str | None = None) -> str
             pace_secs = 0
         return f"{pace_mins}:{pace_secs:02d} /100m"
     
-    elif category in ('cycling', 'water', 'speed'):
+    elif category in SPEED_CATEGORIES:
         # Cycling, water & speed sports: speed in km/h
         speed_kmh = avg_speed * 3.6  # m/s to km/h
         return f"{speed_kmh:.1f} km/h"
     
     else:
-        # Running and other sports: pace per km (default)
+        # Running, walking and other sports: pace per km (default)
         pace_min_per_km = 1000 / (60 * avg_speed)
         pace_mins = int(pace_min_per_km)
         pace_secs = round((pace_min_per_km % 1) * 60)
@@ -187,6 +191,16 @@ def get_activities_as_gdf(activities: pd.DataFrame) -> gpd.GeoDataFrame:
     return gpd.GeoDataFrame(activities, geometry='geometry', crs=BASE_CRS)
 
 
+def _latlng_line(streams: dict) -> LineString | None:
+    """The streams' GPS track, or None with fewer than two valid points."""
+    latlng = streams.get('latlng')
+    if not latlng or len(latlng) < 2:
+        return None
+    coords = [(ll[1], ll[0]) for ll in latlng
+              if ll is not None and len(ll) == 2 and ll[0] is not None and ll[1] is not None]
+    return LineString(coords) if len(coords) >= 2 else None
+
+
 def get_activities_as_gdf_from_streams(activities: pd.DataFrame, streams_store=None,
                                        polyline_fallback: bool = True) -> gpd.GeoDataFrame:
     """Convert activities to a GeoDataFrame using high-resolution GPS streams (lat/lng).
@@ -198,28 +212,19 @@ def get_activities_as_gdf_from_streams(activities: pd.DataFrame, streams_store=N
     """
     if activities.empty:
         return gpd.GeoDataFrame(geometry=[], crs=BASE_CRS)
-    activities = activities.copy()
 
-    streams_map = {}
+    lines: dict[int, LineString | None] = {}
     if streams_store is not None and 'id' in activities.columns:
-        streams_map = streams_store.get_many(activities['id'].astype('int64').tolist())
+        lines = streams_store.derive(activities['id'].astype('int64').tolist(), _latlng_line)
+    geometry: list[LineString | None] = (
+        [lines.get(aid) for aid in activities['id'].astype('int64')] if lines else [None] * len(activities)
+    )
+    if (polyline_fallback or streams_store is None) and 'map' in activities.columns:
+        geometry = [line if line is not None else summary_polyline_geometry(map_cell)
+                    for line, map_cell in zip(geometry, activities['map'])]
 
-    def _parse_streams(row):
-        aid = int(row['id']) if row.get('id') is not None else None
-        streams = streams_map.get(aid) if aid is not None else None
-        if isinstance(streams, dict):
-            latlng = streams.get('latlng')
-            if latlng and len(latlng) >= 2:
-                coords = [(ll[1], ll[0]) for ll in latlng
-                          if ll is not None and len(ll) == 2 and ll[0] is not None and ll[1] is not None]
-                if len(coords) >= 2:
-                    return LineString(coords)
-
-        if polyline_fallback or streams_store is None:
-            return summary_polyline_geometry(row.get('map'))
-        return None
-
-    activities['geometry'] = activities.apply(_parse_streams, axis=1)
+    activities = activities.copy(deep=False)
+    activities['geometry'] = geometry
     activities = activities.dropna(subset=['geometry'])
 
     if activities.empty:

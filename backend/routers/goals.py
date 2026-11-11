@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -62,10 +62,9 @@ async def delete_goal(goal_id: int, db: aiosqlite.Connection = Depends(get_db)):
 
 @router.get("/progress")
 async def goal_progress(
-    week_start: str,
+    week_start: date,
     db: aiosqlite.Connection = Depends(get_db),
     z2: Zone2 = Depends(get_z2),
 ):
     """Compute progress for all goals given a reference week_start (YYYY-MM-DD)."""
-    ref = datetime.strptime(week_start, "%Y-%m-%d").date()
-    return {"goals": await goals_service.progress(z2, db, ref)}
+    return {"goals": await goals_service.progress(z2, db, week_start)}

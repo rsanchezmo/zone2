@@ -18,7 +18,7 @@ import aiosqlite
 
 from backend.config import settings
 from backend.services.zones import get_setting, set_setting
-from zone2.utils import get_sport_category, is_speed_sport
+from zone2.utils import SportCategory, get_sport_category, is_speed_sport
 
 FEED_TOKEN_KEY = "calendar_feed_token"
 LAST_FETCH_KEY = "calendar_feed_last_fetched_at"
@@ -164,7 +164,7 @@ def format_target_pace(sport_type: str | None, lo: float | None, hi: float | Non
     values = sorted({v for v in (lo, hi) if v})
     if is_speed_sport(sport_type):
         return "–".join(f"{v:g}" for v in values) + " km/h"
-    per = "/100m" if get_sport_category(sport_type) == "swimming" else "/km"
+    per = "/100m" if get_sport_category(sport_type) == SportCategory.SWIMMING else "/km"
     return "–".join(f"{m}:{sec:02d}" for m, sec in (divmod(round(v * 60), 60) for v in values)) + f" {per}"
 
 

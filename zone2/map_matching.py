@@ -11,11 +11,9 @@ from pathlib import Path
 
 import geopandas as gpd
 import h3
-import matplotlib.lines as mlines
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import shapely
@@ -125,58 +123,6 @@ class MatchResult:
     walked: pd.DataFrame
     outliers: np.ndarray                # GPS observations left out by the matcher (x, y)
     quality: dict
-
-    def plot(self, figsize: tuple[float, float] = (14, 10),
-             save_path: Path | str | None = None) -> plt.Figure:
-        """Plot the GPS track, the matched route with direction arrows and
-        the observations left out as outliers."""
-        BG, TEXT, DIM = '#0d1117', '#c9d1d9', '#8b949e'
-        CLR = {'gps': '#39d0ff', 'street': '#ff7b3d', 'connector': '#a5d6ff', 'arrow': '#ffd33d',
-               'outlier': '#ff4d4d'}
-
-        fig, ax = plt.subplots(figsize=figsize, facecolor=BG)
-        ax.set_facecolor(BG)
-        if self.original_geometry is not None and not self.original_geometry.is_empty:
-            ax.plot(*self.original_geometry.xy, color=CLR['gps'], linewidth=0.8, alpha=0.6, zorder=3)
-        bounds = self.route.total_bounds if not self.route.empty else self.original_geometry.bounds
-        arrow_every = max(bounds[2] - bounds[0], bounds[3] - bounds[1]) / 25
-        since = arrow_every
-        for geom, street in zip(self.route.geometry, self.route['street']):
-            ax.plot(*geom.xy, color=CLR['street' if street else 'connector'], linewidth=2.4,
-                    solid_capstyle='round', zorder=4)
-            since += geom.length
-            if since >= arrow_every and geom.length > 5:
-                p0, p1 = geom.interpolate(0.4, normalized=True), geom.interpolate(0.6, normalized=True)
-                ax.annotate('', xy=(p1.x, p1.y), xytext=(p0.x, p0.y), zorder=5,
-                            arrowprops=dict(arrowstyle='-|>', color=CLR['arrow'], lw=1.4, mutation_scale=14))
-                since = 0.0
-        if len(self.outliers):
-            ax.scatter(*self.outliers.T, s=40, marker='x', color=CLR['outlier'], linewidths=1.5, zorder=6)
-
-        handles = [
-            mlines.Line2D([], [], color=CLR['gps'], linewidth=1, label='GPS track'),
-            mlines.Line2D([], [], color=CLR['street'], linewidth=2.4, label='Matched route (street)'),
-            mlines.Line2D([], [], color=CLR['connector'], linewidth=2.4, label='Matched route (connector)'),
-            mlines.Line2D([], [], marker='x', color='none', markeredgecolor=CLR['outlier'], markersize=6,
-                          label='Left out as outlier'),
-        ]
-        legend = ax.legend(handles=handles, loc='upper left', fontsize=8, facecolor='#161b22',
-                           edgecolor='#30363d', labelcolor=TEXT, framealpha=0.92)
-        legend.get_frame().set_linewidth(0.5)
-        q = self.quality
-        ax.set_title(f"Activity {self.activity_id} — route {q.get('route_km', '?')} km vs GPS {q.get('gps_km', '?')} km, "
-                     f"{q.get('street_km', '?')} km on streets", color=TEXT, fontsize=10,
-                     fontweight='bold', pad=14)
-        ax.text(0.5, 1.01, f"Points: {q.get('num_points', '?')}  |  Outliers: {q.get('num_outliers', '?')}  |  "
-                f"Breaks: {q.get('num_breaks', '?')}  |  On connectors: {q.get('pct_on_connectors', '?')}%",
-                transform=ax.transAxes, ha='center', fontsize=8, color=DIM)
-        ax.set_aspect('equal')
-        ax.axis('off')
-        plt.tight_layout()
-        if save_path is not None:
-            fig.savefig(save_path, dpi=150, bbox_inches='tight', facecolor=fig.get_facecolor())
-            logger.info("Saved plot to %s", save_path)
-        return fig
 
 
 class StravaMapMatcher:
@@ -1715,53 +1661,3 @@ class StravaMapMatcher:
         inside = und[und.representative_point().within(poly_proj)]
         return self._scoped_stats(inside['length'].sum(), inside['covered_m'].sum(), len(inside), inside['covered'].sum())
 
-    def plot_coverage(
-        self,
-        save_path: Path | str | None = None,
-        neon_color: str = '#fc0101',
-        figsize: tuple[float, float] = (20, 20),
-    ) -> plt.Figure:
-        """Render a neon-glow coverage map of the city from the persisted state:
-        the street network as a dim base layer, the walked stretches glowing
-        in neon (3-layer: atmosphere, glow, core)."""
-        stats = self.coverage_stats_from_state()
-        crs = self._edges_gdf.crs
-        geoms = self._edges_gdf.geometry
-        base = gpd.GeoDataFrame(geometry=geoms[geoms.notna() & ~geoms.is_empty].values, crs=crs)
-        walked = self.walked_layer().to_crs(crs)
-
-        fig, ax = plt.subplots(figsize=figsize, facecolor='black')
-        ax.set_facecolor('black')
-        ax.set_axis_off()
-        if not base.empty:
-            base.plot(ax=ax, color='#1c2333', linewidth=0.3, alpha=0.85, zorder=0)
-        if self._city_boundary is not None and not self._city_boundary.empty:
-            self._city_boundary.boundary.plot(ax=ax, color='#30363d', linewidth=0.5, alpha=0.4, zorder=0)
-        if not walked.empty:
-            walked.plot(ax=ax, color=neon_color, linewidth=6, alpha=0.03, zorder=1)
-            walked.plot(ax=ax, color=neon_color, linewidth=2.5, alpha=0.15, zorder=2)
-            walked.plot(ax=ax, color='white', linewidth=0.5, alpha=0.9, zorder=3)
-
-        subtitle = (
-            f"{stats['traversed_km']} km / {stats['total_network_km']} km  "
-            f"({stats['coverage_pct']}%)"
-        )
-        ax.text(
-            0.5, 0.1, subtitle.upper(),
-            transform=ax.transAxes, ha='center', va='top',
-            color='#8b949e', fontsize=14, fontfamily='monospace',
-        )
-        ax.text(
-            0.5, 0.07, f"{self.city_name} — Coverage".upper(),
-            transform=ax.transAxes, ha='center', va='top',
-            color=neon_color, fontsize=26, fontfamily='monospace',
-            fontweight='bold', alpha=0.9,
-        )
-
-        plt.tight_layout()
-
-        if save_path is not None:
-            fig.savefig(save_path, dpi=300, bbox_inches='tight', facecolor=fig.get_facecolor())
-            logger.info("Coverage map saved to %s", save_path)
-
-        return fig
