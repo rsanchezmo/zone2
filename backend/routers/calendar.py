@@ -9,8 +9,7 @@ import pandas as pd
 from backend.db import get_db
 from backend.dependencies import get_z2
 from backend.scoring import compute_execution_score, has_targets
-from backend.routers.activities import activities_on_dates
-from backend.services import garmin_workouts, session_scores, sessions as planned_sessions
+from backend.services import activities, garmin_workouts, session_scores, sessions as planned_sessions
 from backend.services.briefing import today_briefing
 from backend.services.session_scores import accomplished, activities_by_day, session_matches
 from backend.services.sessions import session_dict
@@ -59,7 +58,7 @@ class SessionUpdate(BaseModel):
 @router.get("/briefing")
 async def briefing(z2: Zone2 = Depends(get_z2), db: aiosqlite.Connection = Depends(get_db)):
     """Today at a glance for the top of the calendar (see `today_briefing`)."""
-    done = (await run_in_threadpool(activities_on_dates, date.today().isoformat(), z2))["items"]
+    done = await run_in_threadpool(activities.on_dates, z2, {date.today().isoformat()})
     return await today_briefing(z2, db, done)
 
 

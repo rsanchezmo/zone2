@@ -26,10 +26,8 @@ from starlette.concurrency import run_in_threadpool
 
 from backend.db import get_db
 from backend.dependencies import get_z2
-from backend.routers.coverage import (
-    _LAYERS_FORMAT, _cached_json, _get_matcher, _osm_dir, _read_stats_cache, _state_version,
-)
-from backend.services.garmin_courses import clear_courses_cache, course_line, course_list
+from backend.services import coverage
+from backend.services.garmin_courses import clear_courses_cache
 from zone2.core import Zone2
 from zone2.garmin_client import GarminUnavailable
 from zone2.map_matching import StravaMapMatcher
@@ -59,14 +57,14 @@ _recent_lock = Lock()
 def _plan(slug: str, request: PlanRequest) -> dict:
     """Plan a loop and hold it for saving: {slug, feature, new_ways, network,
     request}. Raises 422 when there is no loop."""
-    osm_dir = _osm_dir()
+    osm_dir = coverage.osm_dir()
     start = request.start or StravaMapMatcher.usual_start_of(osm_dir, slug)
     if start is None:
         raise HTTPException(status_code=422, detail="Pick a start point: no run matched here yet")
     try:
-        planned = _get_matcher(slug).plan_loop(tuple(start), request.distance_km * 1000, via_latlon=request.via,
-                                               new_share=request.new_share, avoid=frozenset(request.avoid),
-                                               seed=request.seed)
+        planned = coverage.get_matcher(slug).plan_loop(tuple(start), request.distance_km * 1000,
+                                                       via_latlon=request.via, new_share=request.new_share,
+                                                       avoid=frozenset(request.avoid), seed=request.seed)
     except UnreachablePoint as e:
         raise HTTPException(status_code=422, detail=str(e))
     if planned is None:
@@ -111,7 +109,7 @@ def _route(row: aiosqlite.Row, new_km_now: float | None) -> dict:
 
 
 def _new_km_now(slug: str, rows: list[aiosqlite.Row]) -> list[float | None]:
-    return [StravaMapMatcher.new_km_now(_osm_dir(), slug, json.loads(r["new_ways"]), r["network"]) for r in rows]
+    return [StravaMapMatcher.new_km_now(coverage.osm_dir(), slug, json.loads(r["new_ways"]), r["network"]) for r in rows]
 
 
 async def _fetch_route(db: aiosqlite.Connection, slug: str, route_id: int) -> aiosqlite.Row:
@@ -204,38 +202,6 @@ async def send_plan_to_garmin(slug: str, route_id: int, payload: GarminSendReque
     return _route(row, new_now)
 
 
-# Part of the Garmin courses' cache version: bump when their fields change
-_COURSES_FORMAT = 2
-
-
-def city_garmin_courses(slug: str, z2: Zone2):
-    """The Garmin courses starting in the city, each with `city_km`, the km of
-    streets of its part in the city, and `new_km`, those not run yet (both
-    null when it doesn't match here). Kept until the coverage or the courses
-    change; warmed after syncs."""
-    south, west, north, east = (_read_stats_cache(slug) or {}).get("bbox") or _get_matcher(slug).city_bbox()
-    courses = [c for c in course_list(z2)
-               if c["start"][0] is not None and south <= c["start"][0] <= north and west <= c["start"][1] <= east]
-
-    def build():
-        # A course's id and distance identify its line; a changed course is matched again
-        keys = {f"{c['course_id']}:{c['distance_km']}": c for c in courses}
-        streets = StravaMapMatcher.course_streets_of(_osm_dir(), slug)
-        if any(key not in streets for key in keys):
-            streets = _get_matcher(slug).match_courses({
-                key: (lambda c=c: [(lat, lon) for lon, lat in course_line(z2, c["course_id"])["coordinates"]])
-                for key, c in keys.items()
-            })
-        out = []
-        for key, c in keys.items():
-            new_km, city_km = StravaMapMatcher.street_km_of(_osm_dir(), slug, streets.get(key)) or (None, None)
-            out.append({**c, "new_km": new_km, "city_km": city_km})
-        return out
-    version = _state_version(slug) + (_LAYERS_FORMAT, _COURSES_FORMAT,
-                                      tuple((c["course_id"], c["name"], c["distance_km"]) for c in courses))
-    return _cached_json(("garmin-courses", slug), version, build)
-
-
 @router.get("/{slug}/garmin-courses")
 def garmin_courses_in_city(slug: str, z2: Zone2 = Depends(get_z2)):
-    return city_garmin_courses(slug, z2)
+    return coverage.city_garmin_courses(slug, z2)

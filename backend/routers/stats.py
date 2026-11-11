@@ -1,5 +1,4 @@
 import functools
-import json
 from datetime import timedelta, date
 from fastapi import APIRouter, Depends, Query, Response
 from starlette.concurrency import run_in_threadpool
@@ -8,11 +7,16 @@ import aiosqlite
 from backend.db import get_db
 from backend.dependencies import get_z2
 from backend.services import training
-from backend.services.stats_cache import stats_cache as _stats_cache
+from backend.services.stats_cache import (
+    get_previous_weekly_report_cached,
+    get_weekly_report_cached,
+    stats_cache as _stats_cache,
+    zones_signature,
+)
 from backend.services.zones import resolve_hr_zones
 from backend.services.resting_hr import resolve_resting_hr
 from zone2.core import Zone2
-from zone2.utils import SportCategory, get_sport_category, previous_week
+from zone2.utils import SportCategory, get_sport_category
 
 router = APIRouter()
 
@@ -42,36 +46,6 @@ def _serialize_enum_dict(d: dict) -> dict:
     return {str(k): v for k, v in d.items()}
 
 
-def _zones_signature(hr_zones: list | None) -> str:
-    """Stable fingerprint for the zones so the stats cache differentiates by source."""
-    if not hr_zones:
-        return "none"
-    return json.dumps(hr_zones, sort_keys=True, separators=(",", ":"))
-
-
-def _get_weekly_report_cached(
-    z2: Zone2,
-    week_start: str | None,
-    cutoff_date: str | None = None,
-    hr_zones: list | None = None,
-) -> dict:
-    key = ("weekly", week_start, cutoff_date, z2.strava_activities_cache.cache_version, _zones_signature(hr_zones))
-    cached = _stats_cache.get(key)
-    if cached is not None:
-        return cached
-    result = z2.strava_analytics.get_weekly_report(week_start, cutoff_date=cutoff_date, hr_zones=hr_zones)
-    _stats_cache.set(key, result)
-    return result
-
-
-def _get_previous_weekly_report_cached(z2: Zone2, report: dict, hr_zones: list | None) -> dict | None:
-    """The week before `report`'s, for deltas."""
-    if not report.get("week_start"):
-        return None
-    prev_monday, cutoff = previous_week(report["week_start"])
-    return _get_weekly_report_cached(z2, prev_monday, cutoff_date=cutoff, hr_zones=hr_zones)
-
-
 @router.get("/weekly-report")
 async def weekly_report(
     week_start: str | None = None,
@@ -82,15 +56,15 @@ async def weekly_report(
     hr_zones = resolved["zones"]
 
     def build() -> dict:
-        report = _get_weekly_report_cached(z2, week_start, hr_zones=hr_zones)
-        prev_report = _get_previous_weekly_report_cached(z2, report, hr_zones)
+        report = get_weekly_report_cached(z2, week_start, hr_zones=hr_zones)
+        prev_report = get_previous_weekly_report_cached(z2, report, hr_zones)
 
         return {
             "current": _serialize_enum_dict(report),
             "previous": _serialize_enum_dict(prev_report) if prev_report else None,
         }
 
-    key = ("weekly_report_response", week_start, _zones_signature(hr_zones),
+    key = ("weekly_report_response", week_start, zones_signature(hr_zones),
            z2.strava_activities_cache.cache_version)
     return await _cached_json_in_threadpool(key, build)
 
@@ -268,7 +242,7 @@ async def relative_effort_weekly(
     key = (
         "relative_effort_weekly",
         sport_type or "",
-        _zones_signature(resolved_zones["zones"]),
+        zones_signature(resolved_zones["zones"]),
         round(resolved_rhr["value"], 1),
         z2.strava_activities_cache.cache_version,
     )
