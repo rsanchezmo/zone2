@@ -40,7 +40,7 @@ docker compose up
 - `CLOUDFLARE_TUNNEL_TOKEN` — optional, for Docker deployment with Cloudflare Tunnel
 - `STRAVA_WEB_CARTO_API_KEY` — optional; without it Leaflet basemaps fall back to OSM, since unkeyed CARTO tiles are watermarked
 
-There are no tests. CI (`.github/workflows/ci.yml`) runs ESLint (react-hooks v7 / React Compiler rules), the frontend build (`tsc -b` + Vite), ruff (E9/F only), an import smoke test (`import backend.app, telegram_bot`) and `docker build .` — keep `cd frontend && npm run lint` and `npx tsc -b` at zero errors.
+`tests/` holds pytest tests (Poetry dev group) over the pure logic: units and sport categories, HR zones, stream math, best efforts, race predictions, scoring, Garmin workout steps and the analytics caches. They build small synthetic activities and streams in code, never real data (the repo is public), and run in about a second with `poetry run pytest -q`; a known bug stays as a strict `xfail` with its reason. CI (`.github/workflows/ci.yml`) runs ESLint (react-hooks v7 / React Compiler rules), the frontend build (`tsc -b` + Vite), ruff (E9/F only), an import smoke test (`import backend.app, telegram_bot`), the tests and `docker build .` — keep `cd frontend && npm run lint` and `npx tsc -b` at zero errors.
 
 ## Architecture
 

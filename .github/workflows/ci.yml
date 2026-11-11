@@ -34,9 +34,11 @@ jobs:
         with:
           python-version: '3.12'
           cache: poetry
-      - run: poetry install --no-root --only main
+      - run: poetry install --no-root --only main,dev
       # Imports every router and service the way uvicorn and the bot do, without credentials
       - run: poetry run python -c "import backend.app, telegram_bot"
+      # Pure logic on synthetic data: no credentials, network or .strava/
+      - run: poetry run pytest -q
 
   docker:
     runs-on: ubuntu-latest
