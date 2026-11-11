@@ -134,6 +134,18 @@ def test_the_conversation_history_in_pages(offline_app: OfflineApp):
     assert [m for page in pages for m in page] == whole["messages"]
 
 
+def test_the_robot_counts_the_coachs_turns_until_the_chat_is_seen(offline_app: OfflineApp):
+    api = offline_app.client
+    store_exchanges(offline_app, "coach", 3)
+    store_exchanges(offline_app, "cli-1", 2)
+    assert api.get("/api/agent/status").json()["unread"] == 3
+    assert api.post("/api/agent/seen").json() == {"unread": 0}
+    assert api.get("/api/agent/status").json()["unread"] == 0
+    # Stamped before the mark, stored after it
+    store_exchanges(offline_app, "coach", 1)
+    assert api.get("/api/agent/status").json()["unread"] == 1
+
+
 def test_conversation_paging_parameters(offline_app: OfflineApp):
     api = offline_app.client
     empty = api.get("/api/agent/conversations/nobody", params={"turns": 5}).json()

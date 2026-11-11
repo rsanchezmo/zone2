@@ -1,6 +1,6 @@
 """The coach's conversation stored a row per message: the migration from one JSON list per
-conversation, turns that append, sessions, pages and the writes waiting for a yes, against a
-throwaway calendar database. The model is a stub: no request leaves the machine, and every
+conversation, turns that append, sessions, pages, the writes waiting for a yes and the turns the
+athlete hasn't seen, against a throwaway calendar database. The model is a stub: no request leaves the machine, and every
 message is made up."""
 import asyncio
 import sqlite3
@@ -197,6 +197,110 @@ def test_a_write_waiting_for_a_yes_survives_and_keeps_its_session(db_path: Path,
     # The approval itself continues the session
     approving = run(lambda db: conversations.begin(db, CID, prompt=False, approvals=True))
     assert approving.waiting == [] and len(approving.history) == 2
+
+
+# ── What the athlete hasn't seen ─────────────────────────────────────────
+
+def review(at: datetime) -> list[ModelMessage]:
+    """A turn the coach gave itself after a sync: the event, a read tool between, and its message."""
+    return [prompt(f"{conversations.EVENT_MARK}After your run: Test 5k\nThe athlete isn't here.", at),
+            call("review-read", at + timedelta(seconds=1), tool="today"),
+            result("review-read", at + timedelta(seconds=2)), reply("Well run", at + timedelta(seconds=3))]
+
+
+def test_unread_counts_each_coach_turn_once_replies_and_reviews_alike(db_path: Path, run) -> None:
+    run(lambda db: store(db, exchange(1, NOW - timedelta(minutes=10)) + review(NOW - timedelta(minutes=5))))
+    assert run(message_store.unread) == 2
+
+    run(message_store.mark_seen)
+    assert run(message_store.unread) == 0
+    run(lambda db: store(db, exchange(2, NOW)))
+    assert run(message_store.unread) == 1
+
+
+def test_the_athletes_own_messages_and_other_conversations_are_not_unread(db_path: Path, run) -> None:
+    run(lambda db: store(db, [prompt("are you there?", NOW)]))
+    run(lambda db: message_store.replace_from(db, "cli-1", None, [conversations.encode(m) for m in exchange(1, NOW)]))
+    assert run(message_store.unread) == 0
+
+
+def test_a_turn_waiting_for_a_yes_is_unread_and_so_is_what_the_yes_brings(db_path: Path, run) -> None:
+    asked = NOW - timedelta(minutes=1)
+    run(lambda db: store(db, [prompt("move friday", asked), call("w1", asked + timedelta(seconds=2))]))
+    assert run(message_store.unread) == 1
+
+    run(message_store.mark_seen)
+    # A yes, then the chat closed before the coach carried on
+    run(lambda db: store(db, [result("w1", NOW, tool=WRITE), reply("Moved to Saturday", NOW + timedelta(seconds=1))]))
+    assert run(message_store.unread) == 1
+
+
+def test_seen_goes_by_message_not_by_the_clock(db_path: Path, run) -> None:
+    # Two turns stamped the same instant, either side of the mark: one seen, one not, neither twice
+    at = NOW.replace(microsecond=0)
+    run(lambda db: store(db, [prompt("question 1", at), reply("answer 1", at)]))
+    run(message_store.mark_seen)
+    run(lambda db: store(db, [prompt("question 2", at), reply("answer 2", at)]))
+    assert run(message_store.unread) == 1
+    run(message_store.mark_seen)
+    assert run(message_store.unread) == 0
+
+
+def restart_from_seen_at(db_path: Path, seen_at: datetime | None, reviews_done: list[datetime]) -> None:
+    """The app as it stood before SEEN_KEY, with the old mark and the reviews it compared against,
+    then restarted."""
+    def utc(at: datetime) -> str:
+        return at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with sqlite3.connect(db_path) as c:
+        c.execute("DELETE FROM user_settings WHERE key = ?", (message_store.SEEN_KEY,))
+        c.execute("DELETE FROM agent_reviews")
+        if seen_at is not None:
+            c.execute("INSERT INTO user_settings (key, value) VALUES ('agent_seen_at', ?)", (utc(seen_at),))
+        c.executemany("INSERT INTO agent_reviews (activity_id, status, done_at) VALUES (?, 'done', ?)",
+                      [(i, utc(at)) for i, at in enumerate(reviews_done)])
+    asyncio.run(calendar_db.init_db())
+
+
+def seen_marks(db_path: Path) -> set[str]:
+    with sqlite3.connect(db_path) as c:
+        return {r[0] for r in c.execute("SELECT key FROM user_settings WHERE key LIKE 'agent_seen%'")}
+
+
+def test_the_old_seen_mark_carries_over_as_the_reviews_written_after_it(db_path: Path, run) -> None:
+    first, second = NOW - timedelta(hours=1), NOW - timedelta(minutes=30)
+    run(lambda db: store(db, [
+        *exchange(1, NOW - timedelta(hours=3)),
+        # The athlete chatted after the mark: it moved only when reviews were unread
+        *exchange(2, NOW - timedelta(hours=2)),
+        *review(first), *review(second),
+    ]))
+    restart_from_seen_at(db_path, NOW - timedelta(hours=2, minutes=30),
+                         [NOW - timedelta(days=1), first + timedelta(seconds=20), second + timedelta(seconds=20)])
+    assert run(message_store.unread) == 2
+    assert seen_marks(db_path) == {message_store.SEEN_KEY}
+
+    run(message_store.mark_seen)
+    asyncio.run(calendar_db.init_db())
+    assert run(message_store.unread) == 0
+
+
+def test_with_no_review_unread_the_whole_conversation_carries_over_as_seen(db_path: Path, run) -> None:
+    run(lambda db: store(db, [*exchange(1, NOW - timedelta(hours=3)), *review(NOW - timedelta(hours=2)),
+                              *exchange(2, NOW - timedelta(minutes=10))]))
+    restart_from_seen_at(db_path, NOW - timedelta(hours=1), [NOW - timedelta(hours=2) + timedelta(seconds=20)])
+    assert run(message_store.unread) == 0
+    # Nor without the old mark, which a chat that never had a review unread never set
+    restart_from_seen_at(db_path, None, [])
+    assert run(message_store.unread) == 0
+
+
+def test_a_turn_opened_in_the_second_its_review_was_done_counts_after_it(db_path: Path, run) -> None:
+    done = NOW.replace(microsecond=0)
+    run(lambda db: store(db, [*exchange(1, NOW - timedelta(hours=3)), *review(done - timedelta(seconds=20)),
+                              prompt("how was it?", done + timedelta(milliseconds=500)),
+                              reply("Well run", done + timedelta(milliseconds=900))]))
+    restart_from_seen_at(db_path, NOW - timedelta(hours=1), [done])
+    assert run(message_store.unread) == 2
 
 
 # ── Pages ────────────────────────────────────────────────────────────────

@@ -1,12 +1,13 @@
 """The coach's own reviews of new activities. A sync queues each new activity; a worker reviews
 the ones that fulfil a planned session, one coach turn each, as a message in the chat the athlete
-reads later, and any change it proposes waits for their yes. The robot shows how many are unread."""
+reads later, and any change it proposes waits for their yes. The robot counts each review until
+the athlete sees it, like any other turn of the coach's (message_store.unread)."""
 
 import asyncio
 import logging
 import sqlite3
 from collections.abc import Iterable
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from enum import StrEnum
 
 import aiosqlite
@@ -16,7 +17,6 @@ from backend.agent import load_module, preferences
 from backend.db import DB_PATH, connect_db
 from backend.services import session_scores
 from backend.services import sessions as planned_sessions
-from backend.services.zones import get_setting, set_setting
 from zone2.core import Zone2
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,6 @@ logger = logging.getLogger(__name__)
 REVIEW_WINDOW = timedelta(days=2)
 # The worker also looks at the queue this often, should a wake-up be missed
 FALLBACK_S = 600
-SEEN_KEY = "agent_seen_at"
 
 
 class ReviewStatus(StrEnum):
@@ -120,16 +119,3 @@ async def worker(z2: Zone2) -> None:
             )).fetchall()
         for (activity_id,) in rows:
             await _review(z2, activity_id)
-
-
-async def unread(db: aiosqlite.Connection) -> int:
-    """Reviews written since the athlete last opened the chat."""
-    seen = await get_setting(db, SEEN_KEY) or ""
-    row = await (await db.execute(
-        "SELECT COUNT(*) FROM agent_reviews WHERE status = ? AND done_at > ?", (ReviewStatus.DONE, seen),
-    )).fetchone()
-    return row[0]
-
-
-async def mark_seen(db: aiosqlite.Connection) -> None:
-    await set_setting(db, SEEN_KEY, datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"))

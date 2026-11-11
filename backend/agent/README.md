@@ -42,8 +42,9 @@ Nothing else combines the whole loop: plan by conversation, write to the calenda
   - After a write, the agent tells the frontend which data changed and the page refreshes. It can also open a page ("show me that run").
 - **One conversation, typed or dictated.**
   - A message sent when Strava or Garmin last synced over 15 minutes ago syncs them first. The reply waits for Strava (a step, up to 20 seconds), so the coach sees the run you just finished. Garmin's sync is slower (10–20 s on the Pi), so it runs alongside and only the tools that read Garmin wait for it. Opening the chat starts both syncs, so a message typed meanwhile finds them done, or waits only for the rest. Each turn logs its timings: the sync, each tool and the model requests.
-  - After each sync, the coach reviews every new activity that fulfils a planned session (`reviews.py`: a queue in `agent_reviews` and a worker), as a message in the chat marked "After your run". A checkpoint's result and any change its rule calls for come as approval cards; the robot shows how many reviews are unread. `POST /api/agent/review/{id}` reviews an activity again.
+  - After each sync, the coach reviews every new activity that fulfils a planned session (`reviews.py`: a queue in `agent_reviews` and a worker), as a message in the chat marked "After your run". A checkpoint's result and any change its rule calls for come as approval cards. `POST /api/agent/review/{id}` reviews an activity again.
   - Turns run on their own with their own connection, so closing the panel or locking the phone doesn't cancel one. A new message while writes wait for a yes answers them with a no.
+  - The robot counts the coach's turns you haven't seen, replies and reviews alike, one waiting for a yes too (`message_store.unread`, against the last message id you saw, so every device agrees). Opening the chat, or a turn ending while it's open on screen, marks them seen.
   - The app keeps a single conversation. The model sees only its current session: a message after a 30-minute pause starts fresh, with the last few exchanges carried over, plus the notes and the coach's log.
   - Talking is a way of typing, not a second agent: hold the mic and your words appear in the box as you speak (`gpt-live-transcribe` over a Realtime session the backend opens, so the key stays on the server). Let go and the text stays there for you to fix and send; replies are text.
   - A realtime speech model is only worth it for live coaching on the run, and it would use the same tools.
@@ -86,7 +87,7 @@ backend/agent/
   reviews.py        the coach's reviews of new activities that fulfil a planned session: a queue in agent_reviews and a worker
   notes.py          what it keeps about the athlete (preferences, baselines, sensor changes), in every turn, and each plan's agreements
   conversations.py  the conversation as Pydantic AI messages: the session a turn continues, its recap, pages for the chat
-  message_store.py  the messages in calendar.db (agent_messages), a row each, so a turn appends; imports nothing from Pydantic AI
+  message_store.py  the messages in calendar.db (agent_messages), a row each, so a turn appends, and the turns not seen yet; imports nothing from Pydantic AI
   preferences.py    the model and the provider credit set on the Profile page; imports nothing from Pydantic AI
   usage.py          tokens and cost per turn, in calendar.db; imports nothing from Pydantic AI
   __main__.py       the terminal chat

@@ -38,7 +38,7 @@ export function useAgentUsage(days: number) {
 export interface AgentStatus {
   available: boolean;
   model: string;
-  /** The coach's reviews of new activities since the chat was last opened. */
+  /** The coach's turns the athlete hasn't seen, on any device: replies and reviews alike, one each. */
   unread: number;
 }
 
@@ -95,10 +95,12 @@ export function useAgentStatus() {
     queryFn: () => api.get('/agent/status').then(r => r.data),
     // Often enough that a review written after a sync shows up on the robot
     refetchInterval: 1000 * 60,
+    // The interval pauses while the tab is hidden, and the coach may have written meanwhile
+    refetchOnWindowFocus: 'always',
   });
 }
 
-/** The chat is open: the coach's reviews so far are read. */
+/** The athlete has the chat in front of them: what the coach wrote so far is seen. */
 export function useMarkCoachSeen() {
   const qc = useQueryClient();
   return useMutation({

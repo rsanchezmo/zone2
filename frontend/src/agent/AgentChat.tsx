@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -11,12 +11,13 @@ import {
 import { refreshPages } from '../api/invalidation'
 import { useTheme } from '../hooks/useTheme'
 import { useNow } from '../hooks/useNow'
+import { usePageVisible } from '../hooks/usePageVisible'
 import { COACH } from '../components/coach/colors'
 import { RobotIcon } from '../components/icons'
 import { pageContext } from './pageContext'
 import { Listener } from './listener'
 
-// The app's one conversation with the coach (backend/agent/conversations.py MAIN)
+// The app's one conversation with the coach (backend/agent/message_store.py MAIN)
 const CONVERSATION = 'coach'
 const REMARK_PLUGINS = [remarkGfm]
 // The catch-up before a turn (routers/agent.py) and the coach's own sync_now
@@ -369,40 +370,46 @@ export default function AgentChat({ open, expanded, busy, onBusyChange, onOpenPa
   const scroller = useRef<HTMLDivElement>(null)
   const sentinel = useRef<HTMLDivElement>(null)
   const anchor = useRef<ReturnType<typeof topPage>>(null)
+  // The athlete has the chat in front of them
+  const visible = usePageVisible()
+  const inView = open && visible
 
-  // The conversation lives on the server and another device may have continued it: coming back
-  // to the chat (reopening it, or returning to the tab) shows the server's copy again
   const busyNow = useRef(busy)
+  const inViewNow = useRef(inView)
   useEffect(() => {
     busyNow.current = busy
-  }, [busy])
+    inViewNow.current = inView
+  }, [busy, inView])
+
+  /** The server's copy of the conversation in place of the live one, unless a turn is running. */
+  const resync = useCallback(async () => {
+    if (busyNow.current) return
+    await qc.refetchQueries({ queryKey: ['agent-conversation', CONVERSATION] })
+    if (busyNow.current) return
+    setLive(null)
+    setPending(null)
+  }, [qc])
+
+  // The chat coming into view (opened, or its tab back on screen) reads what the coach wrote and
+  // shows the server's copy, since another device may have continued the conversation. So does a
+  // turn from elsewhere arriving while it's in view, such as a review, once no turn of this tab's
+  // is running: until then the live transcript stands in for the server's. This tab's own turns
+  // are read where they end, in run()
+  const inViewBefore = useRef(false)
   const openedBefore = useRef(false)
   useEffect(() => {
-    if (!open) return
-    async function resync() {
-      if (busyNow.current) return
-      await qc.refetchQueries({ queryKey: ['agent-conversation', CONVERSATION] })
-      if (busyNow.current) return
-      setLive(null)
-      setPending(null)
+    if (!inView) {
+      inViewBefore.current = false
+      return
     }
+    const arrived = inViewBefore.current
+    inViewBefore.current = true
+    if (arrived && (busy || unread === 0)) return
+    markSeen()
     // The first open loads the conversation through its query
     if (openedBefore.current) void resync()
     openedBefore.current = true
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') void resync()
-    }
-    document.addEventListener('visibilitychange', onVisible)
-    return () => document.removeEventListener('visibilitychange', onVisible)
-  }, [open, qc])
-
-  // Opening the chat, or a review arriving while it's open, reads what the coach wrote. After the
-  // resync above, so the fetch opening the chat already started serves it rather than restarting
-  useEffect(() => {
-    if (!open || unread === 0) return
-    markSeen()
-    qc.invalidateQueries({ queryKey: ['agent-conversation', CONVERSATION] }, { cancelRefetch: false })
-  }, [open, unread, markSeen, qc])
+  }, [inView, busy, unread, markSeen, resync])
 
   const newest = history?.pages[0]
   const recent = useMemo<LiveItem[]>(() => {
@@ -498,6 +505,9 @@ export default function AgentChat({ open, expanded, busy, onBusyChange, onOpenPa
     } finally {
       onBusyChange(false)
       setThinking(false)
+      // Read if the athlete has it in front of them; if not, the robot counts it now, not at its next poll
+      if (inViewNow.current) markSeen()
+      else void qc.invalidateQueries({ queryKey: ['agent-status'] })
     }
   }
 

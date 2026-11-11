@@ -293,6 +293,7 @@ async def init_db():
         moved = await message_store.migrate(db)
         if moved:
             logger.info("Moved %d agent messages to agent_messages", moved)
+        await message_store.migrate_seen(db)
 
 
 @asynccontextmanager

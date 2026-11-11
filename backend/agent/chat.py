@@ -16,7 +16,7 @@ from pydantic_ai import (
     TextPart, ToolCallPart, ToolDenied, ToolReturnPart, UserPromptPart,
 )
 
-from backend.agent import conversations, preferences
+from backend.agent import conversations, message_store, preferences
 from backend.agent.agent import Output, build_agent, run_turn
 from backend.agent.tools import AgentDeps, memory_tools, workout_tools, write_tools
 from backend.db import connect_db
@@ -182,7 +182,7 @@ async def review(z2: Zone2, activity_id: int, session: dict[str, Any]) -> None:
     async with connect_db() as db:
         model = await preferences.model(db)
         deps = AgentDeps(z2=z2, db=db, schedule=spawn)
-        result = await run_turn(the_agent(), deps, conversations.MAIN, prompt=prompt, model=model, surface="review",
+        result = await run_turn(the_agent(), deps, message_store.MAIN, prompt=prompt, model=model, surface="review",
                                 model_settings=None)
     logger.info("Coach review of activity %s took %.1fs on %s: %d model requests", activity_id,
                 time.monotonic() - started, model, result.usage.requests)

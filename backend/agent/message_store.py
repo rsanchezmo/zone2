@@ -1,20 +1,29 @@
 """The agent's conversations in calendar.db, a row per message as Pydantic AI's JSON: a turn appends
-its messages, and readers load the current session, a page of turns or the whole conversation.
-Imports nothing from Pydantic AI, so the app migrates and serves it without loading the agent."""
+its messages, and readers load the current session, a page of turns or the whole conversation;
+and how much of the app's conversation the athlete hasn't seen yet. Imports nothing from
+Pydantic AI, so the app migrates and serves it without loading the agent."""
 
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import aiosqlite
 
 logger = logging.getLogger(__name__)
 
+# The app's one conversation with the coach
+MAIN = "coach"
 # A pause this long starts a new session: the model starts fresh, with the notes and the
 # coach's log carrying what lasts. The whole conversation stays stored and visible.
 SESSION_GAP = timedelta(minutes=30)
 _COLUMNS = "id, kind, opens_turn, opens_session, at, message"
+# The id of MAIN's last message when the athlete last had the chat in front of them (user_settings)
+SEEN_KEY = "agent_seen_message"
+# What SEEN_KEY replaced: when the athlete last opened the chat with reviews unread, in UTC, in the
+# format of agent_reviews.done_at
+_SEEN_AT_KEY = "agent_seen_at"
+_SEEN_AT_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 @dataclass(frozen=True)
@@ -152,3 +161,64 @@ async def migrate(db: aiosqlite.Connection) -> int:
         await db.commit()
         moved += len(messages)
     return moved
+
+
+# user_settings without services.zones' helpers, which import backend.db, which imports this module
+async def _setting(db: aiosqlite.Connection, key: str) -> str | None:
+    row = await (await db.execute("SELECT value FROM user_settings WHERE key = ?", (key,))).fetchone()
+    return row[0] if row else None
+
+
+async def _store_seen(db: aiosqlite.Connection, message_id: int) -> None:
+    await db.execute(
+        """INSERT INTO user_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at""",
+        (SEEN_KEY, str(message_id)),
+    )
+    await db.commit()
+
+
+async def unread(db: aiosqlite.Connection) -> int:
+    """The coach's turns in MAIN that ended after the athlete last saw it: replies to their messages
+    and the turns it gave itself (reviews), one waiting for a yes too. A turn is stored when it
+    ends, so it counts once however many responses it holds."""
+    row = await (await db.execute(
+        """SELECT COUNT(DISTINCT (SELECT MAX(t.id) FROM agent_messages t
+                                  WHERE t.conversation_id = r.conversation_id AND t.opens_turn = 1 AND t.id <= r.id))
+           FROM agent_messages r WHERE r.conversation_id = ? AND r.kind = 'response' AND r.id > ?""",
+        (MAIN, int(await _setting(db, SEEN_KEY) or 0)),
+    )).fetchone()
+    return row[0]
+
+
+async def mark_seen(db: aiosqlite.Connection) -> None:
+    """The athlete has MAIN in front of them: what it holds so far is seen."""
+    row = await (await db.execute(
+        "SELECT COALESCE(MAX(id), 0) FROM agent_messages WHERE conversation_id = ?", (MAIN,),
+    )).fetchone()
+    await _store_seen(db, row[0])
+
+
+async def migrate_seen(db: aiosqlite.Connection) -> None:
+    """Set SEEN_KEY once from _SEEN_AT_KEY, keeping the count the robot showed: unread from the
+    turn of the first review done after it, seen before. That mark moved only when reviews were
+    unread, so the athlete's own turns after it were seen all the same."""
+    if await _setting(db, SEEN_KEY) is not None:
+        return
+    first = await (await db.execute(
+        "SELECT MIN(done_at) FROM agent_reviews WHERE status = 'done' AND done_at > ?",
+        (await _setting(db, _SEEN_AT_KEY) or "",),
+    )).fetchone()
+    if first[0] is None:
+        await mark_seen(db)
+    else:
+        # A conversation's turns run one at a time, so the review's is the last to open before it was
+        # done. done_at holds whole seconds: a turn opened within that second is taken as after it
+        done = datetime.strptime(first[0], _SEEN_AT_FORMAT).replace(tzinfo=UTC)
+        turns = await (await db.execute(
+            "SELECT id, at FROM agent_messages WHERE conversation_id = ? AND opens_turn = 1 ORDER BY id DESC", (MAIN,),
+        )).fetchall()
+        review = next((turn_id for turn_id, at in turns if datetime.fromisoformat(at) < done), 1)
+        await _store_seen(db, review - 1)
+    await db.execute("DELETE FROM user_settings WHERE key = ?", (_SEEN_AT_KEY,))
+    await db.commit()

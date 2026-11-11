@@ -14,8 +14,6 @@ from pydantic_ai import (
 from backend.agent import message_store
 from backend.agent.message_store import SESSION_GAP
 
-# The app's one conversation with the coach
-MAIN = "coach"
 # Starts a prompt the coach gave itself, such as a review after a sync; its first line is what
 # the chat shows in its place ("After your run: Test 5k")
 EVENT_MARK = "⟳ "

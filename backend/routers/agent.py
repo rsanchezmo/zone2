@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from backend.agent import load_module, preferences, reviews
+from backend.agent import load_module, message_store, preferences, reviews
 from backend.agent import usage as agent_usage
 from backend.db import connect_db, get_db
 from backend.dependencies import get_z2
@@ -40,16 +40,16 @@ async def usage(days: int = Query(default=30, ge=1, le=365), db: aiosqlite.Conne
 
 @router.get("/status")
 async def status(db: aiosqlite.Connection = Depends(get_db)):
-    """Whether the agent can answer (a key for its model's provider), its model, and how many
-    of its reviews are unread."""
+    """Whether the agent can answer (a key for its model's provider), its model, and how many of
+    its turns, replies and reviews alike, the athlete hasn't seen."""
     model = await preferences.model(db)
-    return {"available": preferences.has_key(model), "model": model, "unread": await reviews.unread(db)}
+    return {"available": preferences.has_key(model), "model": model, "unread": await message_store.unread(db)}
 
 
 @router.post("/seen")
 async def seen(db: aiosqlite.Connection = Depends(get_db)):
-    """The athlete opened the chat: its reviews so far are read."""
-    await reviews.mark_seen(db)
+    """The athlete has the chat in front of them: what the coach wrote so far is seen."""
+    await message_store.mark_seen(db)
     return {"unread": 0}
 
 
@@ -130,10 +130,8 @@ async def chat_turn(turn: ChatTurn, z2: Zone2 = Depends(get_z2)):
     it wants to make come back as `pending` in the final `done` event, for approval."""
     await _check_available()
     chat = await load_module("chat")
-    conversations = await load_module("conversations")
-    conversation_id = turn.conversation_id or conversations.MAIN
-    return _streamed(chat, z2, catch_up=True, conversation_id=conversation_id, page=turn.page,
-                     message=turn.message)
+    return _streamed(chat, z2, catch_up=True, conversation_id=turn.conversation_id or message_store.MAIN,
+                     page=turn.page, message=turn.message)
 
 
 @router.post("/approve")
