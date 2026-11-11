@@ -3,7 +3,7 @@ import clsx from 'clsx'
 import type { ActivityDetail, ActivityRoute } from '../../api/hooks'
 import { getSportColor } from '../../constants/sportColors'
 import {
-  getSportCategory, convertSpeed, formatPace, formatClockDuration, isSpeedSport,
+  getSportCategory, isOnFoot, convertSpeed, formatPace, formatClockDuration, isSpeedSport,
 } from '../../utils/formatSpeed'
 import MapView, { type KmMarker } from '../shared/MapView'
 import type { Split } from './activityData'
@@ -72,7 +72,7 @@ export default function RouteMap({ activity, positions, velocities, splits, matc
       ]
       if (split.avgHR != null) tooltipLines.push(`HR: ${split.avgHR} bpm`)
       if (split.elevGain > 0 || split.elevLoss > 0) tooltipLines.push(`Elev: +${split.elevGain}m / -${split.elevLoss}m`)
-      if (split.avgCadence != null) tooltipLines.push(`Cadence: ${split.avgCadence} ${sportCategory === 'running' ? 'spm' : 'rpm'}`)
+      if (split.avgCadence != null) tooltipLines.push(`Cadence: ${split.avgCadence} ${isOnFoot(sportCategory) ? 'spm' : 'rpm'}`)
 
       markers.push({ position: pos, km: split.km, tooltipLines })
     }

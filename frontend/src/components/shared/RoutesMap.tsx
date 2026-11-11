@@ -12,6 +12,7 @@ import { useEscapeKey } from '../../hooks/useEscapeKey'
 import { tileLayerAttribution, tileLayerClass, tileLayerUrl } from '../../utils/mapTiles'
 import { InvalidateSize } from './leafletHelpers'
 import { FullscreenIcon } from './mapChrome'
+import { tooltipContent } from './mapTooltip'
 import { MapStyleToggle, SATELLITE_ATTR, SATELLITE_TILES, type MapStyle } from './MapStyleToggle'
 import { routeBounds, routesSignature, type CornerBounds, type DecodedRoute } from './routes'
 
@@ -91,7 +92,7 @@ export default function RoutesMap({
         click: () => navigate(`/activities/${route.id}`),
         mouseover: e => {
           e.target.setStyle({ weight: 4, opacity: 1 })
-          e.target.bindTooltip(`${route.sport_type}: ${route.name}`, { sticky: true }).openTooltip()
+          e.target.bindTooltip(tooltipContent({ text: `${route.sport_type}: ${route.name}` }), { sticky: true }).openTooltip()
         },
         mouseout: e => {
           e.target.setStyle({ weight: 2, opacity: 0.6 })

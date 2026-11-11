@@ -3,7 +3,7 @@ import type { ActivityDetail } from '../../api/hooks'
 import { getSportColor } from '../../constants/sportColors'
 import { useTheme } from '../../hooks/useTheme'
 import {
-  getSportCategory, formatPace, formatClockDuration, distValue, getDistUnit,
+  getSportCategory, isOnFoot, formatPace, formatClockDuration, distValue, getDistUnit,
 } from '../../utils/formatSpeed'
 import StatCard from '../shared/StatCard'
 import ChartPanel from '../shared/ChartPanel'
@@ -34,8 +34,8 @@ export function ActivityMetrics({ activity, overallGap }: { activity: ActivityDe
       {activity.average_cadence && (
         <StatCard
           label="Cadence"
-          value={Math.round(activity.average_cadence * (sportCategory === 'running' ? 2 : 1))}
-          unit={sportCategory === 'running' ? 'spm' : 'rpm'}
+          value={Math.round(activity.average_cadence * (isOnFoot(sportCategory) ? 2 : 1))}
+          unit={isOnFoot(sportCategory) ? 'spm' : 'rpm'}
           color="text-blue-400"
         />
       )}

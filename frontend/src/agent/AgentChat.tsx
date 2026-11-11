@@ -19,6 +19,8 @@ import { Listener } from './listener'
 // The app's one conversation with the coach (backend/agent/conversations.py MAIN)
 const CONVERSATION = 'coach'
 const REMARK_PLUGINS = [remarkGfm]
+// The catch-up before a turn (routers/agent.py) and the coach's own sync_now
+const SYNC_STEPS = new Set(['sync', 'sync_now'])
 
 /** Questions to start from, on an empty chat. */
 const STARTERS = [
@@ -86,7 +88,6 @@ const STEP_LABEL: Record<string, string> = {
 const CAPABILITY_LABEL: Record<string, string> = {
   gear: 'Looking at your gear',
   history: 'Looking back at your years',
-  sleep: 'Looking at your sleep',
   workouts: 'Opening the workout library',
 }
 
@@ -378,7 +379,7 @@ export default function AgentChat({ open, expanded, busy, onBusyChange, onOpenPa
     if (event.type === 'open') return onOpenPage(event.path)
     setThinking(false)
     // Outside the state update, which React may run twice
-    if (event.type === 'tool_done' && event.tool === 'sync') refreshPages(qc)
+    if (event.type === 'tool_done' && SYNC_STEPS.has(event.tool)) refreshPages(qc)
     const at = Date.now()
     setItems(prev => {
       const next = [...(prev ?? [])]

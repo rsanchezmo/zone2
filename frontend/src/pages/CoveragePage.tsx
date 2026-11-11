@@ -15,6 +15,7 @@ import { useNow } from '../hooks/useNow'
 import { useTheme } from '../hooks/useTheme'
 import { InvalidateSize } from '../components/shared/leafletHelpers'
 import { FullscreenIcon } from '../components/shared/mapChrome'
+import { tooltipContent } from '../components/shared/mapTooltip'
 import { tileLayerAttribution, tileLayerClass, tileLayerUrl } from '../utils/mapTiles'
 import { geojsonBounds, identityOf } from '../utils/geojson'
 import { useEscapeKey } from '../hooks/useEscapeKey'
@@ -46,21 +47,6 @@ function heatColor(t: number): string {
     return Math.round(a + f * (b - a))
   }
   return `rgb(${mix(16)},${mix(8)},${mix(0)})`
-}
-
-/** A district's tooltip, built from nodes so an OSM name is always text, never markup. */
-function districtTip(name: string, pct: number, coveredKm: number, totalKm: number, color: string): HTMLElement {
-  const tip = document.createElement('div')
-  const line = (className: string, text: string) => {
-    const span = document.createElement('span')
-    span.className = className
-    span.textContent = text
-    return tip.appendChild(span)
-  }
-  line('district-tip-name', name)
-  line('district-tip-pct', `${pct.toFixed(1)}%`).style.color = color
-  line('district-tip-km', `${coveredKm.toFixed(1)} / ${totalKm.toFixed(1)} km`)
-  return tip
 }
 
 function FitToLayer({ data }: { data: GeoJSON.GeoJsonObject | undefined }) {
@@ -415,7 +401,11 @@ export default function CoveragePage() {
     }
     const path = layer as L.Path
     path.bindTooltip(
-      districtTip(p.name, p.pct, p.covered_km, p.total_km, districtColor),
+      tooltipContent(
+        { text: p.name, className: 'district-tip-name' },
+        { text: `${p.pct.toFixed(1)}%`, className: 'district-tip-pct', color: districtColor },
+        { text: `${p.covered_km.toFixed(1)} / ${p.total_km.toFixed(1)} km`, className: 'district-tip-km' },
+      ),
       { sticky: true, className: 'district-tip', direction: 'top', opacity: 1 },
     )
     path.on({

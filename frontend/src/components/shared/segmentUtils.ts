@@ -61,10 +61,12 @@ export interface WorkoutBlock {
 // km/h for a step with no pace target, and the ceiling an easy pace is anchored to
 const ASSUMED_SPEED: Record<SportCategory, { easy: number; hard: number }> = {
   running: { easy: 10, hard: 13.3 },
+  walking: { easy: 5, hard: 6.5 },
   swimming: { easy: 2.7, hard: 3.4 },
   cycling: { easy: 24, hard: 32 },
   water: { easy: 7, hard: 10 },
   speed: { easy: 8, hard: 12 },
+  other: { easy: 10, hard: 13.3 },
 }
 
 function targetSpeed(seg: Segment, sportType: string): number | null {

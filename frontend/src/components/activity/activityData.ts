@@ -1,6 +1,6 @@
 import polyline from '@mapbox/polyline'
 import type { ActivityDetail, ActivityHrRecovery, ActivityStreamPoint as StreamPoint } from '../../api/hooks'
-import { convertSpeed, getSportCategory } from '../../utils/formatSpeed'
+import { convertSpeed, getSportCategory, isOnFoot } from '../../utils/formatSpeed'
 
 export interface Split {
   km: number
@@ -101,7 +101,7 @@ function computeSplits(streams: StreamPoint[], sportType: string | undefined, ga
         avgPace,
         gapPace,
         avgHR: hrCount > 0 ? Math.round(hrSum / hrCount) : null,
-        avgCadence: cadCount > 0 ? Math.round((cadSum / cadCount) * (cat === 'running' ? 2 : 1)) : null,
+        avgCadence: cadCount > 0 ? Math.round((cadSum / cadCount) * (isOnFoot(cat) ? 2 : 1)) : null,
         elevGain: Math.round(elevGain),
         elevLoss: Math.round(elevLoss),
       })

@@ -3,6 +3,9 @@
  * Mirrors the backend logic in zone2/utils.py exactly.
  */
 
+const RUNNING_SPORTS = new Set(['run', 'trailrun', 'virtualrun'])
+// Foot sports that aren't runs: read as pace, but never count as running
+const WALKING_SPORTS = new Set(['walk', 'hike', 'snowshoe'])
 const CYCLING_SPORTS = new Set([
   'ride', 'virtualride', 'ebikeride', 'handcycle', 'velomobile',
   'gravelride', 'mountainbikeride', 'emountainbikeride', 'rollerski',
@@ -20,20 +23,30 @@ const SPEED_SPORTS = new Set([
   'soccer', 'basketball', 'volleyball', 'cricket', 'golf',
 ])
 
-export type SportCategory = 'cycling' | 'swimming' | 'water' | 'speed' | 'running'
+export type SportCategory = 'running' | 'walking' | 'cycling' | 'swimming' | 'water' | 'speed' | 'other'
 
+// Read as speed (km/h) rather than pace
+const SPEED_CATEGORIES: ReadonlySet<SportCategory> = new Set(['cycling', 'water', 'speed'])
+
+/** The category of a Strava sport type, 'other' for one it doesn't know. */
 export function getSportCategory(sportType: string | undefined | null): SportCategory {
   const key = (sportType ?? '').toLowerCase().replace(/\s/g, '')
+  if (RUNNING_SPORTS.has(key)) return 'running'
+  if (WALKING_SPORTS.has(key)) return 'walking'
   if (CYCLING_SPORTS.has(key)) return 'cycling'
   if (SWIMMING_SPORTS.has(key)) return 'swimming'
   if (WATER_SPORTS.has(key)) return 'water'
   if (SPEED_SPORTS.has(key)) return 'speed'
-  return 'running'
+  return 'other'
 }
 
 export function isSpeedSport(sportType: string | undefined | null): boolean {
-  const cat = getSportCategory(sportType)
-  return cat === 'cycling' || cat === 'water' || cat === 'speed'
+  return SPEED_CATEGORIES.has(getSportCategory(sportType))
+}
+
+/** Strava counts a foot sport's cadence per leg: doubled, it is steps per minute. */
+export function isOnFoot(category: SportCategory): boolean {
+  return category === 'running' || category === 'walking'
 }
 
 /** Convert m/s to sport-appropriate numeric value and unit. */
@@ -42,7 +55,7 @@ export function convertSpeed(speedMs: number, sportType: string | undefined | nu
   const cat = getSportCategory(sportType)
   if (cat === 'swimming') {
     return { value: (100 / speedMs) / 60, unit: 'min/100m' }
-  } else if (cat === 'cycling' || cat === 'water' || cat === 'speed') {
+  } else if (SPEED_CATEGORIES.has(cat)) {
     return { value: speedMs * 3.6, unit: 'km/h' }
   }
   return { value: (1000 / speedMs) / 60, unit: 'min/km' }
@@ -70,8 +83,7 @@ export function parsePaceInput(s: string, useSpeed: boolean): number {
 export function formatSpeed(speedMs: number, sportType: string | undefined | null): string {
   if (speedMs <= 0) return 'N/A'
   const { value, unit } = convertSpeed(speedMs, sportType)
-  const cat = getSportCategory(sportType)
-  if (cat === 'cycling' || cat === 'water' || cat === 'speed') {
+  if (isSpeedSport(sportType)) {
     return `${value.toFixed(1)} ${unit}`
   }
   // Pace-based: format as M:SS /unit
@@ -85,7 +97,7 @@ export function formatSpeed(speedMs: number, sportType: string | undefined | nul
 export function getPaceUnit(sportType: string | undefined | null): string {
   const cat = getSportCategory(sportType)
   if (cat === 'swimming') return 'min/100m'
-  if (cat === 'cycling' || cat === 'water' || cat === 'speed') return 'km/h'
+  if (SPEED_CATEGORIES.has(cat)) return 'km/h'
   return 'min/km'
 }
 

@@ -2,7 +2,7 @@ import clsx from 'clsx'
 import type { ActivityDetail } from '../../api/hooks'
 import { useTheme } from '../../hooks/useTheme'
 import {
-  getSportCategory, convertSpeed, formatPace, formatClockDuration, formatDist, isSpeedSport,
+  getSportCategory, isOnFoot, convertSpeed, formatPace, formatClockDuration, formatDist, isSpeedSport,
 } from '../../utils/formatSpeed'
 import { paceUnitOf } from './activityData'
 
@@ -95,7 +95,7 @@ export default function SegmentEfforts({ activity }: { activity: ActivityDetail 
                 )}
                 {avgCadence != null && (
                   <span className="font-mono text-blue-400/80">
-                    {Math.round(avgCadence * (sportCategory === 'running' ? 2 : 1))} {sportCategory === 'running' ? 'spm' : 'rpm'}
+                    {Math.round(avgCadence * (isOnFoot(sportCategory) ? 2 : 1))} {isOnFoot(sportCategory) ? 'spm' : 'rpm'}
                   </span>
                 )}
                 {avgWatts != null && (

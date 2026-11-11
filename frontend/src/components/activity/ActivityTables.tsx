@@ -3,7 +3,7 @@ import type { ActivityDetail } from '../../api/hooks'
 import { getSportColor } from '../../constants/sportColors'
 import { useTheme } from '../../hooks/useTheme'
 import {
-  getSportCategory, convertSpeed, formatPace, formatClockDuration, formatDist, isSpeedSport,
+  getSportCategory, isOnFoot, convertSpeed, formatPace, formatClockDuration, formatDist, isSpeedSport,
 } from '../../utils/formatSpeed'
 import ChartPanel from '../shared/ChartPanel'
 import { paceUnitOf, type Split } from './activityData'
@@ -78,7 +78,7 @@ export function LapsTable({ activity }: { activity: ActivityDetail }) {
                   )}
                   {laps.some(l => l.average_cadence) && (
                     <td className="py-2 px-3 text-right text-blue-400 font-mono">
-                      {lap.average_cadence ? Math.round((lap.average_cadence as number) * (sportCategory === 'running' ? 2 : 1)) : '–'}
+                      {lap.average_cadence ? Math.round((lap.average_cadence as number) * (isOnFoot(sportCategory) ? 2 : 1)) : '–'}
                     </td>
                   )}
                 </tr>
