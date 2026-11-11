@@ -30,7 +30,7 @@ CYCLING_SPORTS = {
     'gravelride', 'mountainbikeride', 'emountainbikeride', 'rollerski',
 }
 SWIMMING_SPORTS = {'swim'}
-WATER_SPORTS = {'canoeing', 'standuppaddling', 'kayaking', 'surfing', 'kitesurf', 'rowing', 'windsurf', 'sail'}
+WATER_SPORTS = {'canoeing', 'standuppaddling', 'kayaking', 'surfing', 'kitesurf', 'rowing', 'virtualrow', 'windsurf', 'sail'}
 SPEED_SPORTS = {
     'squash', 'tennis', 'pickleball', 'racquetball', 'badminton', 'tabletennis', 'padel',
     'weighttraining', 'workout', 'yoga', 'pilates', 'crossfit', 'highintensityintervaltraining',

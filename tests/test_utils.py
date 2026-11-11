@@ -41,8 +41,6 @@ def test_strava_sport_types_map_to_their_category(category, sport_types):
     assert wrong == {}
 
 
-@pytest.mark.xfail(reason="VirtualRow is missing from WATER_SPORTS (Rowing is there, as VirtualRide and "
-                          "VirtualRun are with theirs), so indoor rows read as OTHER, in min/km")
 def test_virtual_row_reads_like_rowing():
     assert get_sport_category("VirtualRow") == get_sport_category("Rowing")
 

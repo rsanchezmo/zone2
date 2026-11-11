@@ -189,7 +189,7 @@ class StravaAnalytics:
         zones = []
         low = 0
         for pct in boundaries:
-            high = int(hr_max * pct)
+            high = round(hr_max * pct)
             zones.append({'min': low, 'max': high})
             low = high
         zones.append({'min': low, 'max': hr_max})

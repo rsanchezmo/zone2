@@ -126,8 +126,6 @@ def test_zones_estimated_from_max_heart_rate():
     ]
 
 
-@pytest.mark.xfail(reason="int(hr_max * pct) truncates float error: 180 * 0.7 is 125.999..., so Z2 tops out "
-                          "at 125 instead of 126 (max HR 170 too)")
 def test_default_zone_bounds_are_exact_percentages():
     analytics, _ = make_analytics()
     assert [z["max"] for z in analytics._build_default_zones(180)] == [108, 126, 144, 162, 180]
