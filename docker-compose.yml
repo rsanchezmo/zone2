@@ -1,8 +1,9 @@
 services:
   app:
     build: .
+    # Loopback only: the app has no auth of its own, Cloudflare Access fronts it
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     env_file: .env
     volumes:
       - strava-data:/app/.strava

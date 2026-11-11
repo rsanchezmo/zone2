@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Auto-deploy: fetch the configured branch, rebuild Docker services when
-# origin has commits newer than the last deployed SHA (.git/last-deployed-sha).
+# Auto-deploy: fetch the configured branch, check it out and rebuild Docker
+# services when origin's tip differs from the last deployed SHA
+# (.git/last-deployed-sha).
 #
 # Designed for systemd-timer driven use (see deploy/z2-deploy.timer) but
 # safe to run manually too:
@@ -49,12 +50,6 @@ if ! git show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
   exit 1
 fi
 
-# If the local branch doesn't exist yet, create it tracking origin.
-if ! git show-ref --verify --quiet "refs/heads/$BRANCH"; then
-  log "Local $BRANCH branch missing; creating from origin/$BRANCH"
-  git branch --track "$BRANCH" "origin/$BRANCH"
-fi
-
 REMOTE="$(git rev-parse "origin/$BRANCH")"
 DEPLOYED="$(cat "$STATE_FILE" 2>/dev/null || true)"
 
@@ -64,14 +59,17 @@ if [ "$REMOTE" = "$DEPLOYED" ]; then
 fi
 
 log "Deploying $BRANCH: ${DEPLOYED:-<unknown>} → $REMOTE"
-if [ -n "$DEPLOYED" ] && git cat-file -e "$DEPLOYED^{commit}" 2>/dev/null; then
+if [ -n "$DEPLOYED" ] && git merge-base --is-ancestor "$DEPLOYED" "$REMOTE" 2>/dev/null; then
   log "New commits:"
   git log --oneline --no-color "$DEPLOYED..$REMOTE" | sed 's/^/  /'
+elif [ -n "$DEPLOYED" ]; then
+  log "origin/$BRANCH was rewritten since the last deploy."
 fi
 
-# ── Pull + rebuild ─────────────────────────────────────────────────────
-git checkout --quiet "$BRANCH"
-git pull --ff-only --quiet origin "$BRANCH"
+# ── Checkout + rebuild ─────────────────────────────────────────────────
+# Follows the remote ref even after a force-push. Local edits to tracked files
+# are discarded; untracked files (docker-compose.override.yml, .env) are kept.
+git checkout --quiet --force -B "$BRANCH" "origin/$BRANCH"
 
 log "Rebuilding Docker services..."
 $COMPOSE up -d --build

@@ -14,39 +14,6 @@ No ports are opened on your network. Cloudflare handles TLS, DNS, and
 authentication. SSH into the Pi can go through the same tunnel (see
 [SSH over the tunnel](#ssh-over-the-tunnel) below).
 
-## Migrating an existing install (renamed from `strava-intelligence`)
-
-Nothing breaks if you skip this — `auto-deploy.sh` resolves its own repo root,
-so an existing checkout keeps deploying under the old directory name. Do it
-only if you want the Pi to match the docs:
-
-```bash
-# 1. Stop the stack under the OLD Compose project name, or the renamed
-#    directory yields a second project whose containers fight for :8000.
-cd /home/pi/strava-intelligence
-docker compose down
-
-# 2. Swap the systemd units
-sudo systemctl disable --now strava-deploy.timer strava-healthcheck.timer
-sudo rm /etc/systemd/system/strava-{deploy,healthcheck}.{service,timer}
-sudo mv /etc/strava-healthcheck.env /etc/z2-healthcheck.env
-
-# 3. Rename the checkout and reinstall
-mv /home/pi/strava-intelligence /home/pi/zone2
-cd /home/pi/zone2
-sudo cp deploy/z2-*.service deploy/z2-*.timer /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now z2-deploy.timer z2-healthcheck.timer
-
-# 4. Bring it back up
-docker compose up -d --build
-```
-
-Your data survives: `docker-compose.yml` pins the volume names to
-`strava-intelligence_strava-data` / `..._strava-workdir`, so they stay attached
-no matter what the directory or Compose project is called. Only the container's
-workdir mount path moves, to `/app/zone2_workdir`.
-
 ## Prerequisites
 
 - A domain name (any registrar works)
@@ -139,34 +106,29 @@ With this option, disable the compose `cloudflared` service (see the
 
 ## Step 4: Seed the cache (skip first-time OAuth)
 
-The first-time OAuth flow in `strava_endpoint.py` uses `webbrowser.open()` +
+The first-time OAuth flow in `zone2/endpoint.py` uses `webbrowser.open()` +
 `input()`, which doesn't work on a headless Pi. The simplest fix is to run the
 app locally once on your laptop, complete OAuth there, then copy the populated
 `.strava/` directory onto the Pi before the first `docker compose up`.
 
 On your laptop, after running the app once and authorizing with Strava, the
 `.strava/` folder contains `token.json`, `metadata.json`, and cached Parquet
-activity files. The `cache/` folder next to it holds SHA-indexed user-data
-JSON (populated by `StravaUserCache`). **Both directories are gitignored**,
-so a fresh `git clone` on the Pi has neither — rsync them before the first
-build (the Dockerfile `COPY`s `cache/`, so the build fails without it):
+activity files. **It is gitignored**, so a fresh `git clone` on the Pi doesn't
+have it — rsync it before the first start:
 
 ```bash
 # On the Pi, switch to bind-mounts first (see docker-compose.override.yml below).
 rsync -avz --delete ./.strava/ pi:/home/pi/zone2/strava-data/
-rsync -avz           ./cache/  pi:/home/pi/zone2/cache/
 ```
 
 Instead of editing the tracked `docker-compose.yml`, drop a
 `docker-compose.override.yml` next to it on the Pi — it's auto-merged by
-compose and left alone by `git pull`:
+compose and left alone by the deploy checkout:
 
 ```yaml
 # docker-compose.override.yml — Pi only, not committed
 services:
   app:
-    ports: !override
-      - "127.0.0.1:8000:8000"     # loopback-only; host cloudflared reaches it
     volumes: !override
       - ./strava-data:/app/.strava
       - ./strava-workdir:/app/zone2_workdir
@@ -180,13 +142,17 @@ volumes:
 
 The `!override` tag replaces (rather than merges) the base list, and
 `!reset null` drops the named volumes inherited from `docker-compose.yml`.
-Binding the app port to `127.0.0.1` keeps it off the LAN — Cloudflare Tunnel
-is the only path in.
 
-> If you prefer the token-in-Docker cloudflared flow (Step 2), drop the
-> `cloudflared: profiles: ["disabled"]` block and publish the port as
-> `"8000:8000"` (or keep loopback-only since both containers share the
-> compose network).
+`docker-compose.yml` publishes the app on `127.0.0.1:8000` only: the app has
+no auth of its own, so Cloudflare Tunnel (behind Access) is the only path in.
+A host cloudflared (Option B) reaches it at `localhost:8000`; the compose
+cloudflared (Option A) reaches it at `app:8000` over the compose network.
+
+> If you prefer the token-in-Docker cloudflared flow (Option A), drop the
+> `cloudflared: profiles: ["disabled"]` block.
+>
+> To open the app to other devices on your LAN, without Access in front of it,
+> add `ports: !override ["8000:8000"]` under `app` in the override.
 
 ## Step 5: Deploy on the Pi
 
@@ -215,7 +181,7 @@ docker compose logs -f
 ## Auto-deploy on push
 
 Once the first manual deploy works, enable the included systemd timer so the
-Pi automatically pulls + rebuilds whenever the `prod` branch moves forward.
+Pi automatically checks out + rebuilds whenever the `prod` branch moves.
 See [`deploy/README.md`](./deploy/README.md) for full details. Short version:
 
 ```bash
@@ -343,8 +309,7 @@ If the auto-deploy timer isn't installed or you want to deploy without waiting:
 
 ```bash
 cd /home/pi/zone2
-git pull
-docker compose up -d --build
+./scripts/auto-deploy.sh   # checks out origin/prod and rebuilds if it moved
 ```
 
 If the timer is installed, prefer:
@@ -365,7 +330,7 @@ sudo systemctl start z2-deploy.service
 - **Strava auth issues on the Pi**: if the cache wasn't seeded and you hit
   the interactive OAuth prompt, the container will wait forever for input.
   Either seed `.strava/` (Step 4) or attach a TTY and paste the code:
-  `docker compose run --rm app python -c "from strava.strava_endpoint import StravaEndpoint; StravaEndpoint()"`.
+  `docker compose run --rm app python -c "from zone2.endpoint import StravaEndpoint; StravaEndpoint()"`.
 - **`docker: permission denied` during auto-deploy**: the `pi` user must be
   in the `docker` group — `sudo usermod -aG docker pi`, then log out and
   back in.

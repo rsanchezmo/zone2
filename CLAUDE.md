@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-z2 is a full-stack application for analyzing and visualizing Strava activities locally, without Strava Premium. It syncs activities via the Strava API, caches them as Parquet files, and provides a React web app with dashboards, personal records, training calendar, and map visualizations — plus a Telegram bot and CLI-generated neon-styled PNG reports.
+z2 is a full-stack application for analyzing and planning training locally. It syncs activities via the Strava API (and, optionally, wellness data, workouts and courses with Garmin Connect), caches them as Parquet files, and provides a React web app with a training calendar, analytics, records, street coverage maps and an AI coach — plus a Telegram bot and neon-styled PNG reports.
 
 ## Setup & Running
 
@@ -27,18 +27,20 @@ python main.py
 # Run the Telegram bot (requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env)
 python telegram_bot.py
 
-# Docker deployment (includes Cloudflare Tunnel support)
-docker-compose up
+# Docker deployment (includes Cloudflare Tunnel support, see DEPLOY.md)
+docker compose up
 ```
 
 **Environment variables** (`.env` file in project root):
 - `STRAVA_CLIENT_ID` / `STRAVA_CLIENT_SECRET` — required for API access
 - `STRAVA_WEB_*` — backend config (loaded via Pydantic settings in `backend/config.py`)
+- `GARMIN_EMAIL` / `GARMIN_PASSWORD` — optional, enables the Garmin Connect integration
+- `OPENAI_API_KEY` — optional, for the coach agent
 - `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` — optional, for the Telegram bot
 - `CLOUDFLARE_TUNNEL_TOKEN` — optional, for Docker deployment with Cloudflare Tunnel
 - `STRAVA_WEB_CARTO_API_KEY` — optional; without it Leaflet basemaps fall back to OSM, since unkeyed CARTO tiles are watermarked
 
-There are no tests or CI configured. The frontend has ESLint (react-hooks v7 / React Compiler rules) — keep `cd frontend && npm run lint` and `npx tsc -b` at zero errors.
+There are no tests. CI (`.github/workflows/ci.yml`) runs ESLint (react-hooks v7 / React Compiler rules), the frontend build (`tsc -b` + Vite), ruff (E9/F only), an import smoke test (`import backend.app, telegram_bot`) and `docker build .` — keep `cd frontend && npm run lint` and `npx tsc -b` at zero errors.
 
 ## Architecture
 
@@ -50,9 +52,11 @@ There are no tests or CI configured. The frontend has ESLint (react-hooks v7 / R
 Zone2
 ├── StravaEndpoint          — Strava API client (OAuth, activity/stream fetching)
 ├── StravaActivitiesCache   — Local Parquet-based activity storage with lazy in-memory loading
-├── StravaUserCache          — Cached user profile/zones data
-├── StravaAnalytics          — Computes stats (year-in-sport, weekly reports, HR zones, race predictions)
-└── StravaVisualizer         — All matplotlib visualizations (heatmaps, dashboards, reports)
+├── StravaUserCache         — Athlete profile/zones (in memory) and gear (`.strava/gear.json`)
+├── GarminClient            — Optional Garmin Connect client (wellness, workouts, courses); off without GARMIN_EMAIL
+├── GarminDailyStatsCache   — Garmin daily wellness payloads in SQLite (`calendar.db`) + their sync
+├── StravaAnalytics         — Computes stats (year-in-sport, weekly reports, HR zones, race predictions)
+└── StravaVisualizer        — All matplotlib visualizations (heatmaps, dashboards, reports)
 ```
 
 ### Data Flow
@@ -65,28 +69,35 @@ Zone2
 
 ### Web App (Frontend + Backend)
 
-**Backend** (`backend/`): FastAPI app with 8 API routers at `/api/*`:
+**Backend** (`backend/`): FastAPI app with 18 API routers at `/api/*`:
 - `activities.py` — List, filter, sort activities; polylines for maps; similar activities
 - `stats.py` — Weekly reports, year-in-sport, personal records, race predictions, relative effort, streaks
 - `calendar.py` — Training session CRUD, scoring
 - `exports.py` — PNG image generation (weekly reports, heatmaps, activity plots)
 - `sync.py` — Background sync tasks, stream backfill, cache status
 - `athlete.py` — Profile, rate limits, HR zones
+- `gear.py` — Gear with activity rollups
 - `goals.py` — Yearly goal CRUD with progress tracking
+- `races.py` — Race calendar
+- `garmin.py` — Garmin wellness (sleep, HRV, readiness, body battery), Garmin sync
+- `coverage.py` / `plans.py` — City street coverage and planned exploration loops (see Map Matching)
+- `calendar_feed.py` — Token-authed iCal feed of the calendar
+- `agent.py` / `coach.py` — Coach chat (websocket), approvals and reviews; training plans, coach log and notes
+- `routers/config.py` — Runtime settings for the browser; `health.py` — liveness probe
 - `workouts.py` — Saved workouts (templates with segments). Saved run workouts are mirrored to the Garmin Connect library and sessions planned from them get Garmin calendar entries (`services/garmin_workouts.py`, reconciled after each Garmin sync); a structured session saved in the calendar links to the saved workout with the same steps or saves a new one (`services/workout_library.py`)
 - `dependencies.py` — DI providing `Zone2` singleton
-- `config.py` — Pydantic settings (`workdir`, `cors_origins`, `sync_max_age_hours`)
-- `db.py` — SQLite via aiosqlite at `.strava/calendar.db` (tables: `training_sessions`, `goals`, `workout_templates`)
+- `config.py` — Pydantic settings (`STRAVA_WEB_*`: workdir, CORS origins, auto-sync intervals, coach model, CARTO key)
+- `db.py` — SQLite via aiosqlite at `.strava/calendar.db`: calendar and planning (`training_sessions`, `goals`, `workout_templates`, `race_events`, `planned_routes`, `garmin_workout_schedules`, `user_settings`), Garmin wellness (`garmin_daily_stats`, `garmin_daily_summary`) and the coach (`training_plans`, `plan_checkpoints`, `coach_log`, `agent_conversations`, `agent_notes`, `agent_usage`, `agent_reviews`)
 - `agent/` — the z2 agent (Pydantic AI): one agent for every page that answers from your data and, with your approval, writes to it. `backend/agent/README.md` has the design, layout, build order and how to run it. Its tools call `backend/services/`, never routers; `python -m backend.agent call TOOL '{json}'` runs a tool without a model. The app imports nothing from Pydantic AI at startup (it costs ~60 MB on the Pi)
 
 **Frontend** (`frontend/`): React 19 + TypeScript + Vite SPA:
 - **Stack**: TailwindCSS 4, React Router 7, TanStack React Query, Recharts, Leaflet
-- **Pages** (8): Dashboard, Activities, ActivityDetail, Calendar, Aggregations, PersonalRecords, Profile, Workouts
+- **Pages** (15): Calendar (home), Dashboard, Activities, ActivityDetail, Aggregations, Analytics, PersonalRecords, Races, Workouts, Coverage, Garmin, Coach, CoachPlan, GearDetail, Profile
 - **Layout**: `AppShell` with dock navigation, dark/light theme support
-- **API layer**: Axios client at `/api`, 40+ React Query hooks in `api/hooks.ts`
+- **API layer**: Axios client at `/api`, 100+ React Query hooks in `api/hooks.ts`
 - **Dev**: Vite dev server on :5173 proxies `/api` to backend on :8000
 
-**Deployment**: Multi-stage Dockerfile (Node 22 builds frontend → Python 3.12 serves via Uvicorn); docker-compose with optional Cloudflare Tunnel
+**Deployment**: Multi-stage Dockerfile (Node 22 builds frontend → Python 3.12 serves via Uvicorn); docker-compose publishes the app on `127.0.0.1:8000` only (it has no auth of its own) behind Cloudflare Tunnel + Access; `scripts/auto-deploy.sh` (systemd timer in `deploy/`) redeploys the `prod` branch. See `DEPLOY.md`
 
 ### Map Matching (separate entry point)
 
@@ -108,6 +119,4 @@ Zone2
 ### Files of Note
 
 - `run_dev.py` — Runs backend + frontend dev servers concurrently
-- `zone2/mcp.py` — Placeholder for future MCP server integration (currently empty)
 - `main.py` — Sandbox/example script, not a library entry point
-- `cache/` — SHA-based JSON cache files (for user data caching via `StravaUserCache`)

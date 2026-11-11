@@ -37,3 +37,10 @@ jobs:
       - run: poetry install --no-root --only main
       # Imports every router and service the way uvicorn and the bot do, without credentials
       - run: poetry run python -c "import backend.app, telegram_bot"
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The image the server deploys; built only, never pushed
+      - run: docker build .

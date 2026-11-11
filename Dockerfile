@@ -1,8 +1,8 @@
 # Stage 1: Build frontend
 FROM node:22-slim AS frontend-build
 WORKDIR /app/frontend
-COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm install
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
@@ -34,8 +34,6 @@ RUN poetry install --no-root --only main
 # Copy application code
 COPY zone2/ ./zone2/
 COPY backend/ ./backend/
-COPY cache/ ./cache/
-COPY main.py ./
 
 # Copy built frontend from stage 1
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist

@@ -78,11 +78,11 @@ Everything z2 keeps is in two folders: `.strava/` (activities, streams, tokens, 
 ## Running it on a home server
 
 ```bash
-docker compose up -d --build        # the app on :8000, plus the Cloudflare Tunnel
+docker compose up -d --build        # the app on 127.0.0.1:8000, plus the Cloudflare Tunnel
 docker compose up -d --build app    # just the app
 ```
 
-A container can't do the interactive Strava login, so authorise once on your laptop and copy `.strava/` and `cache/` onto the server (the image build needs `cache/`). [DEPLOY.md](DEPLOY.md) walks through that, setting up Cloudflare Tunnel and Access, and an optional timer that redeploys when you push.
+The app has no login of its own, so it only listens on the server's loopback and Cloudflare Access guards the way in. A container can't do the interactive Strava login either, so authorise once on your laptop and copy `.strava/` onto the server. [DEPLOY.md](DEPLOY.md) walks through that, setting up Cloudflare Tunnel and Access, and an optional timer that redeploys when you push.
 
 ## Finding your way around
 
