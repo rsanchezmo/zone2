@@ -69,15 +69,65 @@ def test_via_points_are_on_the_loop(grid: ExplorationPlanner):
     assert [Point(xy).distance(loop.line) for xy in via] == [0.0, 0.0]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "zone2/route_planner.py:167-168 applies WAYPOINT_REACH (a share of the target length) to the "
-    "discounted routing cost d0, not to metres: where every street is new a street costs 0.4 of its "
-    "length, so waypoints 0.12-0.30 of the target away never qualify. Here a 2.4 km loop through "
-    "both corners exists (via a free waypoint 600 m away, 0.25 of the target) but none is returned"))
 def test_an_unexplored_grid_has_loops_through_its_corners(grid: ExplorationPlanner):
     loop = grid.plan(START, 2400.0, grid.length.copy(), np.zeros(len(grid.u)),
                      via_xy=[(0.0, 600.0), (600.0, 600.0)], seed=0)
     assert loop is not None
+    assert_closed_loop(grid, loop, START, 2400.0)
+
+
+def coverage(p: ExplorationPlanner, run: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """(missing, covered) metres per row with the rows flagged in `run` run and the rest not."""
+    return np.where(run, 0.0, p.length), np.where(run, p.length, 0.0)
+
+
+def doorstep(p: ExplorationPlanner) -> np.ndarray:
+    """The streets meeting at the start."""
+    return np.array([START in (g.coords[0], g.coords[-1]) for g in p.geoms])
+
+
+# Wanted streets are cheaper to route through, down to 0.4 of their length: the grid's far
+# corners, 600 m away (a quarter of these targets or less), must still be in reach
+@pytest.mark.parametrize("network, share", [
+    ("unexplored", 1.0), ("fully explored", 0.0), ("fully explored", 0.5),
+    ("doorstep run", 1.0), ("all run but the doorstep", 0.0), ("west half run", 0.5),
+])
+@pytest.mark.parametrize("target", [2400.0, 2800.0])
+def test_waypoints_are_reached_in_metres_whatever_the_streets_cost(grid: ExplorationPlanner, network: str,
+                                                                   share: float, target: float):
+    run = {"unexplored": np.zeros(len(grid.u), dtype=bool), "fully explored": np.ones(len(grid.u), dtype=bool),
+           "doorstep run": doorstep(grid), "all run but the doorstep": ~doorstep(grid),
+           "west half run": west_half_run(grid)[1] > 0}[network]
+    missing, covered = coverage(grid, run)
+    for seed in range(3):
+        loop = grid.plan(START, target, missing, covered, new_share=share, seed=seed)
+        assert loop is not None
+        assert_closed_loop(grid, loop, START, target)
+        assert loop.new_m == pytest.approx(missing[np.unique(loop.rows)].sum())
+
+
+def district_with_a_bridge() -> tuple[ExplorationPlanner, int]:
+    """A 7×7 grid and a 4×4 one across the water east of it, joined by a 200 m main road
+    bridge at y = 300; with the bridge's row."""
+    ua, va, ga = street_grid(7)
+    ub, vb, gb = street_grid(4, x0=800.0, first_id=100)
+    bridge = LineString([(600.0, 300.0), (700.0, 300.0), (800.0, 300.0)])
+    u, v = np.r_[ua, ub, [27]], np.r_[va, vb, [112]]
+    geoms = np.r_[ga, gb, np.array([bridge], dtype=object)]
+    return planner(u, v, geoms, {len(u) - 1: WayClass.MAIN_ROAD}), len(u) - 1
+
+
+def test_an_avoided_way_counts_its_avoid_cost_in_the_waypoint_reach():
+    p, bridge = district_with_a_bridge()
+    unrun, run = p.length.copy(), np.zeros(len(p.u))
+    # The far district is 300 + 200 m away, AVOID_COST × 200 m more over an avoided bridge:
+    # beyond the reach of a 2.4 km loop, which then fits on the near side
+    for seed in range(3):
+        taking = p.plan(START, 2400.0, unrun, run, seed=seed)
+        avoiding = p.plan(START, 2400.0, unrun, run, avoid=frozenset({WayClass.MAIN_ROAD}), seed=seed)
+        assert taking is not None and (taking.rows == bridge).any()
+        assert avoiding is not None and not (avoiding.rows == bridge).any()
+        assert_closed_loop(p, avoiding, START, 2400.0)
 
 
 def test_avoided_ways_are_left_out_when_the_grid_goes_around_them():

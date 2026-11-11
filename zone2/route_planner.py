@@ -65,9 +65,10 @@ class ExplorationPlanner:
     # An avoided way costs this many times its length: taken only where
     # nothing else connects (a bridge, the one road out)
     AVOID_COST = 5.0
-    # Waypoint candidates: this many, at this share of the target length from the start
+    # Waypoint candidates: this many, at this share of the target length from the start; out
+    # past (1 - LENGTH_TOLERANCE) / 2, where a lone waypoint's out-and-back is long enough
     CANDIDATES = 36
-    WAYPOINT_REACH = (0.12, 0.42)
+    WAYPOINT_REACH = (0.12, 0.46)
     # Missing streets shorter than this (junction slivers) aren't worth a detour
     MIN_NEW_M = 20.0
     # Smaller connected parts of the network are islands a start never snaps to
@@ -132,6 +133,10 @@ class ExplorationPlanner:
         keep = keep[a[keep] != b[keep]]
         src, dst = np.r_[a[keep], b[keep]], np.r_[b[keep], a[keep]]
         graph = csr_matrix((np.r_[cost[keep], cost[keep]], (src, dst)), shape=(n, n))
+        # How far a waypoint is: the same edges in metres, undiscounted, an avoided way still
+        # AVOID_COST times its length so what lies only beyond one stays out of reach
+        reach_m = np.where(avoided, self.AVOID_COST * length, length)[keep]
+        metres = csr_matrix((np.r_[reach_m, reach_m], (src, dst)), shape=(n, n))
         # (from node, to node) -> network row, looked up by the sorted pair keys
         pair_key = src.astype(np.int64) * n + dst
         pair_order = np.argsort(pair_key)
@@ -155,7 +160,7 @@ class ExplorationPlanner:
                 raise UnreachablePoint(i)
             if node != start:
                 via.append(node)
-        d0 = dijkstra(graph, indices=start)
+        d0 = dijkstra(metres, indices=start)
 
         def density(per_row: np.ndarray) -> np.ndarray:
             at = np.zeros(n)
