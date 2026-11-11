@@ -188,12 +188,12 @@ async def review(z2: Zone2, activity_id: int, session: dict[str, Any]) -> None:
                 time.monotonic() - started, model, result.usage.requests)
 
 
-def transcript(messages: list[ModelMessage]) -> list[dict[str, Any]]:
+def transcript(messages: list[ModelMessage], starts: set[int]) -> list[dict[str, Any]]:
     """The conversation as the panel shows it: your words, the agent's, the tools between,
-    and where each session after the first began. A review the coach gave itself that ended
-    on a write waiting for a yes, without a word, shows the review it logged instead."""
+    and where each session after the first began (`starts`, indices into `messages`). A review
+    the coach gave itself that ended on a write waiting for a yes, without a word, shows the
+    review it logged instead."""
     out: list[dict[str, Any]] = []
-    starts = set(conversations.session_starts(messages)[1:])
     event_turn, said, logged = False, False, None
 
     def close_turn() -> None:
@@ -227,9 +227,17 @@ def pending_calls(messages: list[ModelMessage]) -> list[ToolCallPart]:
     return [c for c in conversations.unanswered_calls(messages) if c.tool_name in WRITE_TOOLS]
 
 
-async def history(db: aiosqlite.Connection, conversation_id: str) -> dict[str, Any]:
-    messages = await conversations.load(db, conversation_id)
-    return {
-        "messages": transcript(messages),
-        "pending": [{"id": c.tool_call_id, "tool": c.tool_name, "args": c.args_as_dict()} for c in pending_calls(messages)],
+async def history(db: aiosqlite.Connection, conversation_id: str, turns: int | None = None,
+                  before: int | None = None) -> dict[str, Any]:
+    """The conversation as the panel shows it, with the writes waiting for a yes. With `turns` or
+    `before`, a page: the last `turns` turns before the cursor `before`, and `older`, the cursor
+    for the page before it (None once the page starts the conversation)."""
+    page = await conversations.page(db, conversation_id, turns, before)
+    pending = pending_calls(await conversations.tail(db, conversation_id))
+    out: dict[str, Any] = {
+        "messages": transcript(page.messages, page.session_starts),
+        "pending": [{"id": c.tool_call_id, "tool": c.tool_name, "args": c.args_as_dict()} for c in pending],
     }
+    if turns is not None or before is not None:
+        out["older"] = page.older
+    return out

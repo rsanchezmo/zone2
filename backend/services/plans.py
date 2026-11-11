@@ -13,6 +13,7 @@ from backend.db import insert_row, row_dict, update_row
 from backend.services import training
 from backend.services.session_scores import accomplished, activities_by_day, score_sessions, session_matches
 from backend.services.sessions import session_dict
+from backend.services.stats_cache import get_race_predictions_history_cached
 from backend.services.zones import resolve_hr_zones
 from backend.scoring import has_targets
 from zone2.core import Zone2
@@ -129,7 +130,7 @@ async def _prediction(z2: Zone2, db: aiosqlite.Connection, plan: dict, race: dic
     # A finished plan's trend stops at its end
     upto = min(date.today().isoformat(), plan["end_date"])
     weeks = max(1, math.ceil((date.today() - date.fromisoformat(plan["start_date"])).days / 7) + 1)
-    history = await asyncio.to_thread(analytics.get_race_predictions_history, sport, weeks=min(weeks, 104), step_days=7)
+    history = await asyncio.to_thread(get_race_predictions_history_cached, z2, sport, min(weeks, 104), 7)
     z2_trend = [
         {"date": point["end_date"], "time_s": p["predicted_time_s"]}
         for point in history
@@ -144,14 +145,15 @@ async def _prediction(z2: Zone2, db: aiosqlite.Connection, plan: dict, race: dic
     return {**now_only, "z2": z2_trend, "garmin": garmin}
 
 
-async def progress(z2: Zone2, db: aiosqlite.Connection, plan: dict, *, detail: bool = True) -> dict[str, Any]:
+async def progress(z2: Zone2, db: aiosqlite.Connection, plan: dict, race: dict | None, *,
+                   detail: bool = True) -> dict[str, Any]:
     """How the plan is going today: sessions done of those due, execution scores, km per
     week (target, planned, run), the race prediction against the goal, and current form.
-    Without `detail` (a list of plans), the prediction's trend and the form are left out."""
+    `race` is the plan's (race_of). Without `detail` (a list of plans), the prediction's
+    trend and the form are left out."""
     today = date.today()
     today_iso = today.isoformat()
     sessions = await plan_sessions(db, plan["id"])
-    race = await race_of(db, plan)
     sport = get_sport_category((race or {}).get("sport_type") or "Run")
     span_start = min([plan["start_date"], *(s["date"] for s in sessions)])
     span_end = min(today_iso, max([plan["end_date"], *(s["date"] for s in sessions)]))

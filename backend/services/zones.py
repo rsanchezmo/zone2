@@ -1,15 +1,18 @@
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Literal, TypedDict
+from collections.abc import Callable
+from datetime import date, datetime, timezone
+from typing import Literal, TypedDict, TypeVar
 
 import aiosqlite
 
 from backend.db import connect_db
+from backend.services.stats_cache import stats_cache
 from zone2.core import Zone2
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 Source = Literal["strava", "estimated", "manual", "garmin"]
 DEFAULT_SOURCE: Source = "estimated"
@@ -105,6 +108,36 @@ async def refresh_garmin_zones(z2: Zone2) -> bool:
     return (before.get("zones"), before.get("threshold_hr")) != (zones, threshold_hr)
 
 
+async def get_settings(db: aiosqlite.Connection, keys: tuple[str, ...]) -> dict[str, str | None]:
+    """The values of `keys`, None for those never set."""
+    rows = await (await db.execute(
+        f"SELECT key, value FROM user_settings WHERE key IN ({', '.join('?' * len(keys))})", keys,
+    )).fetchall()
+    found = {key: value for key, value in rows}
+    return {key: found.get(key) for key in keys}
+
+
+def strava_zones_signature(z2: Zone2) -> str | None:
+    """The Strava zones the analytics estimate from (custom ones win), as fetched so far in this process."""
+    cached = z2.strava_user_cache.cached_athlete_zones()
+    return json.dumps(cached.get("heart_rate"), sort_keys=True) if cached else None
+
+
+async def cached_resolution(key: tuple, compute: Callable[[], T]) -> T:
+    """compute() run off the event loop and kept in the stats cache under `key`, which must hold
+    everything it reads. The day is part of it: Strava's zones refetch daily."""
+    key = (*key, date.today())
+    cached = stats_cache.get(key)
+    if cached is not None:
+        return cached
+    value = await asyncio.to_thread(compute)
+    stats_cache.set(key, value)
+    return value
+
+
+ZONE_SETTINGS = ("hr_zones_source", "manual_hr_zones", GARMIN_ZONES_KEY)
+
+
 async def resolve_hr_zones(z2: Zone2, db: aiosqlite.Connection) -> ResolvedZones:
     """Return HR zones according to the user's selected source, with fallback.
 
@@ -116,8 +149,17 @@ async def resolve_hr_zones(z2: Zone2, db: aiosqlite.Connection) -> ResolvedZones
         none have been saved yet.
       - "garmin": the zones Garmin Connect (and so the watch) uses, as last
         fetched. Falls back to estimated until they've been fetched once.
+
+    Cached by the settings it reads, the activities and the Strava zones fetched so far.
     """
-    requested = (await get_setting(db, "hr_zones_source")) or DEFAULT_SOURCE
+    settings = await get_settings(db, ZONE_SETTINGS)
+    key = ("hr_zones", tuple(settings.items()), z2.strava_activities_cache.cache_version, strava_zones_signature(z2))
+    return await cached_resolution(key, lambda: _resolve_hr_zones(z2, settings))
+
+
+def _resolve_hr_zones(z2: Zone2, settings: dict[str, str | None]) -> ResolvedZones:
+    """resolve_hr_zones' work: blocking, since it reads the activities and may refetch Strava's zones."""
+    requested = settings["hr_zones_source"] or DEFAULT_SOURCE
     if requested not in ("strava", "estimated", "manual", "garmin"):
         requested = DEFAULT_SOURCE
     requested_source: Source = requested  # type: ignore[assignment]
@@ -128,7 +170,7 @@ async def resolve_hr_zones(z2: Zone2, db: aiosqlite.Connection) -> ResolvedZones
         return _resolved(z2.strava_analytics.get_hr_zones(), "estimated", requested_source, estimated_max_hr, reason)
 
     if requested_source == "garmin":
-        raw = await get_setting(db, GARMIN_ZONES_KEY)
+        raw = settings[GARMIN_ZONES_KEY]
         if raw:
             stored = json.loads(raw)
             return _resolved(stored["zones"], "garmin", requested_source, estimated_max_hr,
@@ -136,7 +178,7 @@ async def resolve_hr_zones(z2: Zone2, db: aiosqlite.Connection) -> ResolvedZones
         return estimated("Garmin isn't connected" if not z2.garmin_client.email else "No zones fetched from Garmin yet")
 
     if requested_source == "manual":
-        raw = await get_setting(db, "manual_hr_zones")
+        raw = settings["manual_hr_zones"]
         if raw:
             try:
                 manual_zones = json.loads(raw)
@@ -148,9 +190,8 @@ async def resolve_hr_zones(z2: Zone2, db: aiosqlite.Connection) -> ResolvedZones
 
     if requested_source == "strava":
         try:
-            # Refetches from Strava once the cached zones are a day old; off the
-            # event loop so that request can't stall every other one.
-            strava = await asyncio.to_thread(z2.strava_user_cache.get_athlete_zones)
+            # Refetches from Strava once the cached zones are a day old
+            strava = z2.strava_user_cache.get_athlete_zones()
             hr = strava.get("heart_rate", {}) if isinstance(strava, dict) else {}
             if hr.get("custom_zones") and isinstance(hr.get("zones"), list):
                 # Strava's zone 5 may have max=null; normalise to estimated max_hr.

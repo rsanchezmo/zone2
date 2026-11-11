@@ -14,26 +14,28 @@ from typing import Annotated, Any, Literal
 
 import aiosqlite
 import pandas as pd
-from fastapi import HTTPException
 from pydantic import BaseModel, Field
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 from pydantic_ai.tools import GenerateToolJsonSchema
 from pydantic_core import core_schema
 
-from backend.db import delete_row, insert_row, row_dict, update_row
 from backend.agent import notes
+from backend.errors import NotFound, ServiceError
 from backend.services import activities as activity_service, coach_log, garmin_workouts, plans, session_scores
 from backend.services import day_timeline, workout_library
 from backend.services import gear as gear_service
 from backend.services import goals as goal_service
-from backend.services.races import races_changed
+from backend.services import races as race_service
 from backend.services import sessions as planned_sessions
 from backend.services import training
 from backend.services.activity_cost import activity_cost
 from backend.services.briefing import today_briefing
+from backend.services.goals import GoalChanges, NewGoal
+from backend.services.races import NewRace, RaceChanges
 from backend.services.resting_hr import resolve_resting_hr
-from backend.services.sessions import Schedule, session_dict
+from backend.services.sessions import NewSession, Schedule, SessionChanges
+from backend.services.workout_library import NewWorkout, WorkoutChanges
 from backend.services.zones import resolve_hr_zones
 from zone2.core import Zone2
 from zone2.drift import heart_rate_drift
@@ -471,17 +473,13 @@ async def workout_history(
     if workout_template_id is None:
         if session_id is None:
             raise ModelRetry("Give session_id or workout_template_id.")
-        row = await (await db.execute(
-            "SELECT workout_template_id FROM training_sessions WHERE id = ?", (session_id,),
-        )).fetchone()
-        if row is None or row["workout_template_id"] is None:
+        try:
+            workout_template_id = (await planned_sessions.get(db, session_id))["workout_template_id"]
+        except NotFound:
+            workout_template_id = None
+        if workout_template_id is None:
             raise ModelRetry(f"Session {session_id} isn't planned from a saved workout; try find_activities by name.")
-        workout_template_id = row["workout_template_id"]
-    rows = await (await db.execute(
-        "SELECT id, date, title FROM training_sessions WHERE workout_template_id = ? AND date <= ? "
-        "ORDER BY date DESC LIMIT ?",
-        (workout_template_id, date.today().isoformat(), limit),
-    )).fetchall()
+    rows = await planned_sessions.from_workout(db, workout_template_id, date.today().isoformat(), limit)
     z2 = ctx.deps.z2
     view = z2.strava_activities_cache.get_prepared_view()
     race_ids = z2.strava_analytics.race_activity_ids
@@ -497,10 +495,9 @@ async def workout_history(
 @read_tools.tool
 async def races(ctx: RunContext[AgentDeps], include_past: bool = False) -> list[dict[str, Any]]:
     """The race calendar: date, name, sport, distance and target pace."""
-    query = "SELECT * FROM race_events" + ("" if include_past else " WHERE date >= ?") + " ORDER BY date"
-    params = () if include_past else (date.today().isoformat(),)
-    rows = await (await ctx.deps.db.execute(query, params)).fetchall()
-    return [_readable(row_dict(r)) for r in rows]
+    db = ctx.deps.db
+    rows = await (race_service.races_between(db) if include_past else race_service.upcoming(db))
+    return [_readable(r) for r in rows]
 
 
 # What each wellness metric carries to the model; the rest of Garmin's summary it never uses
@@ -568,10 +565,8 @@ async def wellness(
 @read_tools.tool
 async def saved_workouts(ctx: RunContext[AgentDeps]) -> list[dict[str, Any]]:
     """The workout library: saved workouts and their steps."""
-    rows = await (await ctx.deps.db.execute(
-        "SELECT id, name, sport_type, description, segments FROM workout_templates ORDER BY name",
-    )).fetchall()
-    return [_readable(row_dict(r, json_cols=("segments",))) for r in rows]
+    library = await workout_library.library(ctx.deps.z2, ctx.deps.db)
+    return [_workout_view(t) for t in sorted(library, key=lambda t: t["name"])]
 
 
 @read_tools.tool
@@ -580,7 +575,8 @@ async def plans_overview(ctx: RunContext[AgentDeps], include_done: bool = False)
     those due, and average execution score."""
     out = []
     for plan in await plans.list_plans(ctx.deps.db, include_done):
-        progress = await plans.progress(ctx.deps.z2, ctx.deps.db, plan, detail=False)
+        progress = await plans.progress(ctx.deps.z2, ctx.deps.db, plan, await plans.race_of(ctx.deps.db, plan),
+                                        detail=False)
         out.append({"id": plan["id"], "name": plan["name"], "status": plan["status"], "goal": plan.get("goal"),
                     "start_date": plan["start_date"], "end_date": plan["end_date"],
                     "days_to_race": progress["days_to_race"], "phase": progress["phase"],
@@ -597,7 +593,8 @@ async def plan_detail(ctx: RunContext[AgentDeps], plan_id: int) -> dict[str, Any
     plan = await plans.get_plan(db, plan_id)
     if plan is None:
         raise ModelRetry(f"There is no plan {plan_id}; see plans_overview.")
-    progress = await plans.progress(ctx.deps.z2, db, plan)
+    race = await plans.race_of(db, plan)
+    progress = await plans.progress(ctx.deps.z2, db, plan, race)
     status = progress.pop("session_status")
     pred = progress["prediction"]
     if pred:
@@ -618,7 +615,6 @@ async def plan_detail(ctx: RunContext[AgentDeps], plan_id: int) -> dict[str, Any
         progress["weeks"] = [_compact(w) for w in progress["weeks"]]
     keep = ("id", "date", "title", "sport_type", "planned_distance_km", "planned_intensity", "garmin_sync_state")
     goal_s = plan.get("goal_time_s")
-    race = await plans.race_of(db, plan)
     return _compact({
         **_compact(plan, "created_at", "goal_time_s"),
         "goal_time": _hms(goal_s) if goal_s is not None else None,
@@ -707,58 +703,9 @@ async def log_entry(
 
 # ── Writes ──────────────────────────────────────────────────────────────
 
-Pace = Annotated[float, Field(gt=2, lt=15)]
-PACE_UNIT = "decimal minutes per km: 4.5 means 4:30/km"
-
-
-class Step(BaseModel):
-    """One step of a structured session. A `work` step with repetitions > 1 repeats with
-    its recovery in between."""
-    type: Literal["warmup", "work", "recovery", "cooldown", "rest"]
-    distance_km: float | None = None
-    duration_mins: float | None = None
-    repetitions: int = 1
-    recovery_distance_km: float | None = None
-    recovery_duration_mins: float | None = None
-    target_pace_min: Pace | None = Field(None, description=f"Fast end of the pace range, {PACE_UNIT}")
-    target_pace_max: Pace | None = Field(None, description="Slow end")
-    target_hr_zone: Annotated[int, Field(ge=1, le=5)] | None = None
-    label: str | None = None
-
-
-class SessionFields(BaseModel):
-    title: str | None = None
-    sport_type: str | None = Field(None, description='A Strava sport type: "Run", "Ride", "Swim", "WeightTraining", "Rest"…')
-    description: str | None = None
-    planned_distance_km: float | None = None
-    planned_duration_mins: float | None = None
-    planned_intensity: Literal["easy", "moderate", "hard", "race"] | None = None
-    target_avg_pace: Pace | None = Field(None, description=PACE_UNIT.capitalize())
-    target_pace_min: Pace | None = Field(None, description="Fast end of the pace range")
-    target_pace_max: Pace | None = Field(None, description="Slow end")
-    target_hr_zone: Annotated[int, Field(ge=1, le=5)] | None = None
-    segments: list[Step] | None = Field(None, description="Steps, for a structured session such as intervals")
-    workout_template_id: int | None = Field(None, description="A saved workout to reuse")
-
-
-class NewSession(SessionFields):
-    plan_id: int | None = Field(None, description="The plan the session belongs to")
-    date: datetime.date
-    title: str
-    sport_type: str = Field(description='A Strava sport type: "Run", "Ride", "Swim", "WeightTraining", "Rest"…')
-
-
-class SessionChanges(SessionFields):
-    date: datetime.date | None = None
-    completed: bool | None = None
-
-
-def _values(fields: BaseModel, **dump: Any) -> dict[str, Any]:
-    """The columns to write, with steps holding only the fields they set."""
-    values = fields.model_dump(mode="json", **dump)
-    if values.get("segments"):
-        values["segments"] = [{k: v for k, v in step.items() if v is not None} for step in values["segments"]]
-    return values
+def _set_fields(changes: BaseModel) -> list[str]:
+    """The fields a change gives, in the model's order."""
+    return list(changes.model_dump(exclude_unset=True))
 
 
 def _changes(before: dict[str, Any], after: dict[str, Any], fields: list[str]) -> str:
@@ -954,7 +901,10 @@ write_tools = _toolset(requires_approval=True)
 async def add_session(ctx: RunContext[AgentDeps], session: NewSession, reason: str) -> dict[str, Any]:
     """Add a session to the calendar, only when the athlete asked for it. A run with steps also
     goes to the watch."""
-    created = await planned_sessions.create(ctx.deps.z2, ctx.deps.db, _values(session), ctx.deps.schedule)
+    try:
+        created = await planned_sessions.create(ctx.deps.z2, ctx.deps.db, session, ctx.deps.schedule)
+    except ServiceError as e:
+        raise ModelRetry(f"It wasn't added: {e.message}") from e
     await _log_change(ctx, created, f"Added {created['title']} on {created['date']}", reason)
     return _readable(created)
 
@@ -964,28 +914,25 @@ async def change_session(ctx: RunContext[AgentDeps], session_id: int, changes: S
                          reason: str) -> dict[str, Any]:
     """Change a planned session, only when the athlete asked for it: its day, title, targets or
     steps. Only the fields given change."""
-    values = _values(changes, exclude_unset=True)
-    row = await (await ctx.deps.db.execute("SELECT * FROM training_sessions WHERE id = ?", (session_id,))).fetchone()
-    if row is None:
-        raise ModelRetry(f"There is no session {session_id}; look it up with planned_sessions_between.")
-    before = session_dict(row)
     try:
-        after = await planned_sessions.update(ctx.deps.z2, ctx.deps.db, session_id, values, ctx.deps.schedule)
-    except HTTPException as e:
-        raise ModelRetry(f"That change didn't apply: {e.detail}") from e
-    await _log_change(ctx, after, f"Changed {before['title']}", reason,
-                      _changes(before, after, list(values)))
+        before = await planned_sessions.get(ctx.deps.db, session_id)
+    except NotFound as e:
+        raise ModelRetry(f"There is no session {session_id}; look it up with planned_sessions_between.") from e
+    try:
+        after = await planned_sessions.update(ctx.deps.z2, ctx.deps.db, session_id, changes, ctx.deps.schedule)
+    except ServiceError as e:
+        raise ModelRetry(f"That change didn't apply: {e.message}") from e
+    await _log_change(ctx, after, f"Changed {before['title']}", reason, _changes(before, after, _set_fields(changes)))
     return _readable(after)
 
 
 @write_tools.tool
 async def remove_session(ctx: RunContext[AgentDeps], session_id: int, reason: str) -> str:
     """Remove a planned session (and its entry on the watch), only when the athlete asked for it."""
-    row = await (await ctx.deps.db.execute("SELECT * FROM training_sessions WHERE id = ?", (session_id,))).fetchone()
-    if row is None:
-        raise ModelRetry(f"There is no session {session_id}; look it up with planned_sessions_between.")
-    session = session_dict(row)
-    await planned_sessions.delete(ctx.deps.z2, ctx.deps.db, session_id, ctx.deps.schedule)
+    try:
+        session = await planned_sessions.delete(ctx.deps.z2, ctx.deps.db, session_id, ctx.deps.schedule)
+    except NotFound as e:
+        raise ModelRetry(f"There is no session {session_id}; look it up with planned_sessions_between.") from e
     await _log_change(ctx, session, f"Removed {session['title']} on {session['date']}", reason)
     return f"Session {session_id} removed."
 
@@ -1047,8 +994,8 @@ async def change_plan(ctx: RunContext[AgentDeps], plan_id: int, changes: PlanCha
         raise ModelRetry(f"There is no plan {plan_id}; see plans_overview.")
     try:
         after = await plans.update_plan(ctx.deps.db, plan_id, values)
-    except HTTPException as e:
-        raise ModelRetry(f"That change didn't apply: {e.detail}") from e
+    except ServiceError as e:
+        raise ModelRetry(f"That change didn't apply: {e.message}") from e
     await coach_log.add(ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Changed the plan {after['name']}",
                         body=f"{reason}\n{_changes(before, after, list(values))}", plan_id=plan_id)
     return after
@@ -1081,7 +1028,7 @@ async def record_checkpoint(ctx: RunContext[AgentDeps], checkpoint_id: int, resu
     propose those changes, and make them once the athlete agrees."""
     try:
         checkpoint = await plans.update_checkpoint(ctx.deps.db, checkpoint_id, {"result": result, "decision": decision})
-    except HTTPException as e:
+    except NotFound as e:
         raise ModelRetry(f"There is no checkpoint {checkpoint_id}; see plan_detail.") from e
     await coach_log.add(ctx.deps.db, kind=coach_log.Kind.DECISION, title=f"{checkpoint['title']}: {result}",
                         body=decision, day=checkpoint["date"], plan_id=checkpoint["plan_id"],
@@ -1089,90 +1036,56 @@ async def record_checkpoint(ctx: RunContext[AgentDeps], checkpoint_id: int, resu
     return checkpoint
 
 
-class RaceFields(BaseModel):
-    name: str | None = None
-    date: datetime.date | None = None
-    sport_type: str | None = Field(None, description='A Strava sport type: "Run", "Ride", "Swim"…')
-    distance_km: float | None = None
-    target_pace: Pace | None = Field(None, description=f"Goal pace, {PACE_UNIT}")
-    location: str | None = None
-    url: str | None = Field(None, description="The race's public page. Never a registration link with a personal "
-                                               "token: race links go out in the calendar feed.")
-    description: str | None = None
-
-
-class NewRace(RaceFields):
-    name: str
-    date: datetime.date
-    sport_type: str = "Run"
-
-
 @write_tools.tool
 async def add_race(ctx: RunContext[AgentDeps], race: NewRace, reason: str) -> dict[str, Any]:
     """Add a race to the race calendar, when the athlete asks. Races decide which runs count as
     races in the predictions, and a plan can aim at one."""
-    row = row_dict(await insert_row(ctx.deps.db, "race_events", race.model_dump(mode="json")))
-    await races_changed(ctx.deps.z2)
+    try:
+        row = await race_service.create(ctx.deps.z2, ctx.deps.db, race)
+    except ServiceError as e:
+        raise ModelRetry(f"It wasn't added: {e.message}") from e
     await coach_log.add(ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Added the race {row['name']} on {row['date']}",
                         body=reason)
     return _readable(row)
 
 
 @write_tools.tool
-async def change_race(ctx: RunContext[AgentDeps], race_id: int, changes: RaceFields, reason: str) -> dict[str, Any]:
+async def change_race(ctx: RunContext[AgentDeps], race_id: int, changes: RaceChanges, reason: str) -> dict[str, Any]:
     """Change a race (date, distance, goal pace…), when the athlete asks. Only the fields given
     change."""
-    values = changes.model_dump(mode="json", exclude_unset=True)
     try:
-        row = row_dict(await update_row(ctx.deps.db, "race_events", race_id, values, "Race not found"))
-    except HTTPException as e:
+        row = await race_service.update(ctx.deps.z2, ctx.deps.db, race_id, changes)
+    except NotFound as e:
         raise ModelRetry(f"There is no race {race_id}; see races with include_past.") from e
-    await races_changed(ctx.deps.z2)
+    except ServiceError as e:
+        raise ModelRetry(f"That change didn't apply: {e.message}") from e
     await coach_log.add(ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Changed the race {row['name']}",
-                        body=f"{reason}\n" + ", ".join(values))
+                        body=f"{reason}\n" + ", ".join(_set_fields(changes)))
     return _readable(row)
-
-
-GoalMetric = Literal["distance_km", "time_hours", "activities", "elevation_m"]
-GoalPeriod = Literal["weekly", "monthly", "yearly"]
-
-
-class GoalFields(BaseModel):
-    year: int | None = None
-    sport_type: str | None = Field(None, description='A Strava sport type ("Run", "Ride", "Swim"…) or "__all__"')
-    metric: GoalMetric | None = None
-    period: GoalPeriod | None = None
-    target_value: Annotated[float, Field(gt=0)] | None = None
-
-
-class NewGoal(GoalFields):
-    year: int
-    sport_type: str = Field(description='A Strava sport type ("Run", "Ride", "Swim"…) or "__all__"')
-    metric: GoalMetric
-    period: GoalPeriod
-    target_value: Annotated[float, Field(gt=0)]
 
 
 @write_tools.tool
 async def set_goal(ctx: RunContext[AgentDeps], goal: NewGoal, reason: str) -> dict[str, Any]:
     """Add a goal, when the athlete asks: e.g. 2000 km of running in 2027 (yearly), or 3 strength
     sessions a week (activities, weekly)."""
-    row = row_dict(await insert_row(ctx.deps.db, "goals", goal.model_dump()))
+    row = await goal_service.create(ctx.deps.db, goal)
     await coach_log.add(ctx.deps.db, kind=coach_log.Kind.CHANGE, body=reason,
                         title=f"Set a goal: {row['target_value']:g} {row['metric']} {row['period']} ({row['sport_type']}, {row['year']})")
     return row
 
 
 @write_tools.tool
-async def change_goal(ctx: RunContext[AgentDeps], goal_id: int, changes: GoalFields, reason: str) -> dict[str, Any]:
+async def change_goal(ctx: RunContext[AgentDeps], goal_id: int, changes: GoalChanges, reason: str) -> dict[str, Any]:
     """Change a goal's target, period, sport or metric, when the athlete asks."""
-    values = changes.model_dump(exclude_unset=True)
     try:
-        row = row_dict(await update_row(ctx.deps.db, "goals", goal_id, values, "Goal not found"))
-    except HTTPException as e:
+        row = await goal_service.update(ctx.deps.db, goal_id, changes)
+    except NotFound as e:
         raise ModelRetry(f"There is no goal {goal_id}; see goals.") from e
+    except ServiceError as e:
+        raise ModelRetry(f"That change didn't apply: {e.message}") from e
+    given = changes.model_dump(exclude_unset=True)
     await coach_log.add(ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Changed goal {goal_id}",
-                        body=f"{reason}\n" + ", ".join(f"{k}: {v}" for k, v in values.items()))
+                        body=f"{reason}\n" + ", ".join(f"{k}: {v}" for k, v in given.items()))
     return row
 
 
@@ -1180,8 +1093,8 @@ async def change_goal(ctx: RunContext[AgentDeps], goal_id: int, changes: GoalFie
 async def remove_goal(ctx: RunContext[AgentDeps], goal_id: int, reason: str) -> str:
     """Remove a goal, when the athlete asks."""
     try:
-        await delete_row(ctx.deps.db, "goals", goal_id, "Goal not found")
-    except HTTPException as e:
+        await goal_service.delete(ctx.deps.db, goal_id)
+    except NotFound as e:
         raise ModelRetry(f"There is no goal {goal_id}; see goals.") from e
     await coach_log.add(ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Removed goal {goal_id}", body=reason)
     return f"Goal {goal_id} removed."
@@ -1190,26 +1103,6 @@ async def remove_goal(ctx: RunContext[AgentDeps], goal_id: int, reason: str) -> 
 workout_tools = _toolset(requires_approval=True)
 """The workout library's writes, loaded with the workouts capability; each needs approval."""
 WORKOUT_FIELDS = ("id", "name", "sport_type", "description", "segments")
-
-
-class WorkoutFields(BaseModel):
-    name: str | None = Field(None, description='How it shows in the library and on the watch, e.g. "6×1 km @ threshold"')
-    sport_type: str | None = Field(None, description='A Strava sport type: "Run", "Ride", "Swim"…')
-    description: str | None = None
-    segments: list[Step] | None = Field(None, description="Its steps")
-
-
-class NewWorkout(WorkoutFields):
-    name: str
-    sport_type: str
-    segments: list[Step]
-
-
-async def _saved_workout(db: aiosqlite.Connection, workout_id: int) -> dict[str, Any]:
-    row = await (await db.execute("SELECT * FROM workout_templates WHERE id = ?", (workout_id,))).fetchone()
-    if row is None:
-        raise ModelRetry(f"There is no saved workout {workout_id}; see saved_workouts.")
-    return workout_library.template_dict(row)
 
 
 def _workout_view(row: dict[str, Any]) -> dict[str, Any]:
@@ -1221,25 +1114,27 @@ async def save_workout(ctx: RunContext[AgentDeps], workout: NewWorkout, reason: 
     """Save a workout to the library, when the athlete asks, so sessions can reuse it; a run goes
     to the Garmin library too."""
     try:
-        row = await workout_library.create(ctx.deps.z2, ctx.deps.db, _values(workout), ctx.deps.schedule)
-    except HTTPException as e:
-        raise ModelRetry(f"It wasn't saved: {e.detail}") from e
+        row = await workout_library.create(ctx.deps.z2, ctx.deps.db, workout, ctx.deps.schedule)
+    except ServiceError as e:
+        raise ModelRetry(f"It wasn't saved: {e.message}") from e
     await coach_log.add(ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Saved the workout {row['name']}", body=reason)
     return _workout_view(row)
 
 
 @workout_tools.tool
-async def change_workout(ctx: RunContext[AgentDeps], workout_id: int, changes: WorkoutFields,
+async def change_workout(ctx: RunContext[AgentDeps], workout_id: int, changes: WorkoutChanges,
                          reason: str) -> dict[str, Any]:
     """Change a saved workout's name, description or steps, when the athlete asks. Upcoming
     sessions planned from it take the new steps; past ones keep theirs."""
-    before = await _saved_workout(ctx.deps.db, workout_id)
-    values = _values(changes, exclude_unset=True)
     try:
-        after = await workout_library.update(ctx.deps.z2, ctx.deps.db, workout_id, values, ctx.deps.schedule)
-    except HTTPException as e:
-        raise ModelRetry(f"That change didn't apply: {e.detail}") from e
-    body = f"{reason}\n{_changes(before, after, list(values))}"
+        before = await workout_library.get(ctx.deps.db, workout_id)
+    except NotFound as e:
+        raise ModelRetry(f"There is no saved workout {workout_id}; see saved_workouts.") from e
+    try:
+        after = await workout_library.update(ctx.deps.z2, ctx.deps.db, workout_id, changes, ctx.deps.schedule)
+    except ServiceError as e:
+        raise ModelRetry(f"That change didn't apply: {e.message}") from e
+    body = f"{reason}\n{_changes(before, after, _set_fields(changes))}"
     await coach_log.add(ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Changed the workout {before['name']}", body=body)
     return _workout_view(after)
 
@@ -1248,8 +1143,10 @@ async def change_workout(ctx: RunContext[AgentDeps], workout_id: int, changes: W
 async def remove_workout(ctx: RunContext[AgentDeps], workout_id: int, reason: str) -> str:
     """Delete a saved workout and its Garmin copy, when the athlete asks. Sessions planned from it
     keep their steps."""
-    workout = await _saved_workout(ctx.deps.db, workout_id)
-    await workout_library.delete(ctx.deps.z2, ctx.deps.db, workout_id, ctx.deps.schedule)
+    try:
+        workout = await workout_library.delete(ctx.deps.z2, ctx.deps.db, workout_id, ctx.deps.schedule)
+    except NotFound as e:
+        raise ModelRetry(f"There is no saved workout {workout_id}; see saved_workouts.") from e
     await coach_log.add(ctx.deps.db, kind=coach_log.Kind.CHANGE, title=f"Deleted the workout {workout['name']}",
                         body=reason)
     return f"Workout {workout_id} deleted."

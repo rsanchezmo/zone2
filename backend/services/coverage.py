@@ -15,13 +15,14 @@ from collections.abc import Callable
 from pathlib import Path
 from threading import Lock
 
-from fastapi import HTTPException, Response
+from fastapi import Response
 import numpy as np
 import pandas as pd
 import shapely
 
 from backend._serialize import PackedJSON, PackedJSONResponse
 from backend.config import settings
+from backend.errors import NotFound
 from backend.services.garmin_courses import course_line, course_list
 from zone2.core import Zone2
 from zone2.map_matching import StravaMapMatcher
@@ -84,7 +85,7 @@ def known_cities() -> dict[str, str]:
 def get_matcher(slug: str) -> StravaMapMatcher:
     cities = known_cities()
     if slug not in cities:
-        raise HTTPException(status_code=404, detail=f"No coverage map for '{slug}'")
+        raise NotFound(f"No coverage map for '{slug}'")
     # Built under the lock so concurrent requests never load the same city twice
     with _matchers_lock:
         if slug in _matchers:

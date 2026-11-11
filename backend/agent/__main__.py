@@ -36,7 +36,7 @@ from backend.agent.tools import AgentDeps
 from backend.config import settings
 from backend.db import connect_db, init_db
 from backend.services.races import refresh_race_activities
-from backend.services.sync import sync_now
+from backend.services.sync import register_hooks, sync_now
 from zone2.core import Zone2
 
 DIM, BOLD, RESET = "\033[2m", "\033[1m", "\033[0m"
@@ -117,6 +117,7 @@ async def main(args: argparse.Namespace) -> None:
     os.environ.setdefault("GARMINTOKENS", ".strava/garmin")
     z2 = Zone2(workdir=settings.workdir, auto_sync=False, sync_max_age_hours=settings.sync_max_age_hours)
     await init_db()
+    register_hooks()
     await asyncio.to_thread(refresh_race_activities, z2)
     garmin = _Garmin(allowed=args.push_garmin)
     agent = build_agent(args.model)

@@ -3,22 +3,63 @@ router and the agent."""
 
 import calendar
 from datetime import date, timedelta
+from typing import Annotated, Any, Literal
 
 import aiosqlite
+from pydantic import BaseModel, Field
 
-from backend.db import row_dict
+from backend.db import delete_row, insert_row, row_dict, update_row
 from zone2.core import Zone2
 
-METRICS = ("distance_km", "time_hours", "activities", "elevation_m")
-PERIODS = ("weekly", "monthly", "yearly")
+NOT_FOUND = "Goal not found"
+SPORT_TYPE = 'A Strava sport type ("Run", "Ride", "Swim"…) or "__all__"'
+GoalMetric = Literal["distance_km", "time_hours", "activities", "elevation_m"]
+GoalPeriod = Literal["weekly", "monthly", "yearly"]
+Target = Annotated[float, Field(gt=0)]
+
+
+class GoalChanges(BaseModel):
+    year: int | None = None
+    sport_type: str | None = Field(None, description=SPORT_TYPE)
+    metric: GoalMetric | None = None
+    period: GoalPeriod | None = None
+    target_value: Target | None = None
+
+
+class NewGoal(GoalChanges):
+    year: int
+    sport_type: str = Field(description=SPORT_TYPE)
+    metric: GoalMetric
+    period: GoalPeriod
+    target_value: Target
+
+
+async def goals_of(db: aiosqlite.Connection, year: int | None = None) -> list[dict[str, Any]]:
+    """The goals of a year, or all of them."""
+    if year is None:
+        cursor = await db.execute("SELECT * FROM goals ORDER BY id")
+    else:
+        cursor = await db.execute("SELECT * FROM goals WHERE year = ? ORDER BY id", (year,))
+    return [row_dict(row) for row in await cursor.fetchall()]
+
+
+async def create(db: aiosqlite.Connection, goal: NewGoal) -> dict[str, Any]:
+    return row_dict(await insert_row(db, "goals", goal.model_dump(mode="json")))
+
+
+async def update(db: aiosqlite.Connection, goal_id: int, changes: GoalChanges) -> dict[str, Any]:
+    return row_dict(await update_row(db, "goals", goal_id, changes.model_dump(mode="json", exclude_unset=True),
+                                     NOT_FOUND))
+
+
+async def delete(db: aiosqlite.Connection, goal_id: int) -> dict[str, Any]:
+    """Delete a goal and return it."""
+    return row_dict(await delete_row(db, "goals", goal_id, NOT_FOUND))
 
 
 async def progress(z2: Zone2, db: aiosqlite.Connection, ref: date) -> list[dict]:
     """Every goal of `ref`'s year, with its value so far in the week, month or year around `ref`."""
-    # Only fetch goals for the year of the reference date
-    cursor = await db.execute("SELECT * FROM goals WHERE year = ? ORDER BY id", (ref.year,))
-    rows = await cursor.fetchall()
-    goals = [row_dict(row) for row in rows]
+    goals = await goals_of(db, ref.year)
 
     if not goals:
         return []

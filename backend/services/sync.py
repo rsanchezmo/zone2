@@ -1,7 +1,7 @@
 """Strava sync, one at a time: the API, the auto-sync loop and the agent share one slot. A sync
 that changes the cached activities refreshes what depends on them and queues the new ones for the
 coach to review. Refreshes whose state lives elsewhere (the PNG exports, the coverage map) are
-hooks the app registers at startup."""
+hooks: `register_hooks` wires them in every process that syncs, the app and the agent's terminal."""
 
 import asyncio
 import logging
@@ -11,6 +11,9 @@ from datetime import datetime, timedelta
 from threading import Lock
 
 from backend.agent import reviews
+from backend.services import garmin_sync
+from backend.services.coverage import sync_all_cities
+from backend.services.export_cache import clear_export_cache
 from backend.services.gear import clear_gear_cache
 from backend.services.races import refresh_race_activities
 from backend.services.stats_cache import clear_stats_cache
@@ -50,6 +53,15 @@ def on_synced(hook: Callable[[Zone2], None]) -> None:
     _synced_hooks.append(hook)
 
 
+def register_hooks() -> None:
+    """Have syncs refresh the PNG exports and the coverage map too; once per process."""
+    if clear_export_cache in _changed_hooks:
+        return
+    on_changed(clear_export_cache)
+    on_synced(sync_all_cities)
+    garmin_sync.on_zones_changed(clear_export_cache)
+
+
 def status() -> SyncStatus:
     """A snapshot of the sync slot."""
     with _lock:
@@ -85,8 +97,10 @@ def _finalize(z2: Zone2, error: str | None, version_before: int) -> str | None:
             hook()
         # Warmed eagerly so the first read after the sync doesn't pay the parquet reload
         z2.strava_activities_cache.warm()
-        # A new activity may be the one of a race event
-        refresh_race_activities(z2)
+        # A new activity may be the one of a race event; stats a request built since the clear
+        # above counted the old races
+        if refresh_race_activities(z2):
+            clear_stats_cache()
     except Exception as e:
         logger.exception("Sync cleanup failed")
         cleanup_error = f"cleanup failed: {type(e).__name__}: {e}"

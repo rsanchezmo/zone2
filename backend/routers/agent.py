@@ -91,10 +91,17 @@ async def put_settings(update: SettingsUpdate, db: aiosqlite.Connection = Depend
 
 
 @router.get("/conversations/{conversation_id}")
-async def conversation(conversation_id: str, db: aiosqlite.Connection = Depends(get_db)):
-    """A conversation as the chat panel shows it, with any writes still waiting for a yes."""
+async def conversation(
+    conversation_id: str,
+    turns: int | None = Query(default=None, ge=1, le=200),
+    before: int | None = Query(default=None, ge=1),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """A conversation as the chat panel shows it, with any writes still waiting for a yes. With
+    `turns` or `before`, a page of its latest turns, newest page first: `older` in the response
+    is the `before` that fetches the page before it, null at the conversation's start."""
     chat = await load_module("chat")
-    return await chat.history(db, conversation_id)
+    return await chat.history(db, conversation_id, turns, before)
 
 
 class ChatTurn(BaseModel):

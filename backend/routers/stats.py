@@ -11,6 +11,7 @@ from backend.services.stats_cache import (
     get_previous_weekly_report_cached,
     get_weekly_report_cached,
     stats_cache as _stats_cache,
+    today_key,
     zones_signature,
 )
 from backend.services.zones import resolve_hr_zones
@@ -30,7 +31,7 @@ def _cached_json(endpoint):
     def cached(**kwargs) -> Response:
         z2: Zone2 = kwargs["z2"]
         params = tuple(sorted((k, v) for k, v in kwargs.items() if k != "z2"))
-        key = (endpoint.__name__, params, z2.strava_activities_cache.cache_version, date.today())
+        key = (endpoint.__name__, params, z2.strava_activities_cache.cache_version, today_key())
         return _stats_cache.json_response(key, lambda: endpoint(**kwargs))
     return cached
 
@@ -38,7 +39,7 @@ def _cached_json(endpoint):
 async def _cached_json_in_threadpool(key: tuple, build) -> Response:
     """_stats_cache.json_response for async endpoints: the build is blocking
     pandas work, so it runs off the event loop."""
-    return await run_in_threadpool(_stats_cache.json_response, key + (date.today(),), build)
+    return await run_in_threadpool(_stats_cache.json_response, key + (today_key(),), build)
 
 
 def _serialize_enum_dict(d: dict) -> dict:

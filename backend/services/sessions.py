@@ -1,23 +1,65 @@
 """Planned training sessions: the calendar's reads and writes, shared by the calendar router and the agent."""
 
+import datetime
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 import aiosqlite
+from pydantic import BaseModel, Field
 
-from backend.db import delete_row, insert_row, row_dict, update_row
+from backend.db import delete_row, get_row, insert_row, row_dict, update_row
 from backend.services import garmin_workouts, workout_library
+from backend.services.workout_library import PACE_UNIT, HrZone, Pace, Step, ZonePct, check_paces, step_paces, write_values
 from zone2.core import Zone2
 
 JSON_COLS = ("segments",)
+NOT_FOUND = "Session not found"
+SPORT_TYPE = 'A Strava sport type: "Run", "Ride", "Swim", "WeightTraining", "Rest"…'
 
 # Queues work to run once the write is answered, like BackgroundTasks.add_task:
 # the Garmin library and calendar pushes are slow live calls.
 Schedule = Callable[..., Any]
 
 
+class SessionFields(BaseModel):
+    title: str | None = None
+    sport_type: str | None = Field(None, description=SPORT_TYPE)
+    description: str | None = None
+    planned_distance_km: float | None = None
+    planned_duration_mins: float | None = None
+    planned_intensity: Literal["easy", "moderate", "hard", "race"] | None = None
+    target_avg_pace: Pace | None = Field(None, description=PACE_UNIT.capitalize())
+    target_pace_min: Pace | None = Field(None, description="The range's lower number (a pace's fast end)")
+    target_pace_max: Pace | None = Field(None, description="The range's higher number")
+    target_hr_zone: HrZone | None = None
+    target_zone_pct: ZonePct | None = Field(None, description="Share of the session to spend in that HR zone, %")
+    segments: list[Step] | None = Field(None, description="Steps, for a structured session such as intervals")
+    workout_template_id: int | None = Field(None, description="A saved workout to reuse")
+
+
+class NewSession(SessionFields):
+    plan_id: int | None = Field(None, description="The plan the session belongs to")
+    date: datetime.date
+    title: str
+    sport_type: str = Field(description=SPORT_TYPE)
+
+
+class SessionChanges(SessionFields):
+    date: datetime.date | None = None
+    completed: bool | None = None
+
+
 def session_dict(row: aiosqlite.Row) -> dict:
     return row_dict(row, json_cols=JSON_COLS, bool_cols=("completed",))
+
+
+def _paces(values: dict[str, Any]) -> list[float | None]:
+    return [values.get("target_avg_pace"), values.get("target_pace_min"), values.get("target_pace_max"),
+            *step_paces(values.get("segments"))]
+
+
+async def get(db: aiosqlite.Connection, session_id: int) -> dict[str, Any]:
+    return session_dict(await get_row(db, "training_sessions", session_id, NOT_FOUND))
 
 
 async def between(db: aiosqlite.Connection, date_from: str | None = None, date_to: str | None = None) -> list[dict]:
@@ -29,6 +71,16 @@ async def between(db: aiosqlite.Connection, date_from: str | None = None, date_t
         f"{where} ORDER BY s.date, s.id", params,
     )
     return [session_dict(r) for r in await cur.fetchall()]
+
+
+async def from_workout(db: aiosqlite.Connection, workout_template_id: int, until: str, limit: int) -> list[dict]:
+    """The sessions planned from a saved workout up to `until`, latest first: id, date and title."""
+    rows = await (await db.execute(
+        "SELECT id, date, title FROM training_sessions WHERE workout_template_id = ? AND date <= ? "
+        "ORDER BY date DESC LIMIT ?",
+        (workout_template_id, until, limit),
+    )).fetchall()
+    return [dict(r) for r in rows]
 
 
 async def _link_saved_workout(schedule: Schedule, z2: Zone2, db: aiosqlite.Connection, session: dict) -> dict:
@@ -48,23 +100,31 @@ async def _queue_watch_sync(schedule: Schedule, z2: Zone2, db: aiosqlite.Connect
     return session
 
 
-async def create(z2: Zone2, db: aiosqlite.Connection, values: dict, schedule: Schedule) -> dict:
-    values = {**values, "segments": values.get("segments") or None}
+async def create(z2: Zone2, db: aiosqlite.Connection, session: NewSession, schedule: Schedule) -> dict:
+    values = write_values(session)
+    values["segments"] = values["segments"] or None
+    check_paces(session.sport_type, _paces(values))
     row = session_dict(await insert_row(db, "training_sessions", values, json_cols=JSON_COLS))
     row = await _link_saved_workout(schedule, z2, db, row)
     return await _queue_watch_sync(schedule, z2, db, row)
 
 
-async def update(z2: Zone2, db: aiosqlite.Connection, session_id: int, values: dict, schedule: Schedule) -> dict:
-    before = await (await db.execute("SELECT date FROM training_sessions WHERE id = ?", (session_id,))).fetchone()
-    row = session_dict(await update_row(db, "training_sessions", session_id, values, "Session not found",
-                                        json_cols=JSON_COLS))
+async def update(z2: Zone2, db: aiosqlite.Connection, session_id: int, changes: SessionChanges,
+                 schedule: Schedule) -> dict:
+    values = write_values(changes, exclude_unset=True)
+    before = await (await db.execute("SELECT date, sport_type FROM training_sessions WHERE id = ?",
+                                     (session_id,))).fetchone()
+    if before is not None:
+        check_paces(values.get("sport_type") or before["sport_type"], _paces(values))
+    row = session_dict(await update_row(db, "training_sessions", session_id, values, NOT_FOUND, json_cols=JSON_COLS))
     # Only a change of steps relinks, so marking a session done can't resave a deleted workout
     if "segments" in values or "sport_type" in values:
         row = await _link_saved_workout(schedule, z2, db, row)
     return await _queue_watch_sync(schedule, z2, db, row, before["date"] if before else None)
 
 
-async def delete(z2: Zone2, db: aiosqlite.Connection, session_id: int, schedule: Schedule) -> None:
-    await delete_row(db, "training_sessions", session_id, "Session not found")
+async def delete(z2: Zone2, db: aiosqlite.Connection, session_id: int, schedule: Schedule) -> dict:
+    """Delete a session and return it; an upcoming entry on the watch goes too."""
+    row = session_dict(await delete_row(db, "training_sessions", session_id, NOT_FOUND))
     schedule(garmin_workouts.forget_session, z2, session_id)
+    return row

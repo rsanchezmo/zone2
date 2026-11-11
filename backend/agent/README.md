@@ -83,7 +83,8 @@ backend/agent/
   tools.py          read tools over z2's services, and the calendar writes (each needs approval)
   guides/           coaching playbooks, one SKILL.md folder each, loaded on demand (pydantic-ai-harness Skills)
   notes.py          what it keeps about the athlete (preferences, baselines, sensor changes), in every turn, and each plan's agreements
-  conversations.py  message history per conversation, in calendar.db
+  conversations.py  message history per conversation: the session a turn continues, its recap, pages for the chat
+  message_store.py  the messages in calendar.db, a row each, so a turn appends; imports nothing from Pydantic AI
   usage.py          tokens and cost per turn, in calendar.db; imports nothing from Pydantic AI
   __main__.py       the terminal chat
   voice.py          live transcription for the mic, relayed over the /api/agent/listen WebSocket

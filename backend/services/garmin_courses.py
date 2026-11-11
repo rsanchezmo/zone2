@@ -6,9 +6,8 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from fastapi import HTTPException
-
 from backend._ttl_cache import TTLCache
+from backend.errors import UpstreamFailed, UpstreamUnavailable
 from zone2.core import Zone2
 from zone2.garmin_client import GarminUnavailable
 
@@ -26,10 +25,10 @@ def _live[T](fn: Callable[..., T], *args: Any) -> T:
     try:
         return fn(*args)
     except GarminUnavailable as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        raise UpstreamUnavailable(str(e)) from e
     except Exception as e:
         logger.warning("Garmin %s failed: %s: %s", fn.__name__, type(e).__name__, e)
-        raise HTTPException(status_code=502, detail=f"Garmin Connect failed: {e}")
+        raise UpstreamFailed(f"Garmin Connect failed: {e}") from e
 
 
 def course_list(z2: Zone2) -> list[dict[str, Any]]:

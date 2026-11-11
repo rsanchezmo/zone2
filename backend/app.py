@@ -27,8 +27,9 @@ import logging
 import re
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.middleware.gzip import GZipMiddleware
 import starlette.middleware.gzip
 from fastapi.staticfiles import StaticFiles
@@ -37,11 +38,11 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from backend.agent import reviews
 from backend.config import settings
 from backend.dependencies import set_zone2
+from backend.errors import Conflict, Invalid, NotFound, ServiceError, UpstreamFailed, UpstreamUnavailable
 from backend.routers import agent, coach, activities, stats, exports, calendar, calendar_feed, sync, athlete, gear, goals, workouts, races, health, garmin, coverage, plans, config as config_router
 from backend.services import garmin_sync
 from backend.services import sync as strava_sync
-from backend.services.coverage import sync_all_cities, unload_idle_cities
-from backend.services.export_cache import clear_export_cache
+from backend.services.coverage import unload_idle_cities
 from backend.services.races import refresh_race_activities
 from backend.db import connect_db, init_db
 from backend.services.workout_library import link_upcoming_once
@@ -271,10 +272,18 @@ app.include_router(coverage.router, prefix="/api/coverage", tags=["coverage"])
 app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
 app.include_router(coach.router, prefix="/api/coach", tags=["coach"])
 
-# Syncs also refresh the PNG exports and the coverage map
-strava_sync.on_changed(clear_export_cache)
-strava_sync.on_synced(sync_all_cities)
-garmin_sync.on_zones_changed(clear_export_cache)
+strava_sync.register_hooks()
+
+HTTP_STATUS: dict[type[ServiceError], int] = {
+    NotFound: 404, Invalid: 400, Conflict: 409, UpstreamUnavailable: 503, UpstreamFailed: 502,
+}
+
+
+@app.exception_handler(ServiceError)
+async def service_error(request: Request, error: ServiceError) -> JSONResponse:
+    status = next((HTTP_STATUS[cls] for cls in type(error).__mro__ if cls in HTTP_STATUS), 500)
+    return JSONResponse({"detail": error.message}, status_code=status)
+
 
 # Serve frontend build if it exists
 class _SPAStaticFiles(StaticFiles):

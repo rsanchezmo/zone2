@@ -2,6 +2,7 @@
 Shared by the calendar router, the coach's plans and the agent."""
 
 import asyncio
+import json
 import logging
 
 import aiosqlite
@@ -9,6 +10,7 @@ import pandas as pd
 
 from backend._serialize import sanitize as _sanitize
 from backend.scoring import compute_execution_score, has_targets, match_activity
+from backend.services.stats_cache import stats_cache, zones_signature
 from backend.services.zones import resolve_hr_zones
 from zone2.core import Zone2
 
@@ -55,19 +57,39 @@ def session_matches(sessions: list[dict], activity_map: dict[str, list[dict]]) -
     return pairs
 
 
+def _score_key(z2: Zone2, session: dict, activity_id: int | None, zones: str) -> tuple:
+    """What a score is computed from: the session as planned, the activity and whether its streams
+    are stored (a backfill adds them without a new activities version), and the zones."""
+    cache = z2.strava_activities_cache
+    has_streams = activity_id is not None and cache.streams.has(activity_id)
+    return ("session_score", json.dumps(session, sort_keys=True, default=str), activity_id, has_streams,
+            cache.cache_version, zones)
+
+
 def score_sessions(z2: Zone2, sessions: list[dict], date_from: str, date_to: str,
                     hr_zones: list | None) -> dict[int, dict | None]:
-    """Execution score per session, None when no activity matches it."""
+    """Execution score per session, None when no activity matches it. Scores are cached, so only
+    the sessions scored for the first time load their activity's streams."""
     pairs = session_matches(sessions, activities_by_day(z2, date_from, date_to))
-
-    # Bulk-load only the matched activities' streams.
-    matched_ids = [m["id"] for _, m in pairs if m.get("id") is not None]
-    streams_map = z2.strava_activities_cache.get_streams_bulk(matched_ids) if matched_ids else {}
+    zones = zones_signature(hr_zones)
 
     result: dict[int, dict | None] = {s["id"]: None for s in sessions}
+    missing: list[tuple[dict, dict, int | None, tuple]] = []
     for session, matched in pairs:
-        streams = streams_map.get(int(matched["id"])) if matched.get("id") is not None else None
-        result[session["id"]] = compute_execution_score(session, matched, hr_zones, streams)
+        activity_id = int(matched["id"]) if matched.get("id") is not None else None
+        key = _score_key(z2, session, activity_id, zones)
+        cached = stats_cache.get(key)
+        if cached is None:
+            missing.append((session, matched, activity_id, key))
+        else:
+            result[session["id"]] = cached
+
+    matched_ids = [activity_id for _, _, activity_id, _ in missing if activity_id is not None]
+    streams_map = z2.strava_activities_cache.get_streams_bulk(matched_ids) if matched_ids else {}
+    for session, matched, activity_id, key in missing:
+        score = compute_execution_score(session, matched, hr_zones, streams_map.get(activity_id))
+        stats_cache.set(key, score)
+        result[session["id"]] = score
     return result
 
 

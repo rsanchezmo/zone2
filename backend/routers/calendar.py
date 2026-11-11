@@ -12,47 +12,13 @@ from backend.scoring import compute_execution_score, has_targets
 from backend.services import activities, garmin_workouts, session_scores, sessions as planned_sessions
 from backend.services.briefing import today_briefing
 from backend.services.session_scores import accomplished, activities_by_day, session_matches
-from backend.services.sessions import session_dict
+from backend.services.sessions import NewSession, SessionChanges, session_dict
 from backend.services.zones import resolve_hr_zones, set_setting
 from zone2.core import Zone2
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-class SessionCreate(BaseModel):
-    date: str  # YYYY-MM-DD
-    title: str
-    sport_type: str
-    description: str | None = None
-    planned_distance_km: float | None = None
-    planned_duration_mins: float | None = None
-    planned_intensity: str | None = None  # easy/moderate/hard/race
-    target_avg_pace: float | None = None
-    target_pace_min: float | None = None
-    target_pace_max: float | None = None
-    target_hr_zone: int | None = None
-    target_zone_pct: float | None = None
-    segments: list[dict] | None = None
-    workout_template_id: int | None = None
-
-
-class SessionUpdate(BaseModel):
-    date: str | None = None
-    title: str | None = None
-    sport_type: str | None = None
-    description: str | None = None
-    planned_distance_km: float | None = None
-    planned_duration_mins: float | None = None
-    planned_intensity: str | None = None
-    target_avg_pace: float | None = None
-    target_pace_min: float | None = None
-    target_pace_max: float | None = None
-    target_hr_zone: int | None = None
-    target_zone_pct: float | None = None
-    segments: list[dict] | None = None
-    workout_template_id: int | None = None
-    completed: bool | None = None
 
 
 @router.get("/briefing")
@@ -192,23 +158,23 @@ async def get_score_by_activity(
 
 @router.post("/sessions", status_code=201)
 async def create_session(
-    session: SessionCreate,
+    session: NewSession,
     tasks: BackgroundTasks,
     db: aiosqlite.Connection = Depends(get_db),
     z2: Zone2 = Depends(get_z2),
 ):
-    return await planned_sessions.create(z2, db, session.model_dump(), tasks.add_task)
+    return await planned_sessions.create(z2, db, session, tasks.add_task)
 
 
 @router.put("/sessions/{session_id}")
 async def update_session(
     session_id: int,
-    update: SessionUpdate,
+    update: SessionChanges,
     tasks: BackgroundTasks,
     db: aiosqlite.Connection = Depends(get_db),
     z2: Zone2 = Depends(get_z2),
 ):
-    return await planned_sessions.update(z2, db, session_id, update.model_dump(exclude_unset=True), tasks.add_task)
+    return await planned_sessions.update(z2, db, session_id, update, tasks.add_task)
 
 
 @router.delete("/sessions/{session_id}", status_code=204)

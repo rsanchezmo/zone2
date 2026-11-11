@@ -1,31 +1,15 @@
 from datetime import date
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
 import aiosqlite
 
-from backend.db import delete_row, get_db, insert_row, row_dict, update_row
+from backend.db import get_db
 from backend.dependencies import get_z2
-from backend.services import goals as goals_service
+from backend.services import goals
+from backend.services.goals import GoalChanges, NewGoal
 from zone2.core import Zone2
 
 router = APIRouter()
-
-
-class GoalCreate(BaseModel):
-    year: int
-    sport_type: str  # e.g. "Run", "Ride", or "__all__"
-    metric: str  # "distance_km", "time_hours", "activities", "elevation_m"
-    period: str  # "weekly", "monthly", "yearly"
-    target_value: float
-
-
-class GoalUpdate(BaseModel):
-    year: int | None = None
-    sport_type: str | None = None
-    metric: str | None = None
-    period: str | None = None
-    target_value: float | None = None
 
 
 @router.get("/")
@@ -33,31 +17,26 @@ async def list_goals(
     year: int | None = None,
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    if year is not None:
-        cursor = await db.execute("SELECT * FROM goals WHERE year = ? ORDER BY id", (year,))
-    else:
-        cursor = await db.execute("SELECT * FROM goals ORDER BY id")
-    rows = await cursor.fetchall()
-    return [row_dict(row) for row in rows]
+    return await goals.goals_of(db, year)
 
 
 @router.post("/", status_code=201)
-async def create_goal(goal: GoalCreate, db: aiosqlite.Connection = Depends(get_db)):
-    return row_dict(await insert_row(db, "goals", goal.model_dump()))
+async def create_goal(goal: NewGoal, db: aiosqlite.Connection = Depends(get_db)):
+    return await goals.create(db, goal)
 
 
 @router.put("/{goal_id}")
 async def update_goal(
     goal_id: int,
-    update: GoalUpdate,
+    update: GoalChanges,
     db: aiosqlite.Connection = Depends(get_db),
 ):
-    return row_dict(await update_row(db, "goals", goal_id, update.model_dump(exclude_unset=True), "Goal not found"))
+    return await goals.update(db, goal_id, update)
 
 
 @router.delete("/{goal_id}", status_code=204)
 async def delete_goal(goal_id: int, db: aiosqlite.Connection = Depends(get_db)):
-    await delete_row(db, "goals", goal_id, "Goal not found")
+    await goals.delete(db, goal_id)
 
 
 @router.get("/progress")
@@ -67,4 +46,4 @@ async def goal_progress(
     z2: Zone2 = Depends(get_z2),
 ):
     """Compute progress for all goals given a reference week_start (YYYY-MM-DD)."""
-    return {"goals": await goals_service.progress(z2, db, week_start)}
+    return {"goals": await goals.progress(z2, db, week_start)}

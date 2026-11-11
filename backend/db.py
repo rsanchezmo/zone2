@@ -1,11 +1,16 @@
 import json
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 import aiosqlite
-from fastapi import HTTPException
+
+from backend.agent import message_store
+from backend.errors import Invalid, NotFound
+
+logger = logging.getLogger(__name__)
 
 DB_PATH = Path(".strava/calendar.db")
 
@@ -165,8 +170,23 @@ CREATE TABLE IF NOT EXISTS coach_log (
 );
 CREATE INDEX IF NOT EXISTS idx_coach_log_plan_date ON coach_log(plan_id, date);
 
--- The agent's conversations (see backend/agent/): the message history as
--- Pydantic AI's JSON, so a conversation resumes where it stopped.
+-- The agent's conversations (see backend/agent/message_store.py): a row per message as
+-- Pydantic AI's JSON, so a conversation resumes where it stopped and a turn only appends.
+CREATE TABLE IF NOT EXISTS agent_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,  -- the conversation's order
+    conversation_id TEXT NOT NULL,
+    kind TEXT NOT NULL,                    -- request or response
+    opens_turn INTEGER NOT NULL,           -- a request with the athlete's words, or an event the coach gave itself
+    opens_session INTEGER NOT NULL,        -- the first message, or a turn after a pause (message_store.SESSION_GAP)
+    at TEXT NOT NULL,                      -- the message's timestamp
+    message TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_messages_conversation ON agent_messages(conversation_id, id);
+CREATE INDEX IF NOT EXISTS idx_agent_messages_turns ON agent_messages(conversation_id, id) WHERE opens_turn = 1;
+CREATE INDEX IF NOT EXISTS idx_agent_messages_sessions ON agent_messages(conversation_id, id) WHERE opens_session = 1;
+
+-- Each conversation as one JSON list of its messages, which init_db moved to agent_messages;
+-- kept as they were until a later cleanup drops the table.
 CREATE TABLE IF NOT EXISTS agent_conversations (
     id TEXT PRIMARY KEY,
     messages TEXT NOT NULL,
@@ -269,6 +289,10 @@ async def init_db():
             """)
             await db.commit()
 
+        moved = await message_store.migrate(db)
+        if moved:
+            logger.info("Moved %d agent messages to agent_messages", moved)
+
 
 @asynccontextmanager
 async def connect_db() -> AsyncIterator[aiosqlite.Connection]:
@@ -286,8 +310,8 @@ async def get_db():
         yield db
 
 
-# ── Row helpers shared by the CRUD routers ──────────────────────────────
-# Table and column names come from the routers' own models, never from requests.
+# ── Row helpers shared by the services ──────────────────────────────────
+# Table and column names come from the services' own models, never from requests.
 
 def row_dict(row: aiosqlite.Row, json_cols: tuple[str, ...] = (), bool_cols: tuple[str, ...] = ()) -> dict:
     """A row as a dict, with JSON-text columns decoded (None when empty or
@@ -325,11 +349,18 @@ async def insert_row(db: aiosqlite.Connection, table: str, values: dict,
     return row
 
 
+async def get_row(db: aiosqlite.Connection, table: str, row_id: int, not_found: str) -> aiosqlite.Row:
+    row = await (await db.execute(f"SELECT * FROM {table} WHERE id = ?", (row_id,))).fetchone()
+    if row is None:
+        raise NotFound(not_found)
+    return row
+
+
 async def update_row(db: aiosqlite.Connection, table: str, row_id: int, values: dict, not_found: str,
                      json_cols: tuple[str, ...] = ()) -> aiosqlite.Row:
-    """Set `values` on row `row_id` and return it updated; 404 when it doesn't exist."""
+    """Set `values` on row `row_id` and return it updated."""
     if not values:
-        raise HTTPException(status_code=400, detail="No fields to update")
+        raise Invalid("No fields to update")
     values = _encode(values, json_cols)
     cursor = await db.execute(
         f"UPDATE {table} SET {', '.join(f'{k} = ?' for k in values)} WHERE id = ? RETURNING *",
@@ -338,12 +369,15 @@ async def update_row(db: aiosqlite.Connection, table: str, row_id: int, values: 
     row = await cursor.fetchone()
     await db.commit()
     if row is None:
-        raise HTTPException(status_code=404, detail=not_found)
+        raise NotFound(not_found)
     return row
 
 
-async def delete_row(db: aiosqlite.Connection, table: str, row_id: int, not_found: str) -> None:
-    cursor = await db.execute(f"DELETE FROM {table} WHERE id = ?", (row_id,))
+async def delete_row(db: aiosqlite.Connection, table: str, row_id: int, not_found: str) -> aiosqlite.Row:
+    """Delete row `row_id` and return it as it was."""
+    cursor = await db.execute(f"DELETE FROM {table} WHERE id = ? RETURNING *", (row_id,))
+    row = await cursor.fetchone()
     await db.commit()
-    if cursor.rowcount == 0:
-        raise HTTPException(status_code=404, detail=not_found)
+    if row is None:
+        raise NotFound(not_found)
+    return row

@@ -1,7 +1,6 @@
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 import aiosqlite
 
@@ -9,6 +8,7 @@ from backend._ttl_cache import TTLCache
 from backend.db import get_db
 from backend.dependencies import get_z2
 from backend.services import garmin_workouts, workout_library
+from backend.services.workout_library import NewWorkout, WorkoutChanges
 from zone2.core import Zone2
 from zone2.garmin_client import GarminClient, GarminUnavailable
 
@@ -20,35 +20,11 @@ router = APIRouter()
 _garmin_steps_cache = TTLCache(maxsize=512, ttl_seconds=7 * 86400)
 
 
-class WorkoutTemplateCreate(BaseModel):
-    name: str
-    sport_type: str
-    description: str | None = None
-    segments: list[dict]
-
-
-class WorkoutTemplateUpdate(BaseModel):
-    name: str | None = None
-    sport_type: str | None = None
-    description: str | None = None
-    segments: list[dict] | None = None
-
-
 @router.get("")
 async def list_templates(db: aiosqlite.Connection = Depends(get_db), z2: Zone2 = Depends(get_z2)):
     """Saved workouts, newest first, with the state of their Garmin copy (runs)
     and how many planned sessions use them."""
-    templates = [workout_library.template_dict(r) for r in await (await db.execute(
-        "SELECT * FROM workout_templates ORDER BY created_at DESC")).fetchall()]
-    uses = {r[0]: r[1] for r in await (await db.execute(
-        "SELECT workout_template_id, COUNT(*) FROM training_sessions WHERE workout_template_id IS NOT NULL "
-        "GROUP BY workout_template_id")).fetchall()}
-    enabled = await garmin_workouts.is_enabled(z2, db)
-    for t in templates:
-        t["garmin_sync_state"] = garmin_workouts.library_state(t, enabled)
-        t["uses"] = uses.get(t["id"], 0)
-        del t["garmin_sync_hash"]
-    return templates
+    return await workout_library.library(z2, db)
 
 
 def _garmin_workouts(client: GarminClient, ours: set[int]) -> list[dict]:
@@ -98,23 +74,23 @@ async def garmin_library(db: aiosqlite.Connection = Depends(get_db), z2: Zone2 =
 
 @router.post("", status_code=201)
 async def create_template(
-    template: WorkoutTemplateCreate,
+    template: NewWorkout,
     tasks: BackgroundTasks,
     db: aiosqlite.Connection = Depends(get_db),
     z2: Zone2 = Depends(get_z2),
 ):
-    return await workout_library.create(z2, db, template.model_dump(), tasks.add_task)
+    return await workout_library.create(z2, db, template, tasks.add_task)
 
 
 @router.put("/{template_id}")
 async def update_template(
     template_id: int,
-    update: WorkoutTemplateUpdate,
+    update: WorkoutChanges,
     tasks: BackgroundTasks,
     db: aiosqlite.Connection = Depends(get_db),
     z2: Zone2 = Depends(get_z2),
 ):
-    return await workout_library.update(z2, db, template_id, update.model_dump(exclude_unset=True), tasks.add_task)
+    return await workout_library.update(z2, db, template_id, update, tasks.add_task)
 
 
 @router.delete("/{template_id}", status_code=204)

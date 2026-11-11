@@ -120,36 +120,35 @@ async def run_turn(
 ) -> AgentRunResult[Output]:
     """One turn of a stored conversation: a new message, or the answers to the writes it
     asked approval for. The model sees the current session only (see conversations.SESSION_GAP);
-    the whole conversation is saved. Records what the turn cost. `on_events`
+    the whole conversation stays stored. Records what the turn cost. `on_events`
     sees the run as it happens: tool calls, their results, and the reply as it is written.
     `model_settings` None leaves the model's own reasoning effort, for a turn nobody waits for."""
-    # Turns of one conversation run one after another: each saves the whole history it loaded
+    # Turns of one conversation run one after another: each continues from what the last one stored
     async with _turn_locks[conversation_id]:
-        stored = await conversations.load(deps.db, conversation_id)
+        turn = await conversations.begin(deps.db, conversation_id, prompt=prompt is not None,
+                                         approvals=approvals is not None)
         # A new message while writes wait for a yes is a no to them, in the same session
-        waiting = conversations.unanswered_calls(stored) if prompt is not None and approvals is None else []
-        if waiting:
+        if turn.waiting:
             approvals = DeferredToolResults(approvals={
-                c.tool_call_id: ToolDenied("Not answered: the conversation moved on.") for c in waiting
+                c.tool_call_id: ToolDenied("Not answered: the conversation moved on.") for c in turn.waiting
             })
-        start = conversations.current_session(stored, new_message=prompt is not None and not waiting)
-        if start > 0:
-            deps = dataclasses.replace(deps, earlier=conversations.recap(stored[:start]))
+        if turn.earlier is not None:
+            deps = dataclasses.replace(deps, earlier=turn.earlier)
         if deps.first_name is None and deps.z2 is not None:
             deps = dataclasses.replace(deps, first_name=await _first_name(deps.z2))
         with capture_run_messages() as messages:
             try:
                 result = await agent.run(
-                    prompt, message_history=stored[start:], deferred_tool_results=approvals, deps=deps, model=model,
+                    prompt, message_history=turn.history, deferred_tool_results=approvals, deps=deps, model=model,
                     model_settings=model_settings, event_stream_handler=on_events,
                 )
             except Exception:
                 # Keep what ran before the failure (an approved write and its result), so it
                 # never shows as pending again and a second yes can't repeat it
                 if messages:
-                    await conversations.save(deps.db, conversation_id, stored[:start] + messages)
+                    await conversations.save(deps.db, turn, messages)
                 raise
-        await conversations.save(deps.db, conversation_id, stored[:start] + result.all_messages())
+        await conversations.save(deps.db, turn, result.all_messages())
     if record:
         spent = result.usage
         # A local model costs nothing; genai-prices just has no price for it

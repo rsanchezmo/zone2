@@ -23,10 +23,11 @@ async def list_plans(db: aiosqlite.Connection = Depends(get_db), z2: Zone2 = Dep
     """Every plan, latest first, with its race and how far along it is."""
     out = []
     for plan in await plans.list_plans(db):
-        progress = await plans.progress(z2, db, plan, detail=False)
+        race = await plans.race_of(db, plan)
+        progress = await plans.progress(z2, db, plan, race, detail=False)
         out.append({
             **plan,
-            "race": await plans.race_of(db, plan),
+            "race": race,
             "sessions": progress["sessions"],
             "completion_pct": progress["sessions"]["completion_pct"],
             "average_score": progress["score"]["average"],
@@ -44,11 +45,12 @@ async def get_plan(plan_id: int, db: aiosqlite.Connection = Depends(get_db), z2:
     """One plan in full: progress, its sessions with how each went, checkpoints, the agreements
     the coach keeps for it, and the coach's log."""
     plan = await _plan_or_404(db, plan_id)
-    progress = await plans.progress(z2, db, plan)
+    race = await plans.race_of(db, plan)
+    progress = await plans.progress(z2, db, plan, race)
     status = progress.pop("session_status")
     return {
         **plan,
-        "race": await plans.race_of(db, plan),
+        "race": race,
         "progress": progress,
         "sessions": [{**s, **status[s["id"]]} for s in await plans.plan_sessions(db, plan_id)],
         "checkpoints": await plans.checkpoints(db, plan_id),
