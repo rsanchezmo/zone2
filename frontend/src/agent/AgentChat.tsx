@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -104,6 +104,10 @@ type LiveItem = AgentTranscriptItem
   | { role: 'step'; tool: string; args?: Record<string, unknown>; running: boolean; startedAt: number; endedAt?: number }
 type Step = Extract<LiveItem, { role: 'step' | 'tool' }>
 
+/** The turns this tab ran, as they streamed: they stand in for the newest page's messages from
+ *  index `from` on, until the next resync. */
+type Live = { from: number; items: LiveItem[] }
+
 const NO_ITEMS: LiveItem[] = []
 
 const SESSION_AT = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
@@ -124,6 +128,12 @@ function groups(items: LiveItem[]): Group[] {
     else out.push({ kind: 'steps', steps: [item] })
   }
   return out
+}
+
+/** The oldest page on screen, and how far below the scroller's top it sits. */
+function topPage(box: HTMLElement): { node: Element; top: number } | null {
+  const node = box.querySelector('[data-page]')
+  return node && { node, top: node.getBoundingClientRect().top - box.getBoundingClientRect().top }
 }
 
 /** How long something took, as "Ys" or "Xm Ys". */
@@ -339,27 +349,26 @@ export default function AgentChat({ open, expanded, busy, onBusyChange, onOpenPa
   const location = useLocation()
   const page = pageContext(location.pathname, location.search)
   const { data: status } = useAgentStatus()
-  const { data: history } = useAgentConversation(open ? CONVERSATION : null)
+  // Fetched only while open, but observed while closed too, so the pages loaded stay
+  const {
+    data: history, fetchNextPage, hasNextPage, isFetching, isFetchingNextPage, isFetchNextPageError,
+  } = useAgentConversation(CONVERSATION, open)
   const { mutate: markSeen } = useMarkCoachSeen()
   const unread = status?.unread ?? 0
-  // Opening the chat, or a review arriving while it's open, reads what the coach wrote
-  useEffect(() => {
-    if (!open || unread === 0) return
-    markSeen()
-    qc.invalidateQueries({ queryKey: ['agent-conversation', CONVERSATION] })
-  }, [open, unread, markSeen, qc])
   const { mutate: prepare } = useOpenCoach()
   // Stale data syncs while the athlete types, so their first message doesn't wait for it
   useEffect(() => {
     if (open) prepare()
   }, [open, prepare])
-  const [items, setItems] = useState<LiveItem[] | null>(null)
+  const [live, setLive] = useState<Live | null>(null)
   const [pending, setPending] = useState<AgentPendingWrite[] | null>(null)
   const [turnStartedAt, setTurnStartedAt] = useState(0)
   const [thinking, setThinking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const scroller = useRef<HTMLDivElement>(null)
+  const sentinel = useRef<HTMLDivElement>(null)
+  const anchor = useRef<ReturnType<typeof topPage>>(null)
 
   // The conversation lives on the server and another device may have continued it: coming back
   // to the chat (reopening it, or returning to the tab) shows the server's copy again
@@ -374,7 +383,7 @@ export default function AgentChat({ open, expanded, busy, onBusyChange, onOpenPa
       if (busyNow.current) return
       await qc.refetchQueries({ queryKey: ['agent-conversation', CONVERSATION] })
       if (busyNow.current) return
-      setItems(null)
+      setLive(null)
       setPending(null)
     }
     // The first open loads the conversation through its query
@@ -387,17 +396,56 @@ export default function AgentChat({ open, expanded, busy, onBusyChange, onOpenPa
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [open, qc])
 
-  const transcript: LiveItem[] = items ?? history?.messages ?? NO_ITEMS
-  const grouped = useMemo(() => groups(transcript), [transcript])
-  const waiting = pending ?? history?.pending ?? []
+  // Opening the chat, or a review arriving while it's open, reads what the coach wrote. After the
+  // resync above, so the fetch opening the chat already started serves it rather than restarting
+  useEffect(() => {
+    if (!open || unread === 0) return
+    markSeen()
+    qc.invalidateQueries({ queryKey: ['agent-conversation', CONVERSATION] }, { cancelRefetch: false })
+  }, [open, unread, markSeen, qc])
+
+  const newest = history?.pages[0]
+  const recent = useMemo<LiveItem[]>(() => {
+    const served = newest?.messages ?? NO_ITEMS
+    return live ? [...served.slice(0, live.from), ...live.items] : served
+  }, [newest, live])
+  const grouped = useMemo(() => groups(recent), [recent])
+  // The pages before the newest, oldest first, each keyed by the cursor that fetched it: loading
+  // one above leaves every rendered message with its key
+  const earlier = useMemo(() => history?.pages.slice(1).map((page, i) => ({
+    key: String(history.pageParams[i + 1]), groups: groups(page.messages),
+  })).reverse() ?? [], [history])
+  const waiting = pending ?? newest?.pending ?? []
   const offline = status != null && !status.available
 
-  // Follow the conversation as it grows, including a reply still being written
-  const last = transcript[transcript.length - 1]
-  const growth = `${transcript.length}:${last && 'text' in last ? last.text.length : 0}`
-  useEffect(() => {
+  // An older page loaded above what the reader was looking at: scroll by what it added
+  const oldest = history?.pageParams[history.pageParams.length - 1]
+  useLayoutEffect(() => {
+    const box = scroller.current
+    if (!box) return
+    const held = anchor.current
+    if (held?.node.isConnected) box.scrollTop += held.node.getBoundingClientRect().top - box.getBoundingClientRect().top - held.top
+    anchor.current = topPage(box)
+  }, [oldest])
+
+  // Follow the conversation as it grows at the end, including a reply still being written
+  const last = recent[recent.length - 1]
+  const growth = `${recent.length}:${last && 'text' in last ? last.text.length : 0}`
+  useLayoutEffect(() => {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight })
   }, [growth, waiting.length, busy, open, expanded])
+
+  // Reaching the top loads the page before. Watched afresh after each fetch, so a page too short
+  // to push the top out of view loads the next; not after a failure, which would retry in a loop
+  useEffect(() => {
+    const node = sentinel.current, root = scroller.current
+    if (!node || !root || isFetching || isFetchNextPageError) return
+    const watch = new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting)) void fetchNextPage({ cancelRefetch: false })
+    }, { root, rootMargin: '300px 0px 0px 0px' })
+    watch.observe(node)
+    return () => watch.disconnect()
+  }, [open, hasNextPage, isFetching, isFetchNextPageError, fetchNextPage])
 
   /** Fold one streamed event into the live transcript. */
   function apply(event: AgentStreamEvent) {
@@ -407,8 +455,9 @@ export default function AgentChat({ open, expanded, busy, onBusyChange, onOpenPa
     // Outside the state update, which React may run twice
     if (event.type === 'tool_done' && SYNC_STEPS.has(event.tool)) refreshPages(qc)
     const at = Date.now()
-    setItems(prev => {
-      const next = [...(prev ?? [])]
+    setLive(prev => {
+      if (!prev) return prev
+      const next = [...prev.items]
       const last = next[next.length - 1]
       if (event.type === 'tool') next.push({ role: 'step', tool: event.tool, args: event.args, running: true, startedAt: at })
       else if (event.type === 'tool_done') {
@@ -418,12 +467,17 @@ export default function AgentChat({ open, expanded, busy, onBusyChange, onOpenPa
         if (last?.role === 'agent') next[next.length - 1] = { role: 'agent', text: last.text + event.delta }
         else next.push({ role: 'agent', text: event.delta })
       }
-      return next
+      return { ...prev, items: next }
     })
   }
 
-  async function run(path: 'chat' | 'approve', body: Parameters<typeof streamAgentTurn>[1], before: LiveItem[]) {
-    setItems(before)
+  /** A turn: a message, or answers to the writes waiting. */
+  async function run(path: 'chat' | 'approve', body: Parameters<typeof streamAgentTurn>[1], message?: string) {
+    const from = newest?.messages.length ?? 0
+    setLive(prev => {
+      const items = prev?.items ?? []
+      return { from: prev?.from ?? from, items: message === undefined ? items : [...items, { role: 'user', text: message }] }
+    })
     setPending([])
     setError(null)
     setTurnStartedAt(Date.now())
@@ -451,24 +505,89 @@ export default function AgentChat({ open, expanded, busy, onBusyChange, onOpenPa
     const message = draft.trim()
     if (!message || busy) return
     setDraft('')
-    run('chat', { message, conversation_id: CONVERSATION, page }, [...transcript, { role: 'user', text: message }])
+    run('chat', { message, conversation_id: CONVERSATION, page }, message)
   }
 
   function answer(approvals: Record<string, boolean>) {
     if (busy) return
-    run('approve', { conversation_id: CONVERSATION, approvals, page }, transcript)
+    run('approve', { conversation_id: CONVERSATION, approvals, page })
   }
 
   if (!open) return null
 
   const coach = isLight ? COACH.light : COACH.dark
-  const running = transcript.some(it => it.role === 'step' && it.running)
-  const writing = busy && transcript[transcript.length - 1]?.role === 'agent'
+  const running = recent.some(it => it.role === 'step' && it.running)
+  const writing = busy && last?.role === 'agent'
+
+  function renderGroup(group: Group, key: number, live: boolean) {
+    if (group.kind === 'user') return (
+      <div key={key} className="flex justify-end">
+        <div
+          className={clsx('max-w-[85%] rounded-2xl rounded-br-md px-3 py-2 whitespace-pre-wrap', isLight ? 'text-gray-900' : 'text-gray-50')}
+          style={{ backgroundColor: `${coach}${isLight ? '1f' : '29'}` }}
+        >{group.text}</div>
+      </div>
+    )
+    if (group.kind === 'event') return (
+      <div key={key} className="flex items-center gap-3 text-[10px] pt-2" style={{ color: coach }}>
+        <span className="flex-1 h-px bg-current opacity-30" aria-hidden="true" />
+        {group.text} · {SESSION_AT.format(new Date(group.at))}
+        <span className="flex-1 h-px bg-current opacity-30" aria-hidden="true" />
+      </div>
+    )
+    if (group.kind === 'session') return (
+      <div key={key} className="flex items-center gap-3 text-[10px] text-gray-500 pt-2" title="After a pause the coach starts fresh, from your notes and its log">
+        <span className="flex-1 h-px bg-current opacity-20" aria-hidden="true" />
+        New session · {SESSION_AT.format(new Date(group.at))}
+        <span className="flex-1 h-px bg-current opacity-20" aria-hidden="true" />
+      </div>
+    )
+    if (group.kind === 'agent') return <AgentReply key={key} text={group.text} coach={coach} />
+    const lines = group.steps.map((step, i) => {
+      const running = step.role === 'step' && step.running
+      return (
+        <div key={i} className={clsx('flex items-center gap-2 text-[11px]', running ? 'text-fg' : 'text-gray-500')}>
+          <span className={clsx('w-1.5 h-1.5 rounded-full shrink-0', running ? 'bg-[var(--coach)] animate-pulse' : 'bg-surface-500')} aria-hidden="true" />
+          {stepLabel(step.tool, step.role === 'step' ? step.args : undefined)}
+          <StepTime step={step} live={live} />
+        </div>
+      )
+    })
+    const first = group.steps[0], lastStep = group.steps[group.steps.length - 1]
+    const groupTime = first.role === 'step' && lastStep.role === 'step' && lastStep.endedAt
+      ? took(lastStep.endedAt - first.startedAt) : null
+    // Steps show one by one while they run, then fold into a line you can open
+    return live ? <div key={key} className="space-y-1">{lines}</div> : (
+      <details key={key} className="group text-[11px] text-gray-500">
+        <summary className="cursor-pointer list-none flex items-center gap-2 hover:text-gray-300">
+          <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-surface-500" aria-hidden="true" />
+          {group.steps.length === 1 ? stepLabel(group.steps[0].tool, group.steps[0].role === 'step' ? group.steps[0].args : undefined) : `Looked at ${group.steps.length} things`}
+          {groupTime && <span className={TIME_CLASS}>{groupTime}</span>}
+          {group.steps.length > 1 && <span className="opacity-60 group-open:rotate-90 transition-transform">›</span>}
+        </summary>
+        {group.steps.length > 1 && <div className="mt-1 ml-3.5 space-y-1">{lines}</div>}
+      </details>
+    )
+  }
 
   return (
     <>
-      <div ref={scroller} className={clsx('flex-1 overflow-y-auto px-4 py-3 space-y-3 leading-relaxed', expanded ? 'text-[14px]' : 'text-[13px]')}>
-        {transcript.length === 0 && !busy && (
+      <div
+        ref={scroller}
+        onScroll={e => { anchor.current = topPage(e.currentTarget) }}
+        // The scroll is held in place by hand as older pages load, so the browser's own anchoring would double it
+        className={clsx('flex-1 overflow-y-auto [overflow-anchor:none] px-4 py-3 space-y-3 leading-relaxed', expanded ? 'text-[14px]' : 'text-[13px]')}
+      >
+        {hasNextPage && (
+          <div ref={sentinel} role="status" className="h-4 flex items-center justify-center text-gray-500">
+            {isFetchingNextPage ? (
+              <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" aria-label="Loading earlier messages" />
+            ) : isFetchNextPageError && (
+              <button type="button" className="text-[11px] hover:text-gray-300" onClick={() => void fetchNextPage()}>Load earlier messages</button>
+            )}
+          </div>
+        )}
+        {grouped.length === 0 && earlier.length === 0 && !busy && (
           offline ? (
             <p className="text-[12px] text-gray-500">The coach isn't connected: there's no key for {status?.model}.</p>
           ) : (
@@ -479,7 +598,7 @@ export default function AgentChat({ open, expanded, busy, onBusyChange, onOpenPa
                   <button
                     key={q}
                     type="button"
-                    onClick={() => run('chat', { message: q, conversation_id: CONVERSATION, page }, [{ role: 'user', text: q }])}
+                    onClick={() => run('chat', { message: q, conversation_id: CONVERSATION, page }, q)}
                     className="rounded-full border px-3 py-1 text-[12px] transition-colors hover:bg-[color-mix(in_srgb,var(--coach)_12%,transparent)]"
                     style={{ borderColor: `${coach}55`, color: coach }}
                   >{q}</button>
@@ -488,57 +607,16 @@ export default function AgentChat({ open, expanded, busy, onBusyChange, onOpenPa
             </div>
           )
         )}
-        {grouped.map((group, g) => {
-          if (group.kind === 'user') return (
-            <div key={g} className="flex justify-end">
-              <div
-                className={clsx('max-w-[85%] rounded-2xl rounded-br-md px-3 py-2 whitespace-pre-wrap', isLight ? 'text-gray-900' : 'text-gray-50')}
-                style={{ backgroundColor: `${coach}${isLight ? '1f' : '29'}` }}
-              >{group.text}</div>
-            </div>
-          )
-          if (group.kind === 'event') return (
-            <div key={g} className="flex items-center gap-3 text-[10px] pt-2" style={{ color: coach }}>
-              <span className="flex-1 h-px bg-current opacity-30" aria-hidden="true" />
-              {group.text} · {SESSION_AT.format(new Date(group.at))}
-              <span className="flex-1 h-px bg-current opacity-30" aria-hidden="true" />
-            </div>
-          )
-          if (group.kind === 'session') return (
-            <div key={g} className="flex items-center gap-3 text-[10px] text-gray-500 pt-2" title="After a pause the coach starts fresh, from your notes and its log">
-              <span className="flex-1 h-px bg-current opacity-20" aria-hidden="true" />
-              New session · {SESSION_AT.format(new Date(group.at))}
-              <span className="flex-1 h-px bg-current opacity-20" aria-hidden="true" />
-            </div>
-          )
-          if (group.kind === 'agent') return <AgentReply key={g} text={group.text} coach={coach} />
-          const live = busy && g === grouped.length - 1
-          const lines = group.steps.map((step, i) => {
-            const running = step.role === 'step' && step.running
-            return (
-              <div key={i} className={clsx('flex items-center gap-2 text-[11px]', running ? 'text-fg' : 'text-gray-500')}>
-                <span className={clsx('w-1.5 h-1.5 rounded-full shrink-0', running ? 'bg-[var(--coach)] animate-pulse' : 'bg-surface-500')} aria-hidden="true" />
-                {stepLabel(step.tool, step.role === 'step' ? step.args : undefined)}
-                <StepTime step={step} live={live} />
-              </div>
-            )
-          })
-          const first = group.steps[0], lastStep = group.steps[group.steps.length - 1]
-          const groupTime = first.role === 'step' && lastStep.role === 'step' && lastStep.endedAt
-            ? took(lastStep.endedAt - first.startedAt) : null
-          // Steps show one by one while they run, then fold into a line you can open
-          return live ? <div key={g} className="space-y-1">{lines}</div> : (
-            <details key={g} className="group text-[11px] text-gray-500">
-              <summary className="cursor-pointer list-none flex items-center gap-2 hover:text-gray-300">
-                <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-surface-500" aria-hidden="true" />
-                {group.steps.length === 1 ? stepLabel(group.steps[0].tool, group.steps[0].role === 'step' ? group.steps[0].args : undefined) : `Looked at ${group.steps.length} things`}
-                {groupTime && <span className={TIME_CLASS}>{groupTime}</span>}
-                {group.steps.length > 1 && <span className="opacity-60 group-open:rotate-90 transition-transform">›</span>}
-              </summary>
-              {group.steps.length > 1 && <div className="mt-1 ml-3.5 space-y-1">{lines}</div>}
-            </details>
-          )
-        })}
+        {earlier.map(older => (
+          <div key={older.key} data-page className="space-y-3">
+            {older.groups.map((group, g) => renderGroup(group, g, false))}
+          </div>
+        ))}
+        {grouped.length > 0 && (
+          <div data-page className="space-y-3">
+            {grouped.map((group, g) => renderGroup(group, g, busy && g === grouped.length - 1))}
+          </div>
+        )}
         {busy && !running && !writing && (
           <div className="flex items-center gap-2 text-[11px] text-gray-500" aria-live="polite">
             <span className="w-1.5 h-1.5 rounded-full bg-[var(--coach)] animate-pulse" aria-hidden="true" />

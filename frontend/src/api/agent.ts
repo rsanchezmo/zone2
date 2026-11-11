@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient, type InfiniteData, type QueryClient } from '@tanstack/react-query';
 import api from './client';
 import { refreshPages } from './invalidation';
 
@@ -114,11 +114,60 @@ export function useOpenCoach() {
   });
 }
 
-export function useAgentConversation(conversationId: string | null) {
-  return useQuery<{ messages: AgentTranscriptItem[]; pending: AgentPendingWrite[] }>({
+/** A page of the conversation, as the chat panel shows it. */
+export interface AgentConversationPage {
+  messages: AgentTranscriptItem[];
+  /** Writes waiting for a yes, at the conversation's end whatever the page. */
+  pending: AgentPendingWrite[];
+  /** The cursor for the page before this one; null when this one starts the conversation. */
+  older: number | null;
+  /** The turns asked for: the page holds that many, or the conversation's first ones when `older` is null. */
+  turns: number;
+}
+
+const PAGE_TURNS = 20;
+// routers/agent.py's cap on a page's turns
+const MAX_PAGE_TURNS = 200;
+
+async function conversationPage(conversationId: string, turns: number, before: number | null): Promise<AgentConversationPage> {
+  const { data } = await api.get<Omit<AgentConversationPage, 'turns'>>(`/agent/conversations/${conversationId}`, {
+    params: before === null ? { turns } : { turns, before },
+  });
+  return { ...data, turns };
+}
+
+/** The conversation's latest turns. Once a newest page is loaded, the new one starts where it
+ *  did, so what's on screen keeps its place and the pages loaded before it still follow on. */
+async function newestPage(conversationId: string, loaded: AgentConversationPage | undefined): Promise<AgentConversationPage> {
+  // The page grows by each turn since it loaded; past the cap it starts over at the latest turns
+  const keep = loaded && loaded.turns < MAX_PAGE_TURNS ? loaded : undefined;
+  let page = await conversationPage(conversationId, keep?.turns ?? PAGE_TURNS, null);
+  if (!keep) return page;
+  // The API pages backwards only, and its messages carry no ids to drop an overlap by: the turns
+  // that came since fill in one at a time
+  while (page.older !== null && page.older > (keep.older ?? 0)) {
+    const turn = await conversationPage(conversationId, 1, page.older);
+    page = { ...page, messages: [...turn.messages, ...page.messages], older: turn.older, turns: page.turns + 1 };
+  }
+  return page;
+}
+
+/** The conversation, newest page first; `fetchNextPage` loads the page before the oldest loaded.
+ *  A refetch fetches the newest page only. */
+export function useAgentConversation(conversationId: string, enabled: boolean) {
+  return useInfiniteQuery({
     queryKey: ['agent-conversation', conversationId],
-    queryFn: () => api.get(`/agent/conversations/${conversationId}`).then(r => r.data),
-    enabled: conversationId != null,
+    queryFn: ({ client, queryKey, pageParam }) => {
+      const loaded = client.getQueryData<InfiniteData<AgentConversationPage, number | null>>(queryKey);
+      if (pageParam === null) return newestPage(conversationId, loaded?.pages[0]);
+      // What comes before a cursor never changes (a rewritten message gets a new id), so a refetch
+      // keeps the pages already loaded
+      const i = loaded?.pageParams.indexOf(pageParam) ?? -1;
+      return loaded && i >= 0 ? loaded.pages[i] : conversationPage(conversationId, PAGE_TURNS, pageParam);
+    },
+    initialPageParam: null,
+    getNextPageParam: (page: AgentConversationPage): number | null => page.older,
+    enabled,
     staleTime: Infinity,
   });
 }
