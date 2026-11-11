@@ -2,6 +2,7 @@
 the StrEnum feature classes the visualizer and the API read."""
 from __future__ import annotations
 
+import calendar
 from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any
@@ -81,7 +82,10 @@ def year_activities(activities: pd.DataFrame, year: int, cutoff_month_day: tuple
     if sport is not None:
         mask = mask & sport_mask(activities['sport_type'], sport)
     if cutoff_month_day:
-        cutoff = pd.Timestamp(year, cutoff_month_day[0], cutoff_month_day[1], 23, 59, 59)
+        month, day = cutoff_month_day
+        # Feb 29 has no counterpart in a non-leap year: its February ends on the 28th
+        day = min(day, calendar.monthrange(year, month)[1])
+        cutoff = pd.Timestamp(year, month, day, 23, 59, 59)
         if dates.dt.tz is not None:
             cutoff = cutoff.tz_localize(dates.dt.tz)
         mask = mask & (dates <= cutoff)

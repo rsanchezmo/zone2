@@ -202,10 +202,6 @@ def test_year_in_sport_of_a_closed_year(offline_app: OfflineApp):
     assert ride["main_sport"]["total_distance_km"] == 40.0
 
 
-@pytest.mark.xfail(strict=True, raises=ValueError, reason=(
-    "backend/routers/stats.py cuts every year at today's (month, day); on Feb 29 the comparison "
-    "with a non-leap year builds Feb 29 of that year in zone2/reports.py:84 (year_activities) "
-    "and the request fails"))
 def test_year_in_sport_compares_with_a_non_leap_year_on_feb_29(offline_app: OfflineApp,
                                                                monkeypatch: pytest.MonkeyPatch):
     pin_clock(monkeypatch, offline_app.z2, datetime(2028, 2, 29, 12, tzinfo=timezone.utc))
