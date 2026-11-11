@@ -12,7 +12,8 @@ from backend.agent import load_module, preferences, reviews
 from backend.agent import usage as agent_usage
 from backend.db import connect_db, get_db
 from backend.dependencies import get_z2
-from backend.routers import garmin as garmin_sync, sync as strava_sync
+from backend.routers import garmin as garmin_sync
+from backend.services import sync as strava_sync
 from zone2.core import Zone2
 
 router = APIRouter()

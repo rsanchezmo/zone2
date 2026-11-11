@@ -35,8 +35,8 @@ from backend.agent.chat import model_error, pending_calls
 from backend.agent.tools import AgentDeps
 from backend.config import settings
 from backend.db import connect_db, init_db
-from backend.routers.sync import sync_now
 from backend.services.races import refresh_race_activities
+from backend.services.sync import sync_now
 from zone2.core import Zone2
 
 DIM, BOLD, RESET = "\033[2m", "\033[1m", "\033[0m"

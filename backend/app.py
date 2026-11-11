@@ -38,8 +38,9 @@ from backend.agent import reviews
 from backend.config import settings
 from backend.dependencies import set_zone2
 from backend.routers import agent, coach, activities, stats, exports, calendar, calendar_feed, sync, athlete, gear, goals, workouts, races, health, garmin, coverage, plans, config as config_router
-from backend.routers.coverage import unload_idle_cities
-from backend.routers.sync import _try_claim_sync, _run_sync
+from backend.routers.coverage import sync_all_cities, unload_idle_cities
+from backend.routers.exports import clear_export_cache
+from backend.services import sync as strava_sync
 from backend.services.races import refresh_race_activities
 from backend.db import connect_db, init_db
 from backend.services.workout_library import link_upcoming_once
@@ -94,7 +95,7 @@ async def _periodic_sync_loop(
     """Fire an incremental sync every interval_hours. Runs an initial catch-up
     shortly after startup (initial_delay_s) so a restart/redeploy doesn't leave
     a full interval-long blind window. Skips if a manual sync is already running
-    (shares the _sync_lock with the /api/sync endpoint)."""
+    (shares the sync slot with the /api/sync endpoint)."""
     log = logging.getLogger("backend.autosync")
     log.info("auto-sync scheduler enabled (every %dh, first run in %ds)",
              interval_hours, initial_delay_s)
@@ -103,9 +104,9 @@ async def _periodic_sync_loop(
         try:
             await asyncio.sleep(delay)
             delay = interval_hours * 3600  # subsequent runs at the full interval
-            if _try_claim_sync():
+            if strava_sync.try_claim():
                 log.info("auto-sync starting")
-                await asyncio.to_thread(_run_sync, z2, False, True)
+                await asyncio.to_thread(strava_sync.run, z2, False, True)
                 log.info("auto-sync finished")
             else:
                 log.info("auto-sync skipped: another sync already running")
@@ -205,7 +206,7 @@ async def lifespan(app: FastAPI):
     # a thread since pd.read_parquet is blocking.
     startup_log = logging.getLogger("backend.startup")
     startup_log.info("warming activities cache…")
-    await asyncio.to_thread(z2.strava_activities_cache._load_to_memory)
+    await asyncio.to_thread(z2.strava_activities_cache.warm)
     startup_log.info("activities cache warm")
     # Stats caches (and stream summaries missing after a deploy) build in the
     # background, so startup isn't held up by a first full pass over streams.
@@ -275,6 +276,10 @@ app.include_router(plans.router, prefix="/api/coverage", tags=["plans"])
 app.include_router(coverage.router, prefix="/api/coverage", tags=["coverage"])
 app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
 app.include_router(coach.router, prefix="/api/coach", tags=["coach"])
+
+# A Strava sync also refreshes the PNG exports and the coverage map, whose state lives in their routers
+strava_sync.on_changed(clear_export_cache)
+strava_sync.on_synced(sync_all_cities)
 
 # Serve frontend build if it exists
 class _SPAStaticFiles(StaticFiles):

@@ -175,6 +175,10 @@ class StravaActivitiesCache:
 
         return self._memory_cache
 
+    def warm(self) -> None:
+        """Load the cached activities into memory now, so the next read doesn't pay for it."""
+        self._load_to_memory()
+
     def __save_metadata(self):
         """Persist cache metadata."""
         meta_copy = self.metadata.copy()
