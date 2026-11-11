@@ -11,6 +11,7 @@ from typing import Any
 
 import pandas as pd
 
+from zone2.activities_cache import UTC_START
 from zone2.core import Zone2
 
 # Garmin's sleepLevels activityLevel codes
@@ -42,15 +43,20 @@ def _sleep(payload: dict | None, offset_ms: int, start: int, end: int) -> list[d
     return stages
 
 
-def _activities(z2: Zone2, day: date) -> list[dict[str, Any]]:
+def _activities(z2: Zone2, day: date, offset_ms: int) -> list[dict[str, Any]]:
     view = z2.strava_activities_cache.get_prepared_view()
     if view.empty:
         return []
     rows = view[view["start_date_local"].dt.date == day]
     out = []
     for _, r in rows.iterrows():
-        # start_date_local is wall-clock time labelled UTC, which is the clock this view uses
-        start = int(pd.Timestamp(r["start_date_local"]).value // 1_000_000)
+        # On the series' clock, UTC plus the day's offset, an activity recorded in another timezone
+        # or after a DST change still lands on its own heart rate; its wall time when the instant is unknown
+        utc_start = r.get(UTC_START)
+        if pd.isna(utc_start):
+            start = int(pd.Timestamp(r["start_date_local"]).value // 1_000_000)
+        else:
+            start = int(pd.Timestamp(utc_start).value // 1_000_000) + offset_ms
         out.append({
             "id": int(r["id"]),
             "name": r.get("name"),
@@ -94,7 +100,7 @@ def day_timeline(z2: Zone2, day: date) -> dict[str, Any] | None:
         "end": end,
         **series,
         "sleep": sleep,
-        "activities": _activities(z2, day),
+        "activities": _activities(z2, day, offset_ms),
     }
 
 

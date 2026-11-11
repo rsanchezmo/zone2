@@ -108,6 +108,7 @@ Zone2
 ### Key Conventions
 
 - All geo data uses `EPSG:4326` (BASE_CRS) as base, projected to `EPSG:3857` (WEB_MERCATOR_CRS) for visualization
+- Activity times: `start_date` (and `start_date_local`, parsed) is the local wall time labelled UTC, which every day/week bucket uses; `start_date_utc` is the true UTC start (Strava's `start_date`, tz-aware, null when no UTC offset is stored), for matching against real instants such as Garmin's
 - Speed is stored in m/s (Strava API native); conversion to pace/speed uses `convert_speed()` / `format_pace_or_speed()` in `zone2/utils.py` which auto-detects sport category
 - Sport categories are classified via string matching in `zone2/utils.py`: running, cycling, swimming
 - Visualizations use a consistent dark/neon aesthetic with configurable `neon_color` parameters

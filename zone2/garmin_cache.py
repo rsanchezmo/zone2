@@ -33,8 +33,6 @@ from zone2.garmin_extractors import SUMMARY_METRICS, extract, is_finalized, summ
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = Path(".strava/calendar.db")
-
 _PER_CALL_DELAY_S = 0.3            # be polite to Garmin between API calls
 _MAX_CONSECUTIVE_ERROR_DAYS = 5   # abort backfill if Garmin keeps failing
 _BACKFILL_MAX_RUNTIME_S = 2 * 3600  # wall-clock backstop for a full backfill (resumable — re-run continues)
@@ -66,11 +64,11 @@ def _decode_payload(stored: bytes) -> Any:
 
 
 @contextmanager
-def _conn() -> Iterator[sqlite3.Connection]:
+def _conn(db_path: Path) -> Iterator[sqlite3.Connection]:
     """One transaction on its own connection, closed on exit: a bare sqlite3
     connection's `with` only commits, leaving the close to garbage collection."""
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    c = sqlite3.connect(DB_PATH)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    c = sqlite3.connect(db_path)
     try:
         c.row_factory = sqlite3.Row
         # WAL lets the API keep reading calendar.db while a long backfill writes;
@@ -89,8 +87,9 @@ def _conn() -> Iterator[sqlite3.Connection]:
 class GarminDailyStatsCache:
     """CRUD + sync orchestration over the `garmin_daily_stats` table."""
 
-    def __init__(self, client: GarminClient):
+    def __init__(self, client: GarminClient, db_path: Path):
         self.client = client
+        self._db_path = db_path
         # Single sync worker at a time (writes interleave fine but the
         # garminconnect HTTP session isn't safe to hammer concurrently).
         self._sync_lock = threading.Lock()
@@ -102,7 +101,7 @@ class GarminDailyStatsCache:
     def _ensure_summary_table(self) -> None:
         """Create the derived-summary table if the web app's init_db hasn't
         (covers CLI / telegram contexts that use the cache without the API)."""
-        with _conn() as c:
+        with _conn(self._db_path) as c:
             c.execute(
                 """CREATE TABLE IF NOT EXISTS garmin_daily_summary (
                        date TEXT NOT NULL,
@@ -151,7 +150,7 @@ class GarminDailyStatsCache:
                 summaries.append((d, m, json.dumps(slim, default=str)))
         if not items:
             return
-        with _conn() as c:
+        with _conn(self._db_path) as c:
             c.executemany(
                 """INSERT INTO garmin_daily_stats (date, metric, payload, fetched_at)
                    VALUES (?, ?, ?, datetime('now'))
@@ -173,7 +172,7 @@ class GarminDailyStatsCache:
 
     def get(self, d: date_t | str, metric: str) -> Any | None:
         iso = d if isinstance(d, str) else d.isoformat()
-        with _conn() as c:
+        with _conn(self._db_path) as c:
             row = c.execute(
                 "SELECT payload FROM garmin_daily_stats WHERE date = ? AND metric = ?",
                 (iso, metric),
@@ -184,7 +183,7 @@ class GarminDailyStatsCache:
         """Returns list of {date, payload} ordered by date ascending."""
         s = start if isinstance(start, str) else start.isoformat()
         e = end if isinstance(end, str) else end.isoformat()
-        with _conn() as c:
+        with _conn(self._db_path) as c:
             rows = c.execute(
                 """SELECT date, payload FROM garmin_daily_stats
                    WHERE metric = ? AND date BETWEEN ? AND ?
@@ -199,7 +198,7 @@ class GarminDailyStatsCache:
         payloads in garmin_daily_stats — this is what powers /trends."""
         s = start if isinstance(start, str) else start.isoformat()
         e = end if isinstance(end, str) else end.isoformat()
-        with _conn() as c:
+        with _conn(self._db_path) as c:
             rows = c.execute(
                 """SELECT date, summary FROM garmin_daily_summary
                    WHERE metric = ? AND date BETWEEN ? AND ?
@@ -214,7 +213,7 @@ class GarminDailyStatsCache:
         changed (see SUMMARY_VERSIONS). A no-op once everything is current, so
         it runs on every startup. Returns rows written."""
         written = 0
-        with _conn() as c:
+        with _conn(self._db_path) as c:
             stored = {r["metric"]: r["version"] for r in c.execute(
                 "SELECT metric, version FROM garmin_summary_versions")}
             for metric in SUMMARY_METRICS:
@@ -253,7 +252,7 @@ class GarminDailyStatsCache:
         return written
 
     def get_latest(self, metric: str) -> dict | None:
-        with _conn() as c:
+        with _conn(self._db_path) as c:
             row = c.execute(
                 """SELECT date, payload FROM garmin_daily_stats
                    WHERE metric = ? ORDER BY date DESC LIMIT 1""",
@@ -263,12 +262,12 @@ class GarminDailyStatsCache:
 
     def last_sync_at(self) -> datetime | None:
         """When a payload was last fetched (UTC)."""
-        with _conn() as c:
+        with _conn(self._db_path) as c:
             (last,) = c.execute("SELECT MAX(fetched_at) FROM garmin_daily_stats").fetchone()
         return datetime.fromisoformat(last).replace(tzinfo=UTC) if last else None
 
     def status(self) -> dict[str, Any]:
-        with _conn() as c:
+        with _conn(self._db_path) as c:
             row = c.execute(
                 """SELECT MIN(date) AS earliest, MAX(date) AS latest,
                           COUNT(DISTINCT date) AS days,
@@ -371,7 +370,7 @@ class GarminDailyStatsCache:
         return new_ts != cached.get("lastSyncTimestampGMT")
 
     def _existing_metrics_for_date(self, d: date_t) -> set[str]:
-        with _conn() as c:
+        with _conn(self._db_path) as c:
             rows = c.execute(
                 "SELECT metric FROM garmin_daily_stats WHERE date = ?",
                 (d.isoformat(),),
@@ -626,7 +625,7 @@ class GarminDailyStatsCache:
         to sync_day, which gap-fills only what's missing."""
         metrics = self.client.METRICS_PER_DAY
         placeholders = ",".join("?" * len(metrics))
-        with _conn() as c:
+        with _conn(self._db_path) as c:
             rows = c.execute(
                 f"""SELECT date FROM garmin_daily_stats
                     WHERE metric IN ({placeholders}) AND date BETWEEN ? AND ?

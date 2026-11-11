@@ -4,7 +4,6 @@ import logging
 import os
 import threading
 import time
-from dotenv import load_dotenv
 from pydantic import BaseModel
 import requests
 import webbrowser
@@ -12,8 +11,6 @@ from pathlib import Path
 import json
 
 logger = logging.getLogger(__name__)
-
-load_dotenv()
 
 
 class StravaRateLimitError(Exception):
@@ -73,10 +70,9 @@ class StravaEndpoint:
     __API_BASE = 'https://www.strava.com/api/v3'
     __OAUTH_TOKEN_URL = 'https://www.strava.com/oauth/token'
     __OAUTH_AUTHORIZE_URL = 'https://www.strava.com/oauth/authorize'
-    __TOKEN_FILENAME = 'token.json'
     __REQUEST_TIMEOUT = (5, 30)
 
-    def __init__(self, cache_dir: Path = Path("./.strava")):
+    def __init__(self, token_file: Path):
         self.__STRAVA_CLIENT_ID = os.getenv("STRAVA_CLIENT_ID")
         self.__STRAVA_CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET")
         self.__session = requests.Session()
@@ -92,8 +88,8 @@ class StravaEndpoint:
         self._last_usage_daily: int = 0
         self._last_usage_at: float = 0.0  # time.monotonic(); 0 = unknown
 
-        self.__cache_dir = cache_dir
-        self.__cache_dir.mkdir(parents=True, exist_ok=True)
+        self.__token_file = token_file
+        self.__token_file.parent.mkdir(parents=True, exist_ok=True)
 
         if self.__STRAVA_CLIENT_ID is None:
             raise ValueError("STRAVA_CLIENT_ID not found in environment variables.")
@@ -105,8 +101,8 @@ class StravaEndpoint:
 
     def __get_initial_token(self) -> StravaTokenData:
         """Obtain initial OAuth token via user authorization flow."""
-        if (self.__cache_dir / StravaEndpoint.__TOKEN_FILENAME).exists():
-            return StravaTokenData.from_file(self.__cache_dir / StravaEndpoint.__TOKEN_FILENAME)
+        if self.__token_file.exists():
+            return StravaTokenData.from_file(self.__token_file)
 
         # Request all necessary scopes for full API access
         scopes = [
@@ -144,7 +140,7 @@ class StravaEndpoint:
         
         token = StravaTokenData(**token_data)
 
-        token.to_file(self.__cache_dir / StravaEndpoint.__TOKEN_FILENAME)
+        token.to_file(self.__token_file)
 
         return token
     
@@ -168,7 +164,7 @@ class StravaEndpoint:
         
         token = StravaTokenData(**token_data)
 
-        token.to_file(self.__cache_dir / StravaEndpoint.__TOKEN_FILENAME)
+        token.to_file(self.__token_file)
 
         return token
     

@@ -1,9 +1,14 @@
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
 from pathlib import Path
 
+from zone2.paths import DEFAULT_DATA_DIR, DEFAULT_WORKDIR, ENV_FILE
+
 
 class Settings(BaseSettings):
-    workdir: Path = Path("./zone2_workdir")
+    workdir: Path = DEFAULT_WORKDIR
+    # Activities, streams, tokens and calendar.db (zone2.paths.DataDir)
+    data_dir: Path = DEFAULT_DATA_DIR
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:8000"]
     sync_max_age_hours: int = 12
     # If > 0, the backend runs an incremental sync every N hours. 0 disables
@@ -30,7 +35,14 @@ class Settings(BaseSettings):
     # Live speech to text for talking to the agent (backend/agent/voice.py)
     agent_transcribe_model: str = "gpt-live-transcribe"
 
-    model_config = {"env_prefix": "STRAVA_WEB_", "env_file": ".env", "extra": "ignore"}
+    model_config = {"env_prefix": "STRAVA_WEB_", "extra": "ignore"}
 
 
-settings = Settings()
+def load_settings() -> Settings:
+    """The settings from the environment, with the project's .env loaded into it
+    first: Garmin and the agent's model provider read their own keys from there."""
+    load_dotenv(ENV_FILE)
+    return Settings()
+
+
+settings = load_settings()

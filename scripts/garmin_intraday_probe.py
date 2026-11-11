@@ -33,14 +33,16 @@ import time
 from datetime import date, datetime
 from pathlib import Path
 
-from dotenv import load_dotenv
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-TOKEN_DIR = REPO_ROOT / ".strava" / "garmin"
+# Importing the settings loads the project's .env
+from backend.config import settings  # noqa: E402
+from zone2.paths import DataDir  # noqa: E402
+
+TOKEN_DIR = DataDir(settings.data_dir).garmin_tokens
 PROBE_DIR = TOKEN_DIR / "probe"
 
 os.environ.setdefault("GARMINTOKENS", str(TOKEN_DIR))
-load_dotenv(REPO_ROOT / ".env")
 
 try:
     from garminconnect import Garmin  # noqa: E402
@@ -189,7 +191,7 @@ def main() -> int:
         v = verdicts.get(metric, "?")
         print(f"  {metric:20} {v}")
     print("\nRun this again later today to populate the diff. "
-          f"Snapshots: {PROBE_DIR.relative_to(REPO_ROOT)}/")
+          f"Snapshots: {PROBE_DIR}/")
     return 0
 
 

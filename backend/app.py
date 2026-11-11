@@ -1,10 +1,11 @@
 import os
 from pathlib import Path
 
-_mpl_config_dir = Path(os.environ.get(
-    "MPLCONFIGDIR",
-    Path(__file__).resolve().parent.parent / ".strava" / "matplotlib",
-))
+from backend.config import settings
+from zone2.paths import DataDir
+
+_data = DataDir(settings.data_dir)
+_mpl_config_dir = Path(os.environ.get("MPLCONFIGDIR", _data.matplotlib_config))
 _mpl_config_dir.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("MPLCONFIGDIR", str(_mpl_config_dir))
 
@@ -12,10 +13,7 @@ os.environ.setdefault("MPLCONFIGDIR", str(_mpl_config_dir))
 # read buffers resident on the Pi; the system allocator hands them back.
 os.environ.setdefault("ARROW_DEFAULT_MEMORY_POOL", "system")
 
-_xdg_cache_home = Path(os.environ.get(
-    "XDG_CACHE_HOME",
-    Path(__file__).resolve().parent.parent / ".strava" / "cache",
-))
+_xdg_cache_home = Path(os.environ.get("XDG_CACHE_HOME", _data.xdg_cache))
 (_xdg_cache_home / "fontconfig").mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("XDG_CACHE_HOME", str(_xdg_cache_home))
 
@@ -36,7 +34,6 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.agent import reviews
-from backend.config import settings
 from backend.dependencies import set_zone2
 from backend.errors import Conflict, Invalid, NotFound, ServiceError, UpstreamFailed, UpstreamUnavailable
 from backend.routers import agent, coach, activities, stats, exports, calendar, calendar_feed, sync, athlete, gear, goals, workouts, races, health, garmin, coverage, plans, config as config_router
@@ -172,11 +169,9 @@ async def _unload_idle_cities_loop(every_s: int = 60) -> None:
 async def lifespan(app: FastAPI):
     # Startup: initialize Zone2 singleton
     _configure_logging()
-    # Anchor Garmin's token cache under .strava/ alongside the Strava token,
-    # before Zone2 reads the env var to build its GarminClient.
-    os.environ.setdefault("GARMINTOKENS", str(Path(".strava") / "garmin"))
     z2 = Zone2(
         workdir=settings.workdir,
+        data_dir=settings.data_dir,
         auto_sync=False,
         sync_max_age_hours=settings.sync_max_age_hours,
     )

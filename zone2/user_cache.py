@@ -15,9 +15,9 @@ class StravaUserCache:
     # Strava gear lookups that failed are not retried for this long
     GEAR_RETRY_AFTER_FAILURE = timedelta(hours=24)
 
-    def __init__(self, strava_endpoint: StravaEndpoint, cache_dir: Path = Path("./.strava")):
+    def __init__(self, strava_endpoint: StravaEndpoint, gear_file: Path):
         self.strava_endpoint = strava_endpoint
-        self._gear_file = cache_dir / "gear.json"
+        self._gear_file = gear_file
         self._gear_cache: dict[str, dict] | None = None
         self._gear_failed_at: dict[str, datetime] = {}
         # name -> (last good value, when it expires)

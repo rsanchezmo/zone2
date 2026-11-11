@@ -2,17 +2,18 @@ import json
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Any
 
 import aiosqlite
 
 from backend.agent import message_store
+from backend.config import settings
 from backend.errors import Invalid, NotFound
+from zone2.paths import DataDir
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = Path(".strava/calendar.db")
+DB_PATH = DataDir(settings.data_dir).calendar_db
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS training_sessions (

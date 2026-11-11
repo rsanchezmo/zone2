@@ -1,11 +1,11 @@
+# Importing the settings loads the project's .env
+from backend.config import settings
 from zone2.core import Zone2
-from pathlib import Path
 
 
 if __name__ == "__main__":
 
-    workdir = Path("./zone2_workdir")
-    z2 = Zone2(workdir=workdir, sync_max_age_hours=3)
+    z2 = Zone2(workdir=settings.workdir, data_dir=settings.data_dir, sync_max_age_hours=3)
 
     # # get the heatmap of a city
     z2.strava_visualizer.thunderstorm_heatmap(

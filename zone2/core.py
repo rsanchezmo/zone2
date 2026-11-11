@@ -9,30 +9,32 @@ from zone2.utils import get_activities_as_gdf, previous_week
 from zone2.visualizer import StravaVisualizer
 from zone2.garmin_client import GarminClient
 from zone2.garmin_cache import GarminDailyStatsCache
+from zone2.paths import DataDir
 from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
 
 class Zone2:
-    def __init__(self, workdir: Path, auto_sync: bool = True, sync_max_age_hours: int = 12):
+    def __init__(self, workdir: Path, data_dir: Path, auto_sync: bool = True, sync_max_age_hours: int = 12):
         self.workdir = workdir
         self.workdir.mkdir(parents=True, exist_ok=True)
+        self.data = DataDir(data_dir)
 
-        self.strava_endpoint = StravaEndpoint()
-        self.strava_activities_cache = StravaActivitiesCache()
-        self.strava_user_cache = StravaUserCache(self.strava_endpoint)
+        self.strava_endpoint = StravaEndpoint(self.data.token)
+        self.strava_activities_cache = StravaActivitiesCache(self.data.activities, self.data.streams, self.data.metadata)
+        self.strava_user_cache = StravaUserCache(self.strava_endpoint, self.data.gear)
 
         # Optional Garmin Connect integration — disabled if env vars missing
         # or login fails. Never raises during construction. Built before
         # analytics so measured resting HR / VO2max can feed the estimates.
-        garmin_token_dir = Path(os.environ.get("GARMINTOKENS", ".strava/garmin"))
+        garmin_token_dir = os.environ.get("GARMINTOKENS")
         self.garmin_client = GarminClient(
             email=os.environ.get("GARMIN_EMAIL"),
             password=os.environ.get("GARMIN_PASSWORD"),
-            token_dir=garmin_token_dir,
+            token_dir=Path(garmin_token_dir) if garmin_token_dir else self.data.garmin_tokens,
         )
-        self.garmin_cache = GarminDailyStatsCache(self.garmin_client)
+        self.garmin_cache = GarminDailyStatsCache(self.garmin_client, self.data.calendar_db)
 
         self.strava_analytics = StravaAnalytics(
             self.strava_activities_cache, self.strava_user_cache,

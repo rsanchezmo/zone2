@@ -10,6 +10,7 @@ from typing import Any
 
 import pandas as pd
 
+from zone2.activities_cache import UTC_START
 from zone2.core import Zone2
 
 # A Garmin activity event belongs to the activity starting within this of it
@@ -98,11 +99,12 @@ def activity_cost(z2: Zone2, activity_id: int) -> dict[str, Any] | None:
     row = z2.strava_activities_cache.get_activity_by_id(activity_id)
     if row is None:
         return None
-    # start_date_local is wall-clock time despite its Z; Garmin's events are in GMT
-    local = pd.Timestamp(row["start_date_local"]).tz_localize(None)
-    offset = row.get("utc_offset")
-    start = (local - pd.Timedelta(seconds=float(offset) if pd.notna(offset) else 0)).tz_localize("UTC").to_pydatetime()
-    day = local.date()
+    # start_date_local is wall-clock time despite its Z, so it gives the day; Garmin's events are in GMT
+    day = pd.Timestamp(row["start_date_local"]).tz_localize(None).date()
+    utc_start = row.get(UTC_START)
+    if pd.isna(utc_start):
+        return {"body_battery": None, "recovery_hours": None, "night": _night(z2, day)}
+    start = pd.Timestamp(utc_start).to_pydatetime()
     cache = z2.garmin_cache
     events = _activity_events(cache.get(day, "body_battery"))
     event = _matching_event(events, start)

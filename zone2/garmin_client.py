@@ -9,9 +9,8 @@ Design notes
 - Graceful disable: if GARMIN_EMAIL / GARMIN_PASSWORD are missing or login
   fails, `enabled` stays False and every fetch returns None. The rest of the
   app never sees an exception.
-- Token cache: `garminconnect` persists OAuth tokens to GARMINTOKENS. The
-  web app sets that env var to `<workdir>/garmin` before instantiating this
-  class (see backend/app.py lifespan).
+- Token cache: `garminconnect` persists OAuth tokens in `token_dir`, which
+  Zone2 sets to GARMINTOKENS when given, else `garmin/` in its data directory.
 - MFA: handled interactively on first login only. From a web server context
   there is no stdin, so the prompt_mfa callback raises a clean error
   pointing the user at `scripts/garmin_poc.py`.

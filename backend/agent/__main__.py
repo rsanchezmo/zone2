@@ -17,7 +17,6 @@ import asyncio
 import functools
 import inspect
 import json
-import os
 import uuid
 from collections.abc import Callable
 from typing import Any
@@ -114,8 +113,7 @@ class _Garmin:
 
 
 async def main(args: argparse.Namespace) -> None:
-    os.environ.setdefault("GARMINTOKENS", ".strava/garmin")
-    z2 = Zone2(workdir=settings.workdir, auto_sync=False, sync_max_age_hours=settings.sync_max_age_hours)
+    z2 = Zone2(workdir=settings.workdir, data_dir=settings.data_dir, auto_sync=False, sync_max_age_hours=settings.sync_max_age_hours)
     await init_db()
     register_hooks()
     await asyncio.to_thread(refresh_race_activities, z2)
@@ -172,7 +170,7 @@ async def main(args: argparse.Namespace) -> None:
             return
 
         if args.command == "approve":
-            pending = pending_calls(await conversations.load(db, conversation))
+            pending = pending_calls(await conversations.tail(db, conversation))
             if not pending:
                 print("Nothing is waiting for approval in this conversation.")
                 return

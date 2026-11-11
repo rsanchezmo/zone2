@@ -19,17 +19,18 @@ import time
 from datetime import date, timedelta
 from pathlib import Path
 
-from dotenv import load_dotenv
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-TOKEN_DIR = REPO_ROOT / ".strava" / "garmin"
+# Importing the settings loads the project's .env
+from backend.config import settings  # noqa: E402
+from zone2.paths import DataDir  # noqa: E402
+
+TOKEN_DIR = DataDir(settings.data_dir).garmin_tokens
 DUMP_DIR = TOKEN_DIR / "poc"
 
 # Point garminconnect's token cache into the existing workdir before importing
 # the lib so it picks up the env var on first use.
 os.environ.setdefault("GARMINTOKENS", str(TOKEN_DIR))
-
-load_dotenv(REPO_ROOT / ".env")
 
 try:
     from garminconnect import Garmin  # noqa: E402
@@ -134,7 +135,7 @@ def main() -> int:
                 path = dump(payload, metric, cdate)
                 per_day[metric] = f"OK ({elapsed*1000:.0f}ms) — {summary}"
                 print(f"  {metric:22} {elapsed*1000:5.0f}ms  {summary}")
-                print(f"  {' ':22}        -> {path.relative_to(REPO_ROOT)}")
+                print(f"  {' ':22}        -> {path}")
             except Exception as e:
                 elapsed = time.monotonic() - t0
                 per_day[metric] = f"FAIL ({elapsed*1000:.0f}ms) — {type(e).__name__}: {e}"
@@ -144,7 +145,7 @@ def main() -> int:
         print()
 
     total = time.monotonic() - overall_t0
-    print(f"Done in {total:.1f}s. Payloads under {DUMP_DIR.relative_to(REPO_ROOT)}/")
+    print(f"Done in {total:.1f}s. Payloads under {DUMP_DIR}/")
 
     # Quick verdict: which metrics worked at least once?
     print("\n=== Per-metric verdict (across all days) ===")

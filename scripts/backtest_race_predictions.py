@@ -11,13 +11,14 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from backend.config import settings  # noqa: E402
 from backend.services.races import refresh_race_activities  # noqa: E402
 from zone2.core import Zone2  # noqa: E402
 from zone2.race_predictions import RACE_CALIBRATION_CLAMP, RACE_CALIBRATION_MIN_RACES  # noqa: E402
 
 
 def main(sport_category: str) -> None:
-    z2 = Zone2(workdir=Path(tempfile.mkdtemp()), auto_sync=False)
+    z2 = Zone2(workdir=Path(tempfile.mkdtemp()), data_dir=settings.data_dir, auto_sync=False)
     analytics = z2.strava_analytics
     refresh_race_activities(z2)
 

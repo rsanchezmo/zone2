@@ -1,6 +1,9 @@
 import logging
+import os
 from pathlib import Path
+import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pyarrow.parquet as pq
 import json
 from datetime import datetime, timedelta
@@ -16,6 +19,11 @@ logger = logging.getLogger(__name__)
 
 # Stream summary: whether an activity's stored streams include its power
 _HAS_POWER = "has_watts:v1"
+
+# Strava's start_date, the UTC instant the activity started. The `start_date`
+# column holds start_date_local's wall time instead, which day and week buckets use.
+UTC_START = "start_date_utc"
+_UTC_TIMESTAMP = pa.timestamp("ns", tz="UTC")
 
 
 def _has_power_stream(streams: dict) -> bool:
@@ -43,16 +51,13 @@ class StravaActivitiesCache:
     # stays on disk and get_activity_by_id(include_detail=True) reads it per activity.
     DETAIL_ONLY_COLUMNS = ('segment_efforts', 'laps', 'splits_metric', 'similar_activities')
 
-    def __init__(self, cache_dir: Path = Path("./.strava")):
-        self.cache_dir = cache_dir
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-
-        self.activities_dir = self.cache_dir / "activities"
+    def __init__(self, activities_dir: Path, streams_dir: Path, metadata_file: Path):
+        self.activities_dir = activities_dir
         self.activities_dir.mkdir(parents=True, exist_ok=True)
 
-        self.streams = StreamsStore(self.cache_dir / "streams")
+        self.streams = StreamsStore(streams_dir)
 
-        self.metadata_file = self.cache_dir / "metadata.json"
+        self.metadata_file = metadata_file
         self.__load_metadata()
 
         # In-memory cache (lazy-loaded). Holds activity metadata only —
@@ -163,13 +168,16 @@ class StravaActivitiesCache:
         dfs = []
         for f in parquet_files:
             try:
-                columns = [c for c in pq.read_schema(f).names if c not in skipped]
+                names = pq.read_schema(f).names
+                if UTC_START not in names and _add_utc_start(f):
+                    names = [*names, UTC_START]
+                columns = [c for c in names if c not in skipped]
                 df = pd.read_parquet(f, engine='pyarrow', columns=columns)
             except Exception as e:
                 logger.warning("Skipping corrupt parquet file %s: %s", f, e)
                 continue
             dfs.append(df)
-        self._memory_cache = pd.concat(dfs, ignore_index=True)
+        self._memory_cache = _with_utc_start(pd.concat(dfs, ignore_index=True))
         self._memory_cache['start_date'] = pd.to_datetime(self._memory_cache['start_date_local'])
         self._memory_cache = self._memory_cache.sort_values('start_date')
 
@@ -222,6 +230,8 @@ class StravaActivitiesCache:
             if 'streams' in act:
                 raw = act.pop('streams')
                 streams_by_id[aid] = _normalize_streams(raw)
+            # A row re-saved from the cache carries the UTC start already; one from Strava has it as start_date
+            act.setdefault(UTC_START, act.get('start_date'))
             # Year for streams routing (matches activities parquet bucketing).
             sdl = act.get('start_date_local')
             if sdl is not None:
@@ -247,7 +257,7 @@ class StravaActivitiesCache:
             return data
 
         # Convert incompatible types for Parquet and apply to all columns
-        df = df.map(__convert_for_parquet)
+        df = _with_utc_start(df.map(__convert_for_parquet))
 
         yearly_counts = self.metadata.setdefault('yearly_counts', {})
 
@@ -271,7 +281,7 @@ class StravaActivitiesCache:
                 # batch overrides for the columns it does carry (name, distance, etc.).
                 existing_indexed = existing_clean.set_index('id')
                 group_indexed = group_clean.set_index('id')
-                combined = group_indexed.combine_first(existing_indexed).reset_index()
+                combined = _with_utc_start(group_indexed.combine_first(existing_indexed).reset_index())
                 yearly_counts[year_key] = len(combined)
                 if self._same_rows(combined, existing_df):
                     continue
@@ -650,6 +660,51 @@ class StravaActivitiesCache:
             logger.info("Synced %d activities, skipped %d (already had data)", synced_count, skipped_count)
         else:
             logger.info("All %d activities already have the requested data", skipped_count)
+
+
+def _utc_from_local(start_date_local: pd.Series, utc_offset: pd.Series) -> pd.Series:
+    """The UTC starts that Strava's local wall times (despite their Z) and UTC
+    offsets in seconds give: NaT where either is missing."""
+    local = pd.to_datetime(start_date_local, utc=True, errors='coerce').dt.tz_localize(None)
+    offset = pd.to_timedelta(pd.to_numeric(utc_offset, errors='coerce'), unit='s')
+    return (local - offset).dt.tz_localize('UTC')
+
+
+def _with_utc_start(df: pd.DataFrame) -> pd.DataFrame:
+    """`df` with its UTC_START column, derived from local time and offset where missing."""
+    if UTC_START in df.columns:
+        utc = pd.to_datetime(df[UTC_START], utc=True, format='ISO8601')
+    else:
+        utc = pd.Series(pd.NaT, index=df.index, dtype='datetime64[ns, UTC]')
+    missing = utc.isna()
+    if missing.any() and 'utc_offset' in df.columns:
+        utc = utc.fillna(_utc_from_local(df.loc[missing, 'start_date_local'], df.loc[missing, 'utc_offset']))
+    return df.assign(**{UTC_START: utc})
+
+
+def _add_utc_start(year_file: Path) -> bool:
+    """Add UTC_START to a year file written before the column existed, derived
+    from local time and offset, keeping every other column as it is. Returns
+    whether the file has it now."""
+    table = pq.read_table(year_file)
+    if UTC_START in table.column_names:
+        return True
+    names = table.column_names
+    local = table.column('start_date_local').to_pandas()
+    offset = table.column('utc_offset').to_pandas() if 'utc_offset' in names else pd.Series(np.nan, index=local.index)
+    utc = _utc_from_local(local, offset)
+    table = table.append_column(pa.field(UTC_START, _UTC_TIMESTAMP), pa.array(utc, type=_UTC_TIMESTAMP))
+    # Written aside and moved over, so a crash mid-write can't leave the year unreadable
+    staged = year_file.with_name(f".{year_file.name}.tmp")
+    try:
+        pq.write_table(table, staged)
+        os.replace(staged, year_file)
+    except OSError as e:
+        staged.unlink(missing_ok=True)
+        logger.warning("Could not add %s to %s: %s", UTC_START, year_file, e)
+        return False
+    logger.info("Added %s to %s (%d of %d derived)", UTC_START, year_file.name, int(utc.notna().sum()), len(utc))
+    return True
 
 
 def _summary_polyline(map_cell) -> str | None:

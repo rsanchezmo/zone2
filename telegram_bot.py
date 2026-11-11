@@ -16,6 +16,8 @@ import matplotlib
 # Use non-GUI backend for matplotlib to prevent crashes on servers
 matplotlib.use("Agg")
 
+# Importing the settings loads the project's .env, which the TELEGRAM_* and Strava keys come from
+from backend.config import settings
 from zone2.core import Zone2
 
 # --- Logging Configuration ---
@@ -25,7 +27,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- Configuration ---
-WORKDIR = Path(os.getenv("STRAVA_WORKDIR", "./zone2_workdir"))
+def bot_workdir(app_workdir: Path) -> Path:
+    """The bot's own STRAVA_WORKDIR when set, else the app's workdir (STRAVA_WEB_WORKDIR)."""
+    own = os.environ.get("STRAVA_WORKDIR")
+    return Path(own) if own else app_workdir
+
+
+WORKDIR = bot_workdir(settings.workdir)
 WEEKLY_DIR = WORKDIR / "weekly_reports"
 YEAR_DIR = WORKDIR / "year_in_sport"
 
@@ -42,7 +50,7 @@ def _generate_weekly_report() -> Tuple[Optional[Path], str]:
     1. Path to the image
     2. A text summary caption
     """
-    z2 = Zone2(workdir=WORKDIR)
+    z2 = Zone2(workdir=WORKDIR, data_dir=settings.data_dir)
     z2.ensure_activities_with_streams()
     
     # 1. Generate the Visualization
@@ -87,7 +95,7 @@ def _generate_yearly_report(year: int) -> Tuple[List[Path], str]:
     1. List of image paths
     2. A text summary caption for the album
     """
-    z2 = Zone2(workdir=WORKDIR)
+    z2 = Zone2(workdir=WORKDIR, data_dir=settings.data_dir)
     z2.ensure_activities_with_streams()
     
     # 1. Generate the Visualizations
