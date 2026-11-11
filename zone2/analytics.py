@@ -663,7 +663,7 @@ class StravaAnalytics:
 
     # Part of the persisted best-effort summaries' name: bump it whenever
     # _best_effort_times changes so they are recomputed.
-    BEST_EFFORTS_VERSION = 1
+    BEST_EFFORTS_VERSION = 2
 
     def _sport_distances(self, sport_category: SportCategory) -> list[tuple[int, str]]:
         return {
@@ -735,12 +735,16 @@ class StravaAnalytics:
         bracketing the exact target distance, instead of charging the full
         gap to the effort — GPS samples can be many metres apart, which
         systematically overestimated best times.
+
+        Metres gained faster than `max_speed` are dropped before the search
+        (`_plausible_distance`), so no window can credit any part of them.
         """
         distances = np.asarray(dist_col, dtype=np.float64)
         times = np.asarray(time_col, dtype=np.float64)
         n = len(distances)
         if n < 2:
             return {}
+        distances = StravaAnalytics._plausible_distance(distances, times, max_speed)
 
         out: dict[int, float] = {}
         total_d = distances[-1]
@@ -764,12 +768,32 @@ class StravaAnalytics:
             frac = np.clip(frac, 0.0, 1.0)
             cross_t = times[prev_idx] + frac * (times[right_idx] - times[prev_idx])
             elapsed = cross_t - times[left_idx]
-            speeds = target_m / np.maximum(elapsed, 1e-9)
-            ok = (elapsed > 0) & (speeds <= max_speed)
+            ok = elapsed > 0
             if not np.any(ok):
                 continue
             out[int(target_m)] = float(elapsed[ok].min())
         return out
+
+    @staticmethod
+    def _plausible_distance(distances: np.ndarray, times: np.ndarray, max_speed: float) -> np.ndarray:
+        """The cumulative distance without the metres gained faster than
+        `max_speed`: GPS jumps, a watch crediting pool lengths after a rest,
+        the drive home after a forgotten stop. The time they took stays.
+
+        Timestamps are whole seconds, so a stretch can read up to a second
+        shorter than it took: consecutive over-speed samples are only dropped
+        when they beat the cap even granted that second.
+        """
+        steps = np.diff(distances)
+        gaps = np.diff(times)
+        fast = steps > max_speed * gaps
+        if not fast.any():
+            return distances
+        stretch = np.cumsum(np.r_[True, fast[1:] != fast[:-1]]) - 1
+        stretch_m = np.bincount(stretch, weights=steps)
+        stretch_s = np.bincount(stretch, weights=gaps)
+        impossible = fast & (stretch_m[stretch] > max_speed * (stretch_s[stretch] + 1))
+        return distances - np.r_[0.0, np.cumsum(np.where(impossible, steps, 0.0))]
 
     def get_personal_records(self) -> dict:
         """Fastest best effort at each standard distance for running, cycling
