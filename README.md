@@ -42,7 +42,7 @@ The **Coach** is an AI agent with a chat on every page. You can type, or hold th
    ```
 
 3. **Connect your accounts in the app** at http://localhost:5173 (the API is on :8000):
-   - **Strava:** click **Connect Strava** and approve z2 on Strava's page with both boxes ticked (z2 reads your private activities and the HR zones in your profile). You're back in the app with your history syncing. Every activity shows up within a minute. Their GPS and heart-rate streams take longer, because Strava's rate limits allow about 50 activities every 15 minutes and 500 a day. When the limit stops the sync, z2 carries on by itself each time Strava's window resets, and the sync menu shows when. A long history fills in over a few days with nothing to click.
+   - **Strava:** click **Connect Strava** and approve z2 on Strava's page with both boxes ticked (z2 reads your private activities and the HR zones in your profile). Strava sends you back to the app, which starts pulling your history (see [The first sync](#the-first-sync)).
    - **Garmin** (optional, for sleep, HRV, readiness and the watch): click **Connect** under Garmin Connect on the Profile page and sign in, with the code Garmin sends if your account asks for one. The Garmin tab then appears in the dock, Garmin syncs every 6 hours, and Backfill all on that page fetches your whole history.
 
    z2 keeps only the sessions, in `.strava/token.json` and `.strava/garmin/`, never your passwords, and they refresh on their own.
@@ -59,6 +59,15 @@ CLOUDFLARE_TUNNEL_TOKEN=         # remote access with Docker
 The other `STRAVA_WEB_*` settings, such as the Coach's model (`STRAVA_WEB_AGENT_MODEL`), are in [`backend/config.py`](backend/config.py). `GARMIN_EMAIL` and `GARMIN_PASSWORD` still work in place of connecting Garmin in the app.
 
 Everything z2 keeps is in two folders: `.strava/` (activities, streams, tokens, and the SQLite database with the calendar, plans and workouts) and `zone2_workdir/` (street maps and exports), both in the checkout unless `STRAVA_WEB_DATA_DIR` and `STRAVA_WEB_WORKDIR` point elsewhere. Those are the folders to back up. The backend, the bot and the scripts read `.env` from the checkout, wherever you start them from.
+
+### The first sync
+
+Once Strava is connected, z2 pulls your whole history in two passes:
+
+1. **Your activities.** The list comes 200 at a time, so even years of runs are in the calendar, the activity list and the totals within a minute.
+2. **Each activity's GPS, heart rate, splits and photos.** Strava allows an app 100 reads every 15 minutes and 1,000 a day, and each activity takes two or three, so that's 40 to 50 activities per window and up to about 450 a day. When the limit stops the sync, z2 saves what it has and carries on by itself when Strava's window resets: every quarter hour, or after midnight UTC once the day's requests are used. The sync menu shows when it carries on next.
+
+A history of 2,000 activities takes four to six days to fill in, with nothing to click. Records, race predictions, fitness, coverage maps and HR drift fill in as the streams arrive. New activities afterwards sync in seconds.
 
 ## Running it on a home server
 
