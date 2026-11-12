@@ -63,6 +63,7 @@ def sync_status(z2: Zone2 = Depends(get_z2)):
         athlete_name = None
     slot = strava_sync.status()
     return {
+        "connected": z2.strava_endpoint.connected,
         "syncing": slot.running,
         "last_error": slot.last_error,
         "last_sync_at": cache.get_last_sync_time().isoformat() if cache.get_last_sync_time() else None,

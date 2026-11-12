@@ -44,6 +44,7 @@ from backend.services.races import refresh_race_activities
 from backend.db import connect_db, init_db
 from backend.services.workout_library import link_upcoming_once
 from zone2.core import Zone2
+from zone2.endpoint import StravaNotConnected
 
 
 _TOKEN_QS_RE = re.compile(r"(token=)[^&\s\"']+")
@@ -103,7 +104,9 @@ async def _periodic_sync_loop(
         try:
             await asyncio.sleep(delay)
             delay = interval_hours * 3600  # subsequent runs at the full interval
-            if strava_sync.try_claim():
+            if not z2.strava_endpoint.connected:
+                log.info("auto-sync skipped: Strava isn't connected")
+            elif strava_sync.try_claim():
                 log.info("auto-sync starting")
                 await asyncio.to_thread(strava_sync.run, z2, False, True)
                 log.info("auto-sync finished")
@@ -278,6 +281,11 @@ HTTP_STATUS: dict[type[ServiceError], int] = {
 async def service_error(request: Request, error: ServiceError) -> JSONResponse:
     status = next((HTTP_STATUS[cls] for cls in type(error).__mro__ if cls in HTTP_STATUS), 500)
     return JSONResponse({"detail": error.message}, status_code=status)
+
+
+@app.exception_handler(StravaNotConnected)
+async def strava_not_connected(request: Request, error: StravaNotConnected) -> JSONResponse:
+    return JSONResponse({"detail": str(error)}, status_code=503)
 
 
 # Serve frontend build if it exists

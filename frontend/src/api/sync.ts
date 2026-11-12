@@ -3,6 +3,8 @@ import api from './client';
 import { invalidateActivityQueries } from './invalidation';
 
 export interface SyncStatus {
+  /** Whether z2 holds a Strava token the athlete granted and Strava still accepts */
+  connected: boolean;
   syncing: boolean;
   last_error: string | null;
   last_sync_at: string | null;

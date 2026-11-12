@@ -98,7 +98,7 @@ def year_in_sport(z2: Zone2, year: int, main_sport: str | SportCategory,
 def streaks(z2: Zone2) -> dict[str, Any]:
     """Current and longest streaks of consecutive days, and of consecutive weeks, with an activity."""
     activities = z2.strava_activities_cache.get_prepared_view()
-    active_dates = sorted(activities["start_date_local"].dt.date.unique())
+    active_dates = [] if activities.empty else sorted(activities["start_date_local"].dt.date.unique())
 
     if not len(active_dates):
         return {"current_streak": 0, "longest_streak": 0, "longest_streak_start": None, "longest_streak_end": None}

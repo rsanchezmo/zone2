@@ -18,6 +18,7 @@ from backend.services.gear import clear_gear_cache
 from backend.services.races import refresh_race_activities
 from backend.services.stats_cache import clear_stats_cache
 from zone2.core import Zone2
+from zone2.endpoint import StravaNotConnected
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +125,8 @@ def _sync_activities(z2: Zone2, full_sync: bool, include_streams: bool) -> str |
     try:
         before = reviews.activity_ids(z2)
         z2.sync_activities(full_sync=full_sync, include_streams=include_streams)
+    except StravaNotConnected as e:
+        err = str(e)
     except Exception as e:
         logger.exception("Strava sync failed")
         err = str(e)
@@ -189,6 +192,8 @@ def catch_up(z2: Zone2, max_age: timedelta) -> asyncio.Future[str | None] | None
     global _catching_up
     if _catching_up is not None and not _catching_up.done():
         return _catching_up
+    if not z2.strava_endpoint.connected:
+        return None
     last = z2.strava_activities_cache.get_last_sync_time()
     if last is not None and datetime.now() - last < max_age:
         return None
@@ -217,6 +222,8 @@ async def sync_now(z2: Zone2, activity_id: int | None = None) -> str | None:
             return _BUSY
         found, err = await asyncio.to_thread(resync_activity, z2, activity_id, True)
         return err or (None if found else f"Strava has no activity {activity_id}.")
+    if not z2.strava_endpoint.connected:
+        return str(StravaNotConnected())
     strava = catch_up(z2, timedelta(0))
     if strava is None:
         return _BUSY

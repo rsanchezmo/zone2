@@ -68,6 +68,18 @@ async def _active_plans(ctx: RunContext[AgentDeps]) -> str | None:
     return f"Active plans; plan_detail has each one's agreements, checkpoints and log:\n{lines}"
 
 
+def _strava_connection(ctx: RunContext[AgentDeps]) -> str | None:
+    """Only while Strava is disconnected: what z2 holds is all there is, and how to connect it."""
+    z2 = ctx.deps.z2
+    if z2.strava_endpoint.connected:
+        return None
+    count = z2.strava_activities_cache.count_cached_activities()
+    held = f"the {count} activities synced before are all there is" if count else "z2 has no activities yet"
+    return ("Strava isn't connected to z2: no new activities arrive and sync_now can't fetch any, and "
+            f"{held}. When a question depends on their activities, say so and tell them to connect it with "
+            "Connect Strava, on the banner at the top of every page.")
+
+
 async def _first_name(z2) -> str | None:
     """From the cached Strava profile; a turn goes on without it when Strava can't answer."""
     try:
@@ -95,7 +107,7 @@ def build_agent(model: str | Model | None = None) -> Agent[AgentDeps, Output]:
         model or settings.agent_model,
         deps_type=AgentDeps,
         output_type=[str, DeferredToolRequests],
-        instructions=[INSTRUCTIONS, _athlete_notes, _active_plans, _now_and_page],
+        instructions=[INSTRUCTIONS, _athlete_notes, _active_plans, _now_and_page, _strava_connection],
         toolsets=[read_tools, memory_tools, app_tools, write_tools],
         capabilities=[
             # Its own workspace, so the guides are readable without giving the run any file access

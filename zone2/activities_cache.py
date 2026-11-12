@@ -27,6 +27,16 @@ _HAS_POWER = "has_watts:v1"
 UTC_START = "start_date_utc"
 _UTC_TIMESTAMP = pa.timestamp("ns", tz="UTC")
 
+# The summary columns readers index, with their dtypes: a cache without activities still has
+# them, so reading it gives empty results
+_SUMMARY_COLUMNS = {
+    'id': 'int64', 'name': 'object', 'type': 'object', 'sport_type': 'object', 'start_date_local': 'object',
+    'utc_offset': 'float64', 'timezone': 'object', 'distance': 'float64', 'moving_time': 'float64',
+    'elapsed_time': 'float64', 'total_elevation_gain': 'float64', 'average_speed': 'float64',
+    'max_speed': 'float64', 'average_heartrate': 'float64', 'max_heartrate': 'float64', 'gear_id': 'object',
+    'map': 'object',
+}
+
 
 def _has_power_stream(streams: dict) -> bool:
     return "watts" in streams
@@ -90,13 +100,11 @@ class StravaActivitiesCache:
         prepared = self._prepared_view
         if prepared is not None and prepared[0] == version:
             return prepared[1]
-        view = self._load_to_memory()
-        if not view.empty:
-            # Shallow: only the added columns are new, the rest shares the raw cache's data.
-            view = view.copy(deep=False)
-            view["start_date_local"] = pd.to_datetime(view["start_date_local"], utc=True)
-            if "map" in view.columns:
-                view["summary_polyline"] = view["map"].map(_summary_polyline)
+        # Shallow: only the added columns are new, the rest shares the raw cache's data.
+        view = self._load_to_memory().copy(deep=False)
+        view["start_date_local"] = pd.to_datetime(view["start_date_local"], utc=True)
+        if "map" in view.columns:
+            view["summary_polyline"] = view["map"].map(_summary_polyline)
         self._prepared_view = (version, view)
         return view
 
@@ -175,10 +183,6 @@ class StravaActivitiesCache:
 
         parquet_files = sorted(self.activities_dir.rglob("*.parquet"))
 
-        if not parquet_files:
-            self._memory_cache = pd.DataFrame()
-            return self._memory_cache
-
         # Load yearly files without the detail-only columns and the 'streams'
         # column of legacy parquets (before the StreamsStore migration). Each
         # file's schema may differ, so the columns are picked per file.
@@ -195,6 +199,9 @@ class StravaActivitiesCache:
                 logger.warning("Skipping corrupt parquet file %s: %s", f, e)
                 continue
             dfs.append(df)
+        if not dfs:
+            self._memory_cache = _empty_activities()
+            return self._memory_cache
         self._memory_cache = _with_utc_start(pd.concat(dfs, ignore_index=True))
         self._memory_cache['start_date'] = pd.to_datetime(self._memory_cache['start_date_local'])
         self._memory_cache = self._memory_cache.sort_values('start_date')
@@ -686,6 +693,12 @@ def _utc_from_local(start_date_local: pd.Series, utc_offset: pd.Series) -> pd.Se
     local = pd.to_datetime(start_date_local, utc=True, errors='coerce').dt.tz_localize(None)
     offset = pd.to_timedelta(pd.to_numeric(utc_offset, errors='coerce'), unit='s')
     return (local - offset).dt.tz_localize('UTC')
+
+
+def _empty_activities() -> pd.DataFrame:
+    utc = pd.Series(dtype='datetime64[ns, UTC]')
+    return pd.DataFrame({name: pd.Series(dtype=dtype) for name, dtype in _SUMMARY_COLUMNS.items()}).assign(
+        start_date=utc, **{UTC_START: utc})
 
 
 def _with_utc_start(df: pd.DataFrame) -> pd.DataFrame:

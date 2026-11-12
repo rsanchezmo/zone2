@@ -2,7 +2,7 @@ import json
 import logging
 from pathlib import Path
 
-from zone2.endpoint import StravaEndpoint
+from zone2.endpoint import StravaEndpoint, StravaNotConnected
 from datetime import datetime, timedelta
 from typing import Callable
 
@@ -26,16 +26,23 @@ class StravaUserCache:
     def __get(self, name: str, fetch: Callable[[], dict], max_age_hours: int, force_refresh: bool) -> dict:
         """fetch()'s last good result, refetched once it is max_age_hours old.
         A failed fetch ({}) keeps the last good value and is retried after
-        RETRY_AFTER_FAILURE."""
+        RETRY_AFTER_FAILURE; without Strava connected it is retried on the next call."""
         value, expires_at = self._cached.get(name, ({}, datetime.min))
         if force_refresh or datetime.now() >= expires_at:
-            fresh = fetch()
+            try:
+                fresh = fetch()
+            except StravaNotConnected:
+                return value
             if fresh:
                 value, expires_at = fresh, datetime.now() + timedelta(hours=max_age_hours)
             else:
                 expires_at = datetime.now() + self.RETRY_AFTER_FAILURE
             self._cached[name] = (value, expires_at)
         return value
+
+    def forget(self) -> None:
+        """Drop the profile and zones, as when a Strava account is connected."""
+        self._cached.clear()
 
     def get_athlete_profile(self, max_age_hours: int = 24, force_refresh: bool = False) -> dict:
         return self.__get('profile', self.strava_endpoint.get_athlete, max_age_hours, force_refresh)
@@ -63,7 +70,10 @@ class StravaUserCache:
                    and now - self._gear_failed_at.get(gid, datetime.min) >= self.GEAR_RETRY_AFTER_FAILURE]
         fetched_any = False
         for gid in missing:
-            gear = self.strava_endpoint.get_gear(gid)
+            try:
+                gear = self.strava_endpoint.get_gear(gid)
+            except StravaNotConnected:
+                break
             if gear:
                 self._gear_cache[gid] = gear
                 fetched_any = True

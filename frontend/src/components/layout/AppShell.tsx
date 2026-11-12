@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useLayoutEffect, useCallback, lazy, Suspense } from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
+import { NavLink, useLocation, useSearchParams } from 'react-router-dom'
 import { useQueryClient, useIsFetching } from '@tanstack/react-query'
 import { useSyncStatus, useTriggerSync, useBackfillStreams } from '../../api/sync'
 import { invalidateActivityQueries } from '../../api/invalidation'
@@ -9,6 +9,7 @@ import { useEscapeKey } from '../../hooks/useEscapeKey'
 import { useClickOutside } from '../../hooks/useClickOutside'
 import { useToast } from '../../hooks/useToast'
 import PageErrorBoundary from './PageErrorBoundary'
+import { ConnectStravaBanner, ConnectStravaButton } from './ConnectStrava'
 import AgentDock from '../../agent/AgentDock'
 import { RobotIcon } from '../icons'
 import clsx from 'clsx'
@@ -112,6 +113,9 @@ function SyncPopover({ isLight, placement }: { isLight: boolean; placement: Popo
         {syncStatus?.syncing && (
           <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-blue-400 animate-ping" />
         )}
+        {syncStatus?.connected === false && (
+          <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#fc4c02]" />
+        )}
       </button>
 
       {open && (
@@ -120,39 +124,48 @@ function SyncPopover({ isLight, placement }: { isLight: boolean; placement: Popo
           POPOVER_PLACEMENT[placement],
           'backdrop-blur-xl bg-surface-800/90 border-surface-600',
         )}>
-          <div className="text-[11px] space-y-0.5 text-gray-500">
-            {syncStatus?.athlete_name && (
-              <div className="font-medium text-fg">{syncStatus.athlete_name}</div>
-            )}
-            <div>{syncStatus?.total_activities ?? '...'} activities synced</div>
-          </div>
-          <button
-            onClick={() => triggerSync.mutate({ include_streams: true })}
-            disabled={syncStatus?.syncing || triggerSync.isPending}
-            className={clsx(
-              'w-full rounded-lg text-xs font-medium py-1.5 transition-colors',
-              syncStatus?.syncing
-                ? 'bg-blue-500/10 text-blue-400 animate-pulse'
-                : isLight
-                  ? 'bg-surface-700 text-gray-600 hover:bg-surface-600'
-                  : 'bg-white/[0.06] text-gray-300 hover:bg-white/[0.1]',
-            )}
-          >
-            {syncStatus?.syncing ? 'Syncing...' : 'Sync Now'}
-          </button>
-          <button
-            onClick={() => backfillStreams.mutate()}
-            disabled={syncStatus?.syncing || backfillStreams.isPending}
-            title="Fetch GPS/HR streams for activities missing them"
-            className={clsx(
-              'w-full rounded-lg text-xs font-medium py-1.5 transition-colors',
-              isLight
-                ? 'bg-surface-700 text-gray-600 hover:bg-surface-600'
-                : 'bg-white/[0.06] text-gray-300 hover:bg-white/[0.1]',
-            )}
-          >
-            Backfill Streams
-          </button>
+          {syncStatus?.connected === false ? (
+            <>
+              <div className="text-[11px] text-gray-500">Strava isn't connected yet.</div>
+              <ConnectStravaButton />
+            </>
+          ) : (
+            <>
+              <div className="text-[11px] space-y-0.5 text-gray-500">
+                {syncStatus?.athlete_name && (
+                  <div className="font-medium text-fg">{syncStatus.athlete_name}</div>
+                )}
+                <div>{syncStatus?.total_activities ?? '...'} activities synced</div>
+              </div>
+              <button
+                onClick={() => triggerSync.mutate({ include_streams: true })}
+                disabled={syncStatus?.syncing || triggerSync.isPending}
+                className={clsx(
+                  'w-full rounded-lg text-xs font-medium py-1.5 transition-colors',
+                  syncStatus?.syncing
+                    ? 'bg-blue-500/10 text-blue-400 animate-pulse'
+                    : isLight
+                      ? 'bg-surface-700 text-gray-600 hover:bg-surface-600'
+                      : 'bg-white/[0.06] text-gray-300 hover:bg-white/[0.1]',
+                )}
+              >
+                {syncStatus?.syncing ? 'Syncing...' : 'Sync Now'}
+              </button>
+              <button
+                onClick={() => backfillStreams.mutate()}
+                disabled={syncStatus?.syncing || backfillStreams.isPending}
+                title="Fetch GPS/HR streams for activities missing them"
+                className={clsx(
+                  'w-full rounded-lg text-xs font-medium py-1.5 transition-colors',
+                  isLight
+                    ? 'bg-surface-700 text-gray-600 hover:bg-surface-600'
+                    : 'bg-white/[0.06] text-gray-300 hover:bg-white/[0.1]',
+                )}
+              >
+                Backfill Streams
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -478,14 +491,27 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   // otherwise retry in a tight loop while needs_sync stays true.
   const autoSyncAttempted = useRef(false)
   useEffect(() => {
-    if (!syncStatus?.needs_sync) {
+    if (!syncStatus?.needs_sync || !syncStatus.connected) {
       autoSyncAttempted.current = false
       return
     }
     if (syncStatus.syncing || syncTriggerPending || autoSyncAttempted.current) return
     autoSyncAttempted.current = true
     triggerSync({ include_streams: true })
-  }, [syncStatus?.needs_sync, syncStatus?.syncing, syncTriggerPending, triggerSync])
+  }, [syncStatus?.needs_sync, syncStatus?.connected, syncStatus?.syncing, syncTriggerPending, triggerSync])
+
+  // Strava's consent page comes back as a full page load with the outcome in the query
+  // (useConnectStrava): the error stays on the banner, the URL drops both
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [stravaError] = useState(() => new URLSearchParams(window.location.search).get('strava_error'))
+  useEffect(() => {
+    if (!searchParams.has('strava') && !searchParams.has('strava_error')) return
+    if (searchParams.get('strava') === 'connected') toast('Strava connected', 'success')
+    const rest = new URLSearchParams(searchParams)
+    rest.delete('strava')
+    rest.delete('strava_error')
+    setSearchParams(rest, { replace: true })
+  }, [searchParams, setSearchParams, toast])
 
   // Refetch only when the sync changed the data
   useEffect(() => {
@@ -519,6 +545,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           mobile: top clearance for the hamburger
           tablet+: room for the left/bottom dock */}
       <main className={clsx('min-h-screen p-6 pt-20', isBottom ? 'md:pb-24' : 'md:pl-20', 'md:pt-6')}>
+        {syncStatus?.connected === false && (
+          <div className="max-w-3xl mx-auto">
+            <ConnectStravaBanner error={stravaError} />
+          </div>
+        )}
         <PageErrorBoundary resetKey={location.pathname}>
           {children}
         </PageErrorBoundary>

@@ -4,13 +4,27 @@ import logging
 import os
 import threading
 import time
+from urllib.parse import urlencode
 from pydantic import BaseModel
 import requests
-import webbrowser
 from pathlib import Path
 import json
 
 logger = logging.getLogger(__name__)
+
+# What z2 asks for; the athlete can untick any of them on Strava's consent page
+STRAVA_SCOPES = (
+    'read',               # public data
+    'profile:read_all',   # the full profile, HR zones included
+    'activity:read_all',  # every activity, private ones too
+)
+
+
+class StravaNotConnected(Exception):
+    """z2 holds no token the athlete granted, or Strava stopped accepting it: the athlete
+    connects Strava from the app again."""
+    def __init__(self, message: str = "Strava isn't connected yet: connect it from z2's sync menu."):
+        super().__init__(message)
 
 
 class StravaRateLimitError(Exception):
@@ -76,7 +90,9 @@ class StravaEndpoint:
         self.__STRAVA_CLIENT_ID = os.getenv("STRAVA_CLIENT_ID")
         self.__STRAVA_CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET")
         self.__session = requests.Session()
-        self.__token_data = None
+        self.__token_data: StravaTokenData | None = None
+        # Strava refused to refresh the token, so its access was revoked
+        self.__rejected = False
         # Guards against two threads refreshing with the same refresh_token
         # (Strava rotates refresh_tokens, so the second request would 400).
         self.__token_lock = threading.Lock()
@@ -95,98 +111,91 @@ class StravaEndpoint:
             raise ValueError("STRAVA_CLIENT_ID not found in environment variables.")
         if self.__STRAVA_CLIENT_SECRET is None:
             raise ValueError("STRAVA_CLIENT_SECRET not found in environment variables.")
-        
-        # Get the access token 
-        self.__authenticate()
 
-    def __get_initial_token(self) -> StravaTokenData:
-        """Obtain initial OAuth token via user authorization flow."""
-        if self.__token_file.exists():
-            return StravaTokenData.from_file(self.__token_file)
+    @property
+    def connected(self) -> bool:
+        """Whether z2 holds a token for the athlete's account that Strava hasn't refused."""
+        return not self.__rejected and (self.__token_data is not None or self.__token_file.exists())
 
-        # Request all necessary scopes for full API access
-        scopes = [
-            'read',              # Public data access
-            'read_all',          # Private routes, segments, events
-            'profile:read_all',  # Full profile access (required for zones)
-            'activity:read_all', # All activities including private
-        ]
+    def authorize_url(self, redirect_uri: str, state: str) -> str:
+        """Strava's consent page, which sends the browser back to `redirect_uri` with a code
+        for `connect` and the `state` it was given."""
+        return f"{StravaEndpoint.__OAUTH_AUTHORIZE_URL}?" + urlencode({
+            'client_id': self.__STRAVA_CLIENT_ID,
+            'response_type': 'code',
+            'redirect_uri': redirect_uri,
+            'scope': ','.join(STRAVA_SCOPES),
+            'state': state,
+        })
 
-        auth_url = (
-            f"{StravaEndpoint.__OAUTH_AUTHORIZE_URL}?"
-            f"client_id={self.__STRAVA_CLIENT_ID}&"
-            f"response_type=code&"
-            f"redirect_uri=http://localhost/exchange_token&"
-            f"scope={','.join(scopes)}"
-        )
-        webbrowser.open(auth_url)
-        authorization_code = input("Enter the authorization code from the URL: ")
-        
+    def connect(self, code: str) -> dict:
+        """Trade the code from Strava's consent page for the athlete's token and keep it.
+        Returns the athlete Strava signed in."""
         response = self.__session.post(
             StravaEndpoint.__OAUTH_TOKEN_URL,
             data={
                 'client_id': self.__STRAVA_CLIENT_ID,
                 'client_secret': self.__STRAVA_CLIENT_SECRET,
-                'code': authorization_code,
-                'grant_type': 'authorization_code'
+                'code': code,
+                'grant_type': 'authorization_code',
             },
             timeout=self.__REQUEST_TIMEOUT,
         )
-        
         if response.status_code != 200:
-            raise Exception(f"Token exchange failed: {response.json()}")
-        
-        token_data = response.json()
-        
-        token = StravaTokenData(**token_data)
+            raise StravaNotConnected(f"Strava refused the sign-in (HTTP {response.status_code}): {response.text[:200]}")
+        payload = response.json()
+        token = StravaTokenData(**payload)
+        with self.__token_lock:
+            token.to_file(self.__token_file)
+            self.__token_data, self.__rejected = token, False
+        return payload.get('athlete') or {}
 
-        token.to_file(self.__token_file)
+    def __token(self) -> StravaTokenData:
+        """The athlete's token, read from its file once it exists: the app may connect Strava
+        after this process started."""
+        if self.__rejected:
+            raise StravaNotConnected("Strava no longer accepts z2's access: connect Strava again.")
+        if self.__token_data is None:
+            if not self.__token_file.exists():
+                raise StravaNotConnected()
+            self.__token_data = StravaTokenData.from_file(self.__token_file)
+        return self.__token_data
 
-        return token
-    
-    def __refresh_token(self) -> StravaTokenData:
-        """Refresh OAuth token using the refresh token."""
+    def __refresh_token(self, token: StravaTokenData) -> StravaTokenData:
         response = self.__session.post(
             StravaEndpoint.__OAUTH_TOKEN_URL,
             data={
                 'client_id': self.__STRAVA_CLIENT_ID,
                 'client_secret': self.__STRAVA_CLIENT_SECRET,
                 'grant_type': 'refresh_token',
-                'refresh_token': self.__token_data.refresh_token
+                'refresh_token': token.refresh_token,
             },
             timeout=self.__REQUEST_TIMEOUT,
         )
-        
+        # Strava answers a revoked or unknown refresh token with 400, a bad client with 401
+        if response.status_code in (400, 401):
+            logger.error("Strava refused the token refresh: %s", response.text)
+            self.__rejected = True
+            raise StravaNotConnected("Strava no longer accepts z2's access: connect Strava again.")
         if response.status_code != 200:
-            raise Exception(f"Token refresh failed: {response.json()}")
-        
-        token_data = response.json()
-        
-        token = StravaTokenData(**token_data)
+            raise Exception(f"Token refresh failed (HTTP {response.status_code}): {response.text[:200]}")
+        refreshed = StravaTokenData(**response.json())
+        refreshed.to_file(self.__token_file)
+        return refreshed
 
-        token.to_file(self.__token_file)
-
-        return token
-    
     def __get_valid_token(self) -> str:
         """Get a valid access token, refreshing if necessary. Thread-safe:
         concurrent callers serialize on __token_lock and only the first
         refresh actually hits Strava; the rest see the already-refreshed
         token on the re-check inside the lock."""
-        if not self.__token_data.is_expired():
-            return self.__token_data.access_token
+        token = self.__token()
+        if not token.is_expired():
+            return token.access_token
         with self.__token_lock:
-            if self.__token_data.is_expired():
-                self.__token_data = self.__refresh_token()
-            return self.__token_data.access_token
-
-    def __authenticate(self):
-        self.__token_data = self.__get_initial_token()
-
-        if self.__token_data.is_expired():
-            with self.__token_lock:
-                if self.__token_data.is_expired():
-                    self.__token_data = self.__refresh_token()
+            token = self.__token()
+            if token.is_expired():
+                token = self.__token_data = self.__refresh_token(token)
+            return token.access_token
 
     def __get_headers(self) -> dict[str, str]:
         access_token = self.__get_valid_token()

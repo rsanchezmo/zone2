@@ -1,7 +1,10 @@
 import json
 
+from urllib.parse import urlencode
+
 import aiosqlite
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from backend.db import get_db
@@ -16,6 +19,7 @@ from backend.services.zones import (
     resolve_hr_zones,
     set_setting,
 )
+from backend.services import strava_auth
 from backend.services.gear import resolve_gear_catalog
 from backend.services.resting_hr import (
     DEFAULT_SOURCE as RHR_DEFAULT_SOURCE,
@@ -36,6 +40,27 @@ def get_athlete_profile(z2: Zone2 = Depends(get_z2)):
     profile["bikes"] = [g for g in catalog if g["kind"] == "bikes"]
 
     return profile
+
+
+class StravaConnect(BaseModel):
+    origin: str
+    return_to: str = "/"
+
+
+@router.post("/strava/connect")
+def connect_strava(body: StravaConnect, request: Request, z2: Zone2 = Depends(get_z2)) -> dict[str, str]:
+    """Strava's consent page for the browser to open; it comes back to strava_callback."""
+    callback = request.url_for("strava_callback").path
+    return {"url": strava_auth.start(z2, body.origin, callback, body.return_to)}
+
+
+@router.get("/strava/callback")
+def strava_callback(state: str = "", code: str | None = None, scope: str = "", error: str | None = None,
+                    z2: Zone2 = Depends(get_z2)) -> RedirectResponse:
+    outcome = strava_auth.finish(z2, state, code, scope, error)
+    query = urlencode({"strava_error": outcome.error} if outcome.error else {"strava": "connected"})
+    sep = "&" if "?" in outcome.return_to else "?"
+    return RedirectResponse(f"{outcome.return_to}{sep}{query}", status_code=303)
 
 
 @router.get("/rate-limits")

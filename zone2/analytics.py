@@ -163,8 +163,13 @@ class StravaAnalytics:
         hr_max = self._estimate_hr_max_from_activities()
         if hr_max and hr_max > 100:
             return hr_max
-        zones = self.strava_user_cache.get_athlete_zones()
-        return zones['heart_rate']['zones'][4]['min']
+        return self._strava_hr_max()
+
+    def _strava_hr_max(self) -> int:
+        """The floor of Strava's zone 5, or a typical max HR while Strava has no zones for z2
+        (before it is connected)."""
+        zones = self.strava_user_cache.get_athlete_zones().get('heart_rate', {}).get('zones') or []
+        return zones[4]['min'] if len(zones) == 5 and zones[4].get('min') else 190
 
     def _estimate_hr_max_from_activities(self) -> int | None:
         """Estimate max HR from activity data using the 99th percentile.
@@ -212,8 +217,7 @@ class StravaAnalytics:
         zones = self.strava_user_cache.get_athlete_zones()
         if zones.get('heart_rate', {}).get('custom_zones'):
             return zones['heart_rate']['zones']
-        hr_max = zones.get('heart_rate', {}).get('zones', [{}] * 5)[4].get('min', 190)
-        return self._build_default_zones(hr_max)
+        return self._build_default_zones(self._strava_hr_max())
 
     def _garmin_race_predictions(self) -> GarminRacePredictions | None:
         """Latest cached Garmin race-predictor times (running only), or None,

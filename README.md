@@ -29,7 +29,7 @@ The **Coach** is an AI agent with a chat on every page. You can type, or hold th
 
 ## Running it
 
-Create an app in your [Strava API settings](https://www.strava.com/settings/api) and set its Authorization Callback Domain to `localhost`. Then:
+Create an app in your [Strava API settings](https://www.strava.com/settings/api) and set its Authorization Callback Domain to `localhost`, or on a server to the domain you open z2 at. Then:
 
 ```bash
 git clone https://github.com/rsanchezmo/zone2.git
@@ -39,19 +39,13 @@ poetry install
 cp .env.example .env    # then fill it in, see below
 ```
 
-The first time, start the backend on its own, so the Strava login can ask you for a code in the terminal:
-
-```bash
-poetry run uvicorn backend.app:app --port 8000
-```
-
-It opens Strava in your browser. Approve the app, and Strava redirects you to a `localhost/exchange_token` page that won't load. Copy the `code` from its address and paste it into the terminal. The token is saved in `.strava/token.json` and refreshes on its own from then on. Stop the backend, and from now on run both servers together:
+Start the backend and the frontend together:
 
 ```bash
 poetry run python run_dev.py
 ```
 
-The app is at http://localhost:5173 and the API at http://localhost:8000. Hit Sync Now under the sync icon in the dock to pull your history. Strava's rate limits make the first sync of a long history slow, and Backfill Streams, in the same menu, picks up where the last one stopped.
+The app is at http://localhost:5173 and the API at http://localhost:8000. Click **Connect Strava** and approve z2 on Strava's page, leaving both boxes ticked (z2 reads your private activities and the HR zones in your profile). Strava sends you back to the app, which starts pulling your history. The token is kept in `.strava/token.json` and refreshes on its own. Strava's rate limits make the first sync of a long history slow, and Backfill Streams, under the sync icon in the dock, picks up where the last one stopped.
 
 The `.env` file:
 
@@ -82,7 +76,7 @@ docker compose up -d --build        # the app on 127.0.0.1:8000, plus the Cloudf
 docker compose up -d --build app    # just the app
 ```
 
-The app has no login of its own, so it only listens on the server's loopback and Cloudflare Access guards the way in. A container can't do the interactive Strava login either, so authorise once on your laptop and copy `.strava/` onto the server. [DEPLOY.md](DEPLOY.md) walks through that, setting up Cloudflare Tunnel and Access, and an optional timer that redeploys when you push. Days and weeks follow the time zone of your latest activity, so a server running in UTC still rolls over at your midnight.
+The app has no login of its own, so it only listens on the server's loopback and Cloudflare Access guards the way in. Set your Strava app's callback domain to the domain you reach it at, and connect Strava from the app as you would locally. [DEPLOY.md](DEPLOY.md) walks through setting up Cloudflare Tunnel and Access, and an optional timer that redeploys when you push. Days and weeks follow the time zone of your latest activity, so a server running in UTC still rolls over at your midnight.
 
 ## Finding your way around
 

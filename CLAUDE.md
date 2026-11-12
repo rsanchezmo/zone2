@@ -79,7 +79,7 @@ The rest of `zone2/`: `best_efforts.py` (records), `race_predictions.py`, `train
 - `calendar.py` — Training session CRUD, scoring
 - `exports.py` — PNG image generation (weekly reports, heatmaps, activity plots)
 - `sync.py` — Background sync tasks, stream backfill, cache status
-- `athlete.py` — Profile, rate limits, HR zones
+- `athlete.py` — Profile, rate limits, HR zones; connecting Strava (`POST /api/athlete/strava/connect` returns Strava's consent page for the browser's origin, which comes back to `/api/athlete/strava/callback`; `services/strava_auth.py` checks the one-off state and the scopes granted and keeps the token). The app runs without a token: `StravaEndpoint.connected` is false, Strava reads raise `StravaNotConnected` (503) and the frontend shows Connect Strava
 - `gear.py` — Gear with activity rollups
 - `goals.py` — Yearly goal CRUD with progress tracking
 - `races.py` — Race calendar

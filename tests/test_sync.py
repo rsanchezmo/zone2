@@ -34,7 +34,7 @@ class Strava:
     def __init__(self, changes: bool = True, error: Exception | None = None, hold: threading.Event | None = None):
         self.strava_activities_cache = Activities()
         self.strava_analytics = SimpleNamespace(warm_caches=self._warm)
-        self.strava_endpoint = SimpleNamespace()
+        self.strava_endpoint = SimpleNamespace(connected=True)
         self.changes, self.error, self.hold = changes, error, hold
         self.syncs: list[tuple[bool, bool]] = []
         self.warmed_stats = 0

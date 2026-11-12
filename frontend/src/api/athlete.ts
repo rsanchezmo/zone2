@@ -56,6 +56,19 @@ export function useAppConfig() {
   return { cartoApiKey: data?.carto_api_key, pending: isPending };
 }
 
+/** Sends the browser to Strava's consent page, which comes back to the backend's callback and
+ *  from there to this page, with `?strava=connected` or `?strava_error=…`. */
+export function useConnectStrava() {
+  return useMutation({
+    mutationFn: () =>
+      api.post<{ url: string }>('/athlete/strava/connect', {
+        origin: window.location.origin,
+        return_to: window.location.pathname + window.location.search,
+      }).then(r => r.data),
+    onSuccess: ({ url }) => window.location.assign(url),
+  });
+}
+
 export function useAthleteProfile() {
   return useQuery<AthleteProfile>({
     queryKey: ['athlete-profile'],

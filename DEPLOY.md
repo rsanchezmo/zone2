@@ -104,21 +104,15 @@ With this option, disable the compose `cloudflared` service (see the
    - Include: **Emails** → your email address
 5. Authentication method: **One-time PIN** (emails you a code) or add **Google** as an identity provider
 
-## Step 4: Seed the cache (skip first-time OAuth)
+## Step 4: Data folders on the Pi
 
-The first-time OAuth flow in `zone2/endpoint.py` uses `webbrowser.open()` +
-`input()`, which doesn't work on a headless Pi. The simplest fix is to run the
-app locally once on your laptop, complete OAuth there, then copy the populated
-`.strava/` directory onto the Pi before the first `docker compose up`.
-
-On your laptop, after running the app once and authorizing with Strava, the
-`.strava/` folder (or the one `STRAVA_WEB_DATA_DIR` names) contains
-`token.json`, `metadata.json`, and cached Parquet activity files. **It is
-gitignored**, so a fresh `git clone` on the Pi doesn't have it — rsync it
-before the first start:
+z2 keeps everything in `.strava/` (activities, streams, the Strava token and
+`calendar.db`) and `zone2_workdir/` (street maps and exports). Both are
+gitignored. If you already ran z2 on a laptop, copy its `.strava/` onto the Pi
+before the first start to skip the long first sync (switch to bind mounts
+first, see the override below):
 
 ```bash
-# On the Pi, switch to bind-mounts first (see docker-compose.override.yml below).
 rsync -avz --delete ./.strava/ pi:/home/pi/zone2/strava-data/
 ```
 
@@ -173,7 +167,7 @@ nano .env
 #   CLOUDFLARE_TUNNEL_TOKEN=...                           # Option A only
 #   STRAVA_WEB_CORS_ORIGINS=["https://strava.yourdomain.com"]   # JSON array literal
 
-# Copy your seeded .strava/ from the laptop (see Step 4)
+# Optional: copy .strava/ from a laptop that already ran z2 (see Step 4)
 
 # Build and start — first build is slow on ARM (20–40 min on Pi 4)
 docker compose up -d --build
@@ -181,6 +175,12 @@ docker compose up -d --build
 # Watch logs
 docker compose logs -f
 ```
+
+Then connect Strava: in your [Strava API settings](https://www.strava.com/settings/api)
+set the Authorization Callback Domain to the app's domain (`strava.yourdomain.com`),
+open the app and click **Connect Strava**. Strava sends your browser back to
+`/api/athlete/strava/callback` on that domain, which keeps the token in the data
+folder. Cloudflare Access lets that request through like any other of yours.
 
 ## Auto-deploy on push
 
@@ -331,10 +331,9 @@ sudo systemctl start z2-deploy.service
 - **Tunnel not connecting**: `docker compose logs cloudflared` (or
   `journalctl -u cloudflared` if you moved it to host systemd). Verify the
   tunnel token is correct.
-- **Strava auth issues on the Pi**: if the cache wasn't seeded and you hit
-  the interactive OAuth prompt, the container will wait forever for input.
-  Either seed `.strava/` (Step 4) or attach a TTY and paste the code:
-  `docker compose run --rm app python -c "from backend.config import settings; from zone2.endpoint import StravaEndpoint; from zone2.paths import DataDir; StravaEndpoint(DataDir(settings.data_dir).token)"`.
+- **Connect Strava fails with "redirect_uri invalid"**: the Authorization
+  Callback Domain in your Strava API settings isn't the domain you opened the
+  app at. Strava keeps one domain per app (`localhost` is always allowed).
 - **`docker: permission denied` during auto-deploy**: the `pi` user must be
   in the `docker` group — `sudo usermod -aG docker pi`, then log out and
   back in.
