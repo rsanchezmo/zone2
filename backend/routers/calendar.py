@@ -194,7 +194,7 @@ class WatchWorkoutsUpdate(BaseModel):
 @router.get("/watch-workouts")
 async def get_watch_workouts(db: aiosqlite.Connection = Depends(get_db), z2: Zone2 = Depends(get_z2)):
     """Whether saved run workouts and planned runs go to Garmin (`available`: Garmin is configured)."""
-    return {"available": bool(z2.garmin_client.email), "enabled": await garmin_workouts.is_enabled(z2, db)}
+    return {"available": z2.garmin_client.configured, "enabled": await garmin_workouts.is_enabled(z2, db)}
 
 
 @router.put("/watch-workouts")

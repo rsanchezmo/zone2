@@ -224,7 +224,7 @@ def test_open_page_shows_a_held_loop_or_a_saved_route_on_the_coverage_page(offli
 # ── Writes wait for a yes ────────────────────────────────────────────────
 
 class StubGarmin:
-    enabled = True
+    enabled = configured = True
 
     def __init__(self) -> None:
         self.calls: list[tuple[Any, ...]] = []

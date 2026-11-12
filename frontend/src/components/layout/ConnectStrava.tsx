@@ -1,6 +1,7 @@
 import clsx from 'clsx'
 import { useConnectStrava } from '../../api/athlete'
 import { errorDetail } from '../../api/client'
+import HaloButton from '../shared/HaloButton'
 
 const STRAVA_ORANGE = '#fc4c02'
 
@@ -8,15 +9,9 @@ export function ConnectStravaButton({ className }: { className?: string }) {
   const connect = useConnectStrava()
   return (
     <div className={clsx('space-y-1', className)}>
-      <button
-        onClick={() => connect.mutate()}
-        disabled={connect.isPending}
-        className="w-full inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1.5 text-[11px] uppercase tracking-[0.15em] font-semibold transition-colors hover:brightness-125 disabled:opacity-60"
-        style={{ color: STRAVA_ORANGE, borderColor: `${STRAVA_ORANGE}50`, backgroundColor: `${STRAVA_ORANGE}15` }}
-      >
-        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: STRAVA_ORANGE }} aria-hidden="true" />
+      <HaloButton color={STRAVA_ORANGE} className="w-full" onClick={() => connect.mutate()} disabled={connect.isPending}>
         {connect.isPending ? 'Opening Strava…' : 'Connect Strava'}
-      </button>
+      </HaloButton>
       {connect.isError && (
         <div className="text-[11px] text-red-400">{errorDetail(connect.error, 'Could not reach the backend')}</div>
       )}

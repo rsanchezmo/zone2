@@ -33,7 +33,7 @@ def database(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     asyncio.run(calendar_db.init_db())
 
 
-Z2 = SimpleNamespace(garmin_client=SimpleNamespace(email=None, enabled=False), clock=Clock())
+Z2 = SimpleNamespace(garmin_client=SimpleNamespace(configured=False, enabled=False), clock=Clock())
 
 
 def run[T](work: Callable[[Any], Awaitable[T]]) -> T:

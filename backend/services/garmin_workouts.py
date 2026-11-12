@@ -219,7 +219,7 @@ def _error(e: Exception) -> str:
 
 async def is_enabled(z2: Zone2, db: aiosqlite.Connection) -> bool:
     """Garmin is configured and the Profile switch is on (it is by default)."""
-    return bool(z2.garmin_client.email) and (await get_setting(db, SETTING_KEY)) != "0"
+    return z2.garmin_client.configured and (await get_setting(db, SETTING_KEY)) != "0"
 
 
 def is_run_workout(template: dict[str, Any]) -> bool:
@@ -294,7 +294,7 @@ async def _sync_library(db: aiosqlite.Connection, client: GarminClient, enabled:
 
 async def sync_library(z2: Zone2) -> None:
     """Bring the Garmin copies in line with the saved workouts (after one changes)."""
-    if not z2.garmin_client.email:
+    if not z2.garmin_client.configured:
         return
     async with _lock, connect_db() as db:
         await _sync_library(db, z2.garmin_client, await is_enabled(z2, db))

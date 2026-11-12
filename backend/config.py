@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     # Garmin auto-sync — independent of Strava. Default 6h: wellness data
     # mostly refreshes once per night, but stress / body battery / steps
     # update through the day, so a few daytime checkpoints are worth it.
-    # Only starts when GARMIN_EMAIL is set; otherwise the loop is skipped.
+    # Each run is skipped while Garmin isn't connected (no sign-in, no .env credentials).
     auto_garmin_sync_hours: int = 6
     log_level: str = "INFO"
     # Optional: pin the iCal feed token via env. If set, wins over the

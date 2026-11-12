@@ -53,7 +53,7 @@ class Garmin:
 
 @pytest.fixture
 def z2() -> SimpleNamespace:
-    return SimpleNamespace(garmin_client=SimpleNamespace(email=None, enabled=False), clock=Clock())
+    return SimpleNamespace(garmin_client=SimpleNamespace(configured=False, enabled=False), clock=Clock())
 
 
 @pytest.fixture

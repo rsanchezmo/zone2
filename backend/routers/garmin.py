@@ -7,6 +7,9 @@ body battery, etc.).
 Endpoints
 ---------
 - GET  /status             — enabled flag, sync state, cache coverage
+- POST /sign-in            — sign in with email and password; `needs_code` when Garmin asks
+- POST /sign-in/code       — finish that sign-in with the code Garmin sent
+- POST /sign-out           — forget the sign-in made in the app
 - POST /sync?full=false    — background task; default refreshes last 14 days,
                              full=true walks history backwards until empty
 - GET  /daily-stats        — raw cached payloads for one metric over a window
@@ -26,9 +29,10 @@ from datetime import date as date_t, timedelta
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from pydantic import BaseModel
 
 from backend.dependencies import get_z2
-from backend.services import garmin_sync
+from backend.services import garmin_auth, garmin_sync
 from backend.services.activity_cost import activity_cost
 from backend.services.day_timeline import day_timeline
 from backend.services.garmin_courses import course_devices, course_line
@@ -47,12 +51,53 @@ def status(z2: Zone2 = Depends(get_z2)) -> dict[str, Any]:
     slot = garmin_sync.status()
     return {
         "enabled": z2.garmin_client.enabled,
+        "configured": z2.garmin_client.configured,
+        "from_env": z2.garmin_client.from_env,
         "client_error": z2.garmin_client.last_error,
         "syncing": slot.running,
         "last_error": slot.last_error,
         "last_summary": slot.last_summary,
         **coverage,
     }
+
+
+# ---------------------------------------------------------------------- /sign-in
+
+
+class GarminSignIn(BaseModel):
+    email: str
+    password: str
+
+
+class GarminCode(BaseModel):
+    code: str
+
+
+def _sync_signed_in(background_tasks: BackgroundTasks, z2: Zone2) -> None:
+    """A new sign-in fetches the last 14 days, as Sync recent does."""
+    if garmin_sync.try_claim():
+        background_tasks.add_task(garmin_sync.run, z2, False)
+
+
+@router.post("/sign-in")
+async def sign_in(body: GarminSignIn, background_tasks: BackgroundTasks, z2: Zone2 = Depends(get_z2)):
+    needs_code = await garmin_auth.sign_in(z2, body.email, body.password)
+    if not needs_code:
+        _sync_signed_in(background_tasks, z2)
+    return {"needs_code": needs_code}
+
+
+@router.post("/sign-in/code")
+async def sign_in_code(body: GarminCode, background_tasks: BackgroundTasks, z2: Zone2 = Depends(get_z2)):
+    await garmin_auth.enter_code(z2, body.code)
+    _sync_signed_in(background_tasks, z2)
+    return {"needs_code": False}
+
+
+@router.post("/sign-out")
+def sign_out(z2: Zone2 = Depends(get_z2)):
+    garmin_auth.sign_out(z2)
+    return {"status": "signed_out"}
 
 
 # ---------------------------------------------------------------------- /sync

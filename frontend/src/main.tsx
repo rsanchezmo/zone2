@@ -17,7 +17,8 @@ const queryClient = new QueryClient({
     },
   }),
   mutationCache: new MutationCache({
-    onError: (error) => {
+    onError: (error, _variables, _context, mutation) => {
+      if (mutation.meta?.inlineError) return
       const detail = isAxiosError(error) ? error.response?.data?.detail : undefined
       emitToast(typeof detail === 'string' ? detail : 'Request failed', 'error')
     },

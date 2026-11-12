@@ -99,7 +99,7 @@ def run[T](work: Callable[[Any], Awaitable[T]]) -> T:
 
 def athlete(**parts: Any) -> SimpleNamespace:
     return SimpleNamespace(**{"clock": SUNDAY_AFTER_MIDNIGHT,
-                              "garmin_client": SimpleNamespace(email="athlete@example.com"), **parts})
+                              "garmin_client": SimpleNamespace(configured=True), **parts})
 
 
 async def plan_runs(db: Any, days: tuple[str, ...]) -> list[int]:
@@ -140,7 +140,7 @@ def test_the_watch_gets_the_sessions_from_the_athletes_today(database: Path):
 
 def test_a_deleted_session_of_the_athletes_yesterday_keeps_its_garmin_entry(database: Path):
     removed: list[int] = []
-    z2 = athlete(garmin_client=SimpleNamespace(email="athlete@example.com", unschedule_workout=removed.append))
+    z2 = athlete(garmin_client=SimpleNamespace(configured=True, unschedule_workout=removed.append))
 
     async def work(db: Any) -> int:
         (session_id,) = await plan_runs(db, (SATURDAY,))
@@ -159,7 +159,7 @@ def test_new_steps_reach_the_sessions_from_the_athletes_today(database: Path):
 
     async def work(db: Any) -> list[int]:
         await plan_runs(db, (SATURDAY, SUNDAY))
-        await workout_library.update(athlete(garmin_client=SimpleNamespace(email=None)), db, 1,
+        await workout_library.update(athlete(garmin_client=SimpleNamespace(configured=False)), db, 1,
                                      WorkoutChanges(segments=longer), lambda *args: None)
         rows = await (await db.execute("SELECT segments FROM training_sessions ORDER BY date")).fetchall()
         return [json.loads(r[0])[0]["repetitions"] for r in rows]

@@ -65,6 +65,7 @@ export function useConnectStrava() {
         origin: window.location.origin,
         return_to: window.location.pathname + window.location.search,
       }).then(r => r.data),
+    meta: { inlineError: true },
     onSuccess: ({ url }) => window.location.assign(url),
   });
 }

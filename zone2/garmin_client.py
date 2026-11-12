@@ -6,14 +6,15 @@ readiness, body battery, etc.).
 
 Design notes
 ------------
-- Graceful disable: if GARMIN_EMAIL / GARMIN_PASSWORD are missing or login
-  fails, `enabled` stays False and every fetch returns None. The rest of the
-  app never sees an exception.
-- Token cache: `garminconnect` persists OAuth tokens in `token_dir`, which
+- Graceful disable: without a sign-in (tokens) or GARMIN_EMAIL / GARMIN_PASSWORD,
+  or when login fails, `enabled` stays False and every fetch returns None. The
+  rest of the app never sees an exception.
+- Sign-in: `begin_sign_in` / `finish_sign_in` take the email and password once,
+  and the code Garmin sends when it asks for one; only the tokens are kept.
+- Token cache: `garminconnect` persists its tokens in `token_dir`, which
   Zone2 sets to GARMINTOKENS when given, else `garmin/` in its data directory.
-- MFA: handled interactively on first login only. From a web server context
-  there is no stdin, so the prompt_mfa callback raises a clean error
-  pointing the user at `scripts/garmin_poc.py`.
+- MFA: a background login from .env credentials can't ask for the code, so the
+  prompt_mfa callback raises a clean error pointing at the Profile page.
 - All garminconnect methods are synchronous; callers running on the event
   loop must wrap calls in `asyncio.to_thread(...)`.
 """
@@ -23,6 +24,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import date as date_t
 from pathlib import Path
 from typing import Any
@@ -49,16 +52,41 @@ _BACKOFF_BASE_S = 2.0   # exponential: 2s, 4s, ... between retries
 
 
 class GarminMFARequired(RuntimeError):
-    """Raised when Garmin asks for an MFA code but no interactive stdin is
-    available. Tells the caller to provision the token via the CLI helper."""
+    """Raised when Garmin asks a background login for the code it sent."""
 
 
 def _mfa_not_interactive() -> str:
-    raise GarminMFARequired(
-        "Garmin Connect requires MFA but the web server has no stdin. "
-        "Run `poetry run python scripts/garmin_poc.py` once from a "
-        "terminal to refresh the cached token, then restart the backend."
-    )
+    raise GarminMFARequired("Garmin asks for a code to sign in: connect Garmin from z2's Profile page.")
+
+
+class GarminSignInRefused(RuntimeError):
+    """Garmin turned down the email and password, or the code."""
+
+
+class GarminSignInFailed(RuntimeError):
+    """Garmin couldn't be reached or is limiting sign-ins, so try again later."""
+
+
+# The file garminconnect keeps its tokens in, inside the token dir
+TOKENS_FILE = "garmin_tokens.json"
+# How long a sign-in waits for the code Garmin sent
+SIGN_IN_TTL_S = 600
+
+
+@contextmanager
+def _sign_in_errors(what: str) -> Iterator[None]:
+    """The lib's sign-in errors as GarminSignInRefused or GarminSignInFailed, fit to show."""
+    from garminconnect import GarminConnectAuthenticationError, GarminConnectTooManyRequestsError
+    try:
+        yield
+    except GarminConnectAuthenticationError as e:
+        logger.info("Garmin refused %s: %s", what, e)
+        raise GarminSignInRefused(f"Garmin didn't accept {what}.") from e
+    except GarminConnectTooManyRequestsError as e:
+        raise GarminSignInFailed("Garmin is limiting sign-ins from this network: try again in a while.") from e
+    except Exception as e:
+        logger.warning("Garmin sign-in failed: %s: %s", type(e).__name__, e)
+        raise GarminSignInFailed("Garmin can't be reached right now: try again in a minute.") from e
 
 
 class GarminUnavailable(RuntimeError):
@@ -131,10 +159,26 @@ class GarminClient:
         self.call_errors: int = 0
         self._client = None  # garminconnect.Garmin lazy-loaded
         self._lock = threading.Lock()
+        # A sign-in waiting for its code: the lib keeps that state on the client itself
+        self._pending: tuple[Any, float] | None = None
 
-        if not email or not password:
-            self.last_error = "GARMIN_EMAIL / GARMIN_PASSWORD not set in .env"
+        if not self.configured:
+            self.last_error = "Garmin isn't connected"
             logger.info("Garmin client disabled: %s", self.last_error)
+
+    @property
+    def tokens_file(self) -> Path:
+        return self.token_dir / TOKENS_FILE
+
+    @property
+    def from_env(self) -> bool:
+        """Whether GARMIN_EMAIL and GARMIN_PASSWORD are set, so a sign-out doesn't stick."""
+        return bool(self.email and self.password)
+
+    @property
+    def configured(self) -> bool:
+        """Signed in from the app (its tokens are kept), or credentials in .env."""
+        return self.from_env or self.tokens_file.exists()
 
     # ------------------------------------------------------------------ login
 
@@ -142,7 +186,7 @@ class GarminClient:
         """Log in to Garmin (idempotent). Returns True on success."""
         if self.enabled and self._client is not None:
             return True
-        if not self.email or not self.password:
+        if not self.configured:
             return False
         with self._lock:
             if self.enabled and self._client is not None:
@@ -165,9 +209,53 @@ class GarminClient:
                 logger.warning("Garmin login needs MFA: %s", e)
                 return False
             except Exception as e:
-                self.last_error = f"{type(e).__name__}: {e}"
-                logger.warning("Garmin login failed: %s", self.last_error)
+                self.last_error = (f"{type(e).__name__}: {e}" if self.from_env
+                                   else "Garmin signed z2 out: connect Garmin again from the Profile page.")
+                logger.warning("Garmin login failed: %s: %s", type(e).__name__, e)
                 return False
+
+    def begin_sign_in(self, email: str, password: str) -> bool:
+        """Sign in with the athlete's email and password, which are never stored: the tokens
+        are. Returns True when Garmin asks for the code it sent, for `finish_sign_in`."""
+        from garminconnect import Garmin
+        client = Garmin(email, password, return_on_mfa=True)
+        with _sign_in_errors("that email and password"):
+            status, _ = client.login()
+        if status == "needs_mfa":
+            with self._lock:
+                self._pending = (client, time.monotonic())
+            return True
+        self._adopt(client)
+        return False
+
+    def finish_sign_in(self, code: str) -> None:
+        """Finish the sign-in `begin_sign_in` started with the code Garmin sent. A refused code
+        keeps it waiting, for another try."""
+        with self._lock:
+            pending = self._pending
+        if pending is None or time.monotonic() - pending[1] > SIGN_IN_TTL_S:
+            raise GarminSignInRefused("That sign-in expired: enter your email and password again.")
+        client = pending[0]
+        with _sign_in_errors("that code"):
+            client.resume_login(None, code)
+        with self._lock:
+            self._pending = None
+        self._adopt(client)
+
+    def _adopt(self, client: Any) -> None:
+        """Keep a finished sign-in's tokens and log in from them, which loads the profile."""
+        client.client.dump(str(self.tokens_file))
+        with self._lock:
+            self._client, self.enabled, self.last_error = None, False, None
+        if not self.ensure_logged_in():
+            raise GarminSignInFailed(self.last_error or "Garmin signed in but its session doesn't load")
+
+    def sign_out(self) -> None:
+        """Forget the sign-in made in the app: its tokens and the logged-in client."""
+        with self._lock:
+            self.tokens_file.unlink(missing_ok=True)
+            self._client, self.enabled, self._pending = None, False, None
+            self.last_error = "Garmin isn't connected"
 
     # ------------------------------------------------------------------ helpers
 

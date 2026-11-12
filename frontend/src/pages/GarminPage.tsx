@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import { useTheme } from '../hooks/useTheme'
 import {
@@ -48,7 +48,7 @@ export default function GarminPage() {
     : 'no stored data yet'
   const headerDescription = enabled
     ? `wellness dashboard · ${status?.total_days ?? 0} days · ${dataWindow}`
-    : 'Garmin Connect is not configured'
+    : 'Garmin Connect is not connected'
 
   const card = useMemo(() => cardValues(latest), [latest])
 
@@ -120,20 +120,12 @@ export default function GarminPage() {
       {enabled && <TodaySection card={card} />}
 
       {/* ── Status banners ───────────────────────────────────────── */}
-      {!enabled && (
-        <div className={clsx(
-          'rounded-xl border p-4 text-sm',
-          isLight ? 'bg-amber-50/80 border-amber-200 text-amber-900' : 'bg-amber-500/5 border-amber-500/30 text-amber-300',
-        )}>
-          <div className="font-medium mb-1">Garmin Connect not configured</div>
-          <div className="text-xs opacity-90">
-            Set <code className="px-1 rounded bg-black/10">GARMIN_EMAIL</code> and{' '}
-            <code className="px-1 rounded bg-black/10">GARMIN_PASSWORD</code> in <code className="px-1 rounded bg-black/10">.env</code>, then restart the backend.
-            First login may need an MFA code in the server terminal.
-          </div>
-          {status?.client_error && (
-            <div className="text-xs mt-2 opacity-75">Last error: {status.client_error}</div>
-          )}
+      {status && !enabled && (
+        <div className="panel p-4 flex items-center justify-between gap-3 flex-wrap text-sm">
+          <span className="text-gray-400">
+            {status.configured && status.client_error ? status.client_error : "Garmin Connect isn't connected."}
+          </span>
+          <Link to="/profile" className="text-xs font-medium text-[#06b6d4] hover:underline">Connect it on Profile</Link>
         </div>
       )}
       {status?.last_error && (
@@ -156,12 +148,6 @@ export default function GarminPage() {
         <section ref={timelineRef} className="scroll-mt-6">
           <DayTimeline day={day} latest={status?.latest_date ?? null} onDayChange={showDay} />
         </section>
-      )}
-
-      {!enabled && (
-        <div className="text-center text-xs py-12 text-fg-faint">
-          Configure Garmin Connect to start collecting trends.
-        </div>
       )}
 
       {enabled && (

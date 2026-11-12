@@ -86,7 +86,7 @@ def zones_from_garmin(payload: list[dict]) -> tuple[list[dict], int | None] | No
 async def refresh_garmin_zones(z2: Zone2) -> bool:
     """Fetch Garmin's zones and store them; True when they changed. Garmin
     updates them itself as the watch detects a new lactate threshold."""
-    if not z2.garmin_client.email:
+    if not z2.garmin_client.configured:
         return False
     try:
         parsed = zones_from_garmin(await asyncio.to_thread(z2.garmin_client.hr_zones))
@@ -175,7 +175,7 @@ def _resolve_hr_zones(z2: Zone2, settings: dict[str, str | None]) -> ResolvedZon
             stored = json.loads(raw)
             return _resolved(stored["zones"], "garmin", requested_source, estimated_max_hr,
                              threshold_hr=stored.get("threshold_hr"))
-        return estimated("Garmin isn't connected" if not z2.garmin_client.email else "No zones fetched from Garmin yet")
+        return estimated("Garmin isn't connected" if not z2.garmin_client.configured else "No zones fetched from Garmin yet")
 
     if requested_source == "manual":
         raw = settings["manual_hr_zones"]

@@ -59,7 +59,7 @@ def _garmin_workouts(client: GarminClient, ours: set[int]) -> list[dict]:
 @router.get("/garmin")
 async def garmin_library(db: aiosqlite.Connection = Depends(get_db), z2: Zone2 = Depends(get_z2)):
     """The Garmin library's other workouts (made in Garmin Connect), newest first."""
-    if not z2.garmin_client.email:
+    if not z2.garmin_client.configured:
         return []
     ours = {r[0] for r in await (await db.execute(
         "SELECT garmin_workout_id FROM workout_templates WHERE garmin_workout_id IS NOT NULL")).fetchall()}

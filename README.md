@@ -29,43 +29,34 @@ The **Coach** is an AI agent with a chat on every page. You can type, or hold th
 
 ## Running it
 
-Create an app in your [Strava API settings](https://www.strava.com/settings/api) and set its Authorization Callback Domain to `localhost`, or on a server to the domain you open z2 at. Then:
+1. **Create a Strava app** in your [Strava API settings](https://www.strava.com/settings/api), with `localhost` as its Authorization Callback Domain (on a server, the domain you open z2 at).
+2. **Install and start z2**, with the app's Client ID and Client Secret in `.env`:
 
-```bash
-git clone https://github.com/rsanchezmo/zone2.git
-cd zone2
-poetry install
-(cd frontend && npm install)
-cp .env.example .env    # then fill it in, see below
-```
+   ```bash
+   git clone https://github.com/rsanchezmo/zone2.git
+   cd zone2
+   poetry install
+   (cd frontend && npm install)
+   cp .env.example .env    # STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET
+   poetry run python run_dev.py
+   ```
 
-Start the backend and the frontend together:
+3. **Connect your accounts in the app** at http://localhost:5173 (the API is on :8000):
+   - **Strava:** click **Connect Strava** and approve z2 on Strava's page with both boxes ticked (z2 reads your private activities and the HR zones in your profile). You're back in the app with your history syncing. Strava's rate limits make the first sync of a long history slow, and Backfill Streams, under the sync icon in the dock, picks up where it stopped.
+   - **Garmin** (optional, for sleep, HRV, readiness and the watch): click **Connect** under Garmin Connect on the Profile page and sign in, with the code Garmin sends if your account asks for one. The Garmin tab then appears in the dock, Garmin syncs every 6 hours, and Backfill all on that page fetches your whole history.
 
-```bash
-poetry run python run_dev.py
-```
+   z2 keeps only the sessions, in `.strava/token.json` and `.strava/garmin/`, never your passwords, and they refresh on their own.
 
-The app is at http://localhost:5173 and the API at http://localhost:8000. Click **Connect Strava** and approve z2 on Strava's page, leaving both boxes ticked (z2 reads your private activities and the HR zones in your profile). Strava sends you back to the app, which starts pulling your history. The token is kept in `.strava/token.json` and refreshes on its own. Strava's rate limits make the first sync of a long history slow, and Backfill Streams, under the sync icon in the dock, picks up where the last one stopped.
-
-The `.env` file:
+The rest of `.env` is optional:
 
 ```env
-# Required
-STRAVA_CLIENT_ID=
-STRAVA_CLIENT_SECRET=
-
-# Optional
-GARMIN_EMAIL=                    # wellness data, watch workouts and courses
-GARMIN_PASSWORD=
 OPENAI_API_KEY=                  # the Coach
 STRAVA_WEB_CARTO_API_KEY=        # nicer basemaps (free key); maps fall back to OpenStreetMap without it
 STRAVA_WEB_AUTO_SYNC_HOURS=12    # sync Strava every 12 h in the background; off when unset
 CLOUDFLARE_TUNNEL_TOKEN=         # remote access with Docker
 ```
 
-The other `STRAVA_WEB_*` settings, such as the Coach's model (`STRAVA_WEB_AGENT_MODEL`), are in [`backend/config.py`](backend/config.py).
-
-With Garmin credentials set, Garmin syncs every 6 hours, and Backfill all on the Garmin page fetches your whole history. If your account asks for a two-factor code, run `poetry run python scripts/garmin_poc.py` once in a terminal so the login gets cached in `.strava/garmin/`.
+The other `STRAVA_WEB_*` settings, such as the Coach's model (`STRAVA_WEB_AGENT_MODEL`), are in [`backend/config.py`](backend/config.py). `GARMIN_EMAIL` and `GARMIN_PASSWORD` still work in place of connecting Garmin in the app.
 
 Everything z2 keeps is in two folders: `.strava/` (activities, streams, tokens, and the SQLite database with the calendar, plans and workouts) and `zone2_workdir/` (street maps and exports), both in the checkout unless `STRAVA_WEB_DATA_DIR` and `STRAVA_WEB_WORKDIR` point elsewhere. Those are the folders to back up. The backend, the bot and the scripts read `.env` from the checkout, wherever you start them from.
 
@@ -76,7 +67,7 @@ docker compose up -d --build        # the app on 127.0.0.1:8000, plus the Cloudf
 docker compose up -d --build app    # just the app
 ```
 
-The app has no login of its own, so it only listens on the server's loopback and Cloudflare Access guards the way in. Set your Strava app's callback domain to the domain you reach it at, and connect Strava from the app as you would locally. [DEPLOY.md](DEPLOY.md) walks through setting up Cloudflare Tunnel and Access, and an optional timer that redeploys when you push. Days and weeks follow the time zone of your latest activity, so a server running in UTC still rolls over at your midnight.
+The app has no login of its own, so it only listens on the server's loopback and Cloudflare Access guards the way in. Set your Strava app's callback domain to the domain you reach it at, and connect Strava and Garmin from the app as you would locally, with no files to copy over. [DEPLOY.md](DEPLOY.md) walks through setting up Cloudflare Tunnel and Access, and an optional timer that redeploys when you push. Days and weeks follow the time zone of your latest activity, so a server running in UTC still rolls over at your midnight.
 
 ## Finding your way around
 

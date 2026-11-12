@@ -135,7 +135,9 @@ async def _periodic_garmin_sync_loop(
         try:
             await asyncio.sleep(delay)
             delay = interval_hours * 3600  # subsequent runs at the full interval
-            if garmin_sync.try_claim():
+            if not z2.garmin_client.configured:
+                log.debug("Garmin auto-sync skipped: Garmin isn't connected")
+            elif garmin_sync.try_claim():
                 log.info("Garmin auto-sync starting")
                 await garmin_sync.run(z2, False)
                 log.info("Garmin auto-sync finished")
@@ -179,7 +181,7 @@ async def lifespan(app: FastAPI):
         sync_max_age_hours=settings.sync_max_age_hours,
     )
     # Best-effort Garmin login at startup. Doesn't raise if it fails.
-    if z2.garmin_client.email:
+    if z2.garmin_client.configured:
         await asyncio.to_thread(z2.garmin_client.ensure_logged_in)
     set_zone2(z2)
     await init_db()
@@ -213,7 +215,8 @@ async def lifespan(app: FastAPI):
         sync_task = asyncio.create_task(_periodic_sync_loop(z2, settings.auto_sync_hours))
 
     garmin_sync_task: asyncio.Task | None = None
-    if settings.auto_garmin_sync_hours > 0 and z2.garmin_client.email:
+    # Runs without Garmin set up too: a sign-in from the app starts the syncs it brings
+    if settings.auto_garmin_sync_hours > 0:
         garmin_sync_task = asyncio.create_task(
             _periodic_garmin_sync_loop(z2, settings.auto_garmin_sync_hours)
         )

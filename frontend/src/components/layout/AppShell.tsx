@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useLayoutEffect, useCallback, lazy, Suspen
 import { NavLink, useLocation, useSearchParams } from 'react-router-dom'
 import { useQueryClient, useIsFetching } from '@tanstack/react-query'
 import { useSyncStatus, useTriggerSync, useBackfillStreams } from '../../api/sync'
+import { useGarminStatus } from '../../api/garmin'
 import { invalidateActivityQueries } from '../../api/invalidation'
 import { useBackdrop } from '../../hooks/useBackdrop'
 import { useTheme } from '../../hooks/useTheme'
@@ -74,6 +75,12 @@ const NAV_ITEMS: { to: string; label: string; color: string; icon: React.ReactNo
     </svg>
   )},
 ]
+
+/** The dock's pages, Garmin's once Garmin is connected (which happens on Profile). */
+function useNavItems(): typeof NAV_ITEMS {
+  const { data: garmin } = useGarminStatus()
+  return garmin?.configured ? NAV_ITEMS : NAV_ITEMS.filter(item => item.to !== '/garmin')
+}
 
 /** Anchor for the sync popover — the left dock, the bottom dock and the mobile
  *  drawer each sit against a different edge, so each needs its own direction. */
@@ -307,6 +314,7 @@ function DockNav({ navRef, items, location, isLight, indicatorStyle, position }:
 function MobileNav({ isLight, location }: { isLight: boolean; location: { pathname: string } }) {
   const [open, setOpen] = useState(false)
   const { toggleTheme } = useTheme()
+  const navItems = useNavItems()
 
   useEscapeKey(open, () => setOpen(false))
 
@@ -371,7 +379,7 @@ function MobileNav({ isLight, location }: { isLight: boolean; location: { pathna
 
         {/* Nav list */}
         <nav className="flex-1 overflow-y-auto py-2">
-          {NAV_ITEMS.map(item => {
+          {navItems.map(item => {
             const isActive = location.pathname.startsWith(item.to)
             return (
               <NavLink
@@ -482,9 +490,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
+  const navItems = useNavItems()
   useLayoutEffect(() => {
     updateIndicator()
-  }, [location.pathname, dockPosition, updateIndicator])
+  }, [location.pathname, dockPosition, updateIndicator, navItems.length])
 
   // Auto-sync on session start when data is stale. Fire at most once per
   // needs_sync episode — a failed trigger (e.g. expired token) would
@@ -579,7 +588,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           {/* Nav items */}
           <DockNav
             navRef={navRef}
-            items={NAV_ITEMS}
+            items={navItems}
             location={location}
             isLight={isLight}
             indicatorStyle={indicatorStyle}

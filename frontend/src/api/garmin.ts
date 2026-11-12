@@ -10,7 +10,12 @@ export interface GarminMetricCoverage {
 }
 
 export interface GarminStatus {
+  /** Logged in to Garmin Connect now */
   enabled: boolean;
+  /** Signed in from the app, or credentials in .env */
+  configured: boolean;
+  /** GARMIN_EMAIL and GARMIN_PASSWORD are set, so the app can't sign out */
+  from_env: boolean;
   client_error: string | null;
   syncing: boolean;
   last_error: string | null;
@@ -259,6 +264,44 @@ export function useGarminEvents(days: number = 14) {
     queryFn: () => api.get('/garmin/events', { params: { days } }).then(r => r.data),
     staleTime: 1000 * 60 * 5,
     placeholderData: keepPreviousData,
+  });
+}
+
+/** What follows Garmin's sign-in: its status, its HR zones and the watch's workouts. */
+function invalidateGarminConnection(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ['garmin-status'] });
+  qc.invalidateQueries({ queryKey: ['zones-settings'] });
+  qc.invalidateQueries({ queryKey: ['watch-workouts'] });
+  qc.invalidateQueries({ queryKey: ['garmin-library'] });
+}
+
+/** Email and password, sent to Garmin once; `needs_code` when Garmin asks for the code it sent. */
+export function useGarminSignIn() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { email: string; password: string }) =>
+      api.post<{ needs_code: boolean }>('/garmin/sign-in', body).then(r => r.data),
+    meta: { inlineError: true },
+    onSuccess: (data) => {
+      if (!data.needs_code) invalidateGarminConnection(qc);
+    },
+  });
+}
+
+export function useGarminSignInCode() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (code: string) => api.post<{ needs_code: boolean }>('/garmin/sign-in/code', { code }).then(r => r.data),
+    meta: { inlineError: true },
+    onSuccess: () => invalidateGarminConnection(qc),
+  });
+}
+
+export function useGarminSignOut() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post('/garmin/sign-out').then(r => r.data),
+    onSuccess: () => invalidateGarminConnection(qc),
   });
 }
 

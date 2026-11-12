@@ -114,7 +114,7 @@ async def get_zones_settings(db: aiosqlite.Connection = Depends(get_db), z2: Zon
             manual = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             manual = None
-    return {"source": source, "manual_zones": manual, "garmin_available": bool(z2.garmin_client.email)}
+    return {"source": source, "manual_zones": manual, "garmin_available": z2.garmin_client.configured}
 
 
 @router.put("/zones-settings")

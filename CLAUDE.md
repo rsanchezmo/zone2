@@ -35,7 +35,7 @@ docker compose up
 - `STRAVA_CLIENT_ID` / `STRAVA_CLIENT_SECRET` — required for API access
 - `STRAVA_WEB_*` — backend config (loaded via Pydantic settings in `backend/config.py`)
 - `STRAVA_WEB_DATA_DIR` / `STRAVA_WEB_WORKDIR` — optional; where z2 keeps its data (activities, streams, tokens, `calendar.db`) and its street maps and exports. Default `.strava/` and `zone2_workdir/` in the checkout (`zone2/paths.py`), which is also where the Docker volumes mount
-- `GARMIN_EMAIL` / `GARMIN_PASSWORD` — optional, enables the Garmin Connect integration; `GARMINTOKENS` optionally moves its token cache (default `garmin/` in the data dir)
+- `GARMIN_EMAIL` / `GARMIN_PASSWORD` — optional; Garmin Connect is usually connected from the Profile page instead (the dock shows the Garmin tab only once it is) (`POST /api/garmin/sign-in`, then `/sign-in/code` when Garmin asks for one; only the tokens are kept). `GARMINTOKENS` optionally moves the token cache (default `garmin/` in the data dir)
 - `OPENAI_API_KEY` — optional, for the coach agent
 - `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` — optional, for the Telegram bot (`STRAVA_WORKDIR` gives it its own workdir; else the app's)
 - `CLOUDFLARE_TUNNEL_TOKEN` — optional, for Docker deployment with Cloudflare Tunnel
@@ -55,7 +55,7 @@ Zone2
 ├── StravaActivitiesCache   — Local Parquet-based activity storage with lazy in-memory loading
 ├── Clock                   — The athlete's today and now (`zone2/clock.py`, see Key Conventions)
 ├── StravaUserCache         — Athlete profile/zones (in memory) and gear (`gear.json`)
-├── GarminClient            — Optional Garmin Connect client (wellness, workouts, courses); off without GARMIN_EMAIL
+├── GarminClient            — Optional Garmin Connect client (wellness, workouts, courses); `configured` by a sign-in from the app (its tokens) or .env credentials
 ├── GarminDailyStatsCache   — Garmin daily wellness payloads in SQLite (`calendar.db`) + their sync
 ├── StravaAnalytics         — Gathers each computation's inputs and caches the costly results
 └── StravaVisualizer        — All matplotlib visualizations (heatmaps, dashboards, reports)
@@ -83,7 +83,7 @@ The rest of `zone2/`: `best_efforts.py` (records), `race_predictions.py`, `train
 - `gear.py` — Gear with activity rollups
 - `goals.py` — Yearly goal CRUD with progress tracking
 - `races.py` — Race calendar
-- `garmin.py` — Garmin wellness (sleep, HRV, readiness, body battery), Garmin sync
+- `garmin.py` — Garmin wellness (sleep, HRV, readiness, body battery), Garmin sync; signing in and out (`services/garmin_auth.py`)
 - `coverage.py` / `plans.py` — City street coverage and planned exploration loops (see Map Matching)
 - `calendar_feed.py` — Token-authed iCal feed of the calendar
 - `agent.py` / `coach.py` — Coach chat (websocket), approvals and reviews; training plans, coach log and notes

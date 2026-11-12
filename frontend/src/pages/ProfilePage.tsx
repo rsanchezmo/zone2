@@ -17,6 +17,7 @@ import CacheCompleteness from '../components/profile/CacheCompleteness'
 import RateLimits from '../components/profile/RateLimits'
 import CalendarSubscription from '../components/profile/CalendarSubscription'
 import WatchWorkouts from '../components/profile/WatchWorkouts'
+import GarminConnection from '../components/profile/GarminConnection'
 import AgentUsage from '../components/profile/AgentUsage'
 import PageHeader from '../components/shared/PageHeader'
 
@@ -80,6 +81,7 @@ export default function ProfilePage() {
       <RateLimits limits={rateLimits} />
       <AgentUsage />
       <BackdropSettingsPanel />
+      <GarminConnection />
       <WatchWorkouts />
       <CalendarSubscription feedUrl={feedUrl} />
     </div>

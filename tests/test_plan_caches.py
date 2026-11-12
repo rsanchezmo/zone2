@@ -189,7 +189,7 @@ def zones_z2() -> SimpleNamespace:
         strava_analytics=Analytics(),
         strava_user_cache=SimpleNamespace(cached_athlete_zones=lambda: strava_zones[0], strava_zones=strava_zones),
         strava_activities_cache=SimpleNamespace(cache_version=0),
-        garmin_client=SimpleNamespace(email=None),
+        garmin_client=SimpleNamespace(configured=False),
     )
 
 

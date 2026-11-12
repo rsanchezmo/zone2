@@ -80,6 +80,15 @@ def _strava_connection(ctx: RunContext[AgentDeps]) -> str | None:
             "Connect Strava, on the banner at the top of every page.")
 
 
+def _garmin_connection(ctx: RunContext[AgentDeps]) -> str | None:
+    """Only while Garmin isn't connected: what that leaves out, and where to connect it."""
+    if ctx.deps.z2.garmin_client.configured:
+        return None
+    return ("Garmin Connect isn't connected: no new sleep, HRV, readiness, body battery or stress arrive, and "
+            "nothing goes to the watch. When they ask about those, say so and that they connect Garmin on the "
+            "Profile page.")
+
+
 async def _first_name(z2) -> str | None:
     """From the cached Strava profile; a turn goes on without it when Strava can't answer."""
     try:
@@ -107,7 +116,8 @@ def build_agent(model: str | Model | None = None) -> Agent[AgentDeps, Output]:
         model or settings.agent_model,
         deps_type=AgentDeps,
         output_type=[str, DeferredToolRequests],
-        instructions=[INSTRUCTIONS, _athlete_notes, _active_plans, _now_and_page, _strava_connection],
+        instructions=[INSTRUCTIONS, _athlete_notes, _active_plans, _now_and_page, _strava_connection,
+                      _garmin_connection],
         toolsets=[read_tools, memory_tools, app_tools, write_tools],
         capabilities=[
             # Its own workspace, so the guides are readable without giving the run any file access

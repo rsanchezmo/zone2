@@ -222,7 +222,7 @@ class Wellness:
 
 def garmin(wellness: Wellness, enabled: bool = True) -> SimpleNamespace:
     invalidated: list[bool] = []
-    return SimpleNamespace(garmin_cache=wellness, garmin_client=SimpleNamespace(enabled=enabled, email="a@example.com"),
+    return SimpleNamespace(garmin_cache=wellness, garmin_client=SimpleNamespace(enabled=enabled, configured=True),
                            strava_analytics=SimpleNamespace(invalidate_caches=lambda: invalidated.append(True)),
                            invalidated=invalidated)
 
