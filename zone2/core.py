@@ -49,8 +49,9 @@ class Zone2:
             self.sync_activities(include_streams=True)
 
 
-    def sync_activities(self, full_sync: bool = False, include_streams: bool = False):
-        """Sync activities from Strava API to local cache."""
+    def sync_activities(self, full_sync: bool = False, include_streams: bool = False) -> bool:
+        """Sync activities from Strava API to local cache. Returns whether Strava's rate limit
+        stopped the streams before every new activity had them."""
         
         if full_sync:
             logger.info("Performing full sync (all activities)...")
@@ -70,18 +71,20 @@ class Zone2:
         logger.info("Synced %d activities", len(activities))
 
         # Now, fetch streams and zones if requested for the saved activities
-        if include_streams:
-            logger.info("Syncing streams for activities...")
-            self.strava_activities_cache.sync_streams(
-                strava_endpoint=self.strava_endpoint,
-                activity_ids=[activity['id'] for activity in activities]
-            )
+        if not include_streams:
+            return False
+        logger.info("Syncing streams for activities...")
+        return self.strava_activities_cache.sync_streams(
+            strava_endpoint=self.strava_endpoint,
+            activity_ids=[activity['id'] for activity in activities]
+        )
 
 
-    def ensure_activities_with_streams(self):
-        """Ensure all cached activities have streams and zones data."""
+    def ensure_activities_with_streams(self) -> bool:
+        """Ensure all cached activities have streams and zones data. Returns whether Strava's
+        rate limit stopped it first."""
         logger.info("Ensuring all activities have streams and zones data...")
-        self.strava_activities_cache.sync_streams(
+        return self.strava_activities_cache.sync_streams(
             strava_endpoint=self.strava_endpoint,
         )
 

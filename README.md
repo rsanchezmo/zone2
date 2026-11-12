@@ -42,7 +42,7 @@ The **Coach** is an AI agent with a chat on every page. You can type, or hold th
    ```
 
 3. **Connect your accounts in the app** at http://localhost:5173 (the API is on :8000):
-   - **Strava:** click **Connect Strava** and approve z2 on Strava's page with both boxes ticked (z2 reads your private activities and the HR zones in your profile). You're back in the app with your history syncing. Strava's rate limits make the first sync of a long history slow, and Backfill Streams, under the sync icon in the dock, picks up where it stopped.
+   - **Strava:** click **Connect Strava** and approve z2 on Strava's page with both boxes ticked (z2 reads your private activities and the HR zones in your profile). You're back in the app with your history syncing. Every activity shows up within a minute. Their GPS and heart-rate streams take longer, because Strava's rate limits allow about 50 activities every 15 minutes and 500 a day. When the limit stops the sync, z2 carries on by itself each time Strava's window resets, and the sync menu shows when. A long history fills in over a few days with nothing to click.
    - **Garmin** (optional, for sleep, HRV, readiness and the watch): click **Connect** under Garmin Connect on the Profile page and sign in, with the code Garmin sends if your account asks for one. The Garmin tab then appears in the dock, Garmin syncs every 6 hours, and Backfill all on that page fetches your whole history.
 
    z2 keeps only the sessions, in `.strava/token.json` and `.strava/garmin/`, never your passwords, and they refresh on their own.

@@ -143,6 +143,12 @@ function SyncPopover({ isLight, placement }: { isLight: boolean; placement: Popo
                   <div className="font-medium text-fg">{syncStatus.athlete_name}</div>
                 )}
                 <div>{syncStatus?.total_activities ?? '...'} activities synced</div>
+                {syncStatus?.backfill_resumes_at && !syncStatus.syncing && (
+                  <div>
+                    Strava's rate limit paused the streams: they carry on at{' '}
+                    {new Date(syncStatus.backfill_resumes_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                )}
               </div>
               <button
                 onClick={() => triggerSync.mutate({ include_streams: true })}

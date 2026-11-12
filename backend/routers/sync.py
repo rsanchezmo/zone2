@@ -66,6 +66,7 @@ def sync_status(z2: Zone2 = Depends(get_z2)):
         "connected": z2.strava_endpoint.connected,
         "syncing": slot.running,
         "last_error": slot.last_error,
+        "backfill_resumes_at": slot.backfill_resumes_at.isoformat() if slot.backfill_resumes_at else None,
         "last_sync_at": cache.get_last_sync_time().isoformat() if cache.get_last_sync_time() else None,
         "total_activities": cache.count_cached_activities(),
         "needs_sync": cache.needs_sync(),

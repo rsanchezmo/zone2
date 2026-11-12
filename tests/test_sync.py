@@ -4,6 +4,7 @@ Strava, Garmin and the coach's review queue are stand-ins."""
 import asyncio
 import threading
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -31,18 +32,20 @@ class Activities:
 class Strava:
     """A Zone2 whose sync runs `behaviour` (bumping the data version unless told otherwise)."""
 
-    def __init__(self, changes: bool = True, error: Exception | None = None, hold: threading.Event | None = None):
+    def __init__(self, changes: bool = True, error: Exception | None = None, hold: threading.Event | None = None,
+                 stopped: bool = False, daily_used: int = 10):
         self.strava_activities_cache = Activities()
         self.strava_analytics = SimpleNamespace(warm_caches=self._warm)
-        self.strava_endpoint = SimpleNamespace(connected=True)
-        self.changes, self.error, self.hold = changes, error, hold
+        self.strava_endpoint = SimpleNamespace(
+            connected=True, get_rate_limits=lambda: {"daily": {"limit": 1000, "usage": daily_used}})
+        self.changes, self.error, self.hold, self.stopped = changes, error, hold, stopped
         self.syncs: list[tuple[bool, bool]] = []
         self.warmed_stats = 0
 
     def _warm(self) -> None:
         self.warmed_stats += 1
 
-    def sync_activities(self, full_sync: bool, include_streams: bool) -> None:
+    def sync_activities(self, full_sync: bool, include_streams: bool) -> bool:
         self.syncs.append((full_sync, include_streams))
         if self.hold is not None:
             assert self.hold.wait(5)
@@ -51,6 +54,7 @@ class Strava:
         self.strava_activities_cache.last_sync = datetime.now()
         if self.changes:
             self.strava_activities_cache.cache_version += 1
+        return self.stopped
 
 
 @pytest.fixture
@@ -148,6 +152,97 @@ def test_backfill_and_resync_release_the_slot(events: list[str]):
     assert sync.try_claim()
     assert sync.resync_activity(z2, 5, True) == (False, None)
     assert not sync.status().running
+
+
+# ── Streams the rate limit stopped ───────────────────────────────────────
+
+@pytest.mark.parametrize("now, daily, resumes", [
+    ("2026-11-12T14:07:30", False, "2026-11-12T14:16:00"),
+    ("2026-11-12T14:52:00", False, "2026-11-12T15:01:00"),
+    ("2026-11-12T14:15:00", False, "2026-11-12T14:31:00"),
+    ("2026-11-12T23:50:00", True, "2026-11-13T00:01:00"),
+])
+def test_the_backfill_resumes_when_stravas_window_resets(now: str, daily: bool, resumes: str):
+    at = datetime.fromisoformat(now).replace(tzinfo=UTC)
+    assert sync.next_window(at, daily) == datetime.fromisoformat(resumes).replace(tzinfo=UTC)
+
+
+def test_streams_the_rate_limit_stopped_carry_on_until_a_backfill_finishes(events: list[str]):
+    z2 = Strava(stopped=True)
+    assert sync.try_claim()
+    sync.run(z2, False, True)
+    resumes_at = sync.status().backfill_resumes_at
+    assert resumes_at is not None and resumes_at > datetime.now(UTC)
+    assert not sync.resume_due(z2) and sync.resume_due(z2, now=resumes_at)
+
+    # A sync of only the new activities leaves the older ones to the resume
+    z2.stopped = False
+    assert sync.try_claim()
+    sync.run(z2, False, True)
+    assert sync.status().backfill_resumes_at == resumes_at
+
+    z2.strava_endpoint.connected = False
+    assert not sync.resume_due(z2, now=resumes_at)
+    z2.strava_endpoint.connected = True
+
+    z2.ensure_activities_with_streams = lambda: True
+    assert sync.try_claim()
+    sync.backfill_streams(z2)
+    assert sync.status().backfill_resumes_at is not None
+    z2.ensure_activities_with_streams = lambda: False
+    assert sync.try_claim()
+    sync.backfill_streams(z2)
+    assert sync.status().backfill_resumes_at is None and not sync.status().running
+
+
+def test_a_used_up_day_resumes_after_midnight_utc(events: list[str]):
+    assert sync.try_claim()
+    sync.run(Strava(stopped=True, daily_used=999), False, True)
+    resumes_at = sync.status().backfill_resumes_at
+    assert (resumes_at.hour, resumes_at.minute) == (0, 1)
+
+
+def test_the_app_resumes_a_backfill_once_it_is_due(events: list[str]):
+    from backend.app import _resume_backfill_loop
+
+    z2 = Strava()
+    resumed: list[datetime] = []
+
+    def finish_backfill() -> bool:
+        resumed.append(datetime.now(UTC))
+        return False
+    z2.ensure_activities_with_streams = finish_backfill
+    sync._status.backfill_resumes_at = datetime.now(UTC) - timedelta(seconds=1)
+
+    async def go() -> None:
+        loop = asyncio.create_task(_resume_backfill_loop(z2, every_s=0.01))
+        for _ in range(300):
+            await asyncio.sleep(0.01)
+            if resumed and not sync.status().running:
+                break
+        loop.cancel()
+    asyncio.run(go())
+    assert len(resumed) == 1 and sync.status().backfill_resumes_at is None
+
+
+def test_sync_streams_says_when_the_rate_limit_stopped_it(tmp_path: Path):
+    from tests.synthetic import store_activities
+    from zone2.activities_cache import StravaActivitiesCache
+    from zone2.endpoint import StravaRateLimitError
+
+    cache = StravaActivitiesCache(tmp_path / "activities", tmp_path / "streams", tmp_path / "metadata.json")
+    cache.save_activities(store_activities(datetime.now().date()))
+
+    def refused(activity_id: int) -> dict:
+        raise StravaRateLimitError("Strava API returned 429 Too Many Requests")
+    limits = {"fifteen_min": {"limit": 100, "usage": 0}, "daily": {"limit": 1000, "usage": 0}}
+    endpoint = SimpleNamespace(usage_is_fresh=lambda: True, get_rate_limits=lambda refresh=False: limits,
+                               get_activity_detail=refused, get_activity_streams=lambda activity_id: {},
+                               get_activity_photos=lambda activity_id: [])
+    assert cache.sync_streams(endpoint) is True
+    endpoint.get_activity_detail = lambda activity_id: {}
+    assert cache.sync_streams(endpoint) is False
+    assert cache.sync_streams(endpoint) is False  # nothing left to fetch
 
 
 def test_concurrent_catch_ups_share_one_run(events: list[str]):

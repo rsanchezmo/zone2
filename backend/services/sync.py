@@ -1,13 +1,14 @@
 """Strava sync, one at a time: the API, the auto-sync loop and the agent share one slot. A sync
 that changes the cached activities refreshes what depends on them and queues the new ones for the
-coach to review. Refreshes whose state lives elsewhere (the PNG exports, the coverage map) are
+coach to review. Streams that Strava's rate limit stopped are fetched on once its window resets
+(`resume_due`), so a new history fills in without clicking Backfill Streams again and again. Refreshes whose state lives elsewhere (the PNG exports, the coverage map) are
 hooks: `register_hooks` wires them in every process that syncs, the app and the agent's terminal."""
 
 import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from threading import Lock
 
 from backend.agent import reviews
@@ -29,6 +30,8 @@ _BUSY = "A sync is already running; try again in a minute."
 class SyncStatus:
     running: bool = False
     last_error: str | None = None
+    backfill_resumes_at: datetime | None = None
+    """When the streams backfill that Strava's rate limit stopped carries on."""
 
 
 # Syncs run in worker threads while the API reads the status on the event loop: a
@@ -79,6 +82,34 @@ def try_claim() -> bool:
         return True
 
 
+def next_window(now: datetime, daily_used_up: bool) -> datetime:
+    """When Strava's rate limit lets requests through again: its 15-minute windows reset on the
+    quarter hour and its daily one at midnight UTC, with a minute's margin for clock drift."""
+    if daily_used_up:
+        reset = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    else:
+        reset = now.replace(minute=now.minute - now.minute % 15, second=0, microsecond=0) + timedelta(minutes=15)
+    return reset + timedelta(minutes=1)
+
+
+def _schedule_resume(z2: Zone2, stopped: bool) -> None:
+    """Have the backfill carry on at Strava's next window when its rate limit stopped the streams."""
+    resumes_at = None
+    if stopped:
+        daily = z2.strava_endpoint.get_rate_limits()["daily"]
+        resumes_at = next_window(datetime.now(UTC), daily["limit"] - daily["usage"] <= 1)
+        logger.info("Strava's rate limit stopped the streams: the backfill carries on at %s", resumes_at)
+    with _lock:
+        _status.backfill_resumes_at = resumes_at
+
+
+def resume_due(z2: Zone2, now: datetime | None = None) -> bool:
+    """Whether a backfill Strava's rate limit stopped can carry on now."""
+    with _lock:
+        resumes_at = _status.backfill_resumes_at
+    return resumes_at is not None and (now or datetime.now(UTC)) >= resumes_at and z2.strava_endpoint.connected
+
+
 def _release(error: str | None) -> None:
     with _lock:
         _status.running = False
@@ -124,7 +155,9 @@ def _sync_activities(z2: Zone2, full_sync: bool, include_streams: bool) -> str |
     before: set[int] = set()
     try:
         before = reviews.activity_ids(z2)
-        z2.sync_activities(full_sync=full_sync, include_streams=include_streams)
+        # Only a full backfill finishing clears a resume, since this sync covers the new activities
+        if z2.sync_activities(full_sync=full_sync, include_streams=include_streams):
+            _schedule_resume(z2, True)
     except StravaNotConnected as e:
         err = str(e)
     except Exception as e:
@@ -156,13 +189,15 @@ def run(z2: Zone2, full_sync: bool, include_streams: bool) -> None:
 def backfill_streams(z2: Zone2) -> None:
     """Fetch the streams of the activities without them, in the slot the caller claimed."""
     err: str | None = None
+    stopped = False
     version = z2.strava_activities_cache.cache_version
     try:
-        z2.ensure_activities_with_streams()
+        stopped = z2.ensure_activities_with_streams()
     except Exception as e:
         logger.exception("Stream backfill failed")
         err = str(e)
     finally:
+        _schedule_resume(z2, stopped)
         _finalize(z2, err, version)
 
 

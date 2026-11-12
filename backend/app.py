@@ -149,6 +149,22 @@ async def _periodic_garmin_sync_loop(
             log.exception("Garmin auto-sync errored, will retry next interval")
 
 
+async def _resume_backfill_loop(z2: Zone2, every_s: float = 60) -> None:
+    """Carry on the streams backfill that Strava's rate limit stopped once its window resets,
+    until a pass gets every activity its streams."""
+    log = logging.getLogger("backend.backfill")
+    while True:
+        try:
+            await asyncio.sleep(every_s)
+            if strava_sync.resume_due(z2) and strava_sync.try_claim():
+                log.info("resuming the streams backfill")
+                await asyncio.to_thread(strava_sync.backfill_streams, z2)
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            log.exception("Resuming the streams backfill failed")
+
+
 def _warm_stats_caches(z2: Zone2) -> None:
     try:
         refresh_race_activities(z2)
@@ -209,6 +225,7 @@ async def lifespan(app: FastAPI):
     unload_task = asyncio.create_task(_unload_idle_cities_loop())
     # The coach reviews new activities that fulfil a planned session
     review_task = asyncio.create_task(reviews.worker(z2))
+    backfill_task = asyncio.create_task(_resume_backfill_loop(z2))
 
     sync_task: asyncio.Task | None = None
     if settings.auto_sync_hours > 0:
@@ -224,7 +241,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        for task in (sync_task, garmin_sync_task, warm_task, unload_task, review_task):
+        for task in (sync_task, garmin_sync_task, warm_task, unload_task, review_task, backfill_task):
             if task is not None:
                 task.cancel()
                 try:

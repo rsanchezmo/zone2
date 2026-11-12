@@ -541,8 +541,9 @@ class StravaActivitiesCache:
             'missing_detail_ids': missing_detail_ids,
         }
 
-    def sync_streams(self, strava_endpoint, activity_ids: list[int] | None = None):
+    def sync_streams(self, strava_endpoint, activity_ids: list[int] | None = None) -> bool:
         """Sync streams, detail fields (description, calories, splits, best_efforts), and photos.
+        Returns whether Strava's rate limit stopped it before every activity had them.
 
         Args:
             strava_endpoint: The StravaEndpoint instance to fetch data from
@@ -562,7 +563,7 @@ class StravaActivitiesCache:
             )
             if remaining <= 1:
                 logger.warning("No rate limit budget available. Try again later.")
-                return
+                return True
         except Exception as e:
             logger.debug("Rate-limit pre-check skipped: %s", e)  # Non-critical
 
@@ -571,7 +572,7 @@ class StravaActivitiesCache:
 
         if df.empty:
             logger.info("No activities to sync")
-            return
+            return False
 
         # Filter to specific activity IDs if provided
         if activity_ids is not None:
@@ -579,7 +580,7 @@ class StravaActivitiesCache:
 
         if df.empty:
             logger.info("No matching activities found")
-            return
+            return False
 
         # Pre-filter: only iterate activities that actually need work (recent first)
         # Skip manual activities (no upload_id) — they have no device data and will never have streams.
@@ -685,6 +686,7 @@ class StravaActivitiesCache:
             logger.info("Synced %d activities, skipped %d (already had data)", synced_count, skipped_count)
         else:
             logger.info("All %d activities already have the requested data", skipped_count)
+        return rate_limited
 
 
 def _utc_from_local(start_date_local: pd.Series, utc_offset: pd.Series) -> pd.Series:

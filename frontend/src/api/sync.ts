@@ -7,6 +7,8 @@ export interface SyncStatus {
   connected: boolean;
   syncing: boolean;
   last_error: string | null;
+  /** When the streams backfill that Strava's rate limit stopped carries on (a UTC instant) */
+  backfill_resumes_at: string | null;
   last_sync_at: string | null;
   total_activities: number;
   needs_sync: boolean;
